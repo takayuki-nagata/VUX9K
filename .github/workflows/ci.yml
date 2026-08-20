@@ -1,0 +1,44 @@
+name: Tang Nano 9K Dual-ISA SoC CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test:
+    name: SoC Verification & Test Suite
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install System Dependencies (GHDL)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ghdl make python3-pip
+
+      - name: Install Rust Toolchain & Target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: riscv32i-unknown-none-elf
+
+      - name: Setup uv Python Environment
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Setup Python Virtualenv & Dependencies
+        run: |
+          uv python install 3.13
+          uv venv --python 3.13 .venv
+          uv pip install cocotb pytest
+
+      - name: Run Full SoC Test Suite
+        run: |
+          make test
