@@ -18,6 +18,7 @@ veryl:
 	veryl check
 	veryl fmt --check
 	veryl build
+	veryl test
 
 firmware:
 	cd firmware && cargo build --release
