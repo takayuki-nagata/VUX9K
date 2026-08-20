@@ -4,7 +4,7 @@ VENV_PATH ?= .venv
 UV ?= uv
 PYTHON ?= $(VENV_PATH)/bin/python
 
-.PHONY: all setup firmware emu sim test clean
+.PHONY: all setup veryl firmware emu sim test clean
 
 all: test
 
@@ -13,6 +13,11 @@ setup:
 	$(UV) pip install cocotb pytest
 	rustup target add riscv32i-unknown-none-elf
 	git submodule update --init --recursive
+
+veryl:
+	veryl check
+	veryl fmt --check
+	veryl build
 
 firmware:
 	cd firmware && cargo build --release
@@ -26,7 +31,7 @@ sim: firmware
 	PATH=$(PWD)/$(VENV_PATH)/bin:$(PATH) $(MAKE) -C sim SIM=ghdl MODULE=test_soc_rv32i
 	PATH=$(PWD)/$(VENV_PATH)/bin:$(PATH) $(MAKE) -C sim SIM=ghdl MODULE=test_soc_hack
 
-test: firmware emu sim
+test: veryl firmware emu sim
 	@echo "================================================="
 	@echo " ALL Tang Nano 9K SoC TESTS PASSED SUCCESSFULLY! "
 	@echo "================================================="

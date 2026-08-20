@@ -1,35 +1,35 @@
 // Veryl SD Card SPI Master Controller
 module sdcard_spi (
-    clk: input clock,
-    rst: input reset,
-    addr: input logic<4>,
-    data_in: input logic<32>,
+    clk     : input  clock    ,
+    rst     : input  reset    ,
+    addr    : input  logic<4> ,
+    data_in : input  logic<32>,
     data_out: output logic<32>,
-    we: input logic,
-    re: input logic,
-    spi_sclk: output logic,
-    spi_mosi: output logic,
-    spi_miso: input logic,
-    spi_cs_n: output logic,
+    we      : input  logic    ,
+    re      : input  logic    ,
+    spi_sclk: output logic    ,
+    spi_mosi: output logic    ,
+    spi_miso: input  logic    ,
+    spi_cs_n: output logic    ,
 ) {
-    var cs_n_reg: logic;
-    var sclk_reg: logic;
+    var cs_n_reg: logic   ;
+    var sclk_reg: logic   ;
     var shift_tx: logic<8>;
     var shift_rx: logic<8>;
-    var busy: logic;
-    var rx_ready: logic;
+    var busy    : logic   ;
+    var rx_ready: logic   ;
 
     assign spi_cs_n = cs_n_reg;
     assign spi_sclk = sclk_reg;
     assign spi_mosi = shift_tx[7];
 
     always_ff (clk, rst) {
-        if rst {
+        if_reset {
             cs_n_reg = 1'b1;
             sclk_reg = 1'b0;
             shift_tx = 8'hff;
             shift_rx = 8'hff;
-            busy = 1'b0;
+            busy     = 1'b0;
             rx_ready = 1'b0;
         } else {
             if we {
@@ -37,11 +37,11 @@ module sdcard_spi (
                     4'h0: {
                         if !busy {
                             shift_tx = data_in[7:0];
-                            busy = 1'b1;
+                            busy     = 1'b1;
                             rx_ready = 1'b0;
                         }
                     }
-                    4'h4: cs_n_reg = data_in[0];
+                    4'h4   : cs_n_reg = data_in[0];
                     default: {}
                 }
             }
@@ -50,9 +50,9 @@ module sdcard_spi (
 
     always_comb {
         case addr {
-            4'h0: data_out = {24'd0, shift_rx};
-            4'h4: data_out = {31'd0, cs_n_reg};
-            4'h8: data_out = {30'd0, rx_ready, busy};
+            4'h0   : data_out = {24'd0, shift_rx};
+            4'h4   : data_out = {31'd0, cs_n_reg};
+            4'h8   : data_out = {30'd0, rx_ready, busy};
             default: data_out = 32'd0;
         }
     }

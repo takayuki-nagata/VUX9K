@@ -1,29 +1,29 @@
 // Veryl System Timer Core (mtime / mtimecmp)
 module timer_core (
-    clk: input clock,
-    rst: input reset,
-    addr: input logic<4>,
-    data_in: input logic<32>,
-    data_out: output logic<32>,
-    we: input logic,
-    re: input logic,
-    timer_irq: output logic,
+    clk      : input  clock    ,
+    rst      : input  reset    ,
+    addr     : input  logic<4> ,
+    data_in  : input  logic<32>,
+    data_out : output logic<32>,
+    we       : input  logic    ,
+    re       : input  logic    ,
+    timer_irq: output logic    ,
 ) {
-    var mtime: logic<64>;
+    var mtime   : logic<64>;
     var mtimecmp: logic<64>;
 
     always_ff (clk, rst) {
-        if rst {
-            mtime = 64'd0;
+        if_reset {
+            mtime    = 64'd0;
             mtimecmp = 64'hffff_ffff_ffff_ffff;
         } else {
             mtime = mtime + 1'b1;
             if we {
                 case addr {
-                    4'h0: mtime[31:0] = data_in;
-                    4'h4: mtime[63:32] = data_in;
-                    4'h8: mtimecmp[31:0] = data_in;
-                    4'hc: mtimecmp[63:32] = data_in;
+                    4'h0   : mtime[31:0]     = data_in;
+                    4'h4   : mtime[63:32]    = data_in;
+                    4'h8   : mtimecmp[31:0]  = data_in;
+                    4'hc   : mtimecmp[63:32] = data_in;
                     default: {}
                 }
             }
@@ -32,12 +32,16 @@ module timer_core (
 
     always_comb {
         case addr {
-            4'h0: data_out = mtime[31:0];
-            4'h4: data_out = mtime[63:32];
-            4'h8: data_out = mtimecmp[31:0];
-            4'hc: data_out = mtimecmp[63:32];
+            4'h0   : data_out = mtime[31:0];
+            4'h4   : data_out = mtime[63:32];
+            4'h8   : data_out = mtimecmp[31:0];
+            4'hc   : data_out = mtimecmp[63:32];
             default: data_out = 32'd0;
         }
-        timer_irq = if mtime >= mtimecmp { 1'b1 } else { 1'b0 };
+        if mtime >= mtimecmp {
+            timer_irq = 1'b1;
+        } else {
+            timer_irq = 1'b0;
+        }
     }
 }
