@@ -1,0 +1,18 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Firmware build artifacts
+firmware/target/
+firmware/firmware.bin
+firmware/firmware.hex
+
+# Simulation build artifacts
+sim/sim_build/
+sim/results.xml
+sim/soc_top
+sim/e~*
+
+# System & temporary files
+/tmp/
