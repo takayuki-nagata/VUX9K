@@ -3,8 +3,31 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <stddef.h>
+#include <stdint.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
+
+/* Wrapper functions for Rust FFI */
+void vux9k_print_str(const char *str)
+{
+	printk("%s", str);
+}
+
+void vux9k_print_int(int32_t val)
+{
+	printk("%d", (int)val);
+}
+
+int32_t vux9k_k_msleep(int32_t ms)
+{
+	return k_msleep(ms);
+}
+
+uint32_t vux9k_k_uptime_get_32(void)
+{
+	return k_uptime_get_32();
+}
 
 /* Rust staticlib entry function */
 extern void rust_main(void);

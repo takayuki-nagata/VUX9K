@@ -158,4 +158,9 @@ make test
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+This project is dual-licensed:
+
+- **Hardware RTL (Veryl/SV), Bare-Metal Firmware, Test Suites & Scripts**: [MIT License](LICENSE) (see [`LICENSES/MIT.txt`](LICENSES/MIT.txt))
+- **Zephyr RTOS Out-of-Tree BSP & Application**: [Apache License 2.0](LICENSES/Apache-2.0.txt) (compliant with upstream Zephyr RTOS licensing)
+
+All source files contain explicit [SPDX-License-Identifier](https://spdx.dev/ids/) tags and copyright notices compliant with the [REUSE](https://reuse.software/) specification.

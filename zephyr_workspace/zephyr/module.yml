@@ -5,8 +5,7 @@ name: vux9k_bsp
 build:
   cmake: .
   kconfig: Kconfig
-  dts: dts
-  boards:
-    - boards
-  socs:
-    - soc
+  settings:
+    board_root: .
+    soc_root: .
+    dts_root: .

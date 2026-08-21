@@ -9,11 +9,15 @@ CARGO = cargo
 PYTHON = python3
 UV = uv
 
-VENV_PATH = .venv
+VENV_PATH ?= .venv
+ZEPHYR_BASE ?= $(HOME)/zephyrproject/zephyr
+ZEPHYR_SDK_INSTALL_DIR ?= $(HOME)/.local/zephyr-sdk-0.16.8
+OSS_CAD_SUITE_BIN ?= $(HOME)/.local/oss-cad-suite/bin
+CARGO_BIN ?= $(HOME)/.cargo/bin
 
-export PATH := $(PWD)/$(VENV_PATH)/bin:$(HOME)/.local/oss-cad-suite/bin:$(HOME)/.cargo/bin:$(PATH)
+export PATH := $(PWD)/$(VENV_PATH)/bin:$(OSS_CAD_SUITE_BIN):$(CARGO_BIN):$(ZEPHYR_SDK_INSTALL_DIR)/riscv64-zephyr-elf/bin:$(PATH)
 
-.PHONY: all veryl check check-paths fmt test build synth clean venv setup firmware sim-unit sim-soc sim test-arch-compliance zephyr-rust-lib sim-zephyr-emu sim-zephyr-rtl sim-zephyr
+.PHONY: all veryl check check-paths fmt test build synth clean venv setup firmware sim-unit sim-soc sim test-arch-compliance zephyr-rust-lib build-zephyr sim-zephyr-emu sim-zephyr-rtl sim-zephyr
 
 all: test
 
@@ -51,6 +55,22 @@ firmware:
 
 zephyr-rust-lib:
 	cd zephyr_workspace/app/rust_app && $(CARGO) build --release --target riscv32i-unknown-none-elf
+
+build-zephyr:
+	@if [ -d "$(ZEPHYR_BASE)" ] && [ -d "$(ZEPHYR_SDK_INSTALL_DIR)" ]; then \
+		echo "=== Building Zephyr v3.7.2 Application (Rust + C) ==="; \
+		export PATH=$(PWD)/$(VENV_PATH)/bin:$(ZEPHYR_SDK_INSTALL_DIR)/riscv64-zephyr-elf/bin:$(PATH) && \
+		export ZEPHYR_BASE=$(ZEPHYR_BASE) && \
+		export ZEPHYR_SDK_INSTALL_DIR=$(ZEPHYR_SDK_INSTALL_DIR) && \
+		export ZEPHYR_TOOLCHAIN_VARIANT=zephyr && \
+		west build -p auto -b vux9k zephyr_workspace/app -d zephyr_workspace/app/build -- \
+			-DBOARD_ROOT=$(PWD)/zephyr_workspace \
+			-DSOC_ROOT=$(PWD)/zephyr_workspace \
+			-DEXTRA_ZEPHYR_MODULES=$(PWD)/zephyr_workspace && \
+		$(PYTHON) scripts/elf2bin.py zephyr_workspace/app/build/zephyr/zephyr.elf zephyr_workspace/app/build/zephyr/zephyr.bin; \
+	else \
+		echo "Zephyr or Zephyr SDK not found. Skipping real Zephyr build."; \
+	fi
 
 sim-unit: veryl
 	@echo "=== Running RV32I ALU Unit Tests ==="
@@ -98,9 +118,13 @@ sim-soc: firmware
 	@echo "=== Running SoC Top Hack Integration Tests ==="
 	$(MAKE) -C sim TOPLEVEL=soc_top MODULE=test_soc_hack
 
-sim-zephyr-emu: zephyr-rust-lib firmware
+sim-zephyr-emu: build-zephyr
 	@echo "=== Running Zephyr/Rust SoC Python Emulator ==="
-	$(PYTHON) sim/emulator.py firmware/firmware.bin
+	@if [ -f "zephyr_workspace/app/build/zephyr/zephyr.bin" ]; then \
+		$(PYTHON) sim/emulator.py zephyr_workspace/app/build/zephyr/zephyr.bin --steps 3000000; \
+	else \
+		$(PYTHON) sim/emulator.py firmware/firmware.bin; \
+	fi
 
 sim-zephyr-rtl: zephyr-rust-lib
 	@echo "=== Running Zephyr/Rust SoC RTL Simulation ==="
@@ -125,4 +149,4 @@ clean:
 	$(VERYL) clean
 	cd firmware && $(CARGO) clean
 	cd zephyr_workspace/app/rust_app && $(CARGO) clean
-	rm -rf sim/sim_build* sim/results.xml soc.json pack.fs firmware/firmware.bin firmware/firmware.hex build_arch_test
+	rm -rf sim/sim_build* sim/results.xml soc.json pack.fs firmware/firmware.bin firmware/firmware.hex build_arch_test zephyr_workspace/app/build

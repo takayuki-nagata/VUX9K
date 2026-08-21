@@ -32,16 +32,11 @@ def setup_repo():
     
     test_src = os.path.join(ARCH_TEST_DIR, "tests", "rv32i", "I")
     if not os.path.exists(test_src) or not os.listdir(test_src):
-        fallback_dir = os.path.join(os.path.dirname(REPO_DIR), "hack_cpu", "vendor", "riscv-arch-test")
-        if os.path.exists(fallback_dir):
-            print(f"[INFO] Copying vendor/riscv-arch-test from {fallback_dir}...")
-            shutil.copytree(fallback_dir, ARCH_TEST_DIR, dirs_exist_ok=True)
-        else:
-            print("[INFO] Cloning riscv-arch-test repository...")
-            code, out, err = run_cmd(["git", "clone", "--depth", "1", "https://github.com/riscv-non-isa/riscv-arch-test.git", ARCH_TEST_DIR])
-            if code != 0:
-                print(f"[ERROR] Failed to clone riscv-arch-test: {err}")
-                sys.exit(1)
+        print("[INFO] Cloning riscv-arch-test repository...")
+        code, out, err = run_cmd(["git", "clone", "--depth", "1", "https://github.com/riscv-non-isa/riscv-arch-test.git", ARCH_TEST_DIR])
+        if code != 0:
+            print(f"[ERROR] Failed to clone riscv-arch-test: {err}")
+            sys.exit(1)
 
 def compile_verilog():
     print("[INFO] Building Veryl sources...")

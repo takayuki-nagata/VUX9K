@@ -6,29 +6,25 @@
 use core::panic::PanicInfo;
 
 pub mod zephyr_ffi;
-use zephyr_ffi::{zephyr_printk, zephyr_sleep_ms};
+use zephyr_ffi::{zephyr_print_c, zephyr_print_int};
 
 #[no_mangle]
 pub extern "C" fn rust_main() {
-    zephyr_printk("\n[Rust App] Hello from Rust running on Zephyr RTOS!\n");
-    zephyr_printk("[Rust App] Executing on VUX9K RISC-V RV32I Dual-ISA SoC.\n");
+    zephyr_print_c(b"\n[Rust App] Hello from Rust running on Zephyr RTOS!\n\0");
+    zephyr_print_c(b"[Rust App] Executing on VUX9K RISC-V RV32I Dual-ISA SoC.\n\0");
 
     // Perform application workload
     for i in 1..=5 {
-        zephyr_printk("[Rust Task] Task iteration ");
-        // Print decimal digit
-        unsafe {
-            zephyr_ffi::printk(b"%d\0".as_ptr(), i);
-        }
-        zephyr_printk(" completed [OK]\n");
-        zephyr_sleep_ms(100);
+        zephyr_print_c(b"[Rust Task] Task iteration \0");
+        zephyr_print_int(i);
+        zephyr_print_c(b" completed [OK]\n\0");
     }
 
-    zephyr_printk("[Rust App] All Rust application tasks finished successfully!\n");
+    zephyr_print_c(b"[Rust App] All Rust application tasks finished successfully!\n\0");
 }
 
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
-    zephyr_printk("\n[Rust Panic] Fatal error in Rust application!\n");
+    zephyr_print_c(b"\n[Rust Panic] Fatal error in Rust application!\n\0");
     loop {}
 }

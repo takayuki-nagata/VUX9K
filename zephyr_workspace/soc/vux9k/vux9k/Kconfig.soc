@@ -1,0 +1,14 @@
+# Copyright (c) 2026 Takayuki Nagata
+# SPDX-License-Identifier: Apache-2.0
+
+config SOC_VUX9K
+	bool
+	select RISCV
+	select RISCV_ISA_RV32I
+	select RISCV_ISA_EXT_ZICSR
+	select RISCV_PRIVILEGED
+	select INCLUDE_RESET_VECTOR
+	select ATOMIC_OPERATIONS_C
+
+config SOC
+	default "vux9k" if SOC_VUX9K

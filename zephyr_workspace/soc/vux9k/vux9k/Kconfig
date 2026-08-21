@@ -1,0 +1,9 @@
+# Copyright (c) 2026 Takayuki Nagata
+# SPDX-License-Identifier: Apache-2.0
+
+config SOC_FAMILY_VUX9K
+	bool
+
+config SOC_SERIES_VUX9K
+	bool
+	select SOC_FAMILY_VUX9K

@@ -292,8 +292,9 @@ class SocEmulator:
             imm = (instr >> 20)
             if imm & 0x800:
                 imm -= 0x1000
+            target = (self.regs[rs1] + imm) & 0xFFFFFFFE
             self.regs[rd] = self.pc + 4
-            next_pc = (self.regs[rs1] + imm) & 0xFFFFFFFE
+            next_pc = target
 
         # BRANCH (BEQ, BNE, BGE, BGEU, BLT, BLTU, etc.)
         elif opcode == 0x63:

@@ -1,5 +1,8 @@
 # Copyright (c) 2026 Takayuki Nagata
 # SPDX-License-Identifier: Apache-2.0
 
-rsource "drivers/serial/Kconfig"
-rsource "soc/vux9k/vux9k/Kconfig"
+board:
+  name: vux9k
+  vendor: vux9k
+  socs:
+  - name: vux9k
