@@ -1,17 +1,12 @@
+// Copyright (c) 2026 Takayuki Nagata
+// SPDX-License-Identifier: Apache-2.0
+
 //! Minimal Zephyr RTOS C-ABI FFI wrapper for Rust application
 
 extern "C" {
     pub fn printk(fmt: *const u8, ...);
     pub fn k_msleep(ms: i32) -> i32;
     pub fn k_uptime_get_32() -> u32;
-}
-
-/// Print formatted string via Zephyr printk
-#[macro_export]
-macro_rules! printk {
-    ($($arg:tt)*) => {
-        // Simple string literal printing helper
-    };
 }
 
 pub fn zephyr_printk(msg: &str) {

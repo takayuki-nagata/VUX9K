@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Takayuki Nagata
+// SPDX-License-Identifier: Apache-2.0
+
 #![no_std]
 
 use core::panic::PanicInfo;
