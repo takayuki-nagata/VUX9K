@@ -432,12 +432,15 @@ class SocEmulator:
         return "".join(self.uart_tx_buf)
 
 if __name__ == '__main__':
-    if len(sys.argv) < 2:
-        print("Usage: python emulator.py <binary_file>")
-        sys.exit(1)
+    import argparse
+    parser = argparse.ArgumentParser(description="Tang Nano 9K Dual-ISA SoC Emulator")
+    parser.add_argument("binary", help="Path to raw binary file (e.g. zephyr.bin)")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose instruction tracing")
+    parser.add_argument("--steps", type=int, default=100000, help="Maximum simulation steps (default: 100000)")
+    args = parser.parse_args()
+
     emu = SocEmulator()
-    if '-v' in sys.argv:
-        emu.verbose = True
-    emu.load_binary(sys.argv[1])
-    output = emu.run()
+    emu.verbose = args.verbose
+    emu.load_binary(args.binary)
+    output = emu.run(max_steps=args.steps)
     print("\n--- Simulation Complete ---")

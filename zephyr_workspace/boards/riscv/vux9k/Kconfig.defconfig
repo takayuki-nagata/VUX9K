@@ -1,0 +1,12 @@
+# Copyright (c) 2026 Takayuki Nagata
+# SPDX-License-Identifier: Apache-2.0
+
+if BOARD_VUX9K
+
+config BOARD
+	default "vux9k"
+
+config SYS_CLOCK_HW_CYCLES_PER_SEC
+	default 27000000
+
+endif # BOARD_VUX9K

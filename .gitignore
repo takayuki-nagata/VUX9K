@@ -3,10 +3,12 @@
 __pycache__/
 *.pyc
 
-# Firmware build artifacts
+# Firmware & Zephyr build artifacts
 firmware/target/
 firmware/firmware.bin
 firmware/firmware.hex
+zephyr_workspace/**/target/
+zephyr_workspace/**/build/
 
 # Architectural compliance test artifacts
 build_arch_test/

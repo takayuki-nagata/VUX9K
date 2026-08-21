@@ -1,0 +1,11 @@
+# Copyright (c) 2026 Takayuki Nagata
+# SPDX-License-Identifier: Apache-2.0
+
+menuconfig UART_VUX9K
+	bool "VUX9K MMIO UART driver"
+	default y
+	depends on DT_HAS_VUX9K_UART_ENABLED
+	select SERIAL_HAS_DRIVER
+	select SERIAL_SUPPORT_INTERRUPT
+	help
+	  Enable the VUX9K MMIO UART driver for Tang Nano 9K SoC.

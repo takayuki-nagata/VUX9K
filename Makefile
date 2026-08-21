@@ -8,7 +8,9 @@ UV = uv
 
 VENV_PATH = .venv
 
-.PHONY: all veryl check check-paths fmt test build synth clean venv setup firmware sim-unit sim-soc sim test-arch-compliance
+export PATH := $(PWD)/$(VENV_PATH)/bin:$(HOME)/.local/oss-cad-suite/bin:$(HOME)/.cargo/bin:$(PATH)
+
+.PHONY: all veryl check check-paths fmt test build synth clean venv setup firmware sim-unit sim-soc sim test-arch-compliance zephyr-rust-lib sim-zephyr-emu sim-zephyr-rtl sim-zephyr
 
 all: test
 
@@ -41,56 +43,69 @@ fmt:
 
 firmware:
 	cd firmware && $(CARGO) build --release
-	$(VENV_PATH)/bin/python scripts/elf2bin.py firmware/target/riscv32i-unknown-none-elf/release/firmware firmware/firmware.bin
-	$(VENV_PATH)/bin/python scripts/bin2hex.py firmware/firmware.bin firmware/firmware.hex
+	$(PYTHON) scripts/elf2bin.py firmware/target/riscv32i-unknown-none-elf/release/firmware firmware/firmware.bin
+	$(PYTHON) scripts/bin2hex.py firmware/firmware.bin firmware/firmware.hex
+
+zephyr-rust-lib:
+	cd zephyr_workspace/app/rust_app && $(CARGO) build --release --target riscv32i-unknown-none-elf
 
 sim-unit: veryl
 	@echo "=== Running RV32I ALU Unit Tests ==="
-	PATH=$(PWD)/$(VENV_PATH)/bin:$(PATH) $(MAKE) -C sim TOPLEVEL=rv32i_alu MODULE=test_rv32i_alu
+	$(MAKE) -C sim TOPLEVEL=rv32i_alu MODULE=test_rv32i_alu
 	@echo "=== Running RV32I Decoder Unit Tests ==="
-	PATH=$(PWD)/$(VENV_PATH)/bin:$(PATH) $(MAKE) -C sim TOPLEVEL=rv32i_decode MODULE=test_rv32i_decode
+	$(MAKE) -C sim TOPLEVEL=rv32i_decode MODULE=test_rv32i_decode
 	@echo "=== Running Hack Translator Unit Tests ==="
-	PATH=$(PWD)/$(VENV_PATH)/bin:$(PATH) $(MAKE) -C sim TOPLEVEL=hack_translator MODULE=test_hack_translator
+	$(MAKE) -C sim TOPLEVEL=hack_translator MODULE=test_hack_translator
 	@echo "=== Running RV32I Register File Unit Tests ==="
-	PATH=$(PWD)/$(VENV_PATH)/bin:$(PATH) $(MAKE) -C sim TOPLEVEL=rv32i_regfile MODULE=test_rv32i_regfile
+	$(MAKE) -C sim TOPLEVEL=rv32i_regfile MODULE=test_rv32i_regfile
 	@echo "=== Running RV32I CSRs & Trap Unit Tests ==="
-	PATH=$(PWD)/$(VENV_PATH)/bin:$(PATH) $(MAKE) -C sim TOPLEVEL=rv32i_csrs MODULE=test_rv32i_csrs
+	$(MAKE) -C sim TOPLEVEL=rv32i_csrs MODULE=test_rv32i_csrs
 	@echo "=== Running Auto Mode Detector Unit Tests ==="
-	PATH=$(PWD)/$(VENV_PATH)/bin:$(PATH) $(MAKE) -C sim TOPLEVEL=auto_mode_detector MODULE=test_auto_mode_detector
+	$(MAKE) -C sim TOPLEVEL=auto_mode_detector MODULE=test_auto_mode_detector
 	@echo "=== Running Unified Dual-ISA CPU Unit Tests ==="
-	PATH=$(PWD)/$(VENV_PATH)/bin:$(PATH) $(MAKE) -C sim TOPLEVEL=unified_cpu MODULE=test_unified_cpu
+	$(MAKE) -C sim TOPLEVEL=unified_cpu MODULE=test_unified_cpu
 	@echo "=== Running Hack CPU Comprehensive Ops Tests ==="
-	PATH=$(PWD)/$(VENV_PATH)/bin:$(PATH) $(MAKE) -C sim TOPLEVEL=unified_cpu MODULE=test_hack_cpu_ops
+	$(MAKE) -C sim TOPLEVEL=unified_cpu MODULE=test_hack_cpu_ops
 	@echo "=== Running RV32I ISA Compliance Tests ==="
-	PATH=$(PWD)/$(VENV_PATH)/bin:$(PATH) $(MAKE) -C sim TOPLEVEL=unified_cpu MODULE=test_rv32i_compliance
+	$(MAKE) -C sim TOPLEVEL=unified_cpu MODULE=test_rv32i_compliance
 	@echo "=== Running UART Clock Timer Unit Tests ==="
-	PATH=$(PWD)/$(VENV_PATH)/bin:$(PATH) $(MAKE) -C sim TOPLEVEL=clk_timer MODULE=test_clk_timer
+	$(MAKE) -C sim TOPLEVEL=clk_timer MODULE=test_clk_timer
 	@echo "=== Running UART Shift Registers Unit Tests ==="
-	PATH=$(PWD)/$(VENV_PATH)/bin:$(PATH) $(MAKE) -C sim TOPLEVEL=shift_registers MODULE=test_shift_registers
+	$(MAKE) -C sim TOPLEVEL=shift_registers MODULE=test_shift_registers
 	@echo "=== Running UART FIFO Sync Unit Tests ==="
-	PATH=$(PWD)/$(VENV_PATH)/bin:$(PATH) $(MAKE) -C sim TOPLEVEL=fifo_sync MODULE=test_fifo_sync
+	$(MAKE) -C sim TOPLEVEL=fifo_sync MODULE=test_fifo_sync
 	@echo "=== Running UART TX Unit Tests ==="
-	PATH=$(PWD)/$(VENV_PATH)/bin:$(PATH) $(MAKE) -C sim TOPLEVEL=uart_tx MODULE=test_uart_tx
+	$(MAKE) -C sim TOPLEVEL=uart_tx MODULE=test_uart_tx
 	@echo "=== Running UART RX Unit Tests ==="
-	PATH=$(PWD)/$(VENV_PATH)/bin:$(PATH) $(MAKE) -C sim TOPLEVEL=uart_rx MODULE=test_uart_rx
+	$(MAKE) -C sim TOPLEVEL=uart_rx MODULE=test_uart_rx
 	@echo "=== Running UART Controller Loopback Tests ==="
-	PATH=$(PWD)/$(VENV_PATH)/bin:$(PATH) $(MAKE) -C sim TOPLEVEL=uart_controller MODULE=test_uart_controller
+	$(MAKE) -C sim TOPLEVEL=uart_controller MODULE=test_uart_controller
 
 test-arch-compliance: veryl
 	@echo "=== Running Official RISC-V Architectural Compliance Tests ==="
-	$(VENV_PATH)/bin/python scripts/run_arch_test.py
+	$(PYTHON) scripts/run_arch_test.py
 
 sim-soc: firmware
 	@echo "=== Running Python Software Emulator Unit Tests ==="
-	$(VENV_PATH)/bin/pytest sim/test_emulator.py
+	$(PYTHON) -m pytest sim/test_emulator.py
 	@echo "=== Running Python Software Emulator ==="
-	$(VENV_PATH)/bin/python sim/emulator.py firmware/firmware.bin
+	$(PYTHON) sim/emulator.py firmware/firmware.bin
 	@echo "=== Running SoC Top RISC-V Integration Tests ==="
-	PATH=$(PWD)/$(VENV_PATH)/bin:$(PATH) $(MAKE) -C sim TOPLEVEL=soc_top MODULE=test_soc_rv32i
+	$(MAKE) -C sim TOPLEVEL=soc_top MODULE=test_soc_rv32i
 	@echo "=== Running SoC Top Hack Integration Tests ==="
-	PATH=$(PWD)/$(VENV_PATH)/bin:$(PATH) $(MAKE) -C sim TOPLEVEL=soc_top MODULE=test_soc_hack
+	$(MAKE) -C sim TOPLEVEL=soc_top MODULE=test_soc_hack
 
-sim: sim-unit test-arch-compliance sim-soc
+sim-zephyr-emu: zephyr-rust-lib firmware
+	@echo "=== Running Zephyr/Rust SoC Python Emulator ==="
+	$(PYTHON) sim/emulator.py firmware/firmware.bin
+
+sim-zephyr-rtl: zephyr-rust-lib
+	@echo "=== Running Zephyr/Rust SoC RTL Simulation ==="
+	$(MAKE) -C sim TOPLEVEL=soc_top MODULE=test_soc_zephyr
+
+sim-zephyr: sim-zephyr-emu sim-zephyr-rtl
+
+sim: sim-unit test-arch-compliance sim-soc sim-zephyr
 
 synth: veryl
 	$(YOSYS) -p "\
@@ -98,7 +113,7 @@ synth: veryl
 		synth_gowin -top soc_top -json soc.json; \
 	"
 
-test: check firmware sim synth
+test: check firmware zephyr-rust-lib sim synth
 	@echo "========================================================================"
 	@echo "  ALL VERYL CPU, UART, ARCH-COMPLIANCE & SOC TESTS PASSED 100%!         "
 	@echo "========================================================================"
@@ -106,4 +121,5 @@ test: check firmware sim synth
 clean:
 	$(VERYL) clean
 	cd firmware && $(CARGO) clean
+	cd zephyr_workspace/app/rust_app && $(CARGO) clean
 	rm -rf sim/sim_build* sim/results.xml soc.json pack.fs firmware/firmware.bin firmware/firmware.hex build_arch_test

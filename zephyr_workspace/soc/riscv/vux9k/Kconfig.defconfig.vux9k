@@ -1,0 +1,15 @@
+# Copyright (c) 2026 Takayuki Nagata
+# SPDX-License-Identifier: Apache-2.0
+
+if SOC_SERIES_RISCV_VUX9K
+
+config SOC_SERIES
+	default "vux9k"
+
+config SOC
+	default "vux9k"
+
+config RISCV_GENERIC_TOOLCHAIN
+	default y
+
+endif # SOC_SERIES_RISCV_VUX9K

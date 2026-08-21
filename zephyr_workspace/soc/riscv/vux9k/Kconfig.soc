@@ -1,0 +1,14 @@
+# Copyright (c) 2026 Takayuki Nagata
+# SPDX-License-Identifier: Apache-2.0
+
+choice
+	prompt "VUX9K SoC Implementation"
+	depends on SOC_SERIES_RISCV_VUX9K
+
+config SOC_VUX9K
+	bool "VUX9K RV32I Dual-ISA SoC"
+	select INCLUDE_RESET_VECTOR
+	select RISCV_ISA_RV32I
+	select RISCV_ISA_EXT_ZICSR
+
+endchoice

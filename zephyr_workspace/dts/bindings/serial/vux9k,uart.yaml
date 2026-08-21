@@ -1,0 +1,9 @@
+description: VUX9K MMIO UART Controller
+
+compatible: "vux9k,uart"
+
+include: [uart-controller.yaml, base.yaml]
+
+properties:
+  reg:
+    required: true

@@ -1,0 +1,9 @@
+name: vux9k_bsp
+build:
+  cmake: .
+  kconfig: Kconfig
+  dts: dts
+  boards:
+    - boards
+  socs:
+    - soc

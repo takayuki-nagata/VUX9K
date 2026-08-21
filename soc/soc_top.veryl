@@ -153,10 +153,9 @@ pub module soc_top (
         uart_we     = mem_write && uart_sel;
         timer_we    = mem_write && timer_sel;
         sd_we       = mem_write && sd_sel;
-
-        uart_re  = 1'b1;
-        timer_re = 1'b1;
-        sd_re    = 1'b1;
+        uart_re     = !mem_write && uart_sel && (data_addr[3:0] == 4'h0);
+        timer_re    = 1'b1;
+        sd_re       = 1'b1;
 
         if ram_sel {
             cpu_data_in = ram_data_out;

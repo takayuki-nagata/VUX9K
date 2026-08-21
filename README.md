@@ -83,6 +83,16 @@ VUX9K/
 │   ├── Cargo.toml
 │   ├── bootstrap/                  # Assembly entry point (start.s) & linker script (link.x)
 │   └── src/                        # Rust drivers & main entry point
+├── zephyr_workspace/              # Out-of-Tree Zephyr RTOS & Rust integration
+│   ├── boards/                     # Out-of-Tree Board definition (vux9k)
+│   ├── dts/bindings/               # Custom DeviceTree YAML bindings (vux9k,uart)
+│   ├── drivers/                    # Custom Out-of-Tree drivers (uart_vux9k)
+│   ├── soc/                        # Out-of-Tree SoC definitions (soc.h, Kconfig)
+│   └── app/                        # Zephyr C entry + Rust staticlib application
+│       ├── CMakeLists.txt          # CMake Cargo integration
+│       ├── prj.conf                # Zephyr Kconfig options
+│       ├── src/main.c              # C kernel entry & Rust handover
+│       └── rust_app/               # Rust staticlib crate (riscv32i-unknown-none-elf)
 ├── sim/                            # Simulation testbenches (Cocotb & SystemVerilog)
 │   ├── Makefile                    # Cocotb / Icarus test runner Makefile
 │   ├── emulator.py                 # Behavioral Python SoC emulator
@@ -94,7 +104,8 @@ VUX9K/
 │   ├── test_fifo_sync.py           # UART FIFO unit test
 │   ├── test_uart_*.py              # UART TX, RX, Controller unit tests
 │   ├── test_soc_rv32i.py           # RISC-V 32-bit SoC integration test
-│   └── test_soc_hack.py            # Hack 16-bit SoC integration test
+│   ├── test_soc_hack.py            # Hack 16-bit SoC integration test
+│   └── test_soc_zephyr.py          # Zephyr RTOS & Rust SoC RTL integration test
 └── scripts/                        # Utility & Compliance scripts
     ├── bin2hex.py                  # Raw binary to Hex word converter
     ├── elf2bin.py                  # ELF to raw binary extractor
@@ -136,7 +147,10 @@ make test-arch-compliance
 # Run SoC Integration Tests (Rust firmware & Hack binary on soc_top)
 make sim-soc
 
-# Run Full Verification Pipeline (Veryl check -> Firmware build -> All Tests -> Gowin Synthesis)
+# Run Zephyr RTOS & Rust Application Simulation (Python Emulator & Cocotb RTL Simulation)
+make sim-zephyr
+
+# Run Full Verification Pipeline (Veryl check -> Firmware & Rust lib build -> All Tests -> Gowin Synthesis)
 make test
 ```
 
