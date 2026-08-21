@@ -1,0 +1,51 @@
+// Synchronous FIFO Buffer with Parameterized Width and Depth
+pub module fifo_sync #(
+    param WIDTH      : u32 = 8,
+    param LOG_DEPTH  : u32 = 8,
+    param COUNT_WIDTH: u32 = 9,
+) (
+    clk  : input  clock       ,
+    rst  : input  reset       ,
+    wdata: input  logic<WIDTH>,
+    we   : input  logic       ,
+    rdata: output logic<WIDTH>,
+    re   : input  logic       ,
+    full : output logic       ,
+    empty: output logic       ,
+) {
+    const DEPTH      : u32                = 1 << LOG_DEPTH;
+    const DEPTH_COUNT: logic<COUNT_WIDTH> = DEPTH;
+
+    var mem  : logic<WIDTH>       [DEPTH];
+    var waddr: logic<LOG_DEPTH>          ;
+    var raddr: logic<LOG_DEPTH>          ;
+    var count: logic<COUNT_WIDTH>        ;
+
+    assign rdata = mem[raddr];
+
+    always_ff (clk, rst) {
+        if_reset {
+            waddr = '0;
+            raddr = '0;
+            count = '0;
+        } else {
+            if we && re {
+                if count != '0 {
+                    mem[waddr] = wdata;
+                    waddr      = waddr + 1;
+                    raddr      = raddr + 1;
+                }
+            } else if we && count != DEPTH_COUNT {
+                mem[waddr] = wdata;
+                waddr      = waddr + 1;
+                count      = count + 1;
+            } else if re && count != '0 {
+                raddr = raddr + 1;
+                count = count - 1;
+            }
+        }
+    }
+
+    assign full  = count == DEPTH_COUNT;
+    assign empty = count == '0;
+}

@@ -1,0 +1,143 @@
+// Hack-to-RV32I Micro-Op Translator Front-End in Veryl
+pub module hack_translator (
+    instr_16  : input  logic           <16>,
+    rs1       : output logic           <5> , // Operand 1 (D = x2)
+    rs2       : output logic           <5> , // Operand 2 (A = x1)
+    rd        : output logic           <5> ,
+    imm       : output logic           <32>,
+    alu_op    : output rv32i_pkg::AluOp    ,
+    use_imm   : output logic               ,
+    use_mem   : output logic               , // 1 if ALU Y is Memory[x1]
+    we_reg_a  : output logic               , // Write to A (x1)
+    we_reg_d  : output logic               , // Write to D (x2)
+    we_mem    : output logic               , // Write to Memory[x1]
+    jump_cond : output logic           <3> ,
+    is_c_instr: output logic               ,
+) {
+    var r_rs1      : logic           <5> ;
+    var r_rs2      : logic           <5> ;
+    var r_rd       : logic           <5> ;
+    var r_imm      : logic           <32>;
+    var r_alu_op   : rv32i_pkg::AluOp    ;
+    var r_use_imm  : logic               ;
+    var r_use_mem  : logic               ;
+    var r_we_reg_a : logic               ;
+    var r_we_reg_d : logic               ;
+    var r_we_mem   : logic               ;
+    var r_jump_cond: logic           <3> ;
+    var r_is_c     : logic               ;
+    var a_bit      : logic               ;
+    var c_code     : logic           <6> ;
+    var d_code     : logic           <3> ;
+
+    always_comb {
+        r_rs1  = 5'd2; // x2 (D)
+        r_rs2  = 5'd1; // x1 (A)
+        r_rd   = 5'd1;
+        a_bit  = instr_16[12];
+        c_code = instr_16[11:6];
+        d_code = instr_16[5:3];
+
+        if !instr_16[15] {
+            // A-Instruction: 0 vvvvvvvvvvvvvvv
+            r_is_c      = 1'b0;
+            r_imm       = {17'd0, instr_16[14:0]};
+            r_alu_op    = rv32i_pkg::AluOp::COPY_B;
+            r_use_imm   = 1'b1;
+            r_use_mem   = 1'b0;
+            r_we_reg_a  = 1'b1;
+            r_we_reg_d  = 1'b0;
+            r_we_mem    = 1'b0;
+            r_jump_cond = 3'b000;
+        } else {
+            // C-Instruction: 1xx a c1c2c3c4c5c6 d1d2d3 j1j2j3
+            r_is_c      = 1'b1;
+            r_jump_cond = instr_16[2:0];
+
+            r_we_reg_a = d_code[2]; // d1 = A
+            r_we_reg_d = d_code[1]; // d2 = D
+            r_we_mem   = d_code[0]; // d3 = M
+
+            r_use_mem = a_bit;
+            r_use_imm = 1'b0;
+            r_imm     = 32'd0;
+
+            case c_code {
+                6'b101010: { // 0
+                    r_alu_op  = rv32i_pkg::AluOp::COPY_B;
+                    r_use_imm = 1'b1;
+                    r_imm     = 32'd0;
+                }
+                6'b111111: { // 1
+                    r_alu_op  = rv32i_pkg::AluOp::COPY_B;
+                    r_use_imm = 1'b1;
+                    r_imm     = 32'd1;
+                }
+                6'b111010: { // -1
+                    r_alu_op  = rv32i_pkg::AluOp::COPY_B;
+                    r_use_imm = 1'b1;
+                    r_imm     = 32'hffff_ffff;
+                }
+                6'b001100: { // D
+                    r_alu_op = rv32i_pkg::AluOp::COPY_A;
+                }
+                6'b110000: { // A or M
+                    r_alu_op = rv32i_pkg::AluOp::COPY_B;
+                }
+                6'b011111: { // D+1
+                    r_alu_op  = rv32i_pkg::AluOp::ADD;
+                    r_use_imm = 1'b1;
+                    r_imm     = 32'd1;
+                }
+                6'b110111: { // A+1 or M+1
+                    r_alu_op  = rv32i_pkg::AluOp::ADD;
+                    r_rs1     = 5'd1; // Oper1 = A
+                    r_use_imm = 1'b1;
+                    r_imm     = 32'd1;
+                }
+                6'b001110: { // D-1
+                    r_alu_op  = rv32i_pkg::AluOp::ADD;
+                    r_use_imm = 1'b1;
+                    r_imm     = 32'hffff_ffff;
+                }
+                6'b110010: { // A-1 or M-1
+                    r_alu_op  = rv32i_pkg::AluOp::ADD;
+                    r_rs1     = 5'd1; // Oper1 = A
+                    r_use_imm = 1'b1;
+                    r_imm     = 32'hffff_ffff;
+                }
+                6'b000010: { // D+A or D+M
+                    r_alu_op = rv32i_pkg::AluOp::ADD;
+                }
+                6'b010011: { // D-A or D-M
+                    r_alu_op = rv32i_pkg::AluOp::SUB;
+                }
+                6'b000000: { // D&A or D&M
+                    r_alu_op = rv32i_pkg::AluOp::AND;
+                }
+                6'b010101: { // D|A or D|M
+                    r_alu_op = rv32i_pkg::AluOp::OR;
+                }
+                6'b000101: { // D^A or D^M
+                    r_alu_op = rv32i_pkg::AluOp::XOR;
+                }
+                default: {
+                    r_alu_op = rv32i_pkg::AluOp::ADD;
+                }
+            }
+        }
+    }
+
+    assign rs1        = r_rs1;
+    assign rs2        = r_rs2;
+    assign rd         = r_rd;
+    assign imm        = r_imm;
+    assign alu_op     = r_alu_op;
+    assign use_imm    = r_use_imm;
+    assign use_mem    = r_use_mem;
+    assign we_reg_a   = r_we_reg_a;
+    assign we_reg_d   = r_we_reg_d;
+    assign we_mem     = r_we_mem;
+    assign jump_cond  = r_jump_cond;
+    assign is_c_instr = r_is_c;
+}

@@ -1,0 +1,172 @@
+// Tang Nano 9K Top-Level SoC Wrapper in Veryl
+// Integrates CPU, RAMs, UART, Machine Timer, SD Card SPI, and Address Decoder
+
+#[allow(unused_variable)]
+#[allow(unassign_variable)]
+pub module soc_top (
+    clk: input clock,
+    rst: input reset,
+
+    // UART Interface
+    uart_rx: input  logic,
+    uart_tx: output logic,
+
+    // SD Card SPI Interface
+    sd_sclk: output logic,
+    sd_mosi: output logic,
+    sd_miso: input  logic,
+    sd_cs_n: output logic,
+
+    // Status Indicator
+    active_mode: output logic, // 1 = RISC-V 32-bit, 0 = Hack 16-bit
+) {
+    // Bus Interconnect Signals
+    var instr_addr: logic<32>;
+    var instr_data: logic<32>;
+
+    var data_addr   : logic<32>;
+    var cpu_data_out: logic<32>;
+    var cpu_data_in : logic<32>;
+    var mem_write   : logic    ;
+
+    // Memory & MMIO Read Signals
+    var ram_data_out  : logic<32>;
+    var timer_data_out: logic<32>;
+    var sd_data_out   : logic<32>;
+    var uart_rdata    : logic<8> ;
+    var uart_empty    : logic    ;
+    var uart_full     : logic    ;
+
+    // Address Decode Select Signals
+    var ram_sel  : logic;
+    var uart_sel : logic;
+    var timer_sel: logic;
+    var sd_sel   : logic;
+
+    var uart_we    : logic   ;
+    var uart_re    : logic   ;
+    var timer_we   : logic   ;
+    var timer_re   : logic   ;
+    var sd_we      : logic   ;
+    var sd_re      : logic   ;
+    var ram_we     : logic   ;
+    var ram_we_byte: logic<4>;
+
+    var timer_irq: logic;
+
+    // Instantiate Unified Dual-ISA CPU Core (Veryl)
+    inst cpu_inst: unified_cpu (
+        clk        : clk         ,
+        rst        : rst         ,
+        instr_in   : instr_data  ,
+        data_in    : cpu_data_in ,
+        pc_out     : instr_addr  ,
+        data_addr  : data_addr   ,
+        data_out   : cpu_data_out,
+        mem_write  : mem_write   ,
+        active_mode: active_mode ,
+    );
+
+    // Instantiate UART Controller (Veryl)
+    inst uart_inst: uart_controller #(
+        CNT  : 434,
+        CSIZE: 10 ,
+    ) (
+        clk  : clk              ,
+        rst  : rst              ,
+        wdata: cpu_data_out[7:0],
+        rdata: uart_rdata       ,
+        re   : uart_re          ,
+        we   : uart_we          ,
+        empty: uart_empty       ,
+        full : uart_full        ,
+        txd  : uart_tx          ,
+        rxd  : uart_rx          ,
+    );
+
+    // Instantiate Harvard Memory (256KB I-RAM + 128KB D-RAM)
+    inst ram_inst: soc_ram (
+        clk       : clk         ,
+        rst       : rst         ,
+        i_addr    : instr_addr  ,
+        i_data_out: instr_data  ,
+        d_addr    : data_addr   ,
+        d_data_in : cpu_data_out,
+        d_data_out: ram_data_out,
+        d_we      : ram_we      ,
+        d_we_byte : ram_we_byte ,
+    );
+
+    // Instantiate System Timer Core (Veryl)
+    inst timer_inst: timer_core (
+        clk      : clk           ,
+        rst      : rst           ,
+        addr     : data_addr[3:0],
+        data_in  : cpu_data_out  ,
+        data_out : timer_data_out,
+        we       : timer_we      ,
+        re       : timer_re      ,
+        timer_irq: timer_irq     ,
+    );
+
+    // Instantiate SD Card SPI Master Controller (Veryl)
+    inst sd_inst: sdcard_spi (
+        clk     : clk           ,
+        rst     : rst           ,
+        addr    : data_addr[3:0],
+        data_in : cpu_data_out  ,
+        data_out: sd_data_out   ,
+        we      : sd_we         ,
+        re      : sd_re         ,
+        spi_sclk: sd_sclk       ,
+        spi_mosi: sd_mosi       ,
+        spi_miso: sd_miso       ,
+        spi_cs_n: sd_cs_n       ,
+    );
+
+    // Address Decoder Combinational Logic
+    always_comb {
+        ram_sel   = 1'b0;
+        uart_sel  = 1'b0;
+        timer_sel = 1'b0;
+        sd_sel    = 1'b0;
+
+        if data_addr[31:20] == 12'h200 {
+            ram_sel = 1'b1;
+        } else if data_addr[31:16] == 16'h4000 {
+            if data_addr[15:4] == 12'h000 {
+                uart_sel = 1'b1;
+            } else if data_addr[15:4] == 12'h100 {
+                timer_sel = 1'b1;
+            } else if data_addr[15:4] == 12'h200 {
+                sd_sel = 1'b1;
+            }
+        }
+
+        ram_we      = mem_write && ram_sel;
+        ram_we_byte = 4'hf;
+        uart_we     = mem_write && uart_sel;
+        timer_we    = mem_write && timer_sel;
+        sd_we       = mem_write && sd_sel;
+
+        uart_re  = 1'b1;
+        timer_re = 1'b1;
+        sd_re    = 1'b1;
+
+        if ram_sel {
+            cpu_data_in = ram_data_out;
+        } else if timer_sel {
+            cpu_data_in = timer_data_out;
+        } else if sd_sel {
+            cpu_data_in = sd_data_out;
+        } else if uart_sel {
+            if data_addr[3:0] == 4'h0 {
+                cpu_data_in = {24'h0, uart_rdata};
+            } else {
+                cpu_data_in = {30'h0, uart_full, uart_empty};
+            }
+        } else {
+            cpu_data_in = 32'h0;
+        }
+    }
+}

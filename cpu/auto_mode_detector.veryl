@@ -1,0 +1,49 @@
+// First-Instruction Auto Mode Detector in Veryl
+pub module auto_mode_detector (
+    clk          : input  clock    ,
+    rst          : input  reset    ,
+    first_instr  : input  logic<32>,
+    is_riscv_mode: output logic    ,
+) {
+    var mode_latched: logic   ;
+    var riscv_flag  : logic   ;
+    var opcode      : logic<7>;
+
+    always_comb {
+        opcode = first_instr[6:0];
+        if mode_latched {
+            is_riscv_mode = riscv_flag;
+        } else {
+            if first_instr[1:0] == 2'b11
+                && (opcode == rv32i_pkg::OPCODE_R_TYPE || opcode == rv32i_pkg::OPCODE_I_TYPE || opcode
+                    == rv32i_pkg::OPCODE_LOAD || opcode == rv32i_pkg::OPCODE_STORE || opcode == rv32i_pkg::OPCODE_BRANCH
+                    || opcode == rv32i_pkg::OPCODE_JAL || opcode == rv32i_pkg::OPCODE_JALR || opcode
+                    == rv32i_pkg::OPCODE_LUI || opcode == rv32i_pkg::OPCODE_AUIPC) {
+                is_riscv_mode = 1'b1;
+            } else {
+                is_riscv_mode = 1'b0;
+            }
+        }
+    }
+
+    always_ff (clk, rst) {
+        if_reset {
+            mode_latched = 1'b0;
+            riscv_flag   = 1'b0;
+        } else {
+            if !mode_latched {
+                if first_instr[1:0] == 2'b11
+                    && (opcode == rv32i_pkg::OPCODE_R_TYPE || opcode == rv32i_pkg::OPCODE_I_TYPE || opcode
+                        == rv32i_pkg::OPCODE_LOAD || opcode == rv32i_pkg::OPCODE_STORE || opcode
+                        == rv32i_pkg::OPCODE_BRANCH || opcode == rv32i_pkg::OPCODE_JAL || opcode
+                        == rv32i_pkg::OPCODE_JALR || opcode == rv32i_pkg::OPCODE_LUI || opcode
+                        == rv32i_pkg::OPCODE_AUIPC) {
+                    riscv_flag = 1'b1;
+                } else {
+                    riscv_flag = 1'b0;
+                }
+                mode_latched = 1'b1;
+            }
+        }
+    }
+}

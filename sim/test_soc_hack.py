@@ -9,11 +9,11 @@ async def test_soc_hack_execution(dut):
     cocotb.start_soon(clock.start())
 
     # Reset SoC
-    dut.reset.value = 1
+    dut.rst.value = 1
     dut.uart_rx.value = 1
     dut.sd_miso.value = 1
     await ClockCycles(dut.clk, 10)
-    dut.reset.value = 0
+    dut.rst.value = 0
 
     await ClockCycles(dut.clk, 100)
 

@@ -1,0 +1,83 @@
+// RISC-V RV32I Package Definitions in Veryl
+pub package rv32i_pkg {
+    // 7-bit Opcodes Enum
+    enum Opcode {
+        R_TYPE = 7'b011_0011,
+        I_TYPE = 7'b001_0011,
+        LOAD = 7'b000_0011,
+        STORE = 7'b010_0011,
+        BRANCH = 7'b110_0011,
+        JAL = 7'b110_1111,
+        JALR = 7'b110_0111,
+        LUI = 7'b011_0111,
+        AUIPC = 7'b001_0111,
+        SYSTEM = 7'b111_0011,
+    }
+
+    const OPCODE_R_TYPE: logic<7> = 7'b011_0011;
+    const OPCODE_I_TYPE: logic<7> = 7'b001_0011;
+    const OPCODE_LOAD  : logic<7> = 7'b000_0011;
+    const OPCODE_STORE : logic<7> = 7'b010_0011;
+    const OPCODE_BRANCH: logic<7> = 7'b110_0011;
+    const OPCODE_JAL   : logic<7> = 7'b110_1111;
+    const OPCODE_JALR  : logic<7> = 7'b110_0111;
+    const OPCODE_LUI   : logic<7> = 7'b011_0111;
+    const OPCODE_AUIPC : logic<7> = 7'b001_0111;
+    const OPCODE_SYSTEM: logic<7> = 7'b111_0011;
+
+    // 3-bit Funct3 Enum
+    enum Funct3 {
+        ADD_SUB = 3'b000,
+        SLL = 3'b001,
+        SLT = 3'b010,
+        SLTU = 3'b011,
+        XOR = 3'b100,
+        SRL_SRA = 3'b101,
+        OR = 3'b110,
+        AND = 3'b111,
+    }
+
+    const FUNCT3_PRIV  : logic<3> = 3'b000;
+    const FUNCT3_CSRRW : logic<3> = 3'b001;
+    const FUNCT3_CSRRS : logic<3> = 3'b010;
+    const FUNCT3_CSRRC : logic<3> = 3'b011;
+    const FUNCT3_CSRRWI: logic<3> = 3'b101;
+    const FUNCT3_CSRRSI: logic<3> = 3'b110;
+    const FUNCT3_CSRRCI: logic<3> = 3'b111;
+
+    // Machine-Mode CSR Addresses
+    const CSR_MSTATUS : logic<12> = 12'h300;
+    const CSR_MISA    : logic<12> = 12'h301;
+    const CSR_MIE     : logic<12> = 12'h304;
+    const CSR_MTVEC   : logic<12> = 12'h305;
+    const CSR_MSCRATCH: logic<12> = 12'h340;
+    const CSR_MEPC    : logic<12> = 12'h341;
+    const CSR_MCAUSE  : logic<12> = 12'h342;
+    const CSR_MTVAL   : logic<12> = 12'h343;
+    const CSR_MIP     : logic<12> = 12'h344;
+
+    const FUNCT3_ADD_SUB: logic<3> = 3'b000;
+    const FUNCT3_SLL    : logic<3> = 3'b001;
+    const FUNCT3_SLT    : logic<3> = 3'b010;
+    const FUNCT3_SLTU   : logic<3> = 3'b011;
+    const FUNCT3_XOR    : logic<3> = 3'b100;
+    const FUNCT3_SRL_SRA: logic<3> = 3'b101;
+    const FUNCT3_OR     : logic<3> = 3'b110;
+    const FUNCT3_AND    : logic<3> = 3'b111;
+
+    // ALU Operations Enum
+    enum AluOp {
+        ADD,
+        SUB,
+        SLL,
+        SLT,
+        SLTU,
+        XOR,
+        SRL,
+        SRA,
+        OR,
+        AND,
+        COPY_B,
+        COPY_A,
+    }
+}

@@ -1,0 +1,32 @@
+// RISC-V RV32I 32-bit Arithmetic Logic Unit
+pub module rv32i_alu (
+    a     : input  logic<32>       ,
+    b     : input  logic<32>       ,
+    alu_op: input  rv32i_pkg::AluOp,
+    result: output logic<32>       ,
+    zero  : output logic           ,
+) {
+    var res_int: logic<32>;
+
+    always_comb {
+        let shift_amt: u32 = b[4:0] as u32;
+        case alu_op {
+            rv32i_pkg::AluOp::ADD:    res_int = (a as i32 + b as i32) as u32;
+            rv32i_pkg::AluOp::SUB:    res_int = (a as i32 - b as i32) as u32;
+            rv32i_pkg::AluOp::SLL:    res_int = a << shift_amt;
+            rv32i_pkg::AluOp::SLT:    res_int = if (a as i32) <: (b as i32) ? 32'd1 : 32'd0;
+            rv32i_pkg::AluOp::SLTU:   res_int = if (a as u32) <: (b as u32) ? 32'd1 : 32'd0;
+            rv32i_pkg::AluOp::XOR:    res_int = a ^ b;
+            rv32i_pkg::AluOp::SRL:    res_int = a >> shift_amt;
+            rv32i_pkg::AluOp::SRA:    res_int = (a as i32 >>> shift_amt) as u32;
+            rv32i_pkg::AluOp::OR:     res_int = a | b;
+            rv32i_pkg::AluOp::AND:    res_int = a & b;
+            rv32i_pkg::AluOp::COPY_B: res_int = b;
+            rv32i_pkg::AluOp::COPY_A: res_int = a;
+            default:                  res_int = 32'd0;
+        }
+    }
+
+    assign result = res_int;
+    assign zero   = res_int == 32'd0;
+}

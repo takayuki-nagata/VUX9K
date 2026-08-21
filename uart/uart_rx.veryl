@@ -1,0 +1,106 @@
+// UART Receiver Module
+pub module uart_rx #(
+    param DSIZE      : u32 = 8  ,
+    param BITCNT_SIZE: u32 = 4  ,
+    param CNT        : u32 = 434,
+    param CSIZE      : u32 = 10 ,
+) (
+    clk : input  clock       ,
+    rst : input  reset       ,
+    data: output logic<DSIZE>,
+    rdy : output logic       ,
+    rxd : input  logic       ,
+) {
+    enum State {
+        IDLE,
+        WAITFORMIDBIT,
+        RECEIVING,
+    }
+
+    var state      : State             ;
+    var next_state : State             ;
+    var reg_clkcnt : logic<CSIZE>      ;
+    var next_clkcnt: logic<CSIZE>      ;
+    var reg_bitcnt : logic<BITCNT_SIZE>;
+    var next_bitcnt: logic<BITCNT_SIZE>;
+    var ce_rst     : reset             ;
+    var sreg_ce    : logic             ;
+    var sreg_pout  : logic<DSIZE>      ;
+
+    inst timer_inst: clk_timer #(
+        CNT  : CNT  ,
+        CSIZE: CSIZE,
+    ) (
+        clk: clk    ,
+        rst: ce_rst ,
+        alm: sreg_ce,
+    );
+
+    inst sreg_inst: shift_registers #(
+        SIZE: DSIZE,
+    ) (
+        clk : clk      ,
+        ce  : sreg_ce  ,
+        set : '0       ,
+        sin : rxd      ,
+        pin : '0       ,
+        sout: _        ,
+        pout: sreg_pout,
+    );
+
+    always_ff (clk, rst) {
+        if_reset {
+            reg_clkcnt = '0;
+            reg_bitcnt = '0;
+            state      = State::IDLE;
+        } else {
+            reg_clkcnt = next_clkcnt;
+            reg_bitcnt = next_bitcnt;
+            state      = next_state;
+        }
+    }
+
+    always_comb {
+        data        = sreg_pout;
+        ce_rst      = 1'b1 as reset; // Active-low: 1 = running (not in reset)
+        next_clkcnt = reg_clkcnt;
+        next_bitcnt = reg_bitcnt;
+        rdy         = '0;
+        next_state  = state;
+
+        case state {
+            State::IDLE: {
+                if !rxd { // Start bit detected
+                    next_clkcnt = CNT / 2;
+                    next_state  = State::WAITFORMIDBIT;
+                } else {
+                    next_state = State::IDLE;
+                }
+            }
+            State::WAITFORMIDBIT: {
+                if reg_clkcnt == '0 {
+                    ce_rst      = 1'b0 as reset; // Pulse active-low reset to sync clk_timer
+                    next_bitcnt = '0;
+                    next_state  = State::RECEIVING;
+                } else {
+                    next_clkcnt = reg_clkcnt - 1;
+                    next_state  = State::WAITFORMIDBIT;
+                }
+            }
+            State::RECEIVING: {
+                next_state = State::RECEIVING;
+                if sreg_ce {
+                    if reg_bitcnt == DSIZE {
+                        rdy        = '1;
+                        next_state = State::IDLE;
+                    } else {
+                        next_bitcnt = reg_bitcnt + 1;
+                    }
+                }
+            }
+            default: {
+                next_state = State::IDLE;
+            }
+        }
+    }
+}

@@ -14,13 +14,25 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
-      - name: Install System Dependencies (GHDL)
+      - name: Setup uv Python Environment
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Check No Hardcoded Absolute Paths
+        run: python3 scripts/check_no_absolute_paths.py
+
+      - name: Setup OSS CAD Suite (Yosys, Icarus, Verilator, etc.)
+        uses: YosysHQ/setup-oss-cad-suite@v3
+        with:
+          osscadsuite-version: '2024-01-20'
+
+      - name: Install RISC-V GCC Toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y ghdl make python3-pip
+          sudo apt-get install -y gcc-riscv64-linux-gnu
 
       - name: Install Rust Toolchain & Target
         uses: dtolnay/rust-toolchain@stable
@@ -38,18 +50,12 @@ jobs:
         if: steps.cache-veryl.outputs.cache-hit != 'true'
         run: cargo install veryl --version 0.20.3
 
-      - name: Setup uv Python Environment
-        uses: astral-sh/setup-uv@v5
-        with:
-          version: "latest"
-          enable-cache: true
-
       - name: Setup Python Virtualenv & Dependencies
         run: |
           uv python install 3.13
           uv venv --python 3.13 .venv
-          uv pip install cocotb pytest
+          uv pip install --python .venv/bin/python cocotb pytest
 
       - name: Run Full SoC Test Suite
         run: |
-          make test
+          PATH=$PWD/.venv/bin:$PATH make test

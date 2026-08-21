@@ -1,6 +1,0 @@
-[submodule "submodules/hack_cpu"]
-	path = submodules/hack_cpu
-	url = https://github.com/takayuki-nagata/hack_cpu.git
-[submodule "submodules/uart_controller"]
-	path = submodules/uart_controller
-	url = https://github.com/takayuki-nagata/uart_controller.git

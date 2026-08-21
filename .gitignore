@@ -8,11 +8,31 @@ firmware/target/
 firmware/firmware.bin
 firmware/firmware.hex
 
+# Architectural compliance test artifacts
+build_arch_test/
+vendor/
+
 # Simulation build artifacts
-sim/sim_build/
+sim/sim_build*/
 sim/results.xml
 sim/soc_top
 sim/e~*
+
+# Veryl build artifacts
+.build/
+dependencies/
+Veryl.lock
+VUX9K.f
+cpu/*.sv
+cpu/*.map
+uart/*.sv
+uart/*.map
+soc/*.sv
+soc/*.map
+
+# Synthesis outputs
+soc.json
+pack.fs
 
 # System & temporary files
 /tmp/

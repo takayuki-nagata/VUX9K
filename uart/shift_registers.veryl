@@ -1,0 +1,27 @@
+// Parameterized Shift Register with Parallel Load and Right Shift Capability
+pub module shift_registers #(
+    param SIZE: u32 = 10,
+) (
+    clk : input  clock      ,
+    ce  : input  logic      ,
+    set : input  logic      ,
+    sin : input  logic      ,
+    pin : input  logic<SIZE>,
+    sout: output logic      ,
+    pout: output logic<SIZE>,
+) {
+    var sregs: logic<SIZE>;
+
+    always_ff (clk) {
+        if ce {
+            if set {
+                sregs = pin;
+            } else {
+                sregs = {sin, sregs[SIZE - 1:1]};
+            }
+        }
+    }
+
+    assign pout = sregs;
+    assign sout = sregs[0];
+}

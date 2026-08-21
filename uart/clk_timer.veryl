@@ -1,0 +1,26 @@
+// Clock Timer for UART Baud Rate Pulse Generation
+pub module clk_timer #(
+    param CNT  : u32 = 434,
+    param CSIZE: u32 = 10 ,
+) (
+    clk: input  clock,
+    rst: input  reset,
+    alm: output logic,
+) {
+    const CONST_INIT : logic<CSIZE> = CNT - 1;
+    var   reg_counter: logic<CSIZE>;
+
+    always_ff (clk, rst) {
+        if_reset {
+            reg_counter = CONST_INIT;
+        } else {
+            if reg_counter == '0 {
+                reg_counter = CONST_INIT;
+            } else {
+                reg_counter = reg_counter - 1;
+            }
+        }
+    }
+
+    assign alm = reg_counter == '0;
+}

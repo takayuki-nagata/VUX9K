@@ -1,0 +1,116 @@
+// UART Transmitter Module
+pub module uart_tx #(
+    param DSIZE       : u32 = 8  ,
+    param SENTCNT_SIZE: u32 = 4  ,
+    param CNT         : u32 = 434,
+    param CSIZE       : u32 = 10 ,
+) (
+    clk : input  clock       ,
+    rst : input  reset       ,
+    data: input  logic<DSIZE>,
+    we  : input  logic       ,
+    busy: output logic       ,
+    txd : output logic       ,
+) {
+    const FRAME_SIZE: u32 = DSIZE + 2;
+
+    enum State {
+        RST,
+        IDLE,
+        SET,
+        SENDING,
+    }
+
+    var state        : State              ;
+    var next_state   : State              ;
+    var reg_uartframe: logic<FRAME_SIZE>  ;
+    var reg_sentcnt  : logic<SENTCNT_SIZE>;
+    var next_sentcnt : logic<SENTCNT_SIZE>;
+    var sreg_ce      : logic              ;
+    var sreg_set     : logic              ;
+
+    inst timer_inst: clk_timer #(
+        CNT  : CNT  ,
+        CSIZE: CSIZE,
+    ) (
+        clk: clk    ,
+        rst: rst    ,
+        alm: sreg_ce,
+    );
+
+    inst sreg_inst: shift_registers #(
+        SIZE: FRAME_SIZE,
+    ) (
+        clk : clk          ,
+        ce  : sreg_ce      ,
+        set : sreg_set     ,
+        sin : 1'b1         ,
+        pin : reg_uartframe,
+        sout: txd          ,
+        pout: _            ,
+    );
+
+    always_ff (clk, rst) {
+        if_reset {
+            state         = State::RST;
+            reg_uartframe = 10'h3ff;
+            reg_sentcnt   = '0;
+        } else {
+            if we {
+                reg_uartframe = {1'b1, data, 1'b0};
+            }
+            reg_sentcnt = next_sentcnt;
+            state       = next_state;
+        }
+    }
+
+    always_comb {
+        busy         = '0;
+        sreg_set     = '0;
+        next_sentcnt = reg_sentcnt;
+        next_state   = state;
+
+        case state {
+            State::RST: {
+                busy = '1;
+                if sreg_ce {
+                    sreg_set   = '1;
+                    next_state = State::IDLE;
+                } else {
+                    next_state = State::RST;
+                }
+            }
+            State::IDLE: {
+                if we {
+                    next_state = State::SET;
+                } else {
+                    next_state = State::IDLE;
+                }
+            }
+            State::SET: {
+                busy = '1;
+                if sreg_ce {
+                    sreg_set   = '1;
+                    next_state = State::SENDING;
+                } else {
+                    next_state = State::SET;
+                }
+            }
+            State::SENDING: {
+                busy = '1;
+                if reg_sentcnt == DSIZE + 1 {
+                    next_state   = State::IDLE;
+                    next_sentcnt = '0;
+                } else {
+                    if sreg_ce {
+                        next_sentcnt = reg_sentcnt + 1;
+                    }
+                    next_state = State::SENDING;
+                }
+            }
+            default: {
+                next_state = State::IDLE;
+            }
+        }
+    }
+}

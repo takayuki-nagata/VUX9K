@@ -9,11 +9,11 @@ async def test_soc_rv32i_execution(dut):
     cocotb.start_soon(clock.start())
 
     # Assert Reset
-    dut.reset.value = 1
+    dut.rst.value = 1
     dut.uart_rx.value = 1
     dut.sd_miso.value = 1
     await ClockCycles(dut.clk, 10)
-    dut.reset.value = 0
+    dut.rst.value = 0
 
     await ClockCycles(dut.clk, 100)
 

@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Git pre-commit hook to reject commits containing forbidden absolute paths.
+
+set -e
+
+# Run absolute path verification script
+python3 "$(git rev-parse --show-toplevel)/scripts/check_no_absolute_paths.py"

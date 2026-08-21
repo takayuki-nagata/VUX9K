@@ -1,0 +1,48 @@
+// RISC-V RV32I Instruction Decoder & Immediate Generator
+pub module rv32i_decode (
+    instruction: input  logic<32>,
+    opcode     : output logic<7> ,
+    rd         : output logic<5> ,
+    funct3     : output logic<3> ,
+    rs1        : output logic<5> ,
+    rs2        : output logic<5> ,
+    funct7     : output logic<7> ,
+    imm        : output logic<32>,
+    csr_addr   : output logic<12>,
+    uimm       : output logic<32>,
+) {
+    let op_internal: rv32i_pkg::Opcode = instruction[6:0] as rv32i_pkg::Opcode;
+
+    assign opcode   = instruction[6:0];
+    assign rd       = instruction[11:7];
+    assign funct3   = instruction[14:12];
+    assign rs1      = instruction[19:15];
+    assign rs2      = instruction[24:20];
+    assign funct7   = instruction[31:25];
+    assign csr_addr = instruction[31:20];
+    assign uimm     = {27'd0, instruction[19:15]};
+
+    var imm_reg: logic<32>;
+
+    always_comb {
+        case op_internal {
+            rv32i_pkg::Opcode::I_TYPE: imm_reg = {instruction[31] repeat 20, instruction[31:20]};
+            rv32i_pkg::Opcode::LOAD  : imm_reg = {instruction[31] repeat 20, instruction[31:20]};
+            rv32i_pkg::Opcode::JALR  : imm_reg = {instruction[31] repeat 20, instruction[31:20]};
+            rv32i_pkg::Opcode::STORE : imm_reg = {instruction[31] repeat 20, instruction[31:25], instruction[11:7]};
+            rv32i_pkg::Opcode::BRANCH: imm_reg = {
+                instruction[31] repeat 19, instruction[31], instruction[7], instruction[30:25], instruction[11:8], 1'b0
+            };
+            rv32i_pkg::Opcode::LUI   : imm_reg = {instruction[31:12], 12'd0};
+            rv32i_pkg::Opcode::AUIPC : imm_reg = {instruction[31:12], 12'd0};
+            rv32i_pkg::Opcode::JAL   : imm_reg = {
+                instruction[31] repeat 11, instruction[31], instruction[19:12], instruction[20], instruction[30:21],
+                1'b0
+            };
+            rv32i_pkg::Opcode::SYSTEM: imm_reg = {27'd0, instruction[19:15]};
+            default                  : imm_reg = 32'd0;
+        }
+    }
+
+    assign imm = imm_reg;
+}

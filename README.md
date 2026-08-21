@@ -1,25 +1,39 @@
 # VUX9K
 
-**VUX9K** (Veryl Unified eXecution on Tang Nano 9K) is a **Dual-ISA (RISC-V RV32I & Hack 16-bit) System-on-Chip (SoC)** design targeting the **Sipeed Tang Nano 9K** FPGA board. 
+**VUX9K** (Veryl Unified eXecution on Tang Nano 9K) is a **Dual-ISA (RISC-V RV32I & Nand2Tetris Hack 16-bit) System-on-Chip (SoC)** written 100% in **[Veryl](https://github.com/veryl-lang/veryl)** targeting the **Sipeed Tang Nano 9K** FPGA board. 
 
-The SoC is designed with future **Zephyr RTOS** and **Rust application execution** in mind, featuring a Harvard Architecture with SD-Card-backed instruction loading, MMIO UART, System Timer (`mtime`/`mtimecmp`), and dual-mode CPU instruction execution.
+The SoC is designed with future **Zephyr RTOS** and **Rust application execution** in mind, featuring a Harvard Architecture with SD-Card-backed instruction loading, MMIO UART, System Timer (`mtime`/`mtimecmp`), dual-mode CPU instruction execution, and complete unit / compliance / SoC integration test suites.
+
+---
+
+## Lineage & Original Projects
+
+The RTL modules in this repository were originally authored in VHDL-2008 and have been fully ported to Veryl, preserving and extending comprehensive test suites:
+
+- **CPU Core (`unified_cpu`)**: Ported from [`takayuki-nagata/hack_cpu`](https://github.com/takayuki-nagata/hack_cpu)
+  - Features dual-ISA execution with hardware auto-detection of RISC-V RV32I (32-bit) and Nand2Tetris Hack (16-bit) machine code.
+- **UART Controller (`uart_controller`)**: Ported from [`takayuki-nagata/uart_controller`](https://github.com/takayuki-nagata/uart_controller)
+  - Features full-duplex 8N1 serial communication, parameterized clock prescalers, and TX/RX synchronous FIFO buffers.
 
 ---
 
 ## Key Features
 
 - **Target Board**: [Sipeed Tang Nano 9K](https://wiki.sipeed.com/hardware/en/tang/Tang-Nano-9K/Nano-9K.html) (Gowin GW1NR-9 FPGA)
-- **CPU Core**: [`hack_cpu`](https://github.com/takayuki-nagata/hack_cpu) `unified_cpu` (VHDL-2008) with auto-detection of **RISC-V RV32I 32-bit** and **Nand2Tetris Hack 16-bit** instruction sets.
-- **Hardware Languages**: [Veryl](https://github.com/veryl-lang/veryl) & VHDL-2008.
+- **CPU Core**: Dual-ISA `unified_cpu` (ported to Veryl from [`hack_cpu`](https://github.com/takayuki-nagata/hack_cpu)) with auto-detection of **RISC-V RV32I 32-bit** and **Nand2Tetris Hack 16-bit** instruction sets.
+- **Hardware Description**: 100% [Veryl](https://github.com/veryl-lang/veryl) (SystemVerilog output).
 - **Firmware**: Bare-Metal Rust (`no_std` + `alloc` heap, `riscv32i-unknown-none-elf` target).
 - **Peripherals**:
-  - Full-Duplex UART Controller ([`uart_controller`](https://github.com/takayuki-nagata/uart_controller)).
+  - Full-Duplex UART Controller (`uart_controller`, ported from [`uart_controller`](https://github.com/takayuki-nagata/uart_controller)).
   - 64-bit RISC-V Machine Timer Core (`mtime` / `mtimecmp` for Zephyr RTOS tick compatibility).
   - SD Card SPI Master Controller (for bootloader & persistent ROM/storage access).
-- **Verification & Simulation**:
-  - GHDL + [cocotb](https://www.cocotb.org/) RTL simulation suite.
+- **Verification & Simulation (OSS CAD Suite)**:
+  - Fast [Icarus Verilog](https://steveicarus.github.io/iverilog/) + [Cocotb](https://www.cocotb.org/) RTL simulation suite.
+  - Official **RISC-V Architectural Compliance Test Suite** (`riscv-arch-test`, 39/39 passing).
   - Python behavioral SoC emulator (`sim/emulator.py`).
   - Automated CI via GitHub Actions (`.github/workflows/ci.yml`).
+- **FPGA Synthesis**:
+  - [Yosys](https://yosyshq.net/yosys/) `synth_gowin` automated synthesis for Tang Nano 9K.
 
 ---
 
@@ -39,53 +53,88 @@ The SoC is designed with future **Zephyr RTOS** and **Rust application execution
 
 ```
 VUX9K/
-├── Makefile                        # Top-level build & test automation
+├── Makefile                        # Unified build, test, and synthesis automation
+├── Veryl.toml                      # Veryl project configuration
 ├── README.md                       # Project documentation
 ├── LICENSE                         # MIT License
-├── .gitmodules                     # Submodule definitions
-├── submodules/
-│   ├── hack_cpu/                   # Git Submodule: Dual-ISA VHDL CPU Core
-│   └── uart_controller/            # Git Submodule: VHDL UART Controller Core
-├── soc/                            # Veryl / VHDL SoC hardware top level & peripherals
-│   ├── soc_top.vhd                 # Top-level VHDL-2008 SoC wrapper
-│   ├── soc_ram.vhd                 # Harvard 256KB I-RAM + 128KB D-RAM module
-│   ├── timer_core.vhd / .veryl     # 64-bit mtime/mtimecmp timer core
-│   └── sdcard_spi.vhd / .veryl     # SD Card SPI master controller
+├── cpu/                            # Veryl CPU Core & ISA Modules (from hack_cpu)
+│   ├── auto_mode_detector.veryl    # Dual-ISA mode auto-detection logic
+│   ├── hack_translator.veryl       # Hack 16-bit to micro-op translator
+│   ├── rv32i_alu.veryl             # RV32I / Hack shared ALU
+│   ├── rv32i_decode.veryl          # RV32I instruction decoder & imm generator
+│   ├── rv32i_pkg.veryl             # Opcodes and ALU operation definitions
+│   ├── rv32i_regfile.veryl         # Dual-write port 32-register register file
+│   └── unified_cpu.veryl           # Unified Dual-ISA CPU Top Module
+├── uart/                           # Veryl UART Controller & Peripherals (from uart_controller)
+│   ├── clk_timer.veryl             # Baud rate pulse generator
+│   ├── fifo_sync.veryl             # Synchronous FIFO buffer
+│   ├── shift_registers.veryl       # Parallel load shift register
+│   ├── uart_tx.veryl               # 8N1 UART Transmitter
+│   ├── uart_rx.veryl               # 8N1 UART Receiver
+│   └── uart_controller.veryl       # Integrated UART Controller with FIFOs
+├── soc/                            # Veryl SoC Top Level & Interconnect
+│   ├── timer_core.veryl            # 64-bit mtime/mtimecmp timer core
+│   ├── sdcard_spi.veryl            # SD Card SPI master controller
+│   ├── soc_ram.veryl               # Harvard 256KB I-RAM + 128KB D-RAM module
+│   └── soc_top.veryl               # Tang Nano 9K SoC top-level wrapper
 ├── firmware/                       # Bare-metal Rust firmware crate
 │   ├── Cargo.toml
 │   ├── bootstrap/                  # Assembly entry point (start.s) & linker script (link.x)
 │   └── src/                        # Rust drivers & main entry point
-├── sim/                            # cocotb & Python Emulator testbenches
-│   ├── Makefile                    # cocotb Makefile (GHDL runner)
+├── sim/                            # Simulation testbenches (Cocotb & SystemVerilog)
+│   ├── Makefile                    # Cocotb / Icarus test runner Makefile
 │   ├── emulator.py                 # Behavioral Python SoC emulator
-│   ├── test_soc_rv32i.py           # RISC-V 32-bit cocotb simulation test
-│   └── test_soc_hack.py            # Hack 16-bit cocotb simulation test
-└── scripts/                        # Utility scripts (elf2bin.py, bin2hex.py)
+│   ├── tb_hex_runner.sv            # Fast SystemVerilog compliance testbench
+│   ├── test_rv32i_*.py             # CPU unit tests (ALU, Decode, Regfile, Compliance)
+│   ├── test_hack_*.py              # Hack unit tests (Translator, Ops)
+│   ├── test_clk_timer.py           # UART Timer unit test
+│   ├── test_shift_registers.py     # UART Shift register unit test
+│   ├── test_fifo_sync.py           # UART FIFO unit test
+│   ├── test_uart_*.py              # UART TX, RX, Controller unit tests
+│   ├── test_soc_rv32i.py           # RISC-V 32-bit SoC integration test
+│   └── test_soc_hack.py            # Hack 16-bit SoC integration test
+└── scripts/                        # Utility & Compliance scripts
+    ├── bin2hex.py                  # Raw binary to Hex word converter
+    ├── elf2bin.py                  # ELF to raw binary extractor
+    ├── link.ld                     # Linker script for architectural compliance
+    ├── run_arch_test.py            # Official riscv-arch-test automation runner
+    └── target_env/                 # Target environment headers for arch-tests
 ```
 
 ---
 
-## Getting Started & Verification
+## Verification & Build Commands
 
 ### Prerequisites
 1. **Rust Toolchain**:
    ```bash
    rustup target add riscv32i-unknown-none-elf
    ```
-2. **Python Environment with `uv`**:
+2. **OSS CAD Suite** (Yosys, Icarus Verilog):
+   [YosysHQ/oss-cad-suite-build](https://github.com/YosysHQ/oss-cad-suite-build)
+3. **Veryl**:
    ```bash
-   uv venv .venv
-   uv pip install cocotb pytest
+   cargo install veryl --version 0.20.3
    ```
-3. **GHDL Simulator**:
+4. **Python Environment with `uv`**:
    ```bash
-   sudo apt-get install ghdl
+   uv venv --python 3.13 .venv
+   uv pip install cocotb pytest
    ```
 
 ### Running Tests
-To run the full automated verification pipeline (Firmware build -> Behavioral Emulator -> cocotb GHDL simulation):
 
 ```bash
+# Run all module unit tests (ALU, Decoder, Regfile, Translator, UART modules)
+make sim-unit
+
+# Run official RISC-V Architectural Compliance Tests (riscv-arch-test 39/39)
+make test-arch-compliance
+
+# Run SoC Integration Tests (Rust firmware & Hack binary on soc_top)
+make sim-soc
+
+# Run Full Verification Pipeline (Veryl check -> Firmware build -> All Tests -> Gowin Synthesis)
 make test
 ```
 

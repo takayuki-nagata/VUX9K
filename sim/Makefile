@@ -1,35 +1,38 @@
-# cocotb Makefile for Tang Nano 9K Dual-ISA SoC
+# cocotb Makefile for Tang Nano 9K Dual-ISA SoC (100% Veryl)
 
-SIM ?= ghdl
-TOPLEVEL_LANG ?= vhdl
+# Dynamically discover runtime libraries and Python configuration across Linux environments
+export LD_PRELOAD := $(shell gcc -print-file-name=librt.so.1 2>/dev/null) $(shell gcc -print-file-name=libutil.so.1 2>/dev/null)
+export LIBPYTHON_LOC := $(shell cocotb-config --libpython 2>/dev/null)
+export PYTHONHOME := $(shell python3 -c 'import sys; print(sys.base_prefix)' 2>/dev/null)
+export PYTHONPATH := $(shell python3 -c 'import sys; print(":".join(sys.path))' 2>/dev/null):$(PWD)
 
-VHDL_SOURCES += $(PWD)/../submodules/hack_cpu/rtl/rv32i/rv32i_types.vhd
-VHDL_SOURCES += $(PWD)/../submodules/hack_cpu/rtl/rv32i/rv32i_alu.vhd
-VHDL_SOURCES += $(PWD)/../submodules/hack_cpu/rtl/rv32i/rv32i_decode.vhd
-VHDL_SOURCES += $(PWD)/../submodules/hack_cpu/rtl/rv32i/rv32i_regfile.vhd
-VHDL_SOURCES += $(PWD)/../submodules/hack_cpu/rtl/hack/alu.vhd
-VHDL_SOURCES += $(PWD)/../submodules/hack_cpu/rtl/hack/decode.vhd
-VHDL_SOURCES += $(PWD)/../submodules/hack_cpu/rtl/unified/auto_mode_detector.vhd
-VHDL_SOURCES += $(PWD)/../submodules/hack_cpu/rtl/unified/hack_translator.vhd
-VHDL_SOURCES += $(PWD)/../submodules/hack_cpu/rtl/unified/unified_cpu.vhd
+SIM ?= icarus
+TOPLEVEL_LANG ?= verilog
 
-VHDL_SOURCES += $(PWD)/../submodules/uart_controller/rtl/clk_timer.vhd
-VHDL_SOURCES += $(PWD)/../submodules/uart_controller/rtl/fifo_sync.vhd
-VHDL_SOURCES += $(PWD)/../submodules/uart_controller/rtl/shift_registers.vhd
-VHDL_SOURCES += $(PWD)/../submodules/uart_controller/rtl/uart_tx.vhd
-VHDL_SOURCES += $(PWD)/../submodules/uart_controller/rtl/uart_rx.vhd
-VHDL_SOURCES += $(PWD)/../submodules/uart_controller/rtl/uart_controller.vhd
+VERILOG_SOURCES += $(PWD)/../cpu/rv32i_pkg.sv
+VERILOG_SOURCES += $(PWD)/../cpu/rv32i_alu.sv
+VERILOG_SOURCES += $(PWD)/../cpu/rv32i_decode.sv
+VERILOG_SOURCES += $(PWD)/../cpu/rv32i_regfile.sv
+VERILOG_SOURCES += $(PWD)/../cpu/hack_translator.sv
+VERILOG_SOURCES += $(PWD)/../cpu/auto_mode_detector.sv
+VERILOG_SOURCES += $(PWD)/../cpu/unified_cpu.sv
 
-VHDL_SOURCES += $(PWD)/../soc/timer_core.vhd
-VHDL_SOURCES += $(PWD)/../soc/sdcard_spi.vhd
-VHDL_SOURCES += $(PWD)/../soc/soc_ram.vhd
-VHDL_SOURCES += $(PWD)/../soc/soc_top.vhd
+VERILOG_SOURCES += $(PWD)/../uart/clk_timer.sv
+VERILOG_SOURCES += $(PWD)/../uart/shift_registers.sv
+VERILOG_SOURCES += $(PWD)/../uart/fifo_sync.sv
+VERILOG_SOURCES += $(PWD)/../uart/uart_tx.sv
+VERILOG_SOURCES += $(PWD)/../uart/uart_rx.sv
+VERILOG_SOURCES += $(PWD)/../uart/uart_controller.sv
 
-EXTRA_ARGS += --std=08
-GHDL_ARGS += --std=08
-SIM_ARGS += --max-stack-alloc=0
+VERILOG_SOURCES += $(PWD)/../soc/timer_core.sv
+VERILOG_SOURCES += $(PWD)/../soc/sdcard_spi.sv
+VERILOG_SOURCES += $(PWD)/../soc/soc_ram.sv
+VERILOG_SOURCES += $(PWD)/../soc/soc_top.sv
 
-TOPLEVEL = soc_top
+COMPILE_ARGS += -g2012
+
+TOPLEVEL ?= soc_top
 MODULE ?= test_soc_rv32i
+SIM_BUILD ?= sim_build_$(TOPLEVEL)
 
 include $(shell cocotb-config --makefiles)/Makefile.sim

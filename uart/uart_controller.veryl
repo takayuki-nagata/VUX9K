@@ -1,0 +1,130 @@
+// UART Controller Top-Level Module in Veryl
+// Integrates TX FIFO, UART Transmitter, UART Receiver, and RX FIFO (8N1 protocol)
+pub module uart_controller #(
+    param CNT  : u32 = 434,
+    param CSIZE: u32 = 10 ,
+) (
+    clk  : input  clock   ,
+    rst  : input  reset   ,
+    wdata: input  logic<8>,
+    rdata: output logic<8>,
+    re   : input  logic   ,
+    we   : input  logic   ,
+    empty: output logic   ,
+    full : output logic   ,
+    txd  : output logic   ,
+    rxd  : input  logic   ,
+) {
+    var tx_wdata : logic<8>;
+    var tx_we    : logic   ;
+    var tx_rdata : logic<8>;
+    var tx_re    : logic   ;
+    var tx_full  : logic   ;
+    var tx_empty : logic   ;
+    var txdata   : logic<8>;
+    var uart_we  : logic   ;
+    var uart_busy: logic   ;
+
+    var rx_wdata: logic<8>;
+    var rx_we   : logic   ;
+    var rx_rdata: logic<8>;
+    var rx_re   : logic   ;
+    var rx_full : logic   ;
+    var rx_empty: logic   ;
+    var rxdata  : logic<8>;
+    var uart_rdy: logic   ;
+
+    inst tx_fifo: fifo_sync #(
+        WIDTH    : 8,
+        LOG_DEPTH: 8,
+    ) (
+        clk  : clk     ,
+        rst  : rst     ,
+        wdata: tx_wdata,
+        we   : tx_we   ,
+        rdata: tx_rdata,
+        re   : tx_re   ,
+        full : tx_full ,
+        empty: tx_empty,
+    );
+
+    inst inst_uart_tx: uart_tx #(
+        CNT  : CNT  ,
+        CSIZE: CSIZE,
+    ) (
+        clk : clk      ,
+        rst : rst      ,
+        data: txdata   ,
+        we  : uart_we  ,
+        busy: uart_busy,
+        txd : txd      ,
+    );
+
+    assign tx_wdata = wdata;
+    assign txdata   = tx_rdata;
+
+    always_comb {
+        if we && !tx_full {
+            tx_we = '1;
+        } else {
+            tx_we = '0;
+        }
+    }
+
+    always_comb {
+        if !tx_empty && !uart_busy {
+            tx_re   = '1;
+            uart_we = '1;
+        } else {
+            tx_re   = '0;
+            uart_we = '0;
+        }
+    }
+
+    inst inst_uart_rx: uart_rx #(
+        CNT  : CNT  ,
+        CSIZE: CSIZE,
+    ) (
+        clk : clk     ,
+        rst : rst     ,
+        data: rxdata  ,
+        rdy : uart_rdy,
+        rxd : rxd     ,
+    );
+
+    inst rx_fifo: fifo_sync #(
+        WIDTH    : 8,
+        LOG_DEPTH: 8,
+    ) (
+        clk  : clk     ,
+        rst  : rst     ,
+        wdata: rx_wdata,
+        we   : rx_we   ,
+        rdata: rx_rdata,
+        re   : rx_re   ,
+        full : rx_full ,
+        empty: rx_empty,
+    );
+
+    assign rx_wdata = rxdata;
+    assign rdata    = rx_rdata;
+
+    always_comb {
+        if uart_rdy && !rx_full {
+            rx_we = '1;
+        } else {
+            rx_we = '0;
+        }
+    }
+
+    always_comb {
+        if re && !rx_empty {
+            rx_re = '1;
+        } else {
+            rx_re = '0;
+        }
+    }
+
+    assign full  = tx_full;
+    assign empty = rx_empty;
+}
