@@ -13,6 +13,7 @@ VERILOG_SOURCES += $(PWD)/../cpu/rv32i_pkg.sv
 VERILOG_SOURCES += $(PWD)/../cpu/rv32i_alu.sv
 VERILOG_SOURCES += $(PWD)/../cpu/rv32i_decode.sv
 VERILOG_SOURCES += $(PWD)/../cpu/rv32i_regfile.sv
+VERILOG_SOURCES += $(PWD)/../cpu/rv32i_csrs.sv
 VERILOG_SOURCES += $(PWD)/../cpu/hack_translator.sv
 VERILOG_SOURCES += $(PWD)/../cpu/auto_mode_detector.sv
 VERILOG_SOURCES += $(PWD)/../cpu/unified_cpu.sv

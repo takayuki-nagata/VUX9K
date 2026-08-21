@@ -1,0 +1,138 @@
+// Copyright 2026 Takayuki Nagata All Rights Reserved.
+// RISC-V RV32I Machine-Mode CSRs (Zicsr) & Trap Unit in Veryl
+
+pub module rv32i_csrs (
+    clk         : input  clock    ,
+    rst         : input  reset    ,
+    csr_addr    : input  logic<12>,
+    csr_wdata   : input  logic<32>,
+    csr_op      : input  logic<3> ,
+    csr_rdata   : output logic<32>,
+    trap_entry  : input  logic    ,
+    trap_cause  : input  logic<32>,
+    trap_pc     : input  logic<32>,
+    trap_val    : input  logic<32>,
+    trap_return : input  logic    ,
+    timer_irq_in: input  logic    ,
+    ext_irq_in  : input  logic    ,
+    sw_irq_in   : input  logic    ,
+    irq_pending : output logic    ,
+    mtvec_out   : output logic<32>,
+    mepc_out    : output logic<32>,
+) {
+    var mstatus : logic<32>; // [3]: MIE, [7]: MPIE
+    var mie     : logic<32>; // [7]: MTIE, [11]: MEIE, [3]: MSIE
+    var mtvec   : logic<32>;
+    var mscratch: logic<32>;
+    var mepc    : logic<32>;
+    var mcause  : logic<32>;
+    var mtval   : logic<32>;
+    var mip     : logic<32>;
+
+    var read_val : logic<32>;
+    var write_val: logic<32>;
+    var pending  : logic<32>;
+
+    assign mtvec_out = mtvec;
+    assign mepc_out  = mepc;
+
+    // MIP generation from external interrupt inputs
+    always_comb {
+        mip     = 32'd0;
+        mip[7]  = timer_irq_in;
+        mip[11] = ext_irq_in;
+        mip[3]  = sw_irq_in;
+
+        pending = mie & mip;
+        if mstatus[3] && (pending[7] || pending[11] || pending[3]) {
+            irq_pending = 1'b1;
+        } else {
+            irq_pending = 1'b0;
+        }
+    }
+
+    // CSR Read Combinational Mux
+    always_comb {
+        if csr_addr == rv32i_pkg::CSR_MSTATUS {
+            read_val = mstatus;
+        } else if csr_addr == rv32i_pkg::CSR_MISA {
+            read_val = 32'h4000_0100; // RV32I Base Integer ISA
+        } else if csr_addr == rv32i_pkg::CSR_MIE {
+            read_val = mie;
+        } else if csr_addr == rv32i_pkg::CSR_MTVEC {
+            read_val = mtvec;
+        } else if csr_addr == rv32i_pkg::CSR_MSCRATCH {
+            read_val = mscratch;
+        } else if csr_addr == rv32i_pkg::CSR_MEPC {
+            read_val = mepc;
+        } else if csr_addr == rv32i_pkg::CSR_MCAUSE {
+            read_val = mcause;
+        } else if csr_addr == rv32i_pkg::CSR_MTVAL {
+            read_val = mtval;
+        } else if csr_addr == rv32i_pkg::CSR_MIP {
+            read_val = mip;
+        } else {
+            read_val = 32'd0;
+        }
+    }
+
+    assign csr_rdata = read_val;
+
+    // CSR Write Value Computation
+    always_comb {
+        if csr_op == rv32i_pkg::FUNCT3_CSRRW || csr_op == rv32i_pkg::FUNCT3_CSRRWI {
+            write_val = csr_wdata;
+        } else if csr_op == rv32i_pkg::FUNCT3_CSRRS || csr_op == rv32i_pkg::FUNCT3_CSRRSI {
+            write_val = read_val | csr_wdata;
+        } else if csr_op == rv32i_pkg::FUNCT3_CSRRC || csr_op == rv32i_pkg::FUNCT3_CSRRCI {
+            write_val = read_val & (~csr_wdata);
+        } else {
+            write_val = read_val;
+        }
+    }
+
+    // Synchronous Register Update & Trap State Machine
+    always_ff (clk, rst) {
+        if_reset {
+            mstatus  = 32'd0;
+            mie      = 32'd0;
+            mtvec    = 32'd0;
+            mscratch = 32'd0;
+            mepc     = 32'd0;
+            mcause   = 32'd0;
+            mtval    = 32'd0;
+        } else {
+            // 1. Trap Entry Priority (Hardware Interrupt or ECALL/Exception)
+            if trap_entry {
+                mepc       = trap_pc;
+                mcause     = trap_cause;
+                mtval      = trap_val;
+                mstatus[7] = mstatus[3]; // MPIE <= MIE
+                mstatus[3] = 1'b0; // Disable MIE on trap entry
+
+                // 2. Trap Exit (MRET Instruction)
+            } else if trap_return {
+                mstatus[3] = mstatus[7]; // MIE <= MPIE
+                mstatus[7] = 1'b1; // Set MPIE to 1
+
+                // 3. Explicit CSR Write Instruction Execution
+            } else if csr_op != 3'b000 {
+                if csr_addr == rv32i_pkg::CSR_MSTATUS {
+                    mstatus = write_val;
+                } else if csr_addr == rv32i_pkg::CSR_MIE {
+                    mie = write_val;
+                } else if csr_addr == rv32i_pkg::CSR_MTVEC {
+                    mtvec = write_val;
+                } else if csr_addr == rv32i_pkg::CSR_MSCRATCH {
+                    mscratch = write_val;
+                } else if csr_addr == rv32i_pkg::CSR_MEPC {
+                    mepc = write_val;
+                } else if csr_addr == rv32i_pkg::CSR_MCAUSE {
+                    mcause = write_val;
+                } else if csr_addr == rv32i_pkg::CSR_MTVAL {
+                    mtval = write_val;
+                }
+            }
+        }
+    }
+}

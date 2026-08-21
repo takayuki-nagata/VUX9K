@@ -14,6 +14,9 @@ async def test_unified_cpu_hack_and_riscv(dut):
     await FallingEdge(dut.clk)
     dut.rst.value = 0
     dut.data_in.value = 0
+    dut.timer_irq_in.value = 0
+    dut.ext_irq_in.value = 0
+    dut.sw_irq_in.value = 0
     dut.instr_in.value = 0x000F # Hack @15 (Load 15 into A/x1)
 
     await FallingEdge(dut.clk)

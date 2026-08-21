@@ -1,41 +1,46 @@
 // Unified Dual-ISA CPU Core (RISC-V 32-bit + Hack 16-bit) in Veryl
 pub module unified_cpu (
-    clk        : input  clock    ,
-    rst        : input  reset    ,
-    instr_in   : input  logic<32>,
-    data_in    : input  logic<32>,
-    pc_out     : output logic<32>,
-    data_addr  : output logic<32>,
-    data_out   : output logic<32>,
-    mem_write  : output logic    ,
-    active_mode: output logic    , // 0: Hack 16-bit, 1: RISC-V 32-bit
+    clk         : input  clock    ,
+    rst         : input  reset    ,
+    instr_in    : input  logic<32>,
+    data_in     : input  logic<32>,
+    timer_irq_in: input  logic    ,
+    ext_irq_in  : input  logic    ,
+    sw_irq_in   : input  logic    ,
+    pc_out      : output logic<32>,
+    data_addr   : output logic<32>,
+    data_out    : output logic<32>,
+    mem_write   : output logic    ,
+    active_mode : output logic    , // 0: Hack 16-bit, 1: RISC-V 32-bit
 ) {
     var is_riscv_mode: logic    ;
     var pc_reg       : logic<32>;
     var next_pc      : logic<32>;
 
     // Hack Translator signals
-    var h_rs1       : logic<5>       ;
-    var h_rs2       : logic<5>       ;
-    var h_rd        : logic<5>       ;
-    var h_imm       : logic<32>      ;
-    var h_alu_op    : rv32i_pkg::AluOp;
-    var h_use_imm   : logic          ;
-    var h_use_mem   : logic          ;
-    var h_we_reg_a  : logic          ;
-    var h_we_reg_d  : logic          ;
-    var h_we_mem    : logic          ;
-    var h_jump_cond : logic<3>       ;
-    var h_is_c_instr: logic          ;
+    var h_rs1       : logic           <5> ;
+    var h_rs2       : logic           <5> ;
+    var h_rd        : logic           <5> ;
+    var h_imm       : logic           <32>;
+    var h_alu_op    : rv32i_pkg::AluOp    ;
+    var h_use_imm   : logic               ;
+    var h_use_mem   : logic               ;
+    var h_we_reg_a  : logic               ;
+    var h_we_reg_d  : logic               ;
+    var h_we_mem    : logic               ;
+    var h_jump_cond : logic           <3> ;
+    var h_is_c_instr: logic               ;
 
     // RV32I Decoder signals
-    var rv_opcode: logic<7> ;
-    var rv_rd    : logic<5> ;
-    var rv_funct3: logic<3> ;
-    var rv_rs1   : logic<5> ;
-    var rv_rs2   : logic<5> ;
-    var rv_funct7: logic<7> ;
-    var rv_imm   : logic<32>;
+    var rv_opcode  : logic<7> ;
+    var rv_rd      : logic<5> ;
+    var rv_funct3  : logic<3> ;
+    var rv_rs1     : logic<5> ;
+    var rv_rs2     : logic<5> ;
+    var rv_funct7  : logic<7> ;
+    var rv_imm     : logic<32>;
+    var rv_csr_addr: logic<12>;
+    var rv_uimm    : logic<32>;
 
     // Register File Signals
     var rf_rs1_addr: logic<5> ;
@@ -50,21 +55,37 @@ pub module unified_cpu (
     var rf_rs2_data: logic<32>;
 
     // ALU Signals
-    var alu_operand_a: logic<32>      ;
-    var alu_operand_b: logic<32>      ;
-    var alu_ctrl     : rv32i_pkg::AluOp;
-    var alu_result   : logic<32>      ;
-    var alu_zero     : logic          ;
+    var alu_operand_a: logic           <32>;
+    var alu_operand_b: logic           <32>;
+    var alu_ctrl     : rv32i_pkg::AluOp    ;
+    var alu_result   : logic           <32>;
+    var alu_zero     : logic               ;
+
+    // CSR & Trap Signals
+    var csr_rdata  : logic<32>;
+    var csr_wdata  : logic<32>;
+    var csr_op     : logic<3> ;
+    var trap_entry : logic    ;
+    var trap_cause : logic<32>;
+    var trap_pc    : logic<32>;
+    var trap_val   : logic<32>;
+    var trap_return: logic    ;
+    var irq_pending: logic    ;
+    var mtvec_out  : logic<32>;
+    var mepc_out   : logic<32>;
+    var is_ecall   : logic    ;
+    var is_ebreak  : logic    ;
+    var is_mret    : logic    ;
 
     // Internal Helper Signals
-    var is_neg        : logic              ;
-    var byte_sel      : u32                ;
-    var load_val      : logic<32>          ;
-    var r_mem_write   : logic              ;
-    var rv_branch_take: logic              ;
-    var hack_jump_take: logic              ;
-    var rv_op         : rv32i_pkg::Opcode  ;
-    var rv_f3         : rv32i_pkg::Funct3  ;
+    var is_neg        : logic                ;
+    var byte_sel      : u32                  ;
+    var load_val      : logic            <32>;
+    var r_mem_write   : logic                ;
+    var rv_branch_take: logic                ;
+    var hack_jump_take: logic                ;
+    var rv_op         : rv32i_pkg::Opcode    ;
+    var rv_f3         : rv32i_pkg::Funct3    ;
 
     assign active_mode = is_riscv_mode;
     assign pc_out      = pc_reg;
@@ -98,16 +119,37 @@ pub module unified_cpu (
 
     // RISC-V Decoder (32-bit Front-End)
     inst rv_dec: rv32i_decode (
-        instruction: instr_in ,
-        opcode     : rv_opcode,
-        rd         : rv_rd    ,
-        funct3     : rv_funct3,
-        rs1        : rv_rs1   ,
-        rs2        : rv_rs2   ,
-        funct7     : rv_funct7,
-        imm        : rv_imm   ,
-        csr_addr   : _        ,
-        uimm       : _        ,
+        instruction: instr_in   ,
+        opcode     : rv_opcode  ,
+        rd         : rv_rd      ,
+        funct3     : rv_funct3  ,
+        rs1        : rv_rs1     ,
+        rs2        : rv_rs2     ,
+        funct7     : rv_funct7  ,
+        imm        : rv_imm     ,
+        csr_addr   : rv_csr_addr,
+        uimm       : rv_uimm    ,
+    );
+
+    // CSRs & Trap Controller
+    inst csrs_inst: rv32i_csrs (
+        clk         : clk         ,
+        rst         : rst         ,
+        csr_addr    : rv_csr_addr ,
+        csr_wdata   : csr_wdata   ,
+        csr_op      : csr_op      ,
+        csr_rdata   : csr_rdata   ,
+        trap_entry  : trap_entry  ,
+        trap_cause  : trap_cause  ,
+        trap_pc     : trap_pc     ,
+        trap_val    : trap_val    ,
+        trap_return : trap_return ,
+        timer_irq_in: timer_irq_in,
+        ext_irq_in  : ext_irq_in  ,
+        sw_irq_in   : sw_irq_in   ,
+        irq_pending : irq_pending ,
+        mtvec_out   : mtvec_out   ,
+        mepc_out    : mepc_out    ,
     );
 
     // Register File
@@ -135,6 +177,68 @@ pub module unified_cpu (
         zero  : alu_zero     ,
     );
 
+    // SYSTEM Instruction Decoding (ECALL, EBREAK, MRET, CSRs)
+    always_comb {
+        is_ecall  = 1'b0;
+        is_ebreak = 1'b0;
+        is_mret   = 1'b0;
+        csr_op    = 3'b000;
+        csr_wdata = rf_rs1_data;
+
+        if is_riscv_mode && rv_op == rv32i_pkg::Opcode::SYSTEM {
+            if rv_funct3 == rv32i_pkg::FUNCT3_PRIV {
+                if rv_imm[11:0] == 12'h000 {
+                    is_ecall = 1'b1;
+                } else if rv_imm[11:0] == 12'h001 {
+                    is_ebreak = 1'b1;
+                } else if rv_imm[11:0] == 12'h302 {
+                    is_mret = 1'b1;
+                }
+            } else {
+                csr_op = rv_funct3;
+                if rv_funct3 == rv32i_pkg::FUNCT3_CSRRWI || rv_funct3 == rv32i_pkg::FUNCT3_CSRRSI || rv_funct3 == rv32i_pkg::FUNCT3_CSRRCI {
+                    csr_wdata = rv_uimm;
+                } else {
+                    csr_wdata = rf_rs1_data;
+                }
+            }
+        }
+    }
+
+    // Trap & Exception Evaluation
+    always_comb {
+        trap_entry  = 1'b0;
+        trap_cause  = 32'd0;
+        trap_pc     = pc_reg;
+        trap_val    = 32'd0;
+        trap_return = 1'b0;
+
+        if is_riscv_mode {
+            trap_return = is_mret;
+            if irq_pending {
+                trap_entry = 1'b1;
+                trap_pc    = pc_reg;
+                if timer_irq_in {
+                    trap_cause = 32'h8000_0007; // Machine Timer Interrupt
+                } else if ext_irq_in {
+                    trap_cause = 32'h8000_000b; // Machine External Interrupt
+                } else if sw_irq_in {
+                    trap_cause = 32'h8000_0003; // Machine Software Interrupt
+                } else {
+                    trap_cause = 32'h8000_0007;
+                }
+            } else if is_ecall {
+                trap_entry = 1'b1;
+                trap_cause = 32'h0000_000b; // Environment call from M-mode
+                trap_pc    = pc_reg;
+            } else if is_ebreak {
+                trap_entry = 1'b1;
+                trap_cause = 32'h0000_0003; // Breakpoint
+                trap_pc    = pc_reg;
+            }
+        }
+    }
+
     // RISC-V Branch Evaluation
     always_comb {
         rv_branch_take = 1'b0;
@@ -148,12 +252,20 @@ pub module unified_cpu (
         if is_riscv_mode && rv_op == rv32i_pkg::Opcode::BRANCH {
             case rv_f3 {
                 rv32i_pkg::Funct3::ADD_SUB: rv_branch_take = alu_zero; // BEQ
-                rv32i_pkg::Funct3::SLL:     rv_branch_take = !alu_zero; // BNE
-                rv32i_pkg::Funct3::XOR:     if (rf_rs1_data as i32) <: (rf_rs2_data as i32) { rv_branch_take = 1'b1; } // BLT
-                rv32i_pkg::Funct3::SRL_SRA: if !((rf_rs1_data as i32) <: (rf_rs2_data as i32)) { rv_branch_take = 1'b1; } // BGE
-                rv32i_pkg::Funct3::OR:      if (rf_rs1_data as u32) <: (rf_rs2_data as u32) { rv_branch_take = 1'b1; } // BLTU
-                rv32i_pkg::Funct3::AND:     if !((rf_rs1_data as u32) <: (rf_rs2_data as u32)) { rv_branch_take = 1'b1; } // BGEU
-                default:                   rv_branch_take = 1'b0;
+                rv32i_pkg::Funct3::SLL    : rv_branch_take = !alu_zero; // BNE
+                rv32i_pkg::Funct3::XOR    : if (rf_rs1_data as i32) <: (rf_rs2_data as i32) {
+                    rv_branch_take = 1'b1;
+                } // BLT
+                rv32i_pkg::Funct3::SRL_SRA: if !((rf_rs1_data as i32) <: (rf_rs2_data as i32)) {
+                    rv_branch_take = 1'b1;
+                } // BGE
+                rv32i_pkg::Funct3::OR     : if (rf_rs1_data as u32) <: (rf_rs2_data as u32) {
+                    rv_branch_take = 1'b1;
+                } // BLTU
+                rv32i_pkg::Funct3::AND    : if !((rf_rs1_data as u32) <: (rf_rs2_data as u32)) {
+                    rv_branch_take = 1'b1;
+                } // BGEU
+                default                   : rv_branch_take = 1'b0;
             }
         }
     }
@@ -206,14 +318,18 @@ pub module unified_cpu (
                     alu_operand_b = rv_imm;
                     case rv_f3 {
                         rv32i_pkg::Funct3::ADD_SUB: alu_ctrl = rv32i_pkg::AluOp::ADD;
-                        rv32i_pkg::Funct3::SLL:     alu_ctrl = rv32i_pkg::AluOp::SLL;
-                        rv32i_pkg::Funct3::SLT:     alu_ctrl = rv32i_pkg::AluOp::SLT;
-                        rv32i_pkg::Funct3::SLTU:    alu_ctrl = rv32i_pkg::AluOp::SLTU;
-                        rv32i_pkg::Funct3::XOR:     alu_ctrl = rv32i_pkg::AluOp::XOR;
-                        rv32i_pkg::Funct3::SRL_SRA: if rv_funct7[5] { alu_ctrl = rv32i_pkg::AluOp::SRA; } else { alu_ctrl = rv32i_pkg::AluOp::SRL; }
-                        rv32i_pkg::Funct3::OR:      alu_ctrl = rv32i_pkg::AluOp::OR;
-                        rv32i_pkg::Funct3::AND:     alu_ctrl = rv32i_pkg::AluOp::AND;
-                        default:                   alu_ctrl = rv32i_pkg::AluOp::ADD;
+                        rv32i_pkg::Funct3::SLL    : alu_ctrl = rv32i_pkg::AluOp::SLL;
+                        rv32i_pkg::Funct3::SLT    : alu_ctrl = rv32i_pkg::AluOp::SLT;
+                        rv32i_pkg::Funct3::SLTU   : alu_ctrl = rv32i_pkg::AluOp::SLTU;
+                        rv32i_pkg::Funct3::XOR    : alu_ctrl = rv32i_pkg::AluOp::XOR;
+                        rv32i_pkg::Funct3::SRL_SRA: if rv_funct7[5] {
+                            alu_ctrl = rv32i_pkg::AluOp::SRA;
+                        } else {
+                            alu_ctrl = rv32i_pkg::AluOp::SRL;
+                        }
+                        rv32i_pkg::Funct3::OR     : alu_ctrl = rv32i_pkg::AluOp::OR;
+                        rv32i_pkg::Funct3::AND    : alu_ctrl = rv32i_pkg::AluOp::AND;
+                        default                   : alu_ctrl = rv32i_pkg::AluOp::ADD;
                     }
                 }
                 rv32i_pkg::Opcode::LOAD: {
@@ -235,15 +351,23 @@ pub module unified_cpu (
                     alu_operand_a = rf_rs1_data;
                     alu_operand_b = rf_rs2_data;
                     case rv_f3 {
-                        rv32i_pkg::Funct3::ADD_SUB: if rv_funct7[5] { alu_ctrl = rv32i_pkg::AluOp::SUB; } else { alu_ctrl = rv32i_pkg::AluOp::ADD; }
-                        rv32i_pkg::Funct3::SLL:     alu_ctrl = rv32i_pkg::AluOp::SLL;
-                        rv32i_pkg::Funct3::SLT:     alu_ctrl = rv32i_pkg::AluOp::SLT;
-                        rv32i_pkg::Funct3::SLTU:    alu_ctrl = rv32i_pkg::AluOp::SLTU;
-                        rv32i_pkg::Funct3::XOR:     alu_ctrl = rv32i_pkg::AluOp::XOR;
-                        rv32i_pkg::Funct3::SRL_SRA: if rv_funct7[5] { alu_ctrl = rv32i_pkg::AluOp::SRA; } else { alu_ctrl = rv32i_pkg::AluOp::SRL; }
-                        rv32i_pkg::Funct3::OR:      alu_ctrl = rv32i_pkg::AluOp::OR;
-                        rv32i_pkg::Funct3::AND:     alu_ctrl = rv32i_pkg::AluOp::AND;
-                        default:                   alu_ctrl = rv32i_pkg::AluOp::ADD;
+                        rv32i_pkg::Funct3::ADD_SUB: if rv_funct7[5] {
+                            alu_ctrl = rv32i_pkg::AluOp::SUB;
+                        } else {
+                            alu_ctrl = rv32i_pkg::AluOp::ADD;
+                        }
+                        rv32i_pkg::Funct3::SLL    : alu_ctrl = rv32i_pkg::AluOp::SLL;
+                        rv32i_pkg::Funct3::SLT    : alu_ctrl = rv32i_pkg::AluOp::SLT;
+                        rv32i_pkg::Funct3::SLTU   : alu_ctrl = rv32i_pkg::AluOp::SLTU;
+                        rv32i_pkg::Funct3::XOR    : alu_ctrl = rv32i_pkg::AluOp::XOR;
+                        rv32i_pkg::Funct3::SRL_SRA: if rv_funct7[5] {
+                            alu_ctrl = rv32i_pkg::AluOp::SRA;
+                        } else {
+                            alu_ctrl = rv32i_pkg::AluOp::SRL;
+                        }
+                        rv32i_pkg::Funct3::OR     : alu_ctrl = rv32i_pkg::AluOp::OR;
+                        rv32i_pkg::Funct3::AND    : alu_ctrl = rv32i_pkg::AluOp::AND;
+                        default                   : alu_ctrl = rv32i_pkg::AluOp::ADD;
                     }
                 }
                 rv32i_pkg::Opcode::BRANCH: {
@@ -263,17 +387,17 @@ pub module unified_cpu (
             case rv_f3 {
                 rv32i_pkg::Funct3::ADD_SUB: { // LB (000)
                     case byte_sel {
-                        0:       load_val = {data_in[7] repeat 24, data_in[7:0]};
-                        1:       load_val = {data_in[15] repeat 24, data_in[15:8]};
-                        2:       load_val = {data_in[23] repeat 24, data_in[23:16]};
+                        0      : load_val = {data_in[7] repeat 24, data_in[7:0]};
+                        1      : load_val = {data_in[15] repeat 24, data_in[15:8]};
+                        2      : load_val = {data_in[23] repeat 24, data_in[23:16]};
                         default: load_val = {data_in[31] repeat 24, data_in[31:24]};
                     }
                 }
                 rv32i_pkg::Funct3::XOR: { // LBU (100)
                     case byte_sel {
-                        0:       load_val = {24'd0, data_in[7:0]};
-                        1:       load_val = {24'd0, data_in[15:8]};
-                        2:       load_val = {24'd0, data_in[23:16]};
+                        0      : load_val = {24'd0, data_in[7:0]};
+                        1      : load_val = {24'd0, data_in[15:8]};
+                        2      : load_val = {24'd0, data_in[23:16]};
                         default: load_val = {24'd0, data_in[31:24]};
                     }
                 }
@@ -326,6 +450,15 @@ pub module unified_cpu (
                     rf_we      = 1'b1;
                     rf_wr_data = (pc_reg as u32 + 4) as u32;
                 }
+                rv32i_pkg::Opcode::SYSTEM: {
+                    if rv_funct3 != rv32i_pkg::FUNCT3_PRIV {
+                        rf_we      = 1'b1;
+                        rf_wr_data = csr_rdata;
+                    } else {
+                        rf_we      = 1'b0;
+                        rf_wr_data = 32'd0;
+                    }
+                }
                 default: {
                     rf_we      = 1'b0;
                     rf_wr_data = 32'd0;
@@ -340,9 +473,9 @@ pub module unified_cpu (
             rf_rs2_addr = h_rs2; // x1 (A)
 
             // Multi-destination writeback for Hack (A and D can be written simultaneously)
-            rf_rd_addr  = 5'd1; // x1 (A)
-            rf_we       = h_we_reg_a;
-            rf_wr_data  = alu_result;
+            rf_rd_addr = 5'd1; // x1 (A)
+            rf_we      = h_we_reg_a;
+            rf_wr_data = alu_result;
 
             rf_rd2_addr = 5'd2; // x2 (D)
             rf_we2      = h_we_reg_d;
@@ -365,7 +498,11 @@ pub module unified_cpu (
     // Next PC Logic
     always_comb {
         if is_riscv_mode {
-            if rv_op == rv32i_pkg::Opcode::JAL {
+            if trap_entry {
+                next_pc = mtvec_out;
+            } else if is_mret {
+                next_pc = mepc_out;
+            } else if rv_op == rv32i_pkg::Opcode::JAL {
                 next_pc = (pc_reg as u32 + rv_imm as u32) as u32;
             } else if rv_op == rv32i_pkg::Opcode::JALR {
                 next_pc = ((rf_rs1_data as u32 + rv_imm as u32) & 32'hffff_fffe) as u32;

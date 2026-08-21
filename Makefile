@@ -53,6 +53,8 @@ sim-unit: veryl
 	PATH=$(PWD)/$(VENV_PATH)/bin:$(PATH) $(MAKE) -C sim TOPLEVEL=hack_translator MODULE=test_hack_translator
 	@echo "=== Running RV32I Register File Unit Tests ==="
 	PATH=$(PWD)/$(VENV_PATH)/bin:$(PATH) $(MAKE) -C sim TOPLEVEL=rv32i_regfile MODULE=test_rv32i_regfile
+	@echo "=== Running RV32I CSRs & Trap Unit Tests ==="
+	PATH=$(PWD)/$(VENV_PATH)/bin:$(PATH) $(MAKE) -C sim TOPLEVEL=rv32i_csrs MODULE=test_rv32i_csrs
 	@echo "=== Running Auto Mode Detector Unit Tests ==="
 	PATH=$(PWD)/$(VENV_PATH)/bin:$(PATH) $(MAKE) -C sim TOPLEVEL=auto_mode_detector MODULE=test_auto_mode_detector
 	@echo "=== Running Unified Dual-ISA CPU Unit Tests ==="
@@ -90,7 +92,7 @@ sim: sim-unit test-arch-compliance sim-soc
 
 synth: veryl
 	$(YOSYS) -p "\
-		read_verilog -sv cpu/rv32i_pkg.sv cpu/auto_mode_detector.sv cpu/hack_translator.sv cpu/rv32i_alu.sv cpu/rv32i_decode.sv cpu/rv32i_regfile.sv cpu/unified_cpu.sv uart/*.sv soc/*.sv; \
+		read_verilog -sv cpu/rv32i_pkg.sv cpu/auto_mode_detector.sv cpu/hack_translator.sv cpu/rv32i_alu.sv cpu/rv32i_decode.sv cpu/rv32i_regfile.sv cpu/rv32i_csrs.sv cpu/unified_cpu.sv uart/*.sv soc/*.sv; \
 		synth_gowin -top soc_top -json soc.json; \
 	"
 

@@ -29,7 +29,7 @@ The RTL modules in this repository were originally authored in VHDL-2008 and hav
   - SD Card SPI Master Controller (for bootloader & persistent ROM/storage access).
 - **Verification & Simulation (OSS CAD Suite)**:
   - Fast [Icarus Verilog](https://steveicarus.github.io/iverilog/) + [Cocotb](https://www.cocotb.org/) RTL simulation suite.
-  - Official **RISC-V Architectural Compliance Test Suite** (`riscv-arch-test`, 39/39 passing).
+  - Official **RISC-V Architectural Compliance Test Suite** (`riscv-arch-test`, 45/45 passing: 39 RV32I + 6 Zicsr).
   - Python behavioral SoC emulator (`sim/emulator.py`).
   - Automated CI via GitHub Actions (`.github/workflows/ci.yml`).
 - **FPGA Synthesis**:
@@ -54,6 +54,7 @@ The RTL modules in this repository were originally authored in VHDL-2008 and hav
 ```
 VUX9K/
 ├── Makefile                        # Unified build, test, and synthesis automation
+├── Veryl.lock
 ├── Veryl.toml                      # Veryl project configuration
 ├── README.md                       # Project documentation
 ├── LICENSE                         # MIT License
@@ -61,6 +62,7 @@ VUX9K/
 │   ├── auto_mode_detector.veryl    # Dual-ISA mode auto-detection logic
 │   ├── hack_translator.veryl       # Hack 16-bit to micro-op translator
 │   ├── rv32i_alu.veryl             # RV32I / Hack shared ALU
+│   ├── rv32i_csrs.veryl            # Machine-Mode CSRs & System Trap Unit
 │   ├── rv32i_decode.veryl          # RV32I instruction decoder & imm generator
 │   ├── rv32i_pkg.veryl             # Opcodes and ALU operation definitions
 │   ├── rv32i_regfile.veryl         # Dual-write port 32-register register file
@@ -128,7 +130,7 @@ VUX9K/
 # Run all module unit tests (ALU, Decoder, Regfile, Translator, UART modules)
 make sim-unit
 
-# Run official RISC-V Architectural Compliance Tests (riscv-arch-test 39/39)
+# Run official RISC-V Architectural Compliance Tests (riscv-arch-test 45/45: 39 RV32I + 6 Zicsr)
 make test-arch-compliance
 
 # Run SoC Integration Tests (Rust firmware & Hack binary on soc_top)

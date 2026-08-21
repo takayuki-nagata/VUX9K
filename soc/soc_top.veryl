@@ -56,15 +56,18 @@ pub module soc_top (
 
     // Instantiate Unified Dual-ISA CPU Core (Veryl)
     inst cpu_inst: unified_cpu (
-        clk        : clk         ,
-        rst        : rst         ,
-        instr_in   : instr_data  ,
-        data_in    : cpu_data_in ,
-        pc_out     : instr_addr  ,
-        data_addr  : data_addr   ,
-        data_out   : cpu_data_out,
-        mem_write  : mem_write   ,
-        active_mode: active_mode ,
+        clk         : clk         ,
+        rst         : rst         ,
+        instr_in    : instr_data  ,
+        data_in     : cpu_data_in ,
+        timer_irq_in: timer_irq   ,
+        ext_irq_in  : 1'b0        ,
+        sw_irq_in   : 1'b0        ,
+        pc_out      : instr_addr  ,
+        data_addr   : data_addr   ,
+        data_out    : cpu_data_out,
+        mem_write   : mem_write   ,
+        active_mode : active_mode ,
     );
 
     // Instantiate UART Controller (Veryl)

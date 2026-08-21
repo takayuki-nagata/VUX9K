@@ -41,6 +41,9 @@ async def test_rv32i_full_compliance(dut):
     await FallingEdge(dut.clk)
     dut.rst.value = 0
     dut.data_in.value = 0
+    dut.timer_irq_in.value = 0
+    dut.ext_irq_in.value = 0
+    dut.sw_irq_in.value = 0
     dut.instr_in.value = encode_i(0, 0, 0, 0, 0x13) # ADDI x0, x0, 0
 
     await FallingEdge(dut.clk)

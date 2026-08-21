@@ -48,6 +48,7 @@ def compile_verilog():
         os.path.join(REPO_DIR, "cpu", "rv32i_alu.sv"),
         os.path.join(REPO_DIR, "cpu", "rv32i_decode.sv"),
         os.path.join(REPO_DIR, "cpu", "rv32i_regfile.sv"),
+        os.path.join(REPO_DIR, "cpu", "rv32i_csrs.sv"),
         os.path.join(REPO_DIR, "cpu", "hack_translator.sv"),
         os.path.join(REPO_DIR, "cpu", "auto_mode_detector.sv"),
         os.path.join(REPO_DIR, "cpu", "unified_cpu.sv"),
@@ -81,14 +82,19 @@ def convert_elf_to_hex(elf_path, hex_path):
     return True
 
 def run_tests():
-    test_src_dir = os.path.join(ARCH_TEST_DIR, "tests", "rv32i", "I")
-    test_files = glob.glob(os.path.join(test_src_dir, "*.S"))
+    test_dirs = [
+        os.path.join(ARCH_TEST_DIR, "tests", "rv32i", "I"),
+        os.path.join(ARCH_TEST_DIR, "tests", "rv32i", "Zicsr"),
+    ]
+    test_files = []
+    for td in test_dirs:
+        test_files.extend(glob.glob(os.path.join(td, "*.S")))
 
     if not test_files:
         print("[WARNING] No test .S files found in riscv-arch-test directory.")
         return True
 
-    print(f"[INFO] Discovered {len(test_files)} riscv-arch-test assembly test files.")
+    print(f"[INFO] Discovered {len(test_files)} riscv-arch-test assembly test files (I + Zicsr).")
     
     env_inc_dir = os.path.join(ARCH_TEST_DIR, "tests", "env")
     rv32i_inc_dir = os.path.join(ARCH_TEST_DIR, "tests", "rv32i")
@@ -104,7 +110,7 @@ def run_tests():
 
         linker_script = os.path.join(REPO_DIR, "scripts", "link.ld")
         cmd = [
-            GCC_BIN, "-march=rv32i", "-mabi=ilp32", "-nostdlib", "-static",
+            GCC_BIN, "-march=rv32i_zicsr", "-mabi=ilp32", "-nostdlib", "-static",
             "-Wl,--build-id=none", "-Wl,-N",
             "-I", TARGET_ENV_DIR,
             "-I", env_inc_dir,
