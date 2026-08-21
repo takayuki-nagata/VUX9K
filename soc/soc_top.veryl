@@ -52,7 +52,8 @@ pub module soc_top (
     var ram_we     : logic   ;
     var ram_we_byte: logic<4>;
 
-    var timer_irq: logic;
+    var timer_irq  : logic   ;
+    var cpu_byte_we: logic<4>;
 
     // Instantiate Unified Dual-ISA CPU Core (Veryl)
     inst cpu_inst: unified_cpu (
@@ -67,6 +68,7 @@ pub module soc_top (
         data_addr   : data_addr   ,
         data_out    : cpu_data_out,
         mem_write   : mem_write   ,
+        mem_byte_we : cpu_byte_we ,
         active_mode : active_mode ,
     );
 
@@ -134,7 +136,7 @@ pub module soc_top (
         timer_sel = 1'b0;
         sd_sel    = 1'b0;
 
-        if data_addr[31:20] == 12'h200 {
+        if data_addr[31:20] == 12'h200 || data_addr[31:20] == 12'h000 {
             ram_sel = 1'b1;
         } else if data_addr[31:16] == 16'h4000 {
             if data_addr[15:4] == 12'h000 {
@@ -146,8 +148,8 @@ pub module soc_top (
             }
         }
 
-        ram_we      = mem_write && ram_sel;
-        ram_we_byte = 4'hf;
+        ram_we      = mem_write && ram_sel && (data_addr[31:20] == 12'h200);
+        ram_we_byte = cpu_byte_we;
         uart_we     = mem_write && uart_sel;
         timer_we    = mem_write && timer_sel;
         sd_we       = mem_write && sd_sel;

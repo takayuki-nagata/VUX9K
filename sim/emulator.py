@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Tang Nano 9K Dual-ISA SoC Behavioral Python Emulator
-Simulates RV32I & Hack 16-bit CPU execution, 256KB I-RAM, 128KB D-RAM,
-MMIO UART, MMIO Timer, and MMIO SD Card SPI controller.
+Simulates RV32I & Hack 16-bit CPU execution, Machine-Mode CSRs & Traps (Zicsr),
+256KB I-RAM, 128KB D-RAM, MMIO UART, MMIO Timer (with Timer IRQ), and MMIO SD Card SPI controller.
 """
 
 import sys
@@ -21,6 +21,17 @@ class SocEmulator:
         self.verbose = False
         self.running = True
 
+        # Machine-Mode CSRs (Zicsr)
+        self.mstatus = 0x00001800  # MPP=3 (Machine mode)
+        self.misa = 0x40000100     # RV32I
+        self.mie = 0x00000000
+        self.mtvec = 0x00000000
+        self.mscratch = 0x00000000
+        self.mepc = 0x00000000
+        self.mcause = 0x00000000
+        self.mtval = 0x00000000
+        self.mip = 0x00000000
+
     def load_binary(self, filename):
         with open(filename, 'rb') as f:
             data = f.read()
@@ -30,6 +41,48 @@ class SocEmulator:
                 idx = i // 4
                 if idx < len(self.i_ram):
                     self.i_ram[idx] = word
+
+    def read_csr(self, csr_addr):
+        if csr_addr == 0x300: # mstatus
+            return self.mstatus
+        elif csr_addr == 0x301: # misa
+            return self.misa
+        elif csr_addr == 0x304: # mie
+            return self.mie
+        elif csr_addr == 0x305: # mtvec
+            return self.mtvec
+        elif csr_addr == 0x340: # mscratch
+            return self.mscratch
+        elif csr_addr == 0x341: # mepc
+            return self.mepc
+        elif csr_addr == 0x342: # mcause
+            return self.mcause
+        elif csr_addr == 0x343: # mtval
+            return self.mtval
+        elif csr_addr == 0x344: # mip
+            return self.mip
+        return 0
+
+    def write_csr(self, csr_addr, val):
+        val &= 0xFFFFFFFF
+        if csr_addr == 0x300: # mstatus
+            # Keep MPP=3 (bits 12:11 = 11), allow MIE (bit 3) & MPIE (bit 7)
+            self.mstatus = (val & 0x00000088) | 0x00001800
+        elif csr_addr == 0x304: # mie
+            self.mie = val & 0x00000888 # MTIE (bit 7), MEIE (bit 11), MSIE (bit 3)
+        elif csr_addr == 0x305: # mtvec
+            self.mtvec = val & 0xFFFFFFFC # Direct mode (aligned)
+        elif csr_addr == 0x340: # mscratch
+            self.mscratch = val
+        elif csr_addr == 0x341: # mepc
+            self.mepc = val & 0xFFFFFFFE
+        elif csr_addr == 0x342: # mcause
+            self.mcause = val
+        elif csr_addr == 0x343: # mtval
+            self.mtval = val
+        elif csr_addr == 0x344: # mip
+            # Software can only clear/set software interrupt pending
+            self.mip = (self.mip & ~0x08) | (val & 0x08)
 
     def read_mem(self, addr):
         if 0x00000000 <= addr < 0x00040000:
@@ -100,6 +153,31 @@ class SocEmulator:
     def step(self):
         self.regs[0] = 0
         self.mtime += 1
+
+        # Evaluate Machine Timer Pending Flag
+        if self.mtime >= self.mtimecmp:
+            self.mip |= (1 << 7) # MTIP
+        else:
+            self.mip &= ~(1 << 7)
+
+        # Check Interrupts
+        irq_pending = ((self.mip & self.mie) != 0) and ((self.mstatus & (1 << 3)) != 0)
+        if irq_pending:
+            self.mepc = self.pc
+            if (self.mip & self.mie) & (1 << 7):
+                self.mcause = 0x80000007 # Machine Timer Interrupt
+            elif (self.mip & self.mie) & (1 << 11):
+                self.mcause = 0x8000000B # Machine External Interrupt
+            elif (self.mip & self.mie) & (1 << 3):
+                self.mcause = 0x80000003 # Machine Software Interrupt
+            else:
+                self.mcause = 0x80000007
+            self.mtval = 0
+            mpie = (self.mstatus >> 3) & 1
+            self.mstatus = (self.mstatus & ~0x88) | (mpie << 7) # MPIE = MIE, MIE = 0
+            self.pc = self.mtvec & ~3
+            return
+
         instr = self.read_mem(self.pc)
 
         if instr == 0:
@@ -127,6 +205,9 @@ class SocEmulator:
                 imm -= 0x1000
             if funct3 == 0: # ADDI
                 self.regs[rd] = (self.regs[rs1] + imm) & 0xFFFFFFFF
+            elif funct3 == 1: # SLLI
+                shamt = (instr >> 20) & 0x1F
+                self.regs[rd] = (self.regs[rs1] << shamt) & 0xFFFFFFFF
             elif funct3 == 2: # SLTI
                 s1 = self.regs[rs1] if self.regs[rs1] < 0x80000000 else self.regs[rs1] - 0x100000000
                 self.regs[rd] = 1 if s1 < imm else 0
@@ -134,6 +215,13 @@ class SocEmulator:
                 self.regs[rd] = 1 if (self.regs[rs1] & 0xFFFFFFFF) < (imm & 0xFFFFFFFF) else 0
             elif funct3 == 4: # XORI
                 self.regs[rd] = (self.regs[rs1] ^ (imm & 0xFFFFFFFF)) & 0xFFFFFFFF
+            elif funct3 == 5: # SRLI / SRAI
+                shamt = (instr >> 20) & 0x1F
+                if (instr >> 30) & 1: # SRAI
+                    s1 = self.regs[rs1] if self.regs[rs1] < 0x80000000 else self.regs[rs1] - 0x100000000
+                    self.regs[rd] = (s1 >> shamt) & 0xFFFFFFFF
+                else: # SRLI
+                    self.regs[rd] = (self.regs[rs1] >> shamt) & 0xFFFFFFFF
             elif funct3 == 6: # ORI
                 self.regs[rd] = (self.regs[rs1] | (imm & 0xFFFFFFFF)) & 0xFFFFFFFF
             elif funct3 == 7: # ANDI
@@ -149,6 +237,12 @@ class SocEmulator:
             elif funct3 == 1: # SLL
                 shamt = self.regs[rs2] & 0x1F
                 self.regs[rd] = (self.regs[rs1] << shamt) & 0xFFFFFFFF
+            elif funct3 == 2: # SLT
+                s1 = self.regs[rs1] if self.regs[rs1] < 0x80000000 else self.regs[rs1] - 0x100000000
+                s2 = self.regs[rs2] if self.regs[rs2] < 0x80000000 else self.regs[rs2] - 0x100000000
+                self.regs[rd] = 1 if s1 < s2 else 0
+            elif funct3 == 3: # SLTU
+                self.regs[rd] = 1 if (self.regs[rs1] & 0xFFFFFFFF) < (self.regs[rs2] & 0xFFFFFFFF) else 0
             elif funct3 == 4: # XOR
                 self.regs[rd] = (self.regs[rs1] ^ self.regs[rs2]) & 0xFFFFFFFF
             elif funct3 == 5: # SRL / SRA
@@ -158,6 +252,10 @@ class SocEmulator:
                     self.regs[rd] = (s1 >> shamt) & 0xFFFFFFFF
                 else: # SRL
                     self.regs[rd] = (self.regs[rs1] >> shamt) & 0xFFFFFFFF
+            elif funct3 == 6: # OR
+                self.regs[rd] = (self.regs[rs1] | self.regs[rs2]) & 0xFFFFFFFF
+            elif funct3 == 7: # AND
+                self.regs[rd] = (self.regs[rs1] & self.regs[rs2]) & 0xFFFFFFFF
 
         # LUI
         elif opcode == 0x37:
@@ -266,20 +364,62 @@ class SocEmulator:
             elif funct3 == 2: # SW
                 self.write_mem(addr, self.regs[rs2], 0xF)
 
-        # SYSTEM (CSRRW, CSRRS, ECALL, EBREAK, WFI)
+        # SYSTEM (CSRRW, CSRRS, CSRRC, CSRRWI, CSRRSI, CSRRCI, ECALL, EBREAK, MRET, WFI)
         elif opcode == 0x73:
-            if funct3 == 1 or funct3 == 2: # CSRRW / CSRRS
-                csr = (instr >> 20) & 0xFFF
-                if csr == 0x305: # mtvec
-                    self.regs[rd] = 0
-                elif csr == 0x300: # mstatus
-                    self.regs[rd] = 0
-            elif funct3 == 0: # WFI / ECALL / EBREAK
-                if (instr >> 20) == 0x105: # WFI
+            csr_addr = (instr >> 20) & 0xFFF
+            zimm = rs1
+
+            if funct3 == 0: # PRIVILEGED (ECALL, EBREAK, MRET, WFI)
+                funct12 = (instr >> 20) & 0xFFF
+                if funct12 == 0x000: # ECALL
+                    self.mepc = self.pc
+                    self.mcause = 11 # Environment call from M-mode
+                    self.mtval = 0
+                    mpie = (self.mstatus >> 3) & 1
+                    self.mstatus = (self.mstatus & ~0x88) | (mpie << 7)
+                    next_pc = self.mtvec & ~3
+                elif funct12 == 0x001: # EBREAK
+                    self.mepc = self.pc
+                    self.mcause = 3 # Breakpoint
+                    self.mtval = 0
+                    mpie = (self.mstatus >> 3) & 1
+                    self.mstatus = (self.mstatus & ~0x88) | (mpie << 7)
+                    next_pc = self.mtvec & ~3
+                elif funct12 == 0x302: # MRET
+                    mpie = (self.mstatus >> 7) & 1
+                    self.mstatus = (self.mstatus & ~0x88) | (mpie << 3) | 0x80
+                    next_pc = self.mepc
+                elif funct12 == 0x105: # WFI
                     if self.verbose:
-                        print(f"[EMU] Stopped: WFI instruction at PC=0x{self.pc:08x}")
-                    self.running = False
-                    return
+                        print(f"[EMU] WFI at PC=0x{self.pc:08x}")
+            elif funct3 == 1: # CSRRW
+                old_val = self.read_csr(csr_addr)
+                self.write_csr(csr_addr, self.regs[rs1])
+                self.regs[rd] = old_val
+            elif funct3 == 2: # CSRRS
+                old_val = self.read_csr(csr_addr)
+                if rs1 != 0:
+                    self.write_csr(csr_addr, old_val | self.regs[rs1])
+                self.regs[rd] = old_val
+            elif funct3 == 3: # CSRRC
+                old_val = self.read_csr(csr_addr)
+                if rs1 != 0:
+                    self.write_csr(csr_addr, old_val & ~self.regs[rs1])
+                self.regs[rd] = old_val
+            elif funct3 == 5: # CSRRWI
+                old_val = self.read_csr(csr_addr)
+                self.write_csr(csr_addr, zimm)
+                self.regs[rd] = old_val
+            elif funct3 == 6: # CSRRSI
+                old_val = self.read_csr(csr_addr)
+                if zimm != 0:
+                    self.write_csr(csr_addr, old_val | zimm)
+                self.regs[rd] = old_val
+            elif funct3 == 7: # CSRRCI
+                old_val = self.read_csr(csr_addr)
+                if zimm != 0:
+                    self.write_csr(csr_addr, old_val & ~zimm)
+                self.regs[rd] = old_val
 
         self.regs[0] = 0
         self.pc = next_pc

@@ -91,4 +91,30 @@ async def test_unified_cpu_hack_and_riscv(dut):
     await FallingEdge(dut.clk)
     assert int(dut.pc_out.value) == 24, f"Expected PC=24, got {int(dut.pc_out.value)}"
 
-    dut._log.info("[PASS] Unified CPU: RISC-V 32-bit program execution verified!")
+    # =========================================================================
+    # TEST 3: Byte Stores (SB/SH), CSRs, ECALL, and MRET
+    # =========================================================================
+    # PC=24: SB x12, 1(x10) -> Store 142 (0x8E) at addr 42+1=43 (byte 3: byte_we = 4'b1000)
+    dut.instr_in.value = 0x00c500a3 # sb x12, 1(x10)
+    await Timer(1, unit="ns")
+    assert int(dut.mem_write.value) == 1
+    assert int(dut.data_addr.value) == 43
+    assert int(dut.mem_byte_we.value) == 0b1000
+    assert (int(dut.data_out.value) & 0xFF000000) == 0x8E000000
+    await FallingEdge(dut.clk)
+
+    # PC=28: CSRRW x0, mtvec, x10 (0x30551073) -> Write 42 to mtvec
+    dut.instr_in.value = 0x30551073
+    await FallingEdge(dut.clk)
+
+    # PC=32: ECALL (0x00000073) -> Trap to mtvec (42)
+    dut.instr_in.value = 0x00000073
+    await FallingEdge(dut.clk)
+    assert int(dut.pc_out.value) == 42, f"Expected trap to mtvec=42, got {int(dut.pc_out.value)}"
+
+    # PC=42: MRET (0x30200073) -> Return to mepc (32)
+    dut.instr_in.value = 0x30200073
+    await FallingEdge(dut.clk)
+    assert int(dut.pc_out.value) == 32, f"Expected return to mepc=32, got {int(dut.pc_out.value)}"
+
+    dut._log.info("[PASS] Unified CPU: RISC-V 32-bit program, sub-word stores, and CSR/traps verified!")

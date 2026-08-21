@@ -81,6 +81,8 @@ test-arch-compliance: veryl
 	$(VENV_PATH)/bin/python scripts/run_arch_test.py
 
 sim-soc: firmware
+	@echo "=== Running Python Software Emulator Unit Tests ==="
+	$(VENV_PATH)/bin/pytest sim/test_emulator.py
 	@echo "=== Running Python Software Emulator ==="
 	$(VENV_PATH)/bin/python sim/emulator.py firmware/firmware.bin
 	@echo "=== Running SoC Top RISC-V Integration Tests ==="

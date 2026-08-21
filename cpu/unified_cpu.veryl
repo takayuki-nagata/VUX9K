@@ -11,6 +11,7 @@ pub module unified_cpu (
     data_addr   : output logic<32>,
     data_out    : output logic<32>,
     mem_write   : output logic    ,
+    mem_byte_we : output logic<4> ,
     active_mode : output logic    , // 0: Hack 16-bit, 1: RISC-V 32-bit
 ) {
     var is_riscv_mode: logic    ;
@@ -82,6 +83,8 @@ pub module unified_cpu (
     var byte_sel      : u32                  ;
     var load_val      : logic            <32>;
     var r_mem_write   : logic                ;
+    var r_mem_byte_we : logic            <4> ;
+    var r_data_out    : logic            <32>;
     var rv_branch_take: logic                ;
     var hack_jump_take: logic                ;
     var rv_op         : rv32i_pkg::Opcode    ;
@@ -90,7 +93,8 @@ pub module unified_cpu (
     assign active_mode = is_riscv_mode;
     assign pc_out      = pc_reg;
     assign data_addr   = if is_riscv_mode ? alu_result : rf_rs2_data;
-    assign data_out    = if is_riscv_mode ? rf_rs2_data : alu_result;
+    assign data_out    = r_data_out;
+    assign mem_byte_we = r_mem_byte_we;
 
     // Auto Mode Detector
     inst mode_det: auto_mode_detector (
@@ -187,11 +191,11 @@ pub module unified_cpu (
 
         if is_riscv_mode && rv_op == rv32i_pkg::Opcode::SYSTEM {
             if rv_funct3 == rv32i_pkg::FUNCT3_PRIV {
-                if rv_imm[11:0] == 12'h000 {
+                if rv_csr_addr == 12'h000 {
                     is_ecall = 1'b1;
-                } else if rv_imm[11:0] == 12'h001 {
+                } else if rv_csr_addr == 12'h001 {
                     is_ebreak = 1'b1;
-                } else if rv_imm[11:0] == 12'h302 {
+                } else if rv_csr_addr == 12'h302 {
                     is_mret = 1'b1;
                 }
             } else {
@@ -288,10 +292,12 @@ pub module unified_cpu (
 
     assign mem_write = r_mem_write;
 
-    // Register Address & Operand Muxing
+    // Register Address, Store Formatting & Operand Muxing
     always_comb {
-        byte_sel = 0;
-        load_val = 32'd0;
+        byte_sel      = 0;
+        load_val      = 32'd0;
+        r_mem_byte_we = 4'b1111;
+        r_data_out    = if is_riscv_mode ? rf_rs2_data : alu_result;
 
         if is_riscv_mode {
             // RISC-V Mode
@@ -420,6 +426,33 @@ pub module unified_cpu (
                 }
             }
 
+            // Sub-word Store Steering & Byte Enable Generation
+            if rv_op == rv32i_pkg::Opcode::STORE {
+                case rv_f3 {
+                    rv32i_pkg::Funct3::ADD_SUB: { // SB (000)
+                        r_data_out = {rf_rs2_data[7:0] repeat 4};
+                        case byte_sel {
+                            0      : r_mem_byte_we = 4'b0001;
+                            1      : r_mem_byte_we = 4'b0010;
+                            2      : r_mem_byte_we = 4'b0100;
+                            default: r_mem_byte_we = 4'b1000;
+                        }
+                    }
+                    rv32i_pkg::Funct3::SLL: { // SH (001)
+                        r_data_out = {rf_rs2_data[15:0] repeat 2};
+                        if alu_result[1] == 1'b0 {
+                            r_mem_byte_we = 4'b0011;
+                        } else {
+                            r_mem_byte_we = 4'b1100;
+                        }
+                    }
+                    default: { // SW (010)
+                        r_data_out    = rf_rs2_data;
+                        r_mem_byte_we = 4'b1111;
+                    }
+                }
+            }
+
             // Writeback & Memory Write
             case rv_op {
                 rv32i_pkg::Opcode::R_TYPE: {
@@ -490,8 +523,10 @@ pub module unified_cpu (
                 alu_operand_b = rf_rs2_data; // A
             }
 
-            alu_ctrl    = h_alu_op;
-            r_mem_write = h_we_mem;
+            alu_ctrl      = h_alu_op;
+            r_data_out    = alu_result;
+            r_mem_byte_we = 4'b1111;
+            r_mem_write   = h_we_mem;
         }
     }
 

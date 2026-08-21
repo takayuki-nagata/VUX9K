@@ -1,4 +1,4 @@
-// Dual-Port Harvard Memory Module (256 KB I-RAM + 128 KB D-RAM)
+// Dual-Port Harvard Memory Module (256 KB I-RAM + 128 KB D-RAM + .rodata ROM Read)
 pub module soc_ram #(
     param I_MEM_WORDS: u32 = 65536,
     param D_MEM_WORDS: u32 = 32768,
@@ -16,11 +16,13 @@ pub module soc_ram #(
     var i_mem: logic<32> [I_MEM_WORDS];
     var d_mem: logic<32> [D_MEM_WORDS];
 
-    var i_idx: logic<16>;
-    var d_idx: logic<15>;
+    var i_idx   : logic<16>;
+    var d_idx   : logic<15>;
+    var d_is_rom: logic    ;
 
-    assign i_idx = i_addr[17:2];
-    assign d_idx = d_addr[16:2];
+    assign i_idx    = i_addr[17:2];
+    assign d_idx    = d_addr[16:2];
+    assign d_is_rom = (d_addr[31:20] == 12'h000);
 
     embed (inline) sv{{{
         initial begin
@@ -47,6 +49,10 @@ pub module soc_ram #(
                 d_mem[d_idx][31:24] = d_data_in[31:24];
             }
         }
-        d_data_out = d_mem[d_idx];
+        if d_is_rom {
+            d_data_out = i_mem[d_addr[17:2]];
+        } else {
+            d_data_out = d_mem[d_idx];
+        }
     }
 }
