@@ -5,6 +5,8 @@
 name = "firmware"
 version = "0.1.0"
 edition = "2021"
+authors = ["Takayuki Nagata"]
+license = "MIT"
 
 [dependencies]
 

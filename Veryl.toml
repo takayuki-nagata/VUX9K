@@ -1,6 +1,11 @@
+# Copyright (c) 2026 Takayuki Nagata
+# SPDX-License-Identifier: MIT
+
 [project]
 name = "VUX9K"
 version = "0.1.0"
+authors = ["Takayuki Nagata"]
+license = "MIT"
 
 [build]
 omit_project_prefix = true
