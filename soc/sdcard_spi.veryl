@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Takayuki Nagata
+// SPDX-License-Identifier: MIT
+
 // Veryl SD Card SPI Master Controller
 module sdcard_spi (
     clk     : input  clock    ,

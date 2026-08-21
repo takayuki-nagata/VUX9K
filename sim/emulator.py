@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Takayuki Nagata
+# SPDX-License-Identifier: MIT
+
 """
 Tang Nano 9K Dual-ISA SoC Behavioral Python Emulator
 Simulates RV32I & Hack 16-bit CPU execution, Machine-Mode CSRs & Traps (Zicsr),

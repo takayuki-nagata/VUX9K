@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Takayuki Nagata
+// SPDX-License-Identifier: MIT
+
 // MMIO UART Driver with software divmod for pure RV32I compatibility
 
 const UART_BASE: usize = 0x4000_0000;

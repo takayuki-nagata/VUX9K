@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Takayuki Nagata
+// SPDX-License-Identifier: MIT
+
 // Dual-Port Harvard Memory Module (256 KB I-RAM + 128 KB D-RAM + .rodata ROM Read)
 pub module soc_ram #(
     param I_MEM_WORDS: u32 = 65536,

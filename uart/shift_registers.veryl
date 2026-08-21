@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Takayuki Nagata
+// SPDX-License-Identifier: MIT
+
 // Parameterized Shift Register with Parallel Load and Right Shift Capability
 pub module shift_registers #(
     param SIZE: u32 = 10,

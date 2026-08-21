@@ -1,4 +1,8 @@
+// Copyright (c) 2026 Takayuki Nagata
+// SPDX-License-Identifier: MIT
+
 #![no_std]
+
 #![no_main]
 
 use core::arch::global_asm;

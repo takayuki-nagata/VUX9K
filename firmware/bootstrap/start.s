@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 Takayuki Nagata
+ * SPDX-License-Identifier: MIT
+ */
+
 /* RISC-V RV32I Bare-Metal Assembly Entry Point & Trap Handler */
 .section .text.entry
 .global _start

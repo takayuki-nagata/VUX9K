@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Takayuki Nagata
+# SPDX-License-Identifier: MIT
+
 """
 Binary to Hex Word Converter for VHDL Memory Preloading
 Reads binary file and outputs 8-digit hex words per line.

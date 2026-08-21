@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Takayuki Nagata
+// SPDX-License-Identifier: MIT
+
 // RISC-V RV32I 32-bit Arithmetic Logic Unit
 pub module rv32i_alu (
     a     : input  logic           <32>,

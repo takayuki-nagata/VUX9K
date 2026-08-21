@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Takayuki Nagata
+# SPDX-License-Identifier: MIT
+
 """
 Tang Nano 9K Harvard Architecture ELF to Binary Image Extractor
 Extracts instruction ROM image (p_paddr < 0x20000000) from RISC-V ELF.

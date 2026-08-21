@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Takayuki Nagata
+// SPDX-License-Identifier: MIT
+
 // Unified Dual-ISA CPU Core (RISC-V 32-bit + Hack 16-bit) in Veryl
 pub module unified_cpu (
     clk         : input  clock    ,

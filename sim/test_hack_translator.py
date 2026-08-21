@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Takayuki Nagata
+# SPDX-License-Identifier: MIT
+
 import cocotb
 from cocotb.triggers import Timer
 

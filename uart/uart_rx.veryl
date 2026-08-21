@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Takayuki Nagata
+// SPDX-License-Identifier: MIT
+
 // UART Receiver Module
 pub module uart_rx #(
     param DSIZE      : u32 = 8  ,

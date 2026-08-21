@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Takayuki Nagata
+# SPDX-License-Identifier: MIT
+
 # cocotb Makefile for Tang Nano 9K Dual-ISA SoC (100% Veryl)
 
 # Dynamically discover runtime libraries and Python configuration across Linux environments

@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 Takayuki Nagata
+ * SPDX-License-Identifier: MIT
+ */
+
 /* Harvard Architecture Linker Script for Tang Nano 9K SoC */
 MEMORY
 {

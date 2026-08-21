@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Takayuki Nagata
+// SPDX-License-Identifier: MIT
+
 // MMIO Machine Timer Driver (mtime / mtimecmp)
 
 const TIMER_BASE: usize = 0x4000_1000;

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Takayuki Nagata
+// SPDX-License-Identifier: MIT
+
 // First-Instruction Auto Mode Detector in Veryl
 pub module auto_mode_detector (
     clk          : input  clock    ,

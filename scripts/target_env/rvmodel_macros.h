@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Takayuki Nagata
+# SPDX-License-Identifier: MIT
+
 #ifndef RVMODEL_MACROS_H
 #define RVMODEL_MACROS_H
 

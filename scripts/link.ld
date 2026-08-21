@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 Takayuki Nagata
+ * SPDX-License-Identifier: MIT
+ */
+
 OUTPUT_ARCH( "riscv" )
 ENTRY( rvmodel_boot )
 

@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-# Copyright 2026 Takayuki Nagata All Rights Reserved.
+# Copyright (c) 2026 Takayuki Nagata
+# SPDX-License-Identifier: MIT
+
 # Checks tracked and staged repository files to prevent hardcoded absolute paths.
 
 import os

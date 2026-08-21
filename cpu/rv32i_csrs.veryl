@@ -1,4 +1,6 @@
-// Copyright 2026 Takayuki Nagata All Rights Reserved.
+// Copyright (c) 2026 Takayuki Nagata
+// SPDX-License-Identifier: MIT
+
 // RISC-V RV32I Machine-Mode CSRs (Zicsr) & Trap Unit in Veryl
 
 pub module rv32i_csrs (

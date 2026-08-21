@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Takayuki Nagata
+# SPDX-License-Identifier: MIT
+
 #ifndef RVTEST_CONFIG_H
 #define RVTEST_CONFIG_H
 

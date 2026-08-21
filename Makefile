@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Takayuki Nagata
+# SPDX-License-Identifier: MIT
+
 VERYL = veryl
 YOSYS = yosys
 GOWIN_PACK = gowin_pack

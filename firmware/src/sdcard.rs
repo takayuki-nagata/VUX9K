@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Takayuki Nagata
+// SPDX-License-Identifier: MIT
+
 // MMIO SD Card SPI Driver
 
 const SD_BASE: usize = 0x4000_2000;

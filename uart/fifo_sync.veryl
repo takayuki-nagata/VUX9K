@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Takayuki Nagata
+// SPDX-License-Identifier: MIT
+
 // Synchronous FIFO Buffer with Parameterized Width and Depth
 pub module fifo_sync #(
     param WIDTH      : u32 = 8,
