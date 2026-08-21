@@ -42,6 +42,8 @@ def setup_repo():
                 sys.exit(1)
 
 def compile_verilog():
+    print("[INFO] Building Veryl sources...")
+    run_cmd(["veryl", "build"], cwd=REPO_DIR)
     print("[INFO] Compiling SystemVerilog entities with Icarus Verilog...")
     sv_files = [
         os.path.join(REPO_DIR, "cpu", "rv32i_pkg.sv"),

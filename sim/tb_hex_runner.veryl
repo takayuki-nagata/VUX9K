@@ -1,0 +1,84 @@
+// High-Speed Hex Runner Testbench for RISC-V Architectural Compliance in Veryl
+pub module tb_hex_runner () {
+    embed (inline) sv{{{
+        logic clk = 0;
+        logic rst = 0;
+        logic [31:0] instr_in;
+        logic [31:0] data_in;
+        logic [31:0] pc_out;
+        logic [31:0] data_addr;
+        logic [31:0] data_out;
+        logic mem_write;
+        logic active_mode;
+
+        // 256KB RAM (65536 x 32-bit words)
+        logic [31:0] ram [0:65535];
+
+        // Instantiate Unified Dual-ISA CPU Core (Veryl compiled)
+        unified_cpu uut (
+            .clk(clk),
+            .rst(rst),
+            .instr_in(instr_in),
+            .data_in(data_in),
+            .timer_irq_in(1'b0),
+            .ext_irq_in(1'b0),
+            .sw_irq_in(1'b0),
+            .pc_out(pc_out),
+            .data_addr(data_addr),
+            .data_out(data_out),
+            .mem_write(mem_write),
+            .active_mode(active_mode)
+        );
+
+        // Clock generator (50MHz)
+        always #10 clk = ~clk;
+
+        string hex_file;
+        integer cycle_count = 0;
+        integer max_cycles = 50000;
+
+        initial begin
+            for (int i = 0; i < 65536; i++) begin
+                ram[i] = 32'h00000013; // NOP (addi x0, x0, 0)
+            end
+
+            if ($value$plusargs("HEX_FILE=%s", hex_file)) begin
+                $readmemh(hex_file, ram);
+            end
+
+            // Reset sequence (Active-low reset)
+            rst = 0;
+            #30;
+            @(negedge clk);
+            rst = 1;
+
+            // Run simulation
+            while (cycle_count < max_cycles) begin
+                @(negedge clk);
+                cycle_count++;
+
+                // Detect RVMODEL_HALT (Target jumps to 0x1000 or 0x2000 or executes ECALL)
+                if (pc_out == 32'h00001000 || pc_out == 32'h00002000 || instr_in == 32'h00000073) begin
+                    $display("[PASS] Reached halt address PC=%08h at cycle %0d", pc_out, cycle_count);
+                    $finish(0);
+                end
+            end
+
+            $display("[FAIL] Simulation timeout after %0d cycles at PC=%08h", max_cycles, pc_out);
+            $finish(1);
+        end
+
+        // Instruction memory read (word-aligned from PC)
+        assign instr_in = (pc_out[17:2] < 65536) ? ram[pc_out[17:2]] : 32'h00000013;
+
+        // Data memory read (word-aligned)
+        assign data_in  = (data_addr[17:2] < 65536) ? ram[data_addr[17:2]] : 32'h00000000;
+
+        // Data memory write
+        always_ff @(posedge clk) begin
+            if (rst && mem_write && (data_addr[17:2] < 65536)) begin
+                ram[data_addr[17:2]] <= data_out;
+            end
+        end
+    }}}
+}

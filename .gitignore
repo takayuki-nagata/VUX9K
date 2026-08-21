@@ -29,6 +29,8 @@ uart/*.sv
 uart/*.map
 soc/*.sv
 soc/*.map
+sim/*.sv
+sim/*.map
 
 # Synthesis outputs
 soc.json
