@@ -9,10 +9,11 @@ firmware/firmware.bin
 firmware/firmware.hex
 zephyr_workspace/**/target/
 zephyr_workspace/**/build/
+build_zephyr/
 
 # Architectural compliance test artifacts
 build_arch_test/
-vendor/
+vendor/riscv-arch-test/
 
 # Simulation build artifacts
 sim/sim_build*/

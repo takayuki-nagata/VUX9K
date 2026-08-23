@@ -12,12 +12,12 @@ import subprocess
 FORBIDDEN_PATTERNS = [
     (re.compile(r'/(home|var/home|Users)/[a-zA-Z0-9_\-]+'), "User home directory path"),
     (re.compile(r'/(root|tmp)/[a-zA-Z0-9_\-]+'), "System root/tmp absolute path"),
-    (re.compile(r'[A-Za-z]:[\\/][a-zA-Z0-9_\-]+'), "Windows absolute path"),
+    (re.compile(r'(?<![A-Za-z0-9_])[A-Za-z]:[\\/][a-zA-Z0-9_\-]+'), "Windows absolute path"),
 ]
 
 IGNORED_DIRS = {
     '.git', '.venv', '.build', 'target', 'vendor', 'build_arch_test', 
-    '__pycache__', '.pytest_cache', 'dependencies'
+    '__pycache__', '.pytest_cache', 'dependencies', 'build_zephyr', 'build'
 }
 
 IGNORED_EXTENSIONS = {

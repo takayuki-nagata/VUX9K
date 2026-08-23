@@ -17,6 +17,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Setup uv Python Environment
         uses: astral-sh/setup-uv@v5
@@ -35,7 +37,7 @@ jobs:
       - name: Install RISC-V GCC Toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-riscv64-linux-gnu
+          sudo apt-get install -y gcc-riscv64-linux-gnu device-tree-compiler ninja-build
 
       - name: Install Rust Toolchain & Target
         uses: dtolnay/rust-toolchain@stable
@@ -53,12 +55,46 @@ jobs:
         if: steps.cache-veryl.outputs.cache-hit != 'true'
         run: cargo install veryl --version 0.20.3
 
+      - name: Cache Zephyr SDK & Workspace
+        id: cache-zephyr
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.local/zephyr-sdk-0.16.8
+            ~/zephyrproject
+          key: ${{ runner.os }}-zephyr-sdk-0.16.8-riscv-v1
+
+      - name: Install Zephyr Toolchain & West (if not cached)
+        if: steps.cache-zephyr.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/.local
+          wget -q https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v0.16.8/zephyr-sdk-0.16.8_linux-x86_64_minimal.tar.xz
+          tar -xf zephyr-sdk-0.16.8_linux-x86_64_minimal.tar.xz -C ~/.local/
+          rm zephyr-sdk-0.16.8_linux-x86_64_minimal.tar.xz
+          cd ~/.local/zephyr-sdk-0.16.8 && ./setup.sh -t riscv64-zephyr-elf -h -c
+          pip install west
+          west init ~/zephyrproject -m https://github.com/zephyrproject-rtos/zephyr --mr v3.7.2
+          cd ~/zephyrproject && west update -n -o=--depth=1
+
       - name: Setup Python Virtualenv & Dependencies
         run: |
           uv python install 3.13
           uv venv --python 3.13 .venv
-          uv pip install --python .venv/bin/python cocotb pytest
+          uv pip install --python .venv/bin/python cocotb pytest west
 
       - name: Run Full SoC Test Suite
         run: |
-          PATH=$PWD/.venv/bin:$PATH make test
+          export PATH=$PWD/.venv/bin:$HOME/.local/zephyr-sdk-0.16.8/riscv64-zephyr-elf/bin:$PATH
+          export ZEPHYR_BASE=$HOME/zephyrproject/zephyr
+          export ZEPHYR_SDK_INSTALL_DIR=$HOME/.local/zephyr-sdk-0.16.8
+          make test
+          make sim-zephyr
+
+      - name: Check Submodule Cleanliness
+        run: |
+          if [ -n "$(git status --porcelain vendor/bc_clone_rs)" ]; then
+            echo "Error: vendor/bc_clone_rs contains unexpected modifications!"
+            git status --porcelain vendor/bc_clone_rs
+            exit 1
+          fi
+          echo "Submodule vendor/bc_clone_rs is 100% clean."

@@ -17,7 +17,7 @@ CARGO_BIN ?= $(HOME)/.cargo/bin
 
 export PATH := $(PWD)/$(VENV_PATH)/bin:$(OSS_CAD_SUITE_BIN):$(CARGO_BIN):$(ZEPHYR_SDK_INSTALL_DIR)/riscv64-zephyr-elf/bin:$(PATH)
 
-.PHONY: all veryl check check-paths fmt test build synth clean venv setup firmware sim-unit sim-soc sim test-arch-compliance zephyr-rust-lib build-zephyr sim-zephyr-emu sim-zephyr-rtl sim-zephyr
+.PHONY: all veryl check check-paths fmt test build synth clean venv setup firmware sim-unit sim-soc sim test-arch-compliance zephyr-rust-lib zephyr-bc-lib build-zephyr sim-zephyr-emu sim-zephyr-repl sim-zephyr-rtl sim-zephyr submodule-sync
 
 all: test
 
@@ -53,21 +53,31 @@ firmware:
 	$(PYTHON) scripts/elf2bin.py firmware/target/riscv32i-unknown-none-elf/release/firmware firmware/firmware.bin
 	$(PYTHON) scripts/bin2hex.py firmware/firmware.bin firmware/firmware.hex
 
+BC_APP_DIR ?= vendor/bc_clone_rs/examples/zephyr_app
+ZEPHYR_BUILD_DIR ?= build_zephyr
+
+submodule-sync:
+	git submodule update --init --recursive
+
 zephyr-rust-lib:
 	cd zephyr_workspace/app/rust_app && $(CARGO) build --release --target riscv32i-unknown-none-elf
 
+zephyr-bc-lib:
+	cd vendor/bc_clone_rs/crates/bc_zephyr && $(CARGO) build --release --target riscv32i-unknown-none-elf --no-default-features
+
 build-zephyr:
 	@if [ -d "$(ZEPHYR_BASE)" ] && [ -d "$(ZEPHYR_SDK_INSTALL_DIR)" ]; then \
-		echo "=== Building Zephyr v3.7.2 Application (Rust + C) ==="; \
+		echo "=== Building Zephyr bc_clone_rs Application (vux9k) ==="; \
 		export PATH=$(PWD)/$(VENV_PATH)/bin:$(ZEPHYR_SDK_INSTALL_DIR)/riscv64-zephyr-elf/bin:$(PATH) && \
 		export ZEPHYR_BASE=$(ZEPHYR_BASE) && \
 		export ZEPHYR_SDK_INSTALL_DIR=$(ZEPHYR_SDK_INSTALL_DIR) && \
 		export ZEPHYR_TOOLCHAIN_VARIANT=zephyr && \
-		west build -p auto -b vux9k zephyr_workspace/app -d zephyr_workspace/app/build -- \
+		west build -p auto -b vux9k $(BC_APP_DIR) -d $(ZEPHYR_BUILD_DIR) -- \
 			-DBOARD_ROOT=$(PWD)/zephyr_workspace \
 			-DSOC_ROOT=$(PWD)/zephyr_workspace \
-			-DEXTRA_ZEPHYR_MODULES=$(PWD)/zephyr_workspace && \
-		$(PYTHON) scripts/elf2bin.py zephyr_workspace/app/build/zephyr/zephyr.elf zephyr_workspace/app/build/zephyr/zephyr.bin; \
+			-DEXTRA_ZEPHYR_MODULES=$(PWD)/zephyr_workspace \
+			-DRUST_TARGET=riscv32i-unknown-none-elf && \
+		$(PYTHON) scripts/elf2bin.py $(ZEPHYR_BUILD_DIR)/zephyr/zephyr.elf $(ZEPHYR_BUILD_DIR)/zephyr/zephyr.bin; \
 	else \
 		echo "Zephyr or Zephyr SDK not found. Skipping real Zephyr build."; \
 	fi
@@ -119,18 +129,22 @@ sim-soc: firmware
 	$(MAKE) -C sim TOPLEVEL=soc_top MODULE=test_soc_hack
 
 sim-zephyr-emu: build-zephyr
-	@echo "=== Running Zephyr/Rust SoC Python Emulator ==="
-	@if [ -f "zephyr_workspace/app/build/zephyr/zephyr.bin" ]; then \
-		$(PYTHON) sim/emulator.py zephyr_workspace/app/build/zephyr/zephyr.bin --steps 3000000; \
+	@echo "=== Running Zephyr bc_clone_rs Python Emulator ==="
+	@if [ -f "$(ZEPHYR_BUILD_DIR)/zephyr/zephyr.bin" ]; then \
+		$(PYTHON) sim/emulator.py $(ZEPHYR_BUILD_DIR)/zephyr/zephyr.bin --steps 120000000 --until "bc> "; \
 	else \
 		$(PYTHON) sim/emulator.py firmware/firmware.bin; \
 	fi
 
-sim-zephyr-rtl: zephyr-rust-lib
+sim-zephyr-repl: build-zephyr
+	@echo "=== Running Zephyr bc_clone_rs Self-Tests & REPL Pytest Suite ==="
+	$(PYTHON) -m pytest sim/test_soc_bc.py
+
+sim-zephyr-rtl: zephyr-bc-lib
 	@echo "=== Running Zephyr/Rust SoC RTL Simulation ==="
 	$(MAKE) -C sim TOPLEVEL=soc_top MODULE=test_soc_zephyr
 
-sim-zephyr: sim-zephyr-emu sim-zephyr-rtl
+sim-zephyr: sim-zephyr-emu sim-zephyr-repl sim-zephyr-rtl
 
 sim: sim-unit test-arch-compliance sim-soc sim-zephyr
 
@@ -140,7 +154,7 @@ synth: veryl
 		synth_gowin -top soc_top -json soc.json; \
 	"
 
-test: check firmware zephyr-rust-lib sim synth
+test: check firmware zephyr-rust-lib zephyr-bc-lib sim synth
 	@echo "========================================================================"
 	@echo "  ALL VERYL CPU, UART, ARCH-COMPLIANCE & SOC TESTS PASSED 100%!         "
 	@echo "========================================================================"
@@ -149,4 +163,5 @@ clean:
 	$(VERYL) clean
 	cd firmware && $(CARGO) clean
 	cd zephyr_workspace/app/rust_app && $(CARGO) clean
-	rm -rf sim/sim_build* sim/results.xml soc.json pack.fs firmware/firmware.bin firmware/firmware.hex build_arch_test zephyr_workspace/app/build
+	cd vendor/bc_clone_rs/crates/bc_zephyr 2>/dev/null && $(CARGO) clean || true
+	rm -rf sim/sim_build* sim/results.xml soc.json pack.fs firmware/firmware.bin firmware/firmware.hex build_arch_test zephyr_workspace/app/build $(ZEPHYR_BUILD_DIR)

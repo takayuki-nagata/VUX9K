@@ -20,6 +20,7 @@ class SocEmulator:
         self.mtime = 0
         self.mtimecmp = 0xFFFFFFFFFFFFFFFF
         self.uart_tx_buf = []
+        self.uart_rx_buf = []
         self.sd_cs = 1
         self.verbose = False
         self.running = True
@@ -95,19 +96,23 @@ class SocEmulator:
         elif 0x40000000 <= addr < 0x40000010:
             offset = addr & 0xF
             if offset == 0x0:
+                if self.uart_rx_buf:
+                    return ord(self.uart_rx_buf.pop(0)) & 0xFF
                 return 0
             elif offset == 0x4:
-                return 0 # TX FIFO empty, not full
-        elif 0x40001000 <= addr < 0x40001020:
-            offset = addr & 0x1F
-            if offset == 0x0:
-                return self.mtime & 0xFFFFFFFF
-            elif offset == 0x4:
-                return (self.mtime >> 32) & 0xFFFFFFFF
-            elif offset == 0x8:
+                status = 0
+                if not self.uart_rx_buf:
+                    status |= 1 # STATUS_RX_EMPTY (1 << 0)
+                return status
+        elif 0x40001000 <= addr < 0x40010000:
+            if addr == 0x40005000 or (0x40001000 <= addr < 0x40001010 and (addr & 0xF) == 0x8):
                 return self.mtimecmp & 0xFFFFFFFF
-            elif offset == 0xC:
+            elif addr == 0x40005004 or (0x40001000 <= addr < 0x40001010 and (addr & 0xF) == 0xC):
                 return (self.mtimecmp >> 32) & 0xFFFFFFFF
+            elif addr in (0x4000BFF8, 0x4000CFF8) or (0x40001000 <= addr < 0x40001010 and (addr & 0xF) == 0x0):
+                return self.mtime & 0xFFFFFFFF
+            elif addr in (0x4000BFFC, 0x4000CFFC) or (0x40001000 <= addr < 0x40001010 and (addr & 0xF) == 0x4):
+                return (self.mtime >> 32) & 0xFFFFFFFF
         elif 0x40002000 <= addr < 0x40002010:
             offset = addr & 0xF
             if offset == 0x0:
@@ -138,16 +143,15 @@ class SocEmulator:
                     self.uart_tx_buf.append(char)
                     sys.stdout.write(char)
                     sys.stdout.flush()
-        elif 0x40001000 <= addr < 0x40001020:
-            offset = addr & 0x1F
-            if offset == 0x0:
-                self.mtime = (self.mtime & 0xFFFFFFFF00000000) | (val & 0xFFFFFFFF)
-            elif offset == 0x4:
-                self.mtime = (self.mtime & 0x00000000FFFFFFFF) | ((val & 0xFFFFFFFF) << 32)
-            elif offset == 0x8:
+        elif 0x40001000 <= addr < 0x40010000:
+            if addr == 0x40005000 or (0x40001000 <= addr < 0x40001010 and (addr & 0xF) == 0x8):
                 self.mtimecmp = (self.mtimecmp & 0xFFFFFFFF00000000) | (val & 0xFFFFFFFF)
-            elif offset == 0xC:
+            elif addr == 0x40005004 or (0x40001000 <= addr < 0x40001010 and (addr & 0xF) == 0xC):
                 self.mtimecmp = (self.mtimecmp & 0x00000000FFFFFFFF) | ((val & 0xFFFFFFFF) << 32)
+            elif addr in (0x4000BFF8, 0x4000CFF8) or (0x40001000 <= addr < 0x40001010 and (addr & 0xF) == 0x0):
+                self.mtime = (self.mtime & 0xFFFFFFFF00000000) | (val & 0xFFFFFFFF)
+            elif addr in (0x4000BFFC, 0x4000CFFC) or (0x40001000 <= addr < 0x40001010 and (addr & 0xF) == 0x4):
+                self.mtime = (self.mtime & 0x00000000FFFFFFFF) | ((val & 0xFFFFFFFF) << 32)
         elif 0x40002000 <= addr < 0x40002010:
             offset = addr & 0xF
             if offset == 0x4:
@@ -232,7 +236,37 @@ class SocEmulator:
 
         # OP (ADD, SUB, etc.)
         elif opcode == 0x33:
-            if funct3 == 0:
+            if funct7 == 0x01: # M extension
+                s1 = self.regs[rs1] if self.regs[rs1] < 0x80000000 else self.regs[rs1] - 0x100000000
+                s2 = self.regs[rs2] if self.regs[rs2] < 0x80000000 else self.regs[rs2] - 0x100000000
+                u1 = self.regs[rs1] & 0xFFFFFFFF
+                u2 = self.regs[rs2] & 0xFFFFFFFF
+                if funct3 == 0: # MUL
+                    self.regs[rd] = (u1 * u2) & 0xFFFFFFFF
+                elif funct3 == 1: # MULH
+                    self.regs[rd] = ((s1 * s2) >> 32) & 0xFFFFFFFF
+                elif funct3 == 2: # MULHSU
+                    self.regs[rd] = ((s1 * u2) >> 32) & 0xFFFFFFFF
+                elif funct3 == 3: # MULHU
+                    self.regs[rd] = ((u1 * u2) >> 32) & 0xFFFFFFFF
+                elif funct3 == 4: # DIV
+                    if s2 == 0: self.regs[rd] = 0xFFFFFFFF
+                    elif s1 == -0x80000000 and s2 == -1: self.regs[rd] = 0x80000000
+                    else: self.regs[rd] = int(s1 / s2) & 0xFFFFFFFF
+                elif funct3 == 5: # DIVU
+                    if u2 == 0: self.regs[rd] = 0xFFFFFFFF
+                    else: self.regs[rd] = (u1 // u2) & 0xFFFFFFFF
+                elif funct3 == 6: # REM
+                    if s2 == 0: self.regs[rd] = u1
+                    elif s1 == -0x80000000 and s2 == -1: self.regs[rd] = 0
+                    else:
+                        rem = abs(s1) % abs(s2)
+                        if s1 < 0: rem = -rem
+                        self.regs[rd] = rem & 0xFFFFFFFF
+                elif funct3 == 7: # REMU
+                    if u2 == 0: self.regs[rd] = u1
+                    else: self.regs[rd] = (u1 % u2) & 0xFFFFFFFF
+            elif funct3 == 0:
                 if funct7 == 0x00: # ADD
                     self.regs[rd] = (self.regs[rs1] + self.regs[rs2]) & 0xFFFFFFFF
                 elif funct7 == 0x20: # SUB
@@ -428,11 +462,380 @@ class SocEmulator:
         self.regs[0] = 0
         self.pc = next_pc
 
-    def run(self, max_steps=50000):
-        for _ in range(max_steps):
-            if not self.running or self.pc >= 0x00040000:
-                break
-            self.step()
+    def feed_input(self, text):
+        for ch in text:
+            self.uart_rx_buf.append(ch)
+
+    def get_tx_output(self):
+        return "".join(self.uart_tx_buf)
+
+    def clear_tx_output(self):
+        self.uart_tx_buf.clear()
+
+    def run(self, max_steps=50000, target_str=None):
+        # Fast execution path when verbose is disabled
+        if not self.verbose:
+            i_ram = self.i_ram
+            d_ram = self.d_ram
+            regs = self.regs
+            pc = self.pc
+            mtime = self.mtime
+            mtimecmp = self.mtimecmp
+            mstatus = self.mstatus
+            misa = self.misa
+            mie = self.mie
+            mtvec = self.mtvec
+            mscratch = self.mscratch
+            mepc = self.mepc
+            mcause = self.mcause
+            mtval = self.mtval
+            mip = self.mip
+            uart_rx_buf = self.uart_rx_buf
+            uart_tx_buf = self.uart_tx_buf
+            sd_cs = self.sd_cs
+
+            steps = 0
+            while self.running and steps < max_steps:
+                regs[0] = 0
+                mtime += 1
+                if mtime >= mtimecmp:
+                    mip |= 0x80
+                else:
+                    mip &= ~0x80
+
+                if (mip & mie) and (mstatus & 8):
+                    mepc = pc
+                    if (mip & mie) & 0x80:
+                        mcause = 0x80000007
+                    elif (mip & mie) & 0x800:
+                        mcause = 0x8000000B
+                    elif (mip & mie) & 0x08:
+                        mcause = 0x80000003
+                    else:
+                        mcause = 0x80000007
+                    mtval = 0
+                    mpie = (mstatus >> 3) & 1
+                    mstatus = (mstatus & ~0x88) | (mpie << 7)
+                    pc = mtvec & ~3
+                    steps += 1
+                    continue
+
+                if pc < 0x40000:
+                    instr = i_ram[pc >> 2]
+                elif 0x20000000 <= pc < 0x20020000:
+                    instr = d_ram[(pc & 0x1FFFF) >> 2]
+                else:
+                    break
+
+                if instr == 0:
+                    self.running = False
+                    break
+
+                opcode = instr & 0x7F
+                rd = (instr >> 7) & 0x1F
+                funct3 = (instr >> 12) & 0x7
+                rs1 = (instr >> 15) & 0x1F
+                rs2 = (instr >> 20) & 0x1F
+
+                if opcode == 0x13: # OP-IMM
+                    imm = instr >> 20
+                    if imm & 0x800: imm -= 0x1000
+                    if funct3 == 0:
+                        regs[rd] = (regs[rs1] + imm) & 0xFFFFFFFF
+                    elif funct3 == 1:
+                        regs[rd] = (regs[rs1] << (imm & 0x1F)) & 0xFFFFFFFF
+                    elif funct3 == 2:
+                        s1 = regs[rs1] if regs[rs1] < 0x80000000 else regs[rs1] - 0x100000000
+                        regs[rd] = 1 if s1 < imm else 0
+                    elif funct3 == 3:
+                        regs[rd] = 1 if (regs[rs1] & 0xFFFFFFFF) < (imm & 0xFFFFFFFF) else 0
+                    elif funct3 == 4:
+                        regs[rd] = (regs[rs1] ^ (imm & 0xFFFFFFFF)) & 0xFFFFFFFF
+                    elif funct3 == 5:
+                        shamt = imm & 0x1F
+                        if (instr >> 30) & 1:
+                            s1 = regs[rs1] if regs[rs1] < 0x80000000 else regs[rs1] - 0x100000000
+                            regs[rd] = (s1 >> shamt) & 0xFFFFFFFF
+                        else:
+                            regs[rd] = (regs[rs1] >> shamt) & 0xFFFFFFFF
+                    elif funct3 == 6:
+                        regs[rd] = (regs[rs1] | (imm & 0xFFFFFFFF)) & 0xFFFFFFFF
+                    elif funct3 == 7:
+                        regs[rd] = (regs[rs1] & (imm & 0xFFFFFFFF)) & 0xFFFFFFFF
+                    pc += 4
+
+                elif opcode == 0x33: # OP
+                    funct7 = (instr >> 25) & 0x7F
+                    if funct7 == 0x01: # M extension
+                        s1 = regs[rs1] if regs[rs1] < 0x80000000 else regs[rs1] - 0x100000000
+                        s2 = regs[rs2] if regs[rs2] < 0x80000000 else regs[rs2] - 0x100000000
+                        u1 = regs[rs1] & 0xFFFFFFFF
+                        u2 = regs[rs2] & 0xFFFFFFFF
+                        if funct3 == 0: regs[rd] = (u1 * u2) & 0xFFFFFFFF
+                        elif funct3 == 1: regs[rd] = ((s1 * s2) >> 32) & 0xFFFFFFFF
+                        elif funct3 == 2: regs[rd] = ((s1 * u2) >> 32) & 0xFFFFFFFF
+                        elif funct3 == 3: regs[rd] = ((u1 * u2) >> 32) & 0xFFFFFFFF
+                        elif funct3 == 4:
+                            if s2 == 0: regs[rd] = 0xFFFFFFFF
+                            elif s1 == -0x80000000 and s2 == -1: regs[rd] = 0x80000000
+                            else: regs[rd] = int(s1 / s2) & 0xFFFFFFFF
+                        elif funct3 == 5:
+                            if u2 == 0: regs[rd] = 0xFFFFFFFF
+                            else: regs[rd] = (u1 // u2) & 0xFFFFFFFF
+                        elif funct3 == 6:
+                            if s2 == 0: regs[rd] = u1
+                            elif s1 == -0x80000000 and s2 == -1: regs[rd] = 0
+                            else:
+                                rem = abs(s1) % abs(s2)
+                                if s1 < 0: rem = -rem
+                                regs[rd] = rem & 0xFFFFFFFF
+                        elif funct3 == 7:
+                            if u2 == 0: regs[rd] = u1
+                            else: regs[rd] = (u1 % u2) & 0xFFFFFFFF
+                    elif funct3 == 0:
+                        if funct7 == 0x20:
+                            regs[rd] = (regs[rs1] - regs[rs2]) & 0xFFFFFFFF
+                        else:
+                            regs[rd] = (regs[rs1] + regs[rs2]) & 0xFFFFFFFF
+                    elif funct3 == 1:
+                        regs[rd] = (regs[rs1] << (regs[rs2] & 0x1F)) & 0xFFFFFFFF
+                    elif funct3 == 2:
+                        s1 = regs[rs1] if regs[rs1] < 0x80000000 else regs[rs1] - 0x100000000
+                        s2 = regs[rs2] if regs[rs2] < 0x80000000 else regs[rs2] - 0x100000000
+                        regs[rd] = 1 if s1 < s2 else 0
+                    elif funct3 == 3:
+                        regs[rd] = 1 if (regs[rs1] & 0xFFFFFFFF) < (regs[rs2] & 0xFFFFFFFF) else 0
+                    elif funct3 == 4:
+                        regs[rd] = (regs[rs1] ^ regs[rs2]) & 0xFFFFFFFF
+                    elif funct3 == 5:
+                        shamt = regs[rs2] & 0x1F
+                        if funct7 == 0x20:
+                            s1 = regs[rs1] if regs[rs1] < 0x80000000 else regs[rs1] - 0x100000000
+                            regs[rd] = (s1 >> shamt) & 0xFFFFFFFF
+                        else:
+                            regs[rd] = (regs[rs1] >> shamt) & 0xFFFFFFFF
+                    elif funct3 == 6:
+                        regs[rd] = (regs[rs1] | regs[rs2]) & 0xFFFFFFFF
+                    elif funct3 == 7:
+                        regs[rd] = (regs[rs1] & regs[rs2]) & 0xFFFFFFFF
+                    pc += 4
+
+                elif opcode == 0x23: # STORE
+                    imm = ((instr >> 25) << 5) | ((instr >> 7) & 0x1F)
+                    if imm & 0x800: imm -= 0x1000
+                    addr = (regs[rs1] + imm) & 0xFFFFFFFF
+                    val = regs[rs2]
+                    if 0x20000000 <= addr < 0x20020000:
+                        idx = (addr & 0x1FFFF) >> 2
+                        old = d_ram[idx]
+                        byte_offset = addr & 3
+                        if funct3 == 0:
+                            mask = 0xFF << (byte_offset * 8)
+                            d_ram[idx] = (old & ~mask) | ((val & 0xFF) << (byte_offset * 8))
+                        elif funct3 == 1:
+                            mask = 0xFFFF << (byte_offset * 8)
+                            d_ram[idx] = (old & ~mask) | ((val & 0xFFFF) << (byte_offset * 8))
+                        elif funct3 == 2:
+                            d_ram[idx] = val & 0xFFFFFFFF
+                    elif addr == 0x40000000:
+                        c_byte = val & 0xFF
+                        if c_byte != 0:
+                            char = chr(c_byte)
+                            uart_tx_buf.append(char)
+                            sys.stdout.write(char)
+                            sys.stdout.flush()
+                    elif 0x40001000 <= addr < 0x40010000:
+                        if addr == 0x40005000 or (0x40001000 <= addr < 0x40001010 and (addr & 0xF) == 0x8):
+                            mtimecmp = (mtimecmp & 0xFFFFFFFF00000000) | (val & 0xFFFFFFFF)
+                        elif addr == 0x40005004 or (0x40001000 <= addr < 0x40001010 and (addr & 0xF) == 0xC):
+                            mtimecmp = (mtimecmp & 0x00000000FFFFFFFF) | ((val & 0xFFFFFFFF) << 32)
+                        elif addr in (0x4000BFF8, 0x4000CFF8) or (0x40001000 <= addr < 0x40001010 and (addr & 0xF) == 0x0):
+                            mtime = (mtime & 0xFFFFFFFF00000000) | (val & 0xFFFFFFFF)
+                        elif addr in (0x4000BFFC, 0x4000CFFC) or (0x40001000 <= addr < 0x40001010 and (addr & 0xF) == 0x4):
+                            mtime = (mtime & 0x00000000FFFFFFFF) | ((val & 0xFFFFFFFF) << 32)
+                    elif 0x40002000 <= addr < 0x40002010:
+                        offset = addr & 0xF
+                        if offset == 0x4:
+                            sd_cs = val & 1
+                    pc += 4
+
+                elif opcode == 0x03: # LOAD
+                    imm = instr >> 20
+                    if imm & 0x800: imm -= 0x1000
+                    addr = (regs[rs1] + imm) & 0xFFFFFFFF
+                    raw = 0
+                    if addr < 0x40000:
+                        raw = i_ram[addr >> 2]
+                    elif 0x20000000 <= addr < 0x20020000:
+                        raw = d_ram[(addr & 0x1FFFF) >> 2]
+                    elif 0x40000000 <= addr < 0x40000010:
+                        offset = addr & 0xF
+                        if offset == 0x0:
+                            if uart_rx_buf:
+                                raw = ord(uart_rx_buf.pop(0)) & 0xFF
+                            else:
+                                raw = 0
+                        elif offset == 0x4:
+                            raw = 1 if not uart_rx_buf else 0
+                    elif 0x40001000 <= addr < 0x40010000:
+                        if addr == 0x40005000 or (0x40001000 <= addr < 0x40001010 and (addr & 0xF) == 0x8):
+                            raw = mtimecmp & 0xFFFFFFFF
+                        elif addr == 0x40005004 or (0x40001000 <= addr < 0x40001010 and (addr & 0xF) == 0xC):
+                            raw = (mtimecmp >> 32) & 0xFFFFFFFF
+                        elif addr in (0x4000BFF8, 0x4000CFF8) or (0x40001000 <= addr < 0x40001010 and (addr & 0xF) == 0x0):
+                            raw = mtime & 0xFFFFFFFF
+                        elif addr in (0x4000BFFC, 0x4000CFFC) or (0x40001000 <= addr < 0x40001010 and (addr & 0xF) == 0x4):
+                            raw = (mtime >> 32) & 0xFFFFFFFF
+                    elif 0x40002000 <= addr < 0x40002010:
+                        offset = addr & 0xF
+                        if offset == 0x0: raw = 0
+                        elif offset == 0x4: raw = sd_cs
+                        elif offset == 0x8: raw = 2
+                    byte_offset = addr & 3
+                    if funct3 == 0:
+                        b = (raw >> (byte_offset * 8)) & 0xFF
+                        regs[rd] = b if b < 0x80 else b - 0x100
+                    elif funct3 == 1:
+                        h = (raw >> (byte_offset * 8)) & 0xFFFF
+                        regs[rd] = h if h < 0x8000 else h - 0x10000
+                    elif funct3 == 2:
+                        regs[rd] = raw & 0xFFFFFFFF
+                    elif funct3 == 4:
+                        regs[rd] = (raw >> (byte_offset * 8)) & 0xFF
+                    elif funct3 == 5:
+                        regs[rd] = (raw >> (byte_offset * 8)) & 0xFFFF
+                    pc += 4
+
+                elif opcode == 0x63: # BRANCH
+                    imm12 = (instr >> 31) & 1
+                    imm10_5 = (instr >> 25) & 0x3F
+                    imm4_1 = (instr >> 8) & 0xF
+                    imm11 = (instr >> 7) & 1
+                    imm = (imm12 << 12) | (imm11 << 11) | (imm10_5 << 5) | (imm4_1 << 1)
+                    if imm & 0x1000: imm -= 0x2000
+                    take = False
+                    s1 = regs[rs1] if regs[rs1] < 0x80000000 else regs[rs1] - 0x100000000
+                    s2 = regs[rs2] if regs[rs2] < 0x80000000 else regs[rs2] - 0x100000000
+                    if funct3 == 0: take = (regs[rs1] == regs[rs2])
+                    elif funct3 == 1: take = (regs[rs1] != regs[rs2])
+                    elif funct3 == 4: take = (s1 < s2)
+                    elif funct3 == 5: take = (s1 >= s2)
+                    elif funct3 == 6: take = ((regs[rs1] & 0xFFFFFFFF) < (regs[rs2] & 0xFFFFFFFF))
+                    elif funct3 == 7: take = ((regs[rs1] & 0xFFFFFFFF) >= (regs[rs2] & 0xFFFFFFFF))
+                    if take: pc = (pc + imm) & 0xFFFFFFFF
+                    else: pc += 4
+
+                elif opcode == 0x6F: # JAL
+                    imm20 = (instr >> 31) & 1
+                    imm10_1 = (instr >> 21) & 0x3FF
+                    imm11 = (instr >> 20) & 1
+                    imm19_12 = (instr >> 12) & 0xFF
+                    imm = (imm20 << 20) | (imm19_12 << 12) | (imm11 << 11) | (imm10_1 << 1)
+                    if imm & 0x100000: imm -= 0x200000
+                    if imm == 0:
+                        self.running = False
+                        break
+                    regs[rd] = pc + 4
+                    pc = (pc + imm) & 0xFFFFFFFF
+
+                elif opcode == 0x67: # JALR
+                    imm = instr >> 20
+                    if imm & 0x800: imm -= 0x1000
+                    target = (regs[rs1] + imm) & 0xFFFFFFFE
+                    regs[rd] = pc + 4
+                    pc = target
+
+                elif opcode == 0x37: # LUI
+                    regs[rd] = instr & 0xFFFFF000
+                    pc += 4
+
+                elif opcode == 0x17: # AUIPC
+                    regs[rd] = (pc + (instr & 0xFFFFF000)) & 0xFFFFFFFF
+                    pc += 4
+
+                elif opcode == 0x73: # SYSTEM (CSR / ECALL / EBREAK / MRET)
+                    funct12 = instr >> 20
+                    if funct3 == 0:
+                        if funct12 == 0x302: # MRET
+                            mpie = (mstatus >> 7) & 1
+                            mstatus = (mstatus & ~0x88) | (mpie << 3) | 0x80
+                            pc = mepc
+                        elif funct12 == 0x000: # ECALL
+                            mepc = pc
+                            mcause = 11
+                            mtval = 0
+                            mpie = (mstatus >> 3) & 1
+                            mstatus = (mstatus & ~0x88) | (mpie << 7)
+                            pc = mtvec & ~3
+                        elif funct12 == 0x001: # EBREAK
+                            mepc = pc
+                            mcause = 3
+                            mtval = 0
+                            mpie = (mstatus >> 3) & 1
+                            mstatus = (mstatus & ~0x88) | (mpie << 7)
+                            pc = mtvec & ~3
+                        else: # WFI / FENCE / other
+                            pc += 4
+                    else:
+                        csr_addr = funct12 & 0xFFF
+                        val = 0
+                        if csr_addr == 0x300: val = mstatus
+                        elif csr_addr == 0x301: val = misa
+                        elif csr_addr == 0x304: val = mie
+                        elif csr_addr == 0x305: val = mtvec
+                        elif csr_addr == 0x340: val = mscratch
+                        elif csr_addr == 0x341: val = mepc
+                        elif csr_addr == 0x342: val = mcause
+                        elif csr_addr == 0x343: val = mtval
+                        elif csr_addr == 0x344: val = mip
+                        
+                        src = regs[rs1] if funct3 in (1, 2, 3) else rs1
+                        new_val = val
+                        if funct3 in (1, 5): new_val = src
+                        elif funct3 in (2, 6): new_val = val | src
+                        elif funct3 in (3, 7): new_val = val & ~src
+
+                        if csr_addr == 0x300: mstatus = (new_val & 0x88) | 0x1800
+                        elif csr_addr == 0x304: mie = new_val & 0x888
+                        elif csr_addr == 0x305: mtvec = new_val & ~3
+                        elif csr_addr == 0x340: mscratch = new_val
+                        elif csr_addr == 0x341: mepc = new_val & ~1
+                        elif csr_addr == 0x342: mcause = new_val
+                        elif csr_addr == 0x343: mtval = new_val
+                        elif csr_addr == 0x344: mip = (mip & ~8) | (new_val & 8)
+
+                        regs[rd] = val
+                        pc += 4
+                else:
+                    self.running = False
+                    break
+
+                steps += 1
+                if target_str and len(uart_rx_buf) == 0 and steps % 5000 == 0:
+                    if target_str in "".join(uart_tx_buf):
+                        break
+
+            # Sync local variables back to instance
+            self.pc = pc
+            self.mtime = mtime
+            self.mtimecmp = mtimecmp
+            self.mstatus = mstatus
+            self.mie = mie
+            self.mtvec = mtvec
+            self.mscratch = mscratch
+            self.mepc = mepc
+            self.mcause = mcause
+            self.mtval = mtval
+            self.mip = mip
+            self.sd_cs = sd_cs
+        else:
+            for _ in range(max_steps):
+                if not self.running or self.pc >= 0x00040000:
+                    break
+                self.step()
+                if target_str and len(self.uart_rx_buf) == 0 and target_str in "".join(self.uart_tx_buf):
+                    break
+
         return "".join(self.uart_tx_buf)
 
 if __name__ == '__main__':
@@ -441,10 +844,11 @@ if __name__ == '__main__':
     parser.add_argument("binary", help="Path to raw binary file (e.g. zephyr.bin)")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose instruction tracing")
     parser.add_argument("--steps", type=int, default=100000, help="Maximum simulation steps (default: 100000)")
+    parser.add_argument("--until", type=str, default=None, help="Stop when target string appears in UART output")
     args = parser.parse_args()
 
     emu = SocEmulator()
     emu.verbose = args.verbose
     emu.load_binary(args.binary)
-    output = emu.run(max_steps=args.steps)
+    output = emu.run(max_steps=args.steps, target_str=args.until)
     print("\n--- Simulation Complete ---")
