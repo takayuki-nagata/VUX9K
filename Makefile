@@ -17,7 +17,7 @@ CARGO_BIN ?= $(HOME)/.cargo/bin
 
 export PATH := $(PWD)/$(VENV_PATH)/bin:$(OSS_CAD_SUITE_BIN):$(CARGO_BIN):$(ZEPHYR_SDK_INSTALL_DIR)/riscv64-zephyr-elf/bin:$(PATH)
 
-.PHONY: all veryl check check-paths fmt test build synth clean venv setup firmware sim-unit sim-soc sim test-arch-compliance zephyr-rust-lib zephyr-bc-lib build-zephyr sim-zephyr-emu sim-zephyr-repl sim-zephyr-rtl sim-zephyr submodule-sync
+.PHONY: all veryl check check-paths fmt test build synth clean venv setup firmware sim-unit sim-soc sim test-arch-compliance zephyr-rust-lib zephyr-bc-lib build-zephyr sim-zephyr-emu sim-zephyr-repl sim-zephyr-rtl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack
 
 all: test
 
@@ -146,7 +146,37 @@ sim-zephyr-rtl: zephyr-bc-lib
 
 sim-zephyr: sim-zephyr-emu sim-zephyr-repl sim-zephyr-rtl
 
-sim: sim-unit test-arch-compliance sim-soc sim-zephyr
+install-hack-tools:
+	@echo "=== Installing Hack Toolchain (has & m2h) ==="
+	@mkdir -p $(HOME)/.local/bin
+	@if [ ! -f "$(HOME)/.local/bin/has" ]; then \
+		TMP_DIR=$$(mktemp -d); \
+		curl -sL https://github.com/takayuki-nagata/hack_tools/releases/download/v0.1.0/has-v0.1.0-linux-x86_64.tar.gz | tar -xz -C "$$TMP_DIR" && \
+		cp "$$TMP_DIR"/has*/has $(HOME)/.local/bin/has && \
+		chmod +x $(HOME)/.local/bin/has && \
+		rm -rf "$$TMP_DIR"; \
+	fi
+	$(UV) pip install --python $(VENV_PATH)/bin/python https://github.com/takayuki-nagata/hack_tools/releases/download/v0.1.0/m2h-0.1.0.tar.gz
+
+build-hack:
+	@echo "=== Building Hack 16-bit C/Asm Firmware ==="
+	$(MAKE) -C firmware_hack
+
+sim-hack-emu: build-hack
+	@echo "=== Running Hack Firmware on Python SoC Emulator ==="
+	$(PYTHON) sim/emulator.py build_hack/firmware.bin
+
+sim-hack-pytest: build-hack
+	@echo "=== Running Hack Firmware Pytest Test Suite ==="
+	$(PYTHON) -m pytest sim/test_hack_firmware.py
+
+sim-hack-rtl: build-hack
+	@echo "=== Running Hack 16-bit SoC RTL Simulation ==="
+	$(MAKE) -C sim TOPLEVEL=soc_top MODULE=test_soc_hack
+
+sim-hack: sim-hack-emu sim-hack-pytest sim-hack-rtl
+
+sim: sim-unit test-arch-compliance sim-soc sim-zephyr sim-hack
 
 synth: veryl
 	$(YOSYS) -p "\
@@ -154,7 +184,7 @@ synth: veryl
 		synth_gowin -top soc_top -json soc.json; \
 	"
 
-test: check firmware zephyr-rust-lib zephyr-bc-lib sim synth
+test: check firmware zephyr-rust-lib zephyr-bc-lib build-hack sim synth
 	@echo "========================================================================"
 	@echo "  ALL VERYL CPU, UART, ARCH-COMPLIANCE & SOC TESTS PASSED 100%!         "
 	@echo "========================================================================"
@@ -164,4 +194,6 @@ clean:
 	cd firmware && $(CARGO) clean
 	cd zephyr_workspace/app/rust_app && $(CARGO) clean
 	cd vendor/bc_clone_rs/crates/bc_zephyr 2>/dev/null && $(CARGO) clean || true
-	rm -rf sim/sim_build* sim/results.xml soc.json pack.fs firmware/firmware.bin firmware/firmware.hex build_arch_test zephyr_workspace/app/build $(ZEPHYR_BUILD_DIR)
+	$(MAKE) -C firmware_hack clean
+	rm -rf sim/sim_build* sim/results.xml soc.json pack.fs firmware/firmware.bin firmware/firmware.hex build_arch_test build_hack zephyr_workspace/app/build $(ZEPHYR_BUILD_DIR)
+

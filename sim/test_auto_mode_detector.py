@@ -30,7 +30,7 @@ async def test_auto_mode_detection(dut):
     dut.first_instr.value = 0x0000000F
     await ClockCycles(dut.clk, 2)
     dut.rst.value = 1
-    await ClockCycles(dut.clk, 1)
+    await ClockCycles(dut.clk, 2)
 
     assert int(dut.is_riscv_mode.value) == 0, "Should detect Hack 16-bit mode!"
 

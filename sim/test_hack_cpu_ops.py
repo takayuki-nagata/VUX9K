@@ -6,10 +6,12 @@ from cocotb.triggers import FallingEdge, Timer
 from cocotb.clock import Clock
 
 def make_hack_a(val: int) -> int:
-    return val & 0x7FFF
+    a = val & 0x7FFF
+    return (a << 16) | a
 
 def make_hack_c(a: int, c: int, d: int, j: int) -> int:
-    return 0xE000 | ((a & 1) << 12) | ((c & 0x3F) << 6) | ((d & 7) << 3) | (j & 7)
+    val = 0xE000 | ((a & 1) << 12) | ((c & 0x3F) << 6) | ((d & 7) << 3) | (j & 7)
+    return (val << 16) | val
 
 @cocotb.test()
 async def test_hack_cpu_comprehensive(dut):
@@ -29,7 +31,7 @@ async def test_hack_cpu_comprehensive(dut):
     await FallingEdge(dut.clk)
     await FallingEdge(dut.clk)
     dut.rst.value = 1
-    await Timer(1, unit="ns")
+    await FallingEdge(dut.clk)
     assert int(dut.active_mode.value) == 0, "Failed to enter Hack mode!"
 
     # 1. Test A-instruction: Load 0x1234 into A
@@ -61,10 +63,10 @@ async def test_hack_cpu_comprehensive(dut):
     dut.instr_in.value = make_hack_a(100)
     await FallingEdge(dut.clk)
 
-    # JMP unconditional (j = 111 = 7) -> Jump PC to A (100)
+    # JMP unconditional (j = 111 = 7) -> Jump PC to A (100) (byte address 200)
     dut.instr_in.value = make_hack_c(a=0, c=0x30, d=0, j=0b111)
     await FallingEdge(dut.clk)
-    assert int(dut.pc_out.value) == 100, f"Expected PC=100 after JMP, got {int(dut.pc_out.value)}"
+    assert int(dut.pc_out.value) == 200, f"Expected PC=200 after JMP, got {int(dut.pc_out.value)}"
 
     # A = 200
     dut.instr_in.value = make_hack_a(200)
@@ -74,14 +76,14 @@ async def test_hack_cpu_comprehensive(dut):
     dut.instr_in.value = make_hack_c(a=0, c=0x2A, d=0b010, j=0) # c=101010 (0)
     await FallingEdge(dut.clk)
 
-    # JEQ with D=0 -> should jump to A (200)
+    # JEQ with D=0 -> should jump to A (200) (byte address 400)
     dut.instr_in.value = make_hack_c(a=0, c=0x0C, d=0, j=0b010) # D;JEQ
     await FallingEdge(dut.clk)
-    assert int(dut.pc_out.value) == 200, f"Expected PC=200 after JEQ, got {int(dut.pc_out.value)}"
+    assert int(dut.pc_out.value) == 400, f"Expected PC=400 after JEQ, got {int(dut.pc_out.value)}"
 
-    # JGT with D=0 -> should NOT jump (PC increments to 202)
+    # JGT with D=0 -> should NOT jump (PC increments to 201, byte address 402)
     dut.instr_in.value = make_hack_c(a=0, c=0x0C, d=0, j=0b001) # D;JGT
     await FallingEdge(dut.clk)
-    assert int(dut.pc_out.value) == 202, f"Expected PC=202 when JGT not taken, got {int(dut.pc_out.value)}"
+    assert int(dut.pc_out.value) == 402, f"Expected PC=402 when JGT not taken, got {int(dut.pc_out.value)}"
 
     dut._log.info("Comprehensive Hack CPU test passed 100% [PASS]")

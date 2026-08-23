@@ -35,16 +35,31 @@ class SocEmulator:
         self.mcause = 0x00000000
         self.mtval = 0x00000000
         self.mip = 0x00000000
+        self.is_riscv_mode = None
 
     def load_binary(self, filename):
         with open(filename, 'rb') as f:
             data = f.read()
+        if len(data) >= 4:
+            rv_opcode = data[0] & 0x7F
+            rv_valid = (data[0] & 3 == 3) and rv_opcode in (0x33, 0x13, 0x03, 0x23, 0x63, 0x6F, 0x67, 0x37, 0x17, 0x73)
+            is_hack = not rv_valid
+
+        self.is_riscv_mode = not is_hack
+
         for i in range(0, len(data), 4):
-            if i + 4 <= len(data):
-                word = struct.unpack('<I', data[i:i+4])[0]
-                idx = i // 4
-                if idx < len(self.i_ram):
-                    self.i_ram[idx] = word
+            chunk = data[i:i+4]
+            if len(chunk) < 4:
+                chunk = chunk + b'\x00' * (4 - len(chunk))
+            if is_hack:
+                instr0 = (chunk[0] << 8) | chunk[1]
+                instr1 = (chunk[2] << 8) | chunk[3]
+                word = (instr1 << 16) | instr0
+            else:
+                word = struct.unpack('<I', chunk)[0]
+            idx = i // 4
+            if idx < len(self.i_ram):
+                self.i_ram[idx] = word
 
     def read_csr(self, csr_addr):
         if csr_addr == 0x300: # mstatus
@@ -157,7 +172,215 @@ class SocEmulator:
             if offset == 0x4:
                 self.sd_cs = val & 1
 
+    def detect_mode(self):
+        if self.is_riscv_mode is not None:
+            return self.is_riscv_mode
+        pc = self.pc
+        w_idx = (pc >> 2) if (pc >= 4 or (pc > 0 and pc % 4 == 0)) else 0
+        first_word = self.i_ram[w_idx] if w_idx < len(self.i_ram) else self.i_ram[0]
+        opcode = first_word & 0x7F
+        if (first_word & 3 == 3) and opcode in (0x33, 0x13, 0x03, 0x23, 0x63, 0x6F, 0x67, 0x37, 0x17, 0x73):
+            self.is_riscv_mode = True
+        elif first_word == 0 and pc != 0:
+            self.is_riscv_mode = True
+        else:
+            self.is_riscv_mode = False
+        return self.is_riscv_mode
+
+    def step_hack(self):
+        self.regs[0] = 0
+        pc = self.pc
+        w_idx = pc >> 2
+        if w_idx >= len(self.i_ram):
+            self.running = False
+            return
+        word = self.i_ram[w_idx]
+        instr_16 = (word >> 16) & 0xFFFF if (pc & 2) else (word & 0xFFFF)
+
+        if (instr_16 & 0x8000) == 0:  # A-instruction (@val)
+            self.regs[1] = instr_16 & 0x7FFF
+            self.pc += 2
+        else:  # C-instruction (111 a c1..c6 d1..d3 j1..j3)
+            a_bit = (instr_16 >> 12) & 1
+            c_code = (instr_16 >> 6) & 0x3F
+            d_code = (instr_16 >> 3) & 7
+            j_code = instr_16 & 7
+
+            D = self.regs[2] & 0xFFFF
+            A = self.regs[1] & 0xFFFF
+            if a_bit:
+                if A == 24576:
+                    M = ord(self.uart_rx_buf.pop(0)) & 0xFF if self.uart_rx_buf else 0
+                elif A < len(self.d_ram):
+                    M = self.d_ram[A] & 0xFFFF
+                elif (A >> 1) < len(self.i_ram):
+                    w = self.i_ram[A >> 1]
+                    M = ((w >> 16) & 0xFFFF) if (A & 1) else (w & 0xFFFF)
+                else:
+                    M = 0
+                Y = M
+            else:
+                Y = A
+
+            if c_code == 0b101010: out = 0
+            elif c_code == 0b111111: out = 1
+            elif c_code == 0b111010: out = 0xFFFF
+            elif c_code == 0b001100: out = D
+            elif c_code == 0b110000: out = Y
+            elif c_code == 0b001101: out = (~D) & 0xFFFF
+            elif c_code == 0b110001: out = (~Y) & 0xFFFF
+            elif c_code == 0b001111: out = (-D) & 0xFFFF
+            elif c_code == 0b110011: out = (-Y) & 0xFFFF
+            elif c_code == 0b011111: out = (D + 1) & 0xFFFF
+            elif c_code == 0b110111: out = (Y + 1) & 0xFFFF
+            elif c_code == 0b001110: out = (D - 1) & 0xFFFF
+            elif c_code == 0b110010: out = (Y - 1) & 0xFFFF
+            elif c_code == 0b000010: out = (D + Y) & 0xFFFF
+            elif c_code == 0b010011: out = (D - Y) & 0xFFFF
+            elif c_code == 0b000111: out = (Y - D) & 0xFFFF
+            elif c_code == 0b000000: out = D & Y
+            elif c_code == 0b010101: out = D | Y
+            else: out = 0
+
+            if d_code & 4:
+                self.regs[1] = out
+            if d_code & 2:
+                self.regs[2] = out
+            if d_code & 1:
+                if A == 24576:
+                    c_byte = out & 0xFF
+                    if c_byte != 0:
+                        char = chr(c_byte)
+                        self.uart_tx_buf.append(char)
+                        sys.stdout.write(char)
+                        sys.stdout.flush()
+                elif A < len(self.d_ram):
+                    self.d_ram[A] = out
+
+            signed_out = out if out < 0x8000 else out - 0x10000
+            jump = False
+            if j_code == 1: jump = (signed_out > 0)
+            elif j_code == 2: jump = (signed_out == 0)
+            elif j_code == 3: jump = (signed_out >= 0)
+            elif j_code == 4: jump = (signed_out < 0)
+            elif j_code == 5: jump = (signed_out != 0)
+            elif j_code == 6: jump = (signed_out <= 0)
+            elif j_code == 7: jump = True
+
+            if jump:
+                target = (self.regs[1] << 1)
+                if target == pc or target == pc - 2:
+                    self.running = False
+                self.pc = target
+            else:
+                self.pc += 2
+
+    def run_hack(self, max_steps=500000, target_str=None):
+        i_ram = self.i_ram
+        d_ram = self.d_ram
+        regs = self.regs
+        uart_rx_buf = self.uart_rx_buf
+        uart_tx_buf = self.uart_tx_buf
+        steps = 0
+        i_ram_len = len(i_ram)
+        d_ram_len = len(d_ram)
+
+        while self.running and steps < max_steps:
+            steps += 1
+            pc = self.pc
+            w_idx = pc >> 2
+            if w_idx >= i_ram_len:
+                self.running = False
+                break
+            word = i_ram[w_idx]
+            instr_16 = (word >> 16) & 0xFFFF if (pc & 2) else (word & 0xFFFF)
+
+            if (instr_16 & 0x8000) == 0:  # A-instruction (@val)
+                regs[1] = instr_16 & 0x7FFF
+                self.pc += 2
+            else:  # C-instruction (111 a c1..c6 d1..d3 j1..j3)
+                a_bit = (instr_16 >> 12) & 1
+                c_code = (instr_16 >> 6) & 0x3F
+                d_code = (instr_16 >> 3) & 7
+                j_code = instr_16 & 7
+
+                D = regs[2] & 0xFFFF
+                A = regs[1] & 0xFFFF
+                if a_bit:
+                    if A == 24576:
+                        M = ord(uart_rx_buf.pop(0)) & 0xFF if uart_rx_buf else 0
+                    elif A < d_ram_len:
+                        M = d_ram[A] & 0xFFFF
+                    elif (A >> 1) < i_ram_len:
+                        w = i_ram[A >> 1]
+                        M = ((w >> 16) & 0xFFFF) if (A & 1) else (w & 0xFFFF)
+                    else:
+                        M = 0
+                    Y = M
+                else:
+                    Y = A
+
+                if c_code == 0b101010: out = 0
+                elif c_code == 0b111111: out = 1
+                elif c_code == 0b111010: out = 0xFFFF
+                elif c_code == 0b001100: out = D
+                elif c_code == 0b110000: out = Y
+                elif c_code == 0b001101: out = (~D) & 0xFFFF
+                elif c_code == 0b110001: out = (~Y) & 0xFFFF
+                elif c_code == 0b001111: out = (-D) & 0xFFFF
+                elif c_code == 0b110011: out = (-Y) & 0xFFFF
+                elif c_code == 0b011111: out = (D + 1) & 0xFFFF
+                elif c_code == 0b110111: out = (Y + 1) & 0xFFFF
+                elif c_code == 0b001110: out = (D - 1) & 0xFFFF
+                elif c_code == 0b110010: out = (Y - 1) & 0xFFFF
+                elif c_code == 0b000010: out = (D + Y) & 0xFFFF
+                elif c_code == 0b010011: out = (D - Y) & 0xFFFF
+                elif c_code == 0b000111: out = (Y - D) & 0xFFFF
+                elif c_code == 0b000000: out = D & Y
+                elif c_code == 0b010101: out = D | Y
+                else: out = 0
+
+                if d_code & 4:
+                    regs[1] = out
+                if d_code & 2:
+                    regs[2] = out
+                if d_code & 1:
+                    if A == 24576:
+                        c_byte = out & 0xFF
+                        if c_byte != 0:
+                            char = chr(c_byte)
+                            uart_tx_buf.append(char)
+                            sys.stdout.write(char)
+                            sys.stdout.flush()
+                    elif A < d_ram_len:
+                        d_ram[A] = out
+
+                signed_out = out if out < 0x8000 else out - 0x10000
+                jump = False
+                if j_code == 1: jump = (signed_out > 0)
+                elif j_code == 2: jump = (signed_out == 0)
+                elif j_code == 3: jump = (signed_out >= 0)
+                elif j_code == 4: jump = (signed_out < 0)
+                elif j_code == 5: jump = (signed_out != 0)
+                elif j_code == 6: jump = (signed_out <= 0)
+                elif j_code == 7: jump = True
+
+                if jump:
+                    target = (regs[1] << 1)
+                    if target == pc or target == pc - 2:
+                        self.running = False
+                    self.pc = target
+                else:
+                    self.pc += 2
+
+            if target_str and len(uart_tx_buf) >= len(target_str):
+                if target_str in "".join(uart_tx_buf[-len(target_str)*2:]):
+                    break
+        return steps
+
     def step(self):
+        if not self.detect_mode():
+            return self.step_hack()
         self.regs[0] = 0
         self.mtime += 1
 
@@ -473,6 +696,9 @@ class SocEmulator:
         self.uart_tx_buf.clear()
 
     def run(self, max_steps=50000, target_str=None):
+        if not self.detect_mode():
+            return self.run_hack(max_steps=max_steps, target_str=target_str)
+
         # Fast execution path when verbose is disabled
         if not self.verbose:
             i_ram = self.i_ram

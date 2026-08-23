@@ -11,8 +11,24 @@ import shutil
 import glob
 
 # Tool discovery
-GCC_BIN = shutil.which("riscv64-linux-gnu-gcc") or shutil.which("riscv64-unknown-elf-gcc") or shutil.which("riscv32-unknown-elf-gcc") or shutil.which("gcc")
-OBJCOPY_BIN = shutil.which("riscv64-linux-gnu-objcopy") or shutil.which("riscv64-unknown-elf-objcopy") or shutil.which("objcopy")
+ZEPHYR_SDK_GCC = os.path.expanduser("~/.local/zephyr-sdk-0.16.8/riscv64-zephyr-elf/bin/riscv64-zephyr-elf-gcc")
+ZEPHYR_SDK_OBJCOPY = os.path.expanduser("~/.local/zephyr-sdk-0.16.8/riscv64-zephyr-elf/bin/riscv64-zephyr-elf-objcopy")
+
+GCC_BIN = (
+    shutil.which("riscv64-zephyr-elf-gcc")
+    or shutil.which("riscv64-linux-gnu-gcc")
+    or shutil.which("riscv64-unknown-elf-gcc")
+    or shutil.which("riscv32-unknown-elf-gcc")
+    or (ZEPHYR_SDK_GCC if os.path.exists(ZEPHYR_SDK_GCC) else None)
+    or shutil.which("gcc")
+)
+OBJCOPY_BIN = (
+    shutil.which("riscv64-zephyr-elf-objcopy")
+    or shutil.which("riscv64-linux-gnu-objcopy")
+    or shutil.which("riscv64-unknown-elf-objcopy")
+    or (ZEPHYR_SDK_OBJCOPY if os.path.exists(ZEPHYR_SDK_OBJCOPY) else None)
+    or shutil.which("objcopy")
+)
 IVERILOG_BIN = shutil.which("iverilog")
 VVP_BIN = shutil.which("vvp")
 

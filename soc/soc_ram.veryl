@@ -6,15 +6,16 @@ pub module soc_ram #(
     param I_MEM_WORDS: u32 = 65536,
     param D_MEM_WORDS: u32 = 32768,
 ) (
-    clk       : input  clock    ,
-    rst       : input  reset    ,
-    i_addr    : input  logic<32>,
-    i_data_out: output logic<32>,
-    d_addr    : input  logic<32>,
-    d_data_in : input  logic<32>,
-    d_data_out: output logic<32>,
-    d_we      : input  logic    ,
-    d_we_byte : input  logic<4> ,
+    clk        : input  clock    ,
+    rst        : input  reset    ,
+    active_mode: input  logic    , // 0: Hack 16-bit, 1: RISC-V 32-bit
+    i_addr     : input  logic<32>,
+    i_data_out : output logic<32>,
+    d_addr     : input  logic<32>,
+    d_data_in  : input  logic<32>,
+    d_data_out : output logic<32>,
+    d_we       : input  logic    ,
+    d_we_byte  : input  logic<4> ,
 ) {
     var i_mem: logic<32> [I_MEM_WORDS];
     var d_mem: logic<32> [D_MEM_WORDS];
@@ -24,8 +25,8 @@ pub module soc_ram #(
     var d_is_rom: logic    ;
 
     assign i_idx    = i_addr[17:2];
-    assign d_idx    = d_addr[16:2];
-    assign d_is_rom = (d_addr[31:20] == 12'h000);
+    assign d_idx    = if active_mode == 1'b0 ? d_addr[14:0] : d_addr[16:2];
+    assign d_is_rom = if active_mode == 1'b0 ? 1'b0 : (d_addr[31:20] == 12'h000);
 
     embed (inline) sv{{{
         initial begin
@@ -39,23 +40,27 @@ pub module soc_ram #(
 
     always_ff (clk) {
         if d_we {
-            if d_we_byte[0] {
-                d_mem[d_idx][7:0] = d_data_in[7:0];
-            }
-            if d_we_byte[1] {
-                d_mem[d_idx][15:8] = d_data_in[15:8];
-            }
-            if d_we_byte[2] {
-                d_mem[d_idx][23:16] = d_data_in[23:16];
-            }
-            if d_we_byte[3] {
-                d_mem[d_idx][31:24] = d_data_in[31:24];
+            if active_mode == 1'b0 {
+                d_mem[d_idx][15:0] = d_data_in[15:0];
+            } else {
+                if d_we_byte[0] {
+                    d_mem[d_idx][7:0] = d_data_in[7:0];
+                }
+                if d_we_byte[1] {
+                    d_mem[d_idx][15:8] = d_data_in[15:8];
+                }
+                if d_we_byte[2] {
+                    d_mem[d_idx][23:16] = d_data_in[23:16];
+                }
+                if d_we_byte[3] {
+                    d_mem[d_idx][31:24] = d_data_in[31:24];
+                }
             }
         }
         if d_is_rom {
             d_data_out = i_mem[d_addr[17:2]];
         } else {
-            d_data_out = d_mem[d_idx];
+            d_data_out = if active_mode == 1'b0 ? {16'h0000, d_mem[d_idx][15:0]} : d_mem[d_idx];
         }
     }
 }

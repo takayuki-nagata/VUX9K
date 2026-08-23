@@ -20,32 +20,29 @@ async def test_unified_cpu_hack_and_riscv(dut):
     dut.timer_irq_in.value = 0
     dut.ext_irq_in.value = 0
     dut.sw_irq_in.value = 0
-    dut.instr_in.value = 0x000F # Hack @15 (Load 15 into A/x1)
+    dut.instr_in.value = (0x000F << 16) | 0x000F # Hack @15 (Load 15 into A/x1)
 
     await FallingEdge(dut.clk)
     await FallingEdge(dut.clk)
     dut.rst.value = 1
 
-    await Timer(1, unit="ns")
-    assert int(dut.active_mode.value) == 0, "Hack mode auto-detection failed!"
-    assert int(dut.pc_out.value) == 0
-
     # PC=0: @15 executes on rising edge -> PC becomes 2
     await FallingEdge(dut.clk)
+    assert int(dut.active_mode.value) == 0, "Hack mode auto-detection failed!"
     assert int(dut.pc_out.value) == 2, f"Expected PC=2, got {int(dut.pc_out.value)}"
 
     # PC=2: Hack C-instruction D=A (0xEC10 -> "1110110000010000")
-    dut.instr_in.value = 0xEC10
+    dut.instr_in.value = (0xEC10 << 16) | 0xEC10
     await FallingEdge(dut.clk)
     assert int(dut.pc_out.value) == 4, f"Expected PC=4, got {int(dut.pc_out.value)}"
 
     # PC=4: Hack C-instruction D=D+1 (0xE7D0 -> "1110011111010000")
-    dut.instr_in.value = 0xE7D0
+    dut.instr_in.value = (0xE7D0 << 16) | 0xE7D0
     await FallingEdge(dut.clk)
     assert int(dut.pc_out.value) == 6, f"Expected PC=6, got {int(dut.pc_out.value)}"
 
     # PC=6: Hack C-instruction M=D (0xE308 -> "1110001100001000")
-    dut.instr_in.value = 0xE308
+    dut.instr_in.value = (0xE308 << 16) | 0xE308
     await Timer(1, unit="ns")
     assert int(dut.mem_write.value) == 1, "Hack memory write assertion failed"
     assert int(dut.data_addr.value) == 15, f"Expected addr=15, got {int(dut.data_addr.value)}"

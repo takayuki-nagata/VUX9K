@@ -94,15 +94,16 @@ pub module soc_top (
 
     // Instantiate Harvard Memory (256KB I-RAM + 128KB D-RAM)
     inst ram_inst: soc_ram (
-        clk       : clk         ,
-        rst       : rst         ,
-        i_addr    : instr_addr  ,
-        i_data_out: instr_data  ,
-        d_addr    : data_addr   ,
-        d_data_in : cpu_data_out,
-        d_data_out: ram_data_out,
-        d_we      : ram_we      ,
-        d_we_byte : ram_we_byte ,
+        clk        : clk         ,
+        rst        : rst         ,
+        active_mode: active_mode ,
+        i_addr     : instr_addr  ,
+        i_data_out : instr_data  ,
+        d_addr     : data_addr   ,
+        d_data_in  : cpu_data_out,
+        d_data_out : ram_data_out,
+        d_we       : ram_we      ,
+        d_we_byte  : ram_we_byte ,
     );
 
     // Instantiate System Timer Core (Veryl)
@@ -139,24 +140,38 @@ pub module soc_top (
         timer_sel = 1'b0;
         sd_sel    = 1'b0;
 
-        if data_addr[31:20] == 12'h200 || data_addr[31:20] == 12'h000 {
-            ram_sel = 1'b1;
-        } else if data_addr[31:16] == 16'h4000 {
-            if data_addr[15:4] == 12'h000 {
+        if active_mode == 1'b0 {
+            // Hack Mode
+            if data_addr[15:0] == 16'h6000 {
                 uart_sel = 1'b1;
-            } else if data_addr[15:4] == 12'h100 {
-                timer_sel = 1'b1;
-            } else if data_addr[15:4] == 12'h200 {
-                sd_sel = 1'b1;
+            } else if data_addr[15:0] <: 16'h6000 {
+                ram_sel = 1'b1;
+            }
+        } else {
+            // RISC-V Mode
+            if data_addr[31:20] == 12'h200 || data_addr[31:20] == 12'h000 {
+                ram_sel = 1'b1;
+            } else if data_addr[31:16] == 16'h4000 {
+                if data_addr[15:4] == 12'h000 {
+                    uart_sel = 1'b1;
+                } else if data_addr[15:4] == 12'h100 {
+                    timer_sel = 1'b1;
+                } else if data_addr[15:4] == 12'h200 {
+                    sd_sel = 1'b1;
+                }
             }
         }
 
-        ram_we      = mem_write && ram_sel && (data_addr[31:20] == 12'h200);
+        ram_we      = mem_write && ram_sel && ((active_mode == 1'b0) || (data_addr[31:20] == 12'h200));
         ram_we_byte = cpu_byte_we;
         uart_we     = mem_write && uart_sel;
         timer_we    = mem_write && timer_sel;
         sd_we       = mem_write && sd_sel;
-        uart_re     = !mem_write && uart_sel && (data_addr[3:0] == 4'h0);
+        uart_re     = if active_mode == 1'b0 ?
+            (!mem_write && uart_sel)
+        :
+            (!mem_write && uart_sel && (data_addr[3:0] == 4'h0))
+        ;
         timer_re    = 1'b1;
         sd_re       = 1'b1;
 
@@ -167,7 +182,9 @@ pub module soc_top (
         } else if sd_sel {
             cpu_data_in = sd_data_out;
         } else if uart_sel {
-            if data_addr[3:0] == 4'h0 {
+            if active_mode == 1'b0 {
+                cpu_data_in = {24'h0, uart_rdata};
+            } else if data_addr[3:0] == 4'h0 {
                 cpu_data_in = {24'h0, uart_rdata};
             } else {
                 cpu_data_in = {30'h0, uart_full, uart_empty};

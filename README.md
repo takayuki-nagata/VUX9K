@@ -16,6 +16,8 @@ The RTL modules in this repository were originally authored in VHDL-2008 and hav
   - Features full-duplex 8N1 serial communication, parameterized clock prescalers, and TX/RX synchronous FIFO buffers.
 - **Arbitrary-Precision Math Engine & REPL (`vendor/bc_clone_rs`)**: Submodule from [`takayuki-nagata/bc_clone_rs`](https://github.com/takayuki-nagata/bc_clone_rs)
   - Provides `bc_core` arbitrary-precision arithmetic engine, self-test suite, and interactive REPL running atop Zephyr RTOS (`examples/zephyr_app`).
+- **Hack Toolchain & C Firmware (`firmware_hack`)**: Powered by [`takayuki-nagata/hack_tools`](https://github.com/takayuki-nagata/hack_tools) (`has` assembler & `m2h` C-to-Hack transpiler)
+  - Provides 16-bit C and Hack assembly firmware testing factorial, Fibonacci, array manipulations, and MMIO UART output on the Dual-ISA SoC.
 
 ---
 
@@ -85,6 +87,9 @@ VUX9K/
 │   ├── Cargo.toml
 │   ├── bootstrap/                  # Assembly entry point (start.s) & linker script (link.x)
 │   └── src/                        # Rust drivers & main entry point
+├── firmware_hack/                  # Hack 16-bit C and Assembly firmware
+│   ├── Makefile                    # Hack toolchain build automation
+│   └── src/                        # C math tests (main.c), MMIO UART (uart.c/h), assembly crt0 (main.asm)
 ├── vendor/                         # External submodules
 │   ├── bc_clone_rs/                # Arbitrary-precision math engine & Zephyr app
 │   └── riscv-arch-test/            # RISC-V architectural compliance test suite
@@ -103,7 +108,7 @@ VUX9K/
 │   ├── emulator.py                 # Behavioral Python SoC emulator (fast MIPS, CLINT, UART FIFO)
 │   ├── tb_hex_runner.sv            # Fast SystemVerilog compliance testbench
 │   ├── test_rv32i_*.py             # CPU unit tests (ALU, Decode, Regfile, Compliance)
-│   ├── test_hack_*.py              # Hack unit tests (Translator, Ops)
+│   ├── test_hack_*.py              # Hack unit tests (Translator, Ops, Firmware)
 │   ├── test_clk_timer.py           # UART Timer unit test
 │   ├── test_shift_registers.py     # UART Shift register unit test
 │   ├── test_fifo_sync.py           # UART FIFO unit test
@@ -113,7 +118,7 @@ VUX9K/
 │   ├── test_soc_zephyr.py          # Zephyr RTOS & Rust SoC RTL integration test
 │   └── test_soc_bc.py              # Zephyr bc_clone_rs self-tests & interactive REPL pytest suite
 └── scripts/                        # Utility & Compliance scripts
-    ├── bin2hex.py                  # Raw binary to Hex word converter
+    ├── bin2hex.py                  # Raw binary to Hex word converter (supports RISC-V 32-bit and Hack 16-bit)
     ├── elf2bin.py                  # ELF to raw binary extractor
     ├── check_no_absolute_paths.py  # Path validation script
     ├── link.ld                     # Linker script for architectural compliance
@@ -141,7 +146,11 @@ VUX9K/
    uv venv --python 3.13 .venv
    uv pip install cocotb pytest
    ```
-5. **Zephyr SDK & Toolchain** (for Zephyr RTOS / `bc_clone_rs` builds):
+5. **Hack Toolchain** (`has` assembler & `m2h` transpiler):
+   ```bash
+   make install-hack-tools
+   ```
+6. **Zephyr SDK & Toolchain** (for Zephyr RTOS / `bc_clone_rs` builds):
    - Zephyr SDK `0.16.8` with `riscv64-zephyr-elf` toolchain and `west`.
 
 ### Running Tests
@@ -159,6 +168,12 @@ make test-arch-compliance
 # Run SoC Integration Tests (Rust firmware & Hack binary on soc_top)
 make sim-soc
 
+# Build Hack 16-bit C / Assembly Firmware
+make build-hack
+
+# Run Hack Firmware Tests (Python SoC Emulator, Pytest suite, Cocotb RTL)
+make sim-hack
+
 # Build Zephyr RTOS bc_clone_rs math application
 make build-zephyr
 
@@ -171,7 +186,7 @@ make sim-zephyr-repl
 # Run Full Zephyr RTOS & Rust Application Simulation (Python Emulator, REPL pytest, Cocotb RTL)
 make sim-zephyr
 
-# Run Full Verification Pipeline (Veryl check -> Firmware build -> Zephyr build -> All Tests -> Gowin Synthesis)
+# Run Full Verification Pipeline (Veryl check -> Firmware build -> Hack build -> Zephyr build -> All Tests -> Gowin Synthesis)
 make test
 ```
 

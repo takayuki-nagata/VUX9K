@@ -11,12 +11,13 @@ async def test_soc_zephyr_execution(dut):
     clock = Clock(dut.clk, 20, unit="ns") # 50 MHz
     cocotb.start_soon(clock.start())
 
-    # Assert Reset
-    dut.rst.value = 1
+    # Assert Reset (active-low)
+    dut.rst.value = 0
     dut.uart_rx.value = 1
     dut.sd_miso.value = 1
     await ClockCycles(dut.clk, 10)
-    dut.rst.value = 0
+    # Release Reset
+    dut.rst.value = 1
 
     await ClockCycles(dut.clk, 100)
 

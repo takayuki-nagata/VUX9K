@@ -34,10 +34,10 @@ jobs:
         with:
           osscadsuite-version: '2024-01-20'
 
-      - name: Install RISC-V GCC Toolchain
+      - name: Install RISC-V & MSP430 Toolchains
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-riscv64-linux-gnu device-tree-compiler ninja-build
+          sudo apt-get install -y gcc-riscv64-linux-gnu gcc-msp430 device-tree-compiler ninja-build
 
       - name: Install Rust Toolchain & Target
         uses: dtolnay/rust-toolchain@stable
@@ -54,6 +54,15 @@ jobs:
       - name: Install Veryl
         if: steps.cache-veryl.outputs.cache-hit != 'true'
         run: cargo install veryl --version 0.20.3
+
+      - name: Install Hack Toolchain (has & m2h)
+        run: |
+          mkdir -p ~/.local/bin
+          TMP_DIR=$(mktemp -d)
+          curl -sL https://github.com/takayuki-nagata/hack_tools/releases/download/v0.1.0/has-v0.1.0-linux-x86_64.tar.gz | tar -xz -C "$TMP_DIR"
+          cp "$TMP_DIR"/has*/has ~/.local/bin/has
+          chmod +x ~/.local/bin/has
+          rm -rf "$TMP_DIR"
 
       - name: Cache Zephyr SDK & Workspace
         id: cache-zephyr
@@ -79,11 +88,11 @@ jobs:
         run: |
           uv python install 3.13
           uv venv --python 3.13 .venv
-          uv pip install --python .venv/bin/python cocotb pytest -r $HOME/zephyrproject/zephyr/scripts/requirements-base.txt
+          uv pip install --python .venv/bin/python cocotb pytest https://github.com/takayuki-nagata/hack_tools/releases/download/v0.1.0/m2h-0.1.0.tar.gz -r $HOME/zephyrproject/zephyr/scripts/requirements-base.txt
 
       - name: Run Full SoC Test Suite
         run: |
-          export PATH=$PWD/.venv/bin:$HOME/.local/zephyr-sdk-0.16.8/riscv64-zephyr-elf/bin:$PATH
+          export PATH=$PWD/.venv/bin:$HOME/.local/bin:$HOME/.local/zephyr-sdk-0.16.8/riscv64-zephyr-elf/bin:$PATH
           export ZEPHYR_BASE=$HOME/zephyrproject/zephyr
           export ZEPHYR_SDK_INSTALL_DIR=$HOME/.local/zephyr-sdk-0.16.8
           make test

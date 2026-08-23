@@ -108,20 +108,23 @@ pub module unified_cpu (
     );
 
     // Hack Translator (16-bit Front-End)
+    var h_instr_16: logic<16>;
+    assign h_instr_16 = if pc_reg[1] ? instr_in[31:16] : instr_in[15:0];
+
     inst hack_trans: hack_translator (
-        instr_16  : instr_in[15:0],
-        rs1       : h_rs1         ,
-        rs2       : h_rs2         ,
-        rd        : h_rd          ,
-        imm       : h_imm         ,
-        alu_op    : h_alu_op      ,
-        use_imm   : h_use_imm     ,
-        use_mem   : h_use_mem     ,
-        we_reg_a  : h_we_reg_a    ,
-        we_reg_d  : h_we_reg_d    ,
-        we_mem    : h_we_mem      ,
-        jump_cond : h_jump_cond   ,
-        is_c_instr: h_is_c_instr  ,
+        instr_16  : h_instr_16  ,
+        rs1       : h_rs1       ,
+        rs2       : h_rs2       ,
+        rd        : h_rd        ,
+        imm       : h_imm       ,
+        alu_op    : h_alu_op    ,
+        use_imm   : h_use_imm   ,
+        use_mem   : h_use_mem   ,
+        we_reg_a  : h_we_reg_a  ,
+        we_reg_d  : h_we_reg_d  ,
+        we_mem    : h_we_mem    ,
+        jump_cond : h_jump_cond ,
+        is_c_instr: h_is_c_instr,
     );
 
     // RISC-V Decoder (32-bit Front-End)
@@ -203,7 +206,8 @@ pub module unified_cpu (
                 }
             } else {
                 csr_op = rv_funct3;
-                if rv_funct3 == rv32i_pkg::FUNCT3_CSRRWI || rv_funct3 == rv32i_pkg::FUNCT3_CSRRSI || rv_funct3 == rv32i_pkg::FUNCT3_CSRRCI {
+                if rv_funct3 == rv32i_pkg::FUNCT3_CSRRWI || rv_funct3 == rv32i_pkg::FUNCT3_CSRRSI || rv_funct3
+                    == rv32i_pkg::FUNCT3_CSRRCI {
                     csr_wdata = rv_uimm;
                 } else {
                     csr_wdata = rf_rs1_data;
@@ -551,7 +555,7 @@ pub module unified_cpu (
             }
         } else {
             if hack_jump_take {
-                next_pc = rf_rs2_data; // Jump to A (x1)
+                next_pc = (((rf_rs2_data as u32) << 1) as u32); // Jump to A (x1) byte address
             } else {
                 next_pc = (pc_reg as u32 + 2) as u32;
             }

@@ -5,7 +5,7 @@
 pub module tb_hex_runner () {
     embed (inline) sv{{{
         logic clk = 0;
-        logic rst = 0;
+        logic rst = 1;
         logic [31:0] instr_in;
         logic [31:0] data_in;
         logic [31:0] pc_out;
@@ -51,7 +51,9 @@ pub module tb_hex_runner () {
                 $readmemh(hex_file, ram);
             end
 
-            // Reset sequence (Active-low reset)
+            // Reset sequence (Active-low reset: 1 -> 0 -> 1)
+            rst = 1;
+            #5;
             rst = 0;
             #30;
             @(negedge clk);
