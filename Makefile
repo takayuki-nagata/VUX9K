@@ -146,17 +146,27 @@ sim-zephyr-rtl: zephyr-bc-lib
 
 sim-zephyr: sim-zephyr-emu sim-zephyr-repl sim-zephyr-rtl
 
+MSP430_GCC_URL ?= https://dr-download.ti.com/software-development/ide-configuration-compiler-or-debugger/MD-LlCjWuAbzH/9.3.1.2/msp430-gcc-9.3.1.11_linux64.tar.bz2
+LOCAL_MSP430_DIR ?= $(HOME)/.local/msp430-gcc
+
 install-hack-tools:
-	@echo "=== Installing Hack Toolchain (has & m2h) ==="
+	@echo "=== Installing Hack Toolchain (has, m2h & msp430-gcc) ==="
 	@mkdir -p $(HOME)/.local/bin
 	@if [ ! -f "$(HOME)/.local/bin/has" ]; then \
 		TMP_DIR=$$(mktemp -d); \
-		curl -sL https://github.com/takayuki-nagata/hack_tools/releases/download/v0.1.0/has-v0.1.0-linux-x86_64.tar.gz | tar -xz -C "$$TMP_DIR" && \
+		curl -sL https://github.com/takayuki-nagata/hack_tools/releases/download/v0.2.0/has-v0.2.0-linux-x86_64.tar.gz | tar -xz -C "$$TMP_DIR" && \
 		cp "$$TMP_DIR"/has*/has $(HOME)/.local/bin/has && \
 		chmod +x $(HOME)/.local/bin/has && \
 		rm -rf "$$TMP_DIR"; \
 	fi
-	$(UV) pip install --python $(VENV_PATH)/bin/python https://github.com/takayuki-nagata/hack_tools/releases/download/v0.1.0/m2h-0.1.0.tar.gz
+	@if ! which msp430-gcc >/dev/null 2>&1 && ! which msp430-elf-gcc >/dev/null 2>&1 && [ ! -f "$(HOME)/.local/bin/msp430-gcc" ]; then \
+		echo "Installing MSP430 GCC toolchain to $(LOCAL_MSP430_DIR)..."; \
+		mkdir -p $(LOCAL_MSP430_DIR); \
+		curl -fsSL $(MSP430_GCC_URL) | tar -xjf - -C $(LOCAL_MSP430_DIR) --strip-components=1 && \
+		ln -sf $(LOCAL_MSP430_DIR)/bin/msp430-elf-gcc $(HOME)/.local/bin/msp430-gcc && \
+		ln -sf $(LOCAL_MSP430_DIR)/bin/msp430-elf-gcc $(HOME)/.local/bin/msp430-elf-gcc; \
+	fi
+	$(UV) pip install --python $(VENV_PATH)/bin/python https://github.com/takayuki-nagata/hack_tools/releases/download/v0.2.0/m2h-0.2.0.tar.gz
 
 build-hack:
 	@echo "=== Building Hack 16-bit C/Asm Firmware ==="

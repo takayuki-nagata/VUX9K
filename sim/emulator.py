@@ -376,7 +376,7 @@ class SocEmulator:
             if target_str and len(uart_tx_buf) >= len(target_str):
                 if target_str in "".join(uart_tx_buf[-len(target_str)*2:]):
                     break
-        return steps
+        return "".join(uart_tx_buf)
 
     def step(self):
         if not self.detect_mode():
