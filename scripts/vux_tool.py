@@ -30,7 +30,7 @@ except ImportError:
     serial = None
 
 VUX_MAGIC = 0x56555839  # "VUX9"
-DEFAULT_FTDI_URL = "ftdi://0x0403:0x6010/2"
+DEFAULT_FTDI_URL = "ftdi://ftdi:2232/2"
 
 
 def open_port(port_name="auto", baudrate=115200, timeout=0.2):
@@ -45,9 +45,16 @@ def open_port(port_name="auto", baudrate=115200, timeout=0.2):
             except Exception as e:
                 if port_name != "auto":
                     raise e
-        # Fallback to /dev/ttyUSB3
+
+        # Fallback to SIPEED /dev/serial/by-id or /dev/ttyUSB3
+        candidate_ports = []
+        sipeed_id = "/dev/serial/by-id/usb-SIPEED_JTAG_Debugger_FactoryAIOT_Pro-if01-port0"
+        if os.path.exists(sipeed_id):
+            candidate_ports.append(sipeed_id)
+        candidate_ports.extend(["/dev/ttyUSB3", "/dev/ttyUSB2", "/dev/ttyUSB1", "/dev/ttyUSB0"])
+
         if serial is not None:
-            for p in ["/dev/ttyUSB3", "/dev/ttyUSB1", "/dev/ttyUSB0"]:
+            for p in candidate_ports:
                 try:
                     ser = serial.Serial(p, baudrate=baudrate, timeout=timeout, rtscts=False, dsrdtr=False)
                     ser.dtr = False
@@ -66,6 +73,10 @@ def open_port(port_name="auto", baudrate=115200, timeout=0.2):
 
 
 def send_cmd_and_wait(ser, cmd_char, timeout=5.0):
+    ser.reset_input_buffer()
+    ser.write(b"\r\n")
+    ser.flush()
+    time.sleep(0.05)
     ser.reset_input_buffer()
     ser.write(cmd_char.encode("utf-8"))
     ser.flush()
@@ -162,24 +173,31 @@ def cmd_flash_sd(args):
     print(f"  Mode: {args.mode.upper()} (mode={mode_val})")
     print(f"  Total Sectors: {num_sectors} ({len(raw_data)} bytes)")
 
-    ser = open_port(args.port, baudrate=args.baud)
+    ser = open_port(args.port, baudrate=args.baud, timeout=0.1)
     ser.reset_input_buffer()
 
     print("=== Initiating Multi-Sector Flash to Sector 64 ===")
-    ser.write(b"w")
-    ser.flush()
-
-    # 1. Wait for [READY]
+    
+    # 1. Wait for [READY] with gentle retry
     buf = b""
     start = time.time()
     ready = False
-    while time.time() - start < 3.0:
-        c = ser.read(64)
-        if c:
-            buf += c
-            if b"[READY]" in buf:
-                ready = True
-                break
+    for attempt in range(3):
+        ser.reset_input_buffer()
+        ser.write(b"w")
+        ser.flush()
+        
+        attempt_start = time.time()
+        while time.time() - attempt_start < 1.5:
+            c = ser.read(64)
+            if c:
+                buf += c
+                if b"[READY]" in buf:
+                    ready = True
+                    break
+            time.sleep(0.01)
+        if ready:
+            break
 
     if not ready:
         print(f"Error: SoC did not respond with [READY]. Output: {buf.decode('utf-8', errors='replace')}")

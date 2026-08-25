@@ -154,23 +154,39 @@ make prog-flash
 
 ---
 
-## Verification & Test Suite
+## Verification & Test Targets
 
-The project includes an automated regression test suite covering all levels of the stack:
+The project provides dedicated targets for both pure-simulation CI pipelines and end-to-end real hardware verification:
 
 ```bash
-# Run all tests (CPU unit tests, 45 RISC-V arch-tests, UART, SD SPI, SoC boot, Zephyr)
-make test
+# 1. CI Target: Run ALL Simulation & Synthesis Tests (100% pure software, no board required)
+make test-ci
+
+# 2. Hardware Target: Synthesize, Flash SRAM & Run Automated Real-Board Test Suite on Tang Nano 9K
+make test-hw
 ```
 
 ### Test Suite Components
-- **Auto Mode Detector & CPU Multi-FSM**: `sim/test_auto_mode_detector.py`, `sim/test_unified_cpu.py`
-- **Hack 16-bit Comprehensive ALU & Jump Operations**: `sim/test_hack_cpu_ops.py`
-- **Official RISC-V Architectural Compliance (`riscv-arch-test`)**:
-  - **45 / 45 PASSED (100%)**: 39 RV32I Base Instructions (`I-add-00` through `I-xori-00`) + 6 Zicsr Operations (`Zicsr-csrrc-00` through `Zicsr-csrrwi-00`).
-- **UART Peripheral Suite**: `sim/test_clk_timer.py`, `sim/test_shift_registers.py`, `sim/test_fifo_sync.py`, `sim/test_uart_tx.py`, `sim/test_uart_rx.py`, `sim/test_uart_controller.py`.
-- **SoC Integration & Boot Manager**: `sim/test_soc_boot.py`, `sim/test_soc_rv32i.py`, `sim/test_soc_hack.py`.
-- **Zephyr RTOS & `bc_clone_rs` BigInt Engine**: `sim/test_soc_bc.py`.
+- **CI / Simulation Suite (`make test-ci`)**:
+  - **Auto Mode Detector & CPU Multi-FSM**: `sim/test_auto_mode_detector.py`, `sim/test_unified_cpu.py`
+  - **Hack 16-bit Comprehensive ALU & Jump Operations**: `sim/test_hack_cpu_ops.py`
+  - **Official RISC-V Architectural Compliance (`riscv-arch-test`)**:
+    - **45 / 45 PASSED (100%)**: 39 RV32I Base Instructions (`I-add-00` through `I-xori-00`) + 6 Zicsr Operations (`Zicsr-csrrc-00` through `Zicsr-csrrwi-00`).
+  - **UART Peripheral Suite**: `sim/test_clk_timer.py`, `sim/test_shift_registers.py`, `sim/test_fifo_sync.py`, `sim/test_uart_tx.py`, `sim/test_uart_rx.py`, `sim/test_uart_controller.py`.
+  - **SoC Integration & Boot Manager**: `sim/test_soc_boot.py`, `sim/test_soc_rv32i.py`, `sim/test_soc_hack.py`.
+  - **Zephyr RTOS & `bc_clone_rs` BigInt Engine**: `sim/test_soc_bc.py` (10/10 math engine tests + interactive REPL).
+  - **Gowin Synthesis Check**: `synth` & `synth-top` RTL synthesis check via Yosys.
+
+- **Real Hardware Suite (`make test-hw`)**:
+  - **`test_hardware.py`**: Automated end-to-end verification directly on Sipeed Tang Nano 9K and physical MicroSD card:
+    1. UART Connection & Prompt Synchronization (`vux> `)
+    2. Hardware Self-Diagnostics (`diag` / `t`: LED test, UART loopback, MicroSD SPI init)
+    3. MicroSD Card Sector 0 (MBR) Dump (`dump-mbr` / `d`: 512-byte read & `0x55AA` signature)
+    4. Multi-Sector Flash: Hack 16-bit Firmware (`flash-sd` / `w` to Sector 64)
+    5. Header Verification: Hack 16-bit (`inspect-sd` / `s`: Magic `VUX9`, Mode `0`)
+    6. Multi-Sector Flash: RISC-V 32-bit Firmware (`flash-sd` / `w` to Sector 64)
+    7. Header Verification: RISC-V 32-bit (`inspect-sd` / `s`: Magic `VUX9`, Mode `1`)
+    8. SD Card Program Load & Dual-ISA Execution Trigger (`boot` / `l`)
 
 ---
 

@@ -19,9 +19,9 @@ CARGO_BIN ?= $(HOME)/.cargo/bin
 
 export PATH := $(PWD)/$(VENV_PATH)/bin:$(OSS_CAD_SUITE_BIN):$(CARGO_BIN):$(ZEPHYR_SDK_INSTALL_DIR)/riscv64-zephyr-elf/bin:$(PATH)
 
-.PHONY: all veryl check check-paths fmt test build synth synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware sim-unit sim-boot sim-soc sim test-arch-compliance zephyr-rust-lib zephyr-bc-lib build-zephyr sim-zephyr-emu sim-zephyr-repl sim-zephyr-rtl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack
+.PHONY: all veryl check check-paths fmt test test-ci test-hw test-hardware build synth synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware sim-unit sim-boot sim-soc sim test-arch-compliance zephyr-rust-lib zephyr-bc-lib build-zephyr sim-zephyr-emu sim-zephyr-repl sim-zephyr-rtl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack
 
-all: test
+all: test-ci
 
 venv: $(VENV_PATH)/bin/activate
 
@@ -222,9 +222,20 @@ prog-sram:
 prog-flash:
 	$(OPENFPGALOADER) -b tangnano9k -f pack.fs
 
-test: check firmware zephyr-rust-lib zephyr-bc-lib build-hack sim synth
+test: test-ci
+ 
+test-ci: check firmware zephyr-rust-lib zephyr-bc-lib build-hack build-zephyr sim synth synth-top
 	@echo "========================================================================"
-	@echo "  ALL VERYL CPU, UART, ARCH-COMPLIANCE & SOC TESTS PASSED 100%!         "
+	@echo "  [CI] ALL VERYL CPU, UART, ARCH-COMPLIANCE & SOC SIM TESTS PASSED 100%! "
+	@echo "========================================================================"
+
+test-hardware: test-hw
+
+test-hw: firmware build-hack build-hw prog-sram
+	@echo "=== Running Automated End-to-End Hardware Test Suite on Tang Nano 9K ==="
+	$(PYTHON) scripts/test_hardware.py
+	@echo "========================================================================"
+	@echo "  [HW] ALL REAL TANG NANO 9K HARDWARE & SD CARD TESTS PASSED 100%!     "
 	@echo "========================================================================"
 
 clean:

@@ -32,16 +32,14 @@ pub module soc_top (
     var raw_rst    : logic    ;
 
     always_ff (clk) {
-        if ~rst_n {
+        if por_counter[19] == 1'b0 {
+            por_counter = por_counter + 1'b1;
+            raw_rst     = 1'b0;
+        } else if ~rst_n {
             por_counter = '0;
             raw_rst     = 1'b0;
         } else {
-            if por_counter[19] == 1'b0 {
-                por_counter = por_counter + 1'b1;
-                raw_rst     = 1'b0;
-            } else {
-                raw_rst = 1'b1; // Permanently 1 (Running) after 19.4ms Power-on Reset delay
-            }
+            raw_rst = 1'b1; // Permanently 1 (Running) after 19.4ms Power-on Reset delay
         }
     }
     let rst: reset = raw_rst as reset;
