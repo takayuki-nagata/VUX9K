@@ -11,6 +11,9 @@ pub module soc_ram #(
     active_mode: input  logic    , // 0: Hack 16-bit, 1: RISC-V 32-bit
     i_addr     : input  logic<32>,
     i_data_out : output logic<32>,
+    i_we       : input  logic    ,
+    i_waddr    : input  logic<16>,
+    i_wdata    : input  logic<32>,
     d_addr     : input  logic<32>,
     d_data_in  : input  logic<32>,
     d_data_out : output logic<32>,
@@ -35,6 +38,9 @@ pub module soc_ram #(
     }}}
 
     always_ff (clk) {
+        if i_we {
+            i_mem[i_waddr] = i_wdata;
+        }
         i_data_out = i_mem[i_idx];
     }
 

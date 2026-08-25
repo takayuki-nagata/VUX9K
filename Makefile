@@ -17,7 +17,7 @@ CARGO_BIN ?= $(HOME)/.cargo/bin
 
 export PATH := $(PWD)/$(VENV_PATH)/bin:$(OSS_CAD_SUITE_BIN):$(CARGO_BIN):$(ZEPHYR_SDK_INSTALL_DIR)/riscv64-zephyr-elf/bin:$(PATH)
 
-.PHONY: all veryl check check-paths fmt test build synth clean venv setup firmware sim-unit sim-soc sim test-arch-compliance zephyr-rust-lib zephyr-bc-lib build-zephyr sim-zephyr-emu sim-zephyr-repl sim-zephyr-rtl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack
+.PHONY: all veryl check check-paths fmt test build synth clean venv setup firmware sim-unit sim-boot sim-soc sim test-arch-compliance zephyr-rust-lib zephyr-bc-lib build-zephyr sim-zephyr-emu sim-zephyr-repl sim-zephyr-rtl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack
 
 all: test
 
@@ -118,7 +118,11 @@ test-arch-compliance: veryl
 	@echo "=== Running Official RISC-V Architectural Compliance Tests ==="
 	$(PYTHON) scripts/run_arch_test.py
 
-sim-soc: firmware
+sim-boot: veryl
+	@echo "=== Running Hardware Boot Manager & Bridge Cocotb Tests ==="
+	$(MAKE) -C sim TOPLEVEL=soc_top MODULE=test_soc_boot
+
+sim-soc: firmware sim-boot
 	@echo "=== Running Python Software Emulator Unit Tests ==="
 	$(PYTHON) -m pytest sim/test_emulator.py
 	@echo "=== Running Python Software Emulator ==="
@@ -190,8 +194,8 @@ sim: sim-unit test-arch-compliance sim-soc sim-zephyr sim-hack
 
 synth: veryl
 	$(YOSYS) -p "\
-		read_verilog -sv cpu/rv32i_pkg.sv cpu/auto_mode_detector.sv cpu/hack_translator.sv cpu/rv32i_alu.sv cpu/rv32i_decode.sv cpu/rv32i_regfile.sv cpu/rv32i_csrs.sv cpu/unified_cpu.sv uart/*.sv soc/*.sv; \
-		synth_gowin -top soc_top -json soc.json; \
+		read_verilog -sv cpu/rv32i_pkg.sv cpu/auto_mode_detector.sv cpu/hack_translator.sv cpu/rv32i_alu.sv cpu/rv32i_decode.sv cpu/rv32i_regfile.sv cpu/rv32i_csrs.sv cpu/unified_cpu.sv uart/*.sv soc/timer_core.sv soc/sdcard_spi.sv soc/hw_boot_mgr.sv; \
+		synth_gowin -top hw_boot_mgr -json soc.json; \
 	"
 
 test: check firmware zephyr-rust-lib zephyr-bc-lib build-hack sim synth

@@ -1,0 +1,656 @@
+// Copyright (c) 2026 Takayuki Nagata
+// SPDX-License-Identifier: MIT
+
+// Hardware Boot Manager Module in Veryl
+// Features:
+// 1. UART <-> SPI Byte-Level Bridge for Host-driven SD Flashing (vux_tool.py)
+// 2. Hardware SD Card Auto-Loader (CMD0 -> CMD8 -> ACMD41 -> CMD17 -> DMA to I-RAM)
+// 3. CPU Reset & Pin/Bus Multiplexer for Zero-Overhead Dual-ISA execution
+
+#[allow(unused_variable)]
+#[allow(unassign_variable)]
+pub module hw_boot_mgr #(
+    param UART_CNT      : u32 = 434   , // 50MHz / 115200 baud
+    param UART_CSIZE    : u32 = 10    ,
+    param TIMEOUT_CYCLES: u32 = 100000, // Sync wait timeout (~2ms in sim, configurable)
+    param LOAD_SECTORS  : u32 = 1     , // Number of 512B sectors to auto-load into I-RAM
+) (
+    clk: input clock,
+    rst: input reset, // System Reset (active-low: 0 = reset)
+
+    // External UART Pins
+    ext_uart_rx: input  logic,
+    ext_uart_tx: output logic,
+
+    // External SD Card SPI Pins
+    sd_sclk: output logic,
+    sd_mosi: output logic,
+    sd_miso: input  logic,
+    sd_cs_n: output logic,
+
+    // CPU Control & I-RAM DMA Port
+    cpu_rst    : output reset    , // Active-low CPU reset (0 = reset, 1 = running)
+    boot_active: output logic    , // 1 = booting/bridge mode, 0 = CPU running
+    iram_we    : output logic    ,
+    iram_waddr : output logic<16>,
+    iram_wdata : output logic<32>,
+
+    // SoC MMIO UART Passthrough
+    soc_uart_tx: input  logic,
+    soc_uart_rx: output logic,
+
+    // SoC MMIO SD SPI Passthrough
+    soc_sd_sclk: input  logic,
+    soc_sd_mosi: input  logic,
+    soc_sd_miso: output logic,
+    soc_sd_cs_n: input  logic,
+) {
+    enum BootState {
+        IDLE_WAIT,
+        // Bridge Mode
+        BRIDGE_IDLE,
+        BRIDGE_SPI_WAIT,
+        BRIDGE_TX_RESP,
+        // Auto Load Mode (SD SPI Init & Read)
+        AUTO_DUMMY_CLK,
+        AUTO_CMD0_TX,
+        AUTO_CMD0_RX,
+        AUTO_CMD8_TX,
+        AUTO_CMD8_RX,
+        AUTO_CMD55_TX,
+        AUTO_CMD55_RX,
+        AUTO_ACMD41_TX,
+        AUTO_ACMD41_RX,
+        AUTO_CMD17_TX,
+        AUTO_CMD17_RX,
+        AUTO_WAIT_TOKEN,
+        AUTO_READ_DATA,
+        AUTO_READ_CRC,
+        AUTO_NEXT_SECTOR,
+        AUTO_BOOT_DONE,
+        RUN_CPU,
+    }
+
+    var state     : BootState;
+    var next_state: BootState;
+
+    // Timeout Counter
+    var timeout_cnt     : logic<32>;
+    var next_timeout_cnt: logic<32>;
+
+    // Internal UART signals
+    var b_uart_rx_data: logic<8>;
+    var b_uart_rx_rdy : logic   ;
+    var b_uart_tx_data: logic<8>;
+    var b_uart_tx_we  : logic   ;
+    var b_uart_tx_busy: logic   ;
+    var b_uart_tx_out : logic   ;
+
+    // Internal SPI Master signals
+    var spi_start   : logic   ;
+    var spi_tx_byte : logic<8>;
+    var spi_rx_byte : logic<8>;
+    var spi_busy    : logic   ;
+    var spi_sclk_out: logic   ;
+    var spi_mosi_out: logic   ;
+    var spi_cs_reg  : logic   ;
+
+    // Command generation & parsing registers
+    var cmd_buf0     : logic<8>;
+    var cmd_buf1     : logic<8>;
+    var cmd_buf2     : logic<8>;
+    var cmd_buf3     : logic<8>;
+    var cmd_buf4     : logic<8>;
+    var cmd_buf5     : logic<8>;
+    var cmd_byte_idx : logic<3>;
+    var resp_wait_cnt: logic<8>;
+
+    // Sector & Word tracking for Auto-Loader
+    var cur_sector   : logic<8> ;
+    var byte_in_sec  : logic<10>; // 0..511
+    var word_buf     : logic<32>;
+    var iram_addr_reg: logic<16>;
+    var iram_we_reg  : logic    ;
+    var iram_data_reg: logic<32>;
+
+    var bridge_cmd: logic<8>;
+
+    // Instantiate Bootloader UART Receiver
+    inst boot_uart_rx: uart_rx #(
+        CNT  : UART_CNT  ,
+        CSIZE: UART_CSIZE,
+    ) (
+        clk : clk           ,
+        rst : rst           ,
+        data: b_uart_rx_data,
+        rdy : b_uart_rx_rdy ,
+        rxd : ext_uart_rx   ,
+    );
+
+    // Instantiate Bootloader UART Transmitter
+    inst boot_uart_tx: uart_tx #(
+        CNT  : UART_CNT  ,
+        CSIZE: UART_CSIZE,
+    ) (
+        clk : clk           ,
+        rst : rst           ,
+        data: b_uart_tx_data,
+        we  : b_uart_tx_we  ,
+        busy: b_uart_tx_busy,
+        txd : b_uart_tx_out ,
+    );
+
+    // SPI Master Bit-Shifter (CPOL=0, CPHA=0, 8-bit full-duplex transfer)
+    enum SpiState {
+        SPI_IDLE,
+        SPI_TRANSFER,
+    }
+    var s_state     : SpiState   ;
+    var spi_bit_cnt : logic   <4>;
+    var spi_clk_div : logic   <8>;
+    var spi_shift_tx: logic   <8>;
+    var spi_shift_rx: logic   <8>;
+
+    const SPI_DIV_SLOW: logic<8> = 8'd64; // ~400kHz during init
+    const SPI_DIV_FAST: logic<8> = 8'd2; // ~12.5MHz during data transfer
+    var   cur_spi_div : logic<8>;
+
+    assign cur_spi_div = if (state == BootState::AUTO_READ_DATA || state == BootState::BRIDGE_IDLE || state
+        == BootState::BRIDGE_SPI_WAIT) ?
+        SPI_DIV_FAST
+    :
+        SPI_DIV_SLOW
+    ;
+
+    always_ff (clk, rst) {
+        if_reset {
+            s_state      = SpiState::SPI_IDLE;
+            spi_bit_cnt  = 4'd0;
+            spi_clk_div  = 8'd0;
+            spi_shift_tx = 8'hff;
+            spi_shift_rx = 8'hff;
+            spi_sclk_out = 1'b0;
+            spi_mosi_out = 1'b1;
+            spi_busy     = 1'b0;
+            spi_rx_byte  = 8'h00;
+        } else {
+            case s_state {
+                SpiState::SPI_IDLE: {
+                    spi_sclk_out = 1'b0;
+                    if spi_start && !spi_busy {
+                        spi_shift_tx = spi_tx_byte;
+                        spi_shift_rx = 8'h00;
+                        spi_mosi_out = spi_tx_byte[7];
+                        spi_bit_cnt  = 4'd8;
+                        spi_clk_div  = cur_spi_div;
+                        spi_busy     = 1'b1;
+                        s_state      = SpiState::SPI_TRANSFER;
+                    } else {
+                        spi_busy = 1'b0;
+                    }
+                }
+                SpiState::SPI_TRANSFER: {
+                    if spi_clk_div == 8'd0 {
+                        spi_clk_div = cur_spi_div;
+                        if !spi_sclk_out {
+                            // Rising edge: sample MISO
+                            spi_sclk_out = 1'b1;
+                            spi_shift_rx = {spi_shift_rx[6:0], sd_miso};
+                        } else {
+                            // Falling edge: shift MOSI
+                            spi_sclk_out = 1'b0;
+                            spi_shift_tx = {spi_shift_tx[6:0], 1'b1};
+                            spi_mosi_out = spi_shift_tx[6];
+                            spi_bit_cnt  = spi_bit_cnt - 1'b1;
+                            if spi_bit_cnt == 4'd1 {
+                                spi_rx_byte = {spi_shift_rx[6:0], sd_miso};
+                                spi_busy    = 1'b0;
+                                s_state     = SpiState::SPI_IDLE;
+                            }
+                        }
+                    } else {
+                        spi_clk_div = spi_clk_div - 1'b1;
+                    }
+                }
+            }
+        }
+    }
+
+    var cur_cmd_byte: logic<8>;
+    always_comb {
+        case cmd_byte_idx {
+            3'd0   : cur_cmd_byte = cmd_buf0;
+            3'd1   : cur_cmd_byte = cmd_buf1;
+            3'd2   : cur_cmd_byte = cmd_buf2;
+            3'd3   : cur_cmd_byte = cmd_buf3;
+            3'd4   : cur_cmd_byte = cmd_buf4;
+            3'd5   : cur_cmd_byte = cmd_buf5;
+            default: cur_cmd_byte = 8'hff;
+        }
+    }
+
+    // Main FSM Sequential Logic
+    always_ff (clk, rst) {
+        if_reset {
+            state          = BootState::IDLE_WAIT;
+            timeout_cnt    = 32'd0;
+            b_uart_tx_we   = 1'b0;
+            b_uart_tx_data = 8'h00;
+            spi_start      = 1'b0;
+            spi_tx_byte    = 8'hff;
+            spi_cs_reg     = 1'b1;
+            cmd_buf0       = 8'hff;
+            cmd_buf1       = 8'hff;
+            cmd_buf2       = 8'hff;
+            cmd_buf3       = 8'hff;
+            cmd_buf4       = 8'hff;
+            cmd_buf5       = 8'hff;
+            cmd_byte_idx   = 3'd0;
+            resp_wait_cnt  = 8'd0;
+            cur_sector     = 8'd0;
+            byte_in_sec    = 10'd0;
+            word_buf       = 32'd0;
+            iram_addr_reg  = 16'd0;
+            iram_we_reg    = 1'b0;
+            iram_data_reg  = 32'd0;
+            bridge_cmd     = 8'd0;
+        } else {
+            b_uart_tx_we = 1'b0;
+            spi_start    = 1'b0;
+            iram_we_reg  = 1'b0;
+
+            case state {
+                BootState::IDLE_WAIT: {
+                    spi_cs_reg = 1'b1;
+                    if b_uart_rx_rdy && b_uart_rx_data == 8'h5a {
+                        // Host requested Bridge Mode!
+                        b_uart_tx_data = 8'h5a; // ACK
+                        b_uart_tx_we   = 1'b1;
+                        state          = BootState::BRIDGE_IDLE;
+                    } else if !(timeout_cnt <: (TIMEOUT_CYCLES as u32)) {
+                        // Timeout reached, proceed to Auto-Loader!
+                        state = BootState::AUTO_DUMMY_CLK;
+                    } else {
+                        timeout_cnt = timeout_cnt + 1'b1;
+                    }
+                }
+
+                // ==========================================
+                // Bridge Mode: Host-driven SPI & Boot
+                // ==========================================
+                BootState::BRIDGE_IDLE: {
+                    if b_uart_rx_rdy {
+                        bridge_cmd = b_uart_rx_data;
+                        case b_uart_rx_data {
+                            8'h5a: { // SYNC Ping
+                                b_uart_tx_data = 8'h5a;
+                                b_uart_tx_we   = 1'b1;
+                            }
+                            8'h01: { // SPI Transfer next byte
+                                state = BootState::BRIDGE_SPI_WAIT;
+                            }
+                            8'h02: { // CS Low
+                                spi_cs_reg     = 1'b0;
+                                b_uart_tx_data = 8'h06; // ACK
+                                b_uart_tx_we   = 1'b1;
+                            }
+                            8'h03: { // CS High
+                                spi_cs_reg     = 1'b1;
+                                b_uart_tx_data = 8'h06; // ACK
+                                b_uart_tx_we   = 1'b1;
+                            }
+                            8'h05: { // CMD_BOOT -> Start Auto Load
+                                state = BootState::AUTO_DUMMY_CLK;
+                            }
+                            8'h06: { // DIRECT_BOOT -> Skip to Run CPU
+                                state = BootState::RUN_CPU;
+                            }
+                            default: {
+                                b_uart_tx_data = 8'h15; // NAK
+                                b_uart_tx_we   = 1'b1;
+                            }
+                        }
+                    }
+                }
+
+                BootState::BRIDGE_SPI_WAIT: {
+                    if b_uart_rx_rdy {
+                        spi_tx_byte = b_uart_rx_data;
+                        spi_start   = 1'b1;
+                        state       = BootState::BRIDGE_TX_RESP;
+                    }
+                }
+
+                BootState::BRIDGE_TX_RESP: {
+                    if !spi_busy && !spi_start {
+                        if !b_uart_tx_busy {
+                            b_uart_tx_data = spi_rx_byte;
+                            b_uart_tx_we   = 1'b1;
+                            state          = BootState::BRIDGE_IDLE;
+                        }
+                    }
+                }
+
+                // ==========================================
+                // Auto-Load Mode: Read SD Sector 0 to I-RAM
+                // ==========================================
+                BootState::AUTO_DUMMY_CLK: {
+                    spi_cs_reg  = 1'b1;
+                    spi_tx_byte = 8'hff;
+                    if !spi_busy && !spi_start {
+                        if resp_wait_cnt <: 8'd10 { // 80 dummy clocks
+                            spi_start     = 1'b1;
+                            resp_wait_cnt = resp_wait_cnt + 1'b1;
+                        } else {
+                            resp_wait_cnt = 8'd0;
+                            // Setup CMD0: 0x40, 0x00, 0x00, 0x00, 0x00, 0x95
+                            cmd_buf0     = 8'h40;
+                            cmd_buf1     = 8'h00;
+                            cmd_buf2     = 8'h00;
+                            cmd_buf3     = 8'h00;
+                            cmd_buf4     = 8'h00;
+                            cmd_buf5     = 8'h95;
+                            cmd_byte_idx = 3'd0;
+                            spi_cs_reg   = 1'b0;
+                            state        = BootState::AUTO_CMD0_TX;
+                        }
+                    }
+                }
+
+                BootState::AUTO_CMD0_TX: {
+                    if !spi_busy && !spi_start {
+                        spi_tx_byte  = cur_cmd_byte;
+                        spi_start    = 1'b1;
+                        cmd_byte_idx = cmd_byte_idx + 1'b1;
+                        if cmd_byte_idx == 3'd5 {
+                            resp_wait_cnt = 8'd0;
+                            state         = BootState::AUTO_CMD0_RX;
+                        }
+                    }
+                }
+
+                BootState::AUTO_CMD0_RX: {
+                    if !spi_busy && !spi_start {
+                        spi_tx_byte = 8'hff;
+                        spi_start   = 1'b1;
+                        if (spi_rx_byte & 8'h80) == 8'h00 {
+                            // R1 response received! (0x01 = Idle)
+                            // Setup CMD8: 0x48, 0x00, 0x00, 0x01, 0xAA, 0x87
+                            cmd_buf0     = 8'h48;
+                            cmd_buf1     = 8'h00;
+                            cmd_buf2     = 8'h00;
+                            cmd_buf3     = 8'h01;
+                            cmd_buf4     = 8'haa;
+                            cmd_buf5     = 8'h87;
+                            cmd_byte_idx = 3'd0;
+                            state        = BootState::AUTO_CMD8_TX;
+                        } else if !(resp_wait_cnt <: 8'd64) {
+                            // Fallback if SD card not responding: Run CPU directly
+                            state = BootState::RUN_CPU;
+                        } else {
+                            resp_wait_cnt = resp_wait_cnt + 1'b1;
+                        }
+                    }
+                }
+
+                BootState::AUTO_CMD8_TX: {
+                    if !spi_busy && !spi_start {
+                        spi_tx_byte  = cur_cmd_byte;
+                        spi_start    = 1'b1;
+                        cmd_byte_idx = cmd_byte_idx + 1'b1;
+                        if cmd_byte_idx == 3'd5 {
+                            resp_wait_cnt = 8'd0;
+                            state         = BootState::AUTO_CMD8_RX;
+                        }
+                    }
+                }
+
+                BootState::AUTO_CMD8_RX: {
+                    if !spi_busy && !spi_start {
+                        spi_tx_byte = 8'hff;
+                        spi_start   = 1'b1;
+                        if (spi_rx_byte & 8'h80) == 8'h00 {
+                            // Setup CMD55: 0x77, 0x00, 0x00, 0x00, 0x00, 0x65
+                            cmd_buf0     = 8'h77;
+                            cmd_buf1     = 8'h00;
+                            cmd_buf2     = 8'h00;
+                            cmd_buf3     = 8'h00;
+                            cmd_buf4     = 8'h00;
+                            cmd_buf5     = 8'h65;
+                            cmd_byte_idx = 3'd0;
+                            state        = BootState::AUTO_CMD55_TX;
+                        } else if !(resp_wait_cnt <: 8'd64) {
+                            state = BootState::RUN_CPU;
+                        } else {
+                            resp_wait_cnt = resp_wait_cnt + 1'b1;
+                        }
+                    }
+                }
+
+                BootState::AUTO_CMD55_TX: {
+                    if !spi_busy && !spi_start {
+                        spi_tx_byte  = cur_cmd_byte;
+                        spi_start    = 1'b1;
+                        cmd_byte_idx = cmd_byte_idx + 1'b1;
+                        if cmd_byte_idx == 3'd5 {
+                            resp_wait_cnt = 8'd0;
+                            state         = BootState::AUTO_CMD55_RX;
+                        }
+                    }
+                }
+
+                BootState::AUTO_CMD55_RX: {
+                    if !spi_busy && !spi_start {
+                        spi_tx_byte = 8'hff;
+                        spi_start   = 1'b1;
+                        if (spi_rx_byte & 8'h80) == 8'h00 {
+                            // Setup ACMD41: 0x69, 0x40, 0x00, 0x00, 0x00, 0x77
+                            cmd_buf0     = 8'h69;
+                            cmd_buf1     = 8'h40;
+                            cmd_buf2     = 8'h00;
+                            cmd_buf3     = 8'h00;
+                            cmd_buf4     = 8'h00;
+                            cmd_buf5     = 8'h77;
+                            cmd_byte_idx = 3'd0;
+                            state        = BootState::AUTO_ACMD41_TX;
+                        } else if !(resp_wait_cnt <: 8'd64) {
+                            state = BootState::RUN_CPU;
+                        } else {
+                            resp_wait_cnt = resp_wait_cnt + 1'b1;
+                        }
+                    }
+                }
+
+                BootState::AUTO_ACMD41_TX: {
+                    if !spi_busy && !spi_start {
+                        spi_tx_byte  = cur_cmd_byte;
+                        spi_start    = 1'b1;
+                        cmd_byte_idx = cmd_byte_idx + 1'b1;
+                        if cmd_byte_idx == 3'd5 {
+                            resp_wait_cnt = 8'd0;
+                            state         = BootState::AUTO_ACMD41_RX;
+                        }
+                    }
+                }
+
+                BootState::AUTO_ACMD41_RX: {
+                    if !spi_busy && !spi_start {
+                        spi_tx_byte = 8'hff;
+                        spi_start   = 1'b1;
+                        if spi_rx_byte == 8'h00 {
+                            // SD Card Ready! Start Reading Sector
+                            // Setup CMD17 (Read Sector): 0x51, addr[31:24], addr[23:16], addr[15:8], addr[7:0], 0xFF
+                            cmd_buf0     = 8'h51;
+                            cmd_buf1     = 8'h00;
+                            cmd_buf2     = 8'h00;
+                            cmd_buf3     = 8'h00;
+                            cmd_buf4     = cur_sector;
+                            cmd_buf5     = 8'hff;
+                            cmd_byte_idx = 3'd0;
+                            state        = BootState::AUTO_CMD17_TX;
+                        } else if (spi_rx_byte & 8'h80) == 8'h00 {
+                            // Still in Idle (0x01), repeat CMD55 + ACMD41
+                            cmd_buf0     = 8'h77;
+                            cmd_buf1     = 8'h00;
+                            cmd_buf2     = 8'h00;
+                            cmd_buf3     = 8'h00;
+                            cmd_buf4     = 8'h00;
+                            cmd_buf5     = 8'h65;
+                            cmd_byte_idx = 3'd0;
+                            state        = BootState::AUTO_CMD55_TX;
+                        } else if !(resp_wait_cnt <: 8'd64) {
+                            state = BootState::RUN_CPU;
+                        } else {
+                            resp_wait_cnt = resp_wait_cnt + 1'b1;
+                        }
+                    }
+                }
+
+                BootState::AUTO_CMD17_TX: {
+                    if !spi_busy && !spi_start {
+                        spi_tx_byte  = cur_cmd_byte;
+                        spi_start    = 1'b1;
+                        cmd_byte_idx = cmd_byte_idx + 1'b1;
+                        if cmd_byte_idx == 3'd5 {
+                            resp_wait_cnt = 8'd0;
+                            state         = BootState::AUTO_CMD17_RX;
+                        }
+                    }
+                }
+
+                BootState::AUTO_CMD17_RX: {
+                    if !spi_busy && !spi_start {
+                        spi_tx_byte = 8'hff;
+                        spi_start   = 1'b1;
+                        if spi_rx_byte == 8'h00 {
+                            // Command accepted, now wait for Data Token (0xFE)
+                            resp_wait_cnt = 8'd0;
+                            state         = BootState::AUTO_WAIT_TOKEN;
+                        } else if !(resp_wait_cnt <: 8'd64) {
+                            state = BootState::RUN_CPU;
+                        } else {
+                            resp_wait_cnt = resp_wait_cnt + 1'b1;
+                        }
+                    }
+                }
+
+                BootState::AUTO_WAIT_TOKEN: {
+                    if !spi_busy && !spi_start {
+                        spi_tx_byte = 8'hff;
+                        spi_start   = 1'b1;
+                        if spi_rx_byte == 8'hfe {
+                            // Data Token 0xFE received! Start reading 512 bytes
+                            byte_in_sec   = 10'd0;
+                            resp_wait_cnt = 8'd0;
+                            state         = BootState::AUTO_READ_DATA;
+                        } else if !(resp_wait_cnt <: 8'd255) {
+                            state = BootState::RUN_CPU;
+                        } else {
+                            resp_wait_cnt = resp_wait_cnt + 1'b1;
+                        }
+                    }
+                }
+
+                BootState::AUTO_READ_DATA: {
+                    if !spi_busy && !spi_start {
+                        spi_tx_byte = 8'hff;
+                        spi_start   = 1'b1;
+
+                        // Assemble 32-bit Little-Endian word
+                        case byte_in_sec[1:0] {
+                            2'd0: word_buf[7:0]   = spi_rx_byte;
+                            2'd1: word_buf[15:8]  = spi_rx_byte;
+                            2'd2: word_buf[23:16] = spi_rx_byte;
+                            2'd3: {
+                                word_buf[31:24] = spi_rx_byte;
+                                iram_we_reg     = 1'b1;
+                                iram_data_reg   = {spi_rx_byte, word_buf[23:0]};
+                                iram_addr_reg   = {cur_sector, byte_in_sec[8:2]}; // Word address in I-RAM
+                            }
+                            default: {}
+                        }
+
+                        byte_in_sec = byte_in_sec + 1'b1;
+                        if byte_in_sec == 10'd512 {
+                            resp_wait_cnt = 8'd0;
+                            state         = BootState::AUTO_READ_CRC;
+                        }
+                    }
+                }
+
+                BootState::AUTO_READ_CRC: {
+                    if !spi_busy && !spi_start {
+                        spi_tx_byte   = 8'hff;
+                        spi_start     = 1'b1;
+                        resp_wait_cnt = resp_wait_cnt + 1'b1;
+                        if resp_wait_cnt == 8'd2 {
+                            // CRC read complete
+                            state = BootState::AUTO_NEXT_SECTOR;
+                        }
+                    }
+                }
+
+                BootState::AUTO_NEXT_SECTOR: {
+                    cur_sector = cur_sector + 1'b1;
+                    if !(cur_sector <: (LOAD_SECTORS as u8)) {
+                        state = BootState::AUTO_BOOT_DONE;
+                    } else {
+                        // Read next sector
+                        cmd_buf0     = 8'h51;
+                        cmd_buf1     = 8'h00;
+                        cmd_buf2     = 8'h00;
+                        cmd_buf3     = 8'h00;
+                        cmd_buf4     = cur_sector;
+                        cmd_buf5     = 8'hff;
+                        cmd_byte_idx = 3'd0;
+                        state        = BootState::AUTO_CMD17_TX;
+                    }
+                }
+
+                BootState::AUTO_BOOT_DONE: {
+                    spi_cs_reg = 1'b1;
+                    state      = BootState::RUN_CPU;
+                }
+
+                BootState::RUN_CPU: {
+                    // CPU running, multiplexer handles I/O passthrough
+                }
+            }
+        }
+    }
+
+    // Multiplexer Outputs
+    always_comb {
+        if state == BootState::RUN_CPU {
+            cpu_rst     = 1'b1; // CPU active (not reset)
+            boot_active = 1'b0;
+
+            ext_uart_tx = soc_uart_tx;
+            soc_uart_rx = ext_uart_rx;
+
+            sd_sclk     = soc_sd_sclk;
+            sd_mosi     = soc_sd_mosi;
+            soc_sd_miso = sd_miso;
+            sd_cs_n     = soc_sd_cs_n;
+
+            iram_we    = 1'b0;
+            iram_waddr = 16'd0;
+            iram_wdata = 32'd0;
+        } else {
+            cpu_rst     = 1'b0; // Hold CPU in reset
+            boot_active = 1'b1;
+
+            ext_uart_tx = b_uart_tx_out;
+            soc_uart_rx = 1'b1;
+
+            sd_sclk     = spi_sclk_out;
+            sd_mosi     = spi_mosi_out;
+            soc_sd_miso = 1'b1;
+            sd_cs_n     = spi_cs_reg;
+
+            iram_we    = iram_we_reg;
+            iram_waddr = iram_addr_reg;
+            iram_wdata = iram_data_reg;
+        }
+    }
+}

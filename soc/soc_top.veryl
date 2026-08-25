@@ -58,10 +58,52 @@ pub module soc_top (
     var timer_irq  : logic   ;
     var cpu_byte_we: logic<4>;
 
+    // Boot Manager Signals
+    var cpu_rst    : reset    ;
+    var boot_active: logic    ;
+    var iram_we    : logic    ;
+    var iram_waddr : logic<16>;
+    var iram_wdata : logic<32>;
+
+    var soc_uart_tx: logic;
+    var soc_uart_rx: logic;
+    var soc_sd_sclk: logic;
+    var soc_sd_mosi: logic;
+    var soc_sd_miso: logic;
+    var soc_sd_cs_n: logic;
+
+    // Instantiate Hardware Boot Manager (Veryl)
+    inst boot_mgr_inst: hw_boot_mgr #(
+        UART_CNT      : 434   ,
+        UART_CSIZE    : 10    ,
+        TIMEOUT_CYCLES: 100000,
+        LOAD_SECTORS  : 1     ,
+    ) (
+        clk        : clk        ,
+        rst        : rst        ,
+        ext_uart_rx: uart_rx    ,
+        ext_uart_tx: uart_tx    ,
+        sd_sclk    : sd_sclk    ,
+        sd_mosi    : sd_mosi    ,
+        sd_miso    : sd_miso    ,
+        sd_cs_n    : sd_cs_n    ,
+        cpu_rst    : cpu_rst    ,
+        boot_active: boot_active,
+        iram_we    : iram_we    ,
+        iram_waddr : iram_waddr ,
+        iram_wdata : iram_wdata ,
+        soc_uart_tx: soc_uart_tx,
+        soc_uart_rx: soc_uart_rx,
+        soc_sd_sclk: soc_sd_sclk,
+        soc_sd_mosi: soc_sd_mosi,
+        soc_sd_miso: soc_sd_miso,
+        soc_sd_cs_n: soc_sd_cs_n,
+    );
+
     // Instantiate Unified Dual-ISA CPU Core (Veryl)
     inst cpu_inst: unified_cpu (
         clk         : clk         ,
-        rst         : rst         ,
+        rst         : cpu_rst     ,
         instr_in    : instr_data  ,
         data_in     : cpu_data_in ,
         timer_irq_in: timer_irq   ,
@@ -88,8 +130,8 @@ pub module soc_top (
         we   : uart_we          ,
         empty: uart_empty       ,
         full : uart_full        ,
-        txd  : uart_tx          ,
-        rxd  : uart_rx          ,
+        txd  : soc_uart_tx      ,
+        rxd  : soc_uart_rx      ,
     );
 
     // Instantiate Harvard Memory (256KB I-RAM + 128KB D-RAM)
@@ -99,6 +141,9 @@ pub module soc_top (
         active_mode: active_mode ,
         i_addr     : instr_addr  ,
         i_data_out : instr_data  ,
+        i_we       : iram_we     ,
+        i_waddr    : iram_waddr  ,
+        i_wdata    : iram_wdata  ,
         d_addr     : data_addr   ,
         d_data_in  : cpu_data_out,
         d_data_out : ram_data_out,
@@ -127,10 +172,10 @@ pub module soc_top (
         data_out: sd_data_out   ,
         we      : sd_we         ,
         re      : sd_re         ,
-        spi_sclk: sd_sclk       ,
-        spi_mosi: sd_mosi       ,
-        spi_miso: sd_miso       ,
-        spi_cs_n: sd_cs_n       ,
+        spi_sclk: soc_sd_sclk   ,
+        spi_mosi: soc_sd_mosi   ,
+        spi_miso: soc_sd_miso   ,
+        spi_cs_n: soc_sd_cs_n   ,
     );
 
     // Address Decoder Combinational Logic
