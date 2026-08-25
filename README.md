@@ -1,65 +1,176 @@
 # VUX9K
 
-**VUX9K** (Veryl Unified eXecution on Tang Nano 9K) is a **Dual-ISA (RISC-V RV32I & Nand2Tetris Hack 16-bit) System-on-Chip (SoC)** written 100% in **[Veryl](https://github.com/veryl-lang/veryl)** targeting the **Sipeed Tang Nano 9K** FPGA board. 
+**VUX9K** (Veryl Unified eXecution on Tang Nano 9K) is an open-source **Dual-ISA (RISC-V RV32I & Nand2Tetris Hack 16-bit) System-on-Chip (SoC)** written 100% in **[Veryl](https://github.com/veryl-lang/veryl)** targeting the **Sipeed Tang Nano 9K** FPGA board (Gowin GW1NR-9).
 
-The SoC is designed with future **Zephyr RTOS** and **Rust application execution** in mind, featuring a Harvard Architecture with SD-Card-backed instruction loading, MMIO UART, System Timer (`mtime`/`mtimecmp`), dual-mode CPU instruction execution, and complete unit / compliance / SoC integration test suites.
+The SoC features a multi-cycle Unified CPU core capable of seamlessly executing both standard **32-bit RISC-V RV32I** instructions and **16-bit Nand2Tetris Hack** machine code, integrated with a hardware MicroSD SPI master, full-duplex UART, 64-bit CLINT timer, GPIO, and an on-chip **Bare-Metal Rust Boot Manager** capable of loading and flashing multi-sector dual-ISA images from the MicroSD card (MBR gap).
+
+---
+
+## Architecture Overview
+
+```
++-----------------------------------------------------------------------------------+
+|                                 Tang Nano 9K FPGA                                 |
+|                                                                                   |
+|  +-----------------------------------------------------------------------------+  |
+|  |                     Unified Dual-ISA Core (unified_cpu)                     |  |
+|  |                                                                             |  |
+|  |   +-----------------------+     +-------------------+     +-------------+   |  |
+|  |   |  Auto-Mode Detector   | --> | 2-Cycle Multi-FSM | --> | Shared ALU  |   |  |
+|  |   | (RV32I vs Hack 16-bit)|     | (FETCH -> EXEC)   |     | (32-bit ops)|   |  |
+|  |   +-----------------------+     +-------------------+     +-------------+   |  |
+|  |               |                                                  |          |  |
+|  |   +-----------------------+                         +-------------------+   |  |
+|  |   | Hack uOp Translator   |                         | 32 x 32b Regfile  |   |  |
+|  |   | (A, D, M, JMP decode) |                         | (Distributed RAM) |   |  |
+|  |   +-----------------------+                         +-------------------+   |  |
+|  +-----------------------------------------------------------------------------+  |
+|                                        |                                          |
+|                                  MMIO Interconnect                                |
+|    +-------------------+-------------------+------------------+-----------------+ |
+|    |                   |                   |                  |                 | |
+| +-------+         +---------+         +---------+        +---------+       +----+ |
+| | 16KB  |         |  8KB    |         | UART    |        | Timer   |       | SD | |
+| | I-RAM |         |  D-RAM  |         | 115200  |        | 64-bit  |       | SPI| |
+| +-------+         +---------+         +---------+        +---------+       +----+ |
++----+-------------------+-------------------+------------------+-----------------+-+
+     |                   |                   |                  |                 |
+ [Reset/Boot]        [Stack/Data]        [USB-UART]         [mtime/cmp]      [MicroSD]
+```
 
 ---
 
 ## Lineage & Original Projects
 
-The RTL modules in this repository were originally authored in VHDL-2008 and have been fully ported to Veryl, preserving and extending comprehensive test suites:
+The RTL modules in this repository were originally authored in VHDL-2008 and have been fully ported to modern Veryl:
 
 - **CPU Core (`unified_cpu`)**: Ported from [`takayuki-nagata/hack_cpu`](https://github.com/takayuki-nagata/hack_cpu)
-  - Features dual-ISA execution with hardware auto-detection of RISC-V RV32I (32-bit) and Nand2Tetris Hack (16-bit) machine code.
+  - Unified datapath supporting both **RISC-V RV32I** (32-bit) and **Nand2Tetris Hack** (16-bit) execution with dynamic ISA auto-detection.
 - **UART Controller (`uart_controller`)**: Ported from [`takayuki-nagata/uart_controller`](https://github.com/takayuki-nagata/uart_controller)
-  - Features full-duplex 8N1 serial communication, parameterized clock prescalers, and TX/RX synchronous FIFO buffers.
+  - Parameterized baud rate clock timer (27.0 MHz -> 115200 bps), 8N1 serial framing, and dual 16-byte synchronous TX/RX FIFOs.
 - **Arbitrary-Precision Math Engine & REPL (`vendor/bc_clone_rs`)**: Submodule from [`takayuki-nagata/bc_clone_rs`](https://github.com/takayuki-nagata/bc_clone_rs)
-  - Provides `bc_core` arbitrary-precision arithmetic engine, self-test suite, and interactive REPL running atop Zephyr RTOS (`examples/zephyr_app`).
-- **Hack Toolchain & C Firmware (`firmware_hack`)**: Powered by [`takayuki-nagata/hack_tools`](https://github.com/takayuki-nagata/hack_tools) (`has` assembler & `m2h` C-to-Hack transpiler)
-  - Provides 16-bit C and Hack assembly firmware testing factorial, Fibonacci, array manipulations, and MMIO UART output on the Dual-ISA SoC.
+  - Embedded `bc_core` arbitrary-precision arithmetic engine with 10/10 math test suite running atop Zephyr RTOS.
+- **Hack Toolchain & C Firmware (`firmware_hack`)**: Powered by [`takayuki-nagata/hack_tools`](https://github.com/takayuki-nagata/hack_tools) (`has` assembler & `m2h` transpiler)
+  - 16-bit C and Hack assembly firmware testing recursive arithmetic, Fibonacci, array manipulations, and MMIO UART output.
 
 ---
 
-## Key Features
+## Memory & MMIO Register Map
 
-- **Target Board**: [Sipeed Tang Nano 9K](https://wiki.sipeed.com/hardware/en/tang/Tang-Nano-9K/Nano-9K.html) (Gowin GW1NR-9 FPGA)
-- **CPU Core**: Dual-ISA `unified_cpu` (ported to Veryl from [`hack_cpu`](https://github.com/takayuki-nagata/hack_cpu)) with auto-detection of **RISC-V RV32I 32-bit** and **Nand2Tetris Hack 16-bit** instruction sets.
-- **Hardware Description**: 100% [Veryl](https://github.com/veryl-lang/veryl) (SystemVerilog output).
-- **Firmware**: Bare-Metal Rust (`no_std` + `alloc` heap, `riscv32i-unknown-none-elf` target).
-- **Peripherals & Boot Controller**:
-  - **Hardware Boot Manager (`hw_boot_mgr`)**: UART <-> SPI byte-level bridge, SD Card hardware auto-loader (MBR gap LBA 64), and CPU reset multiplexer.
-  - Full-Duplex UART Controller (`uart_controller`, ported from [`uart_controller`](https://github.com/takayuki-nagata/uart_controller)).
-  - 64-bit RISC-V Machine Timer Core (`mtime` / `mtimecmp` for Zephyr RTOS tick compatibility).
-  - SD Card SPI Master Controller (for bootloader & persistent ROM/storage access).
-- **Verification & Simulation (OSS CAD Suite)**:
-  - Fast [Icarus Verilog](https://steveicarus.github.io/iverilog/) + [Cocotb](https://www.cocotb.org/) RTL simulation suite.
-  - Official **RISC-V Architectural Compliance Test Suite** (`riscv-arch-test`, 45/45 passing: 39 RV32I + 6 Zicsr).
-  - Python behavioral SoC emulator (`sim/emulator.py`).
-  - Automated CI via GitHub Actions (`.github/workflows/ci.yml`).
-- **FPGA Synthesis**:
-  - [Yosys](https://yosyshq.net/yosys/) `synth_gowin` automated synthesis for Tang Nano 9K (~487 LUTs for Boot Manager).
-
----
-
-## Memory & SD Card Sector Map
-
-### Harvard & MMIO Address Space
-| Address Range | Space / Peripheral | Description |
-|:---|:---|:---|
-| `0x0000_0000` - `0x0003_FFFF` | **Instruction ROM/RAM (256 KB)** | Code execution space (loaded from SD Card LBA 64 / HEX) |
-| `0x2000_0000` - `0x2001_FFFF` | **Data RAM (128 KB)** | `.data`, `.bss`, stack, and `alloc` heap region |
-| `0x4000_0000` - `0x4000_000F` | **UART Controller** | TX/RX data registers & FIFO status |
-| `0x4000_1000` - `0x4000_101F` | **System Timer** | 64-bit `mtime` & `mtimecmp` registers |
-| `0x4000_2000` - `0x4000_200F` | **SD Card SPI Controller** | SPI data, CS control, status, clock divisor |
-
-### SD Card Sector Layout (Filesystem-Safe MBR Gap Boot)
-| LBA Range | Byte Offset | Allocation / Purpose | Filesystem Safety |
+### System Address Space
+| Address Range | Size | Component | Description |
 |:---|:---|:---|:---|
-| `LBA 0` | `0x0000_0000` (512 B) | **MBR (Master Boot Record)** & Partition Table | Protected (Untouched) |
-| `LBA 1` - `LBA 63` | `0x0000_0200` - `0x0000_7FFF` | Reserved Header Area (31.5 KB) | Protected (Untouched) |
-| **`LBA 64` - `LBA 2047`** | **`0x0000_8000` - `0x000F_FFFF`** | **VUX9K Firmware Space (~1 MB MBR Gap)** | **Dedicated Boot Space** |
-| `LBA 2048`+ | `0x0010_0000`+ (1 MB+) | **FAT32 / exFAT Partition 1** (User Files) | **Fully Protected & Coexistent** |
+| `0x0000_0000` - `0x0000_3FFF` | 16 KB | **Instruction RAM / ROM** | Preloaded with Rust Boot Manager; executable target for SD app loading |
+| `0x2000_0000` - `0x2000_1FFF` | 8 KB | **Data RAM** | `.data`, `.bss`, stack, and heap region |
+| `0x4000_0000` - `0x4000_000F` | 16 B | **UART Controller** | Full-duplex 115200 bps TX/RX data registers & status flags |
+| `0x4000_1000` - `0x4000_101F` | 32 B | **System Timer (CLINT)** | 64-bit `mtime` and `mtimecmp` registers |
+| `0x4000_2000` - `0x4000_200F` | 16 B | **MicroSD SPI Master** | SPI TX/RX data, CS assertion, busy status, clock divider |
+| `0x4000_3000` - `0x4000_300F` | 16 B | **GPIO Controller** | 6 onboard active-low LEDs (`0x00`=ON, `0x3F`=OFF) & user buttons |
+
+### MicroSD Card Sector Map (Filesystem-Safe MBR Gap Boot)
+| LBA Sector | Byte Offset | Allocation / Purpose | Filesystem Safety |
+|:---|:---|:---|:---|
+| `LBA 0` | `0x0000_0000` (512 B) | **MBR (Master Boot Record)** | Protected (Untouched by tool) |
+| `LBA 1` - `LBA 63` | `0x0000_0200` - `0x0000_7FFF` | Reserved Partition Header Area | Protected |
+| **`LBA 64` - `LBA 2047`** | **`0x0000_8000` - `0x000F_FFFF`** | **VUX9 Boot Image (MBR Gap ~1 MB)** | **Dedicated VUX9 Boot Location** |
+| `LBA 2048`+ | `0x0010_0000`+ | **FAT32 / exFAT Partition 1** | **Fully Protected & Coexistent** |
+
+#### VUX9 Boot Header (Sector 64)
+| Offset | Field | Value / Meaning |
+|:---|:---|:---|
+| `0x00` - `0x03` | Magic Number | `0x56555839` (`"VUX9"` ASCII) |
+| `0x04` | ISA Mode | `0` = Hack 16-bit, `1` = RISC-V RV32I |
+| `0x05` | Entry Point Offset | Word offset in I-RAM (typically `0x00`) |
+| `0x06` - `0x07` | Sector Count | Number of 512-byte payload sectors (`n`) |
+| `0x08` - `0x0B` | Binary Byte Length | Exact size of executable binary in bytes |
+| `0x0C` - `0x0F` | CRC32 Checksum | Integrity check for payload |
+| `0x10` - `0x1FF` | Payload (Start) | First chunk of binary machine code |
+
+---
+
+## Host Tooling: `vux_tool.py`
+
+[`scripts/vux_tool.py`](scripts/vux_tool.py) is a comprehensive CLI management utility for Tang Nano 9K:
+
+```bash
+# 1. Hardware Self-Diagnostics (Tests onboard LEDs, UART loopback, MicroSD SPI init)
+python3 scripts/vux_tool.py diag
+
+# 2. Dump Sector 0 (MBR) in Hex/ASCII
+python3 scripts/vux_tool.py dump-mbr
+
+# 3. Flash Dual-ISA binary to MicroSD Card Sector 64 (MBR Gap)
+#    - Flashes Hack 16-bit binary:
+python3 scripts/vux_tool.py flash-sd build_hack/firmware.bin --mode hack
+#    - Flashes RISC-V 32-bit binary:
+python3 scripts/vux_tool.py flash-sd firmware/firmware.bin --mode riscv
+
+# 4. Inspect Sector 64 Header & verify Magic/CRC32
+python3 scripts/vux_tool.py inspect-sd
+
+# 5. Trigger MicroSD image loading & execution
+python3 scripts/vux_tool.py boot
+
+# 6. Interactive Serial Monitor (115200 bps)
+python3 scripts/vux_tool.py monitor
+```
+
+---
+
+## Quickstart & Build Guide
+
+### Prerequisites
+1. **Rust Toolchain**:
+   ```bash
+   rustup target add riscv32i-unknown-none-elf
+   ```
+2. **OSS CAD Suite** (Yosys, nextpnr, Icarus Verilog, openFPGALoader):
+   [YosysHQ/oss-cad-suite-build](https://github.com/YosysHQ/oss-cad-suite-build)
+3. **Veryl Compiler**:
+   ```bash
+   cargo install veryl --version 0.20.3
+   ```
+4. **Python Environment**:
+   ```bash
+   uv venv --python 3.13 .venv
+   uv pip install cocotb pytest pyftdi pyserial
+   ```
+
+### Building & Flashing
+
+```bash
+# 1. Build Rust Boot Manager firmware
+make firmware
+
+# 2. Synthesize Veryl SoC RTL -> GW1NR-9 Bitstream (pack.fs)
+make build-hw
+
+# 3. Flash Bitstream to Tang Nano 9K SRAM (fast volatile load)
+make prog-sram
+
+# 4. Flash Bitstream to Tang Nano 9K On-Board SPI Flash (persistent)
+make prog-flash
+```
+
+---
+
+## Verification & Test Suite
+
+The project includes an automated regression test suite covering all levels of the stack:
+
+```bash
+# Run all tests (CPU unit tests, 45 RISC-V arch-tests, UART, SD SPI, SoC boot, Zephyr)
+make test
+```
+
+### Test Suite Components
+- **Auto Mode Detector & CPU Multi-FSM**: `sim/test_auto_mode_detector.py`, `sim/test_unified_cpu.py`
+- **Hack 16-bit Comprehensive ALU & Jump Operations**: `sim/test_hack_cpu_ops.py`
+- **Official RISC-V Architectural Compliance (`riscv-arch-test`)**:
+  - **45 / 45 PASSED (100%)**: 39 RV32I Base Instructions (`I-add-00` through `I-xori-00`) + 6 Zicsr Operations (`Zicsr-csrrc-00` through `Zicsr-csrrwi-00`).
+- **UART Peripheral Suite**: `sim/test_clk_timer.py`, `sim/test_shift_registers.py`, `sim/test_fifo_sync.py`, `sim/test_uart_tx.py`, `sim/test_uart_rx.py`, `sim/test_uart_controller.py`.
+- **SoC Integration & Boot Manager**: `sim/test_soc_boot.py`, `sim/test_soc_rv32i.py`, `sim/test_soc_hack.py`.
+- **Zephyr RTOS & `bc_clone_rs` BigInt Engine**: `sim/test_soc_bc.py`.
 
 ---
 
@@ -67,173 +178,44 @@ The RTL modules in this repository were originally authored in VHDL-2008 and hav
 
 ```
 VUX9K/
-├── Makefile                        # Unified build, test, and synthesis automation
-├── Veryl.lock
-├── Veryl.toml                      # Veryl project configuration
-├── README.md                       # Project documentation
-├── LICENSE                         # MIT License
-├── cpu/                            # Veryl CPU Core & ISA Modules (from hack_cpu)
-│   ├── auto_mode_detector.veryl    # Dual-ISA mode auto-detection logic
-│   ├── hack_translator.veryl       # Hack 16-bit to micro-op translator
-│   ├── rv32i_alu.veryl             # RV32I / Hack shared ALU
-│   ├── rv32i_csrs.veryl            # Machine-Mode CSRs & System Trap Unit
-│   ├── rv32i_decode.veryl          # RV32I instruction decoder & imm generator
-│   ├── rv32i_pkg.veryl             # Opcodes and ALU operation definitions
-│   ├── rv32i_regfile.veryl         # Dual-write port 32-register register file
-│   └── unified_cpu.veryl           # Unified Dual-ISA CPU Top Module
-├── uart/                           # Veryl UART Controller & Peripherals (from uart_controller)
-│   ├── clk_timer.veryl             # Baud rate pulse generator
-│   ├── fifo_sync.veryl             # Synchronous FIFO buffer
+├── Makefile                        # Unified build, test, synthesis, and flash automation
+├── Veryl.toml                      # Veryl project configuration & dependencies
+├── cpu/                            # Veryl Unified CPU & Dual-ISA modules
+│   ├── auto_mode_detector.veryl    # First-instruction ISA auto-detector
+│   ├── hack_translator.veryl       # Hack 16-bit instruction to uOp translator
+│   ├── rv32i_alu.veryl             # Shared 32-bit ALU
+│   ├── rv32i_csrs.veryl            # Machine-Mode CSRs (mstatus, mie, mtvec, mepc, mcause)
+│   ├── rv32i_decode.veryl          # RV32I instruction decoder & immediate generator
+│   ├── rv32i_pkg.veryl             # Common type definitions and opcodes
+│   ├── rv32i_regfile.veryl         # Dual-port 32 x 32-bit register file (Distributed RAM)
+│   └── unified_cpu.veryl           # 2-cycle multi-cycle Dual-ISA CPU Top Module
+├── uart/                           # Veryl UART Controller & FIFOs
+│   ├── clk_timer.veryl             # Parameterized baud rate clock timer
+│   ├── fifo_sync.veryl             # 16-entry synchronous FIFO buffer
 │   ├── shift_registers.veryl       # Parallel load shift register
-│   ├── uart_tx.veryl               # 8N1 UART Transmitter
-│   ├── uart_rx.veryl               # 8N1 UART Receiver
-│   └── uart_controller.veryl       # Integrated UART Controller with FIFOs
+│   ├── uart_tx.veryl               # 8N1 serial transmitter
+│   ├── uart_rx.veryl               # 8N1 serial receiver
+│   └── uart_controller.veryl       # Integrated UART subsystem
 ├── soc/                            # Veryl SoC Top Level & Interconnect
-│   ├── hw_boot_mgr.veryl           # Hardware Boot Manager (UART-SPI bridge & SD auto-loader)
+│   ├── gpio_controller.veryl       # LED & button GPIO controller
+│   ├── sdcard_spi.veryl            # MicroSD SPI Master controller
 │   ├── timer_core.veryl            # 64-bit mtime/mtimecmp timer core
-│   ├── sdcard_spi.veryl            # SD Card SPI master controller
-│   ├── soc_ram.veryl               # Harvard 256KB I-RAM + 128KB D-RAM module
+│   ├── soc_ram.veryl               # Harvard 16KB I-RAM + 8KB D-RAM memory
 │   └── soc_top.veryl               # Tang Nano 9K SoC top-level wrapper
-├── firmware/                       # Bare-metal Rust firmware crate
+├── firmware/                       # Bare-metal Rust Boot Manager & drivers
 │   ├── Cargo.toml
-│   ├── bootstrap/                  # Assembly entry point (start.s) & linker script (link.x)
-│   └── src/                        # Rust drivers & main entry point
-├── firmware_hack/                  # Hack 16-bit C and Assembly firmware
-│   ├── Makefile                    # Hack toolchain build automation
-│   └── src/                        # C math tests (main.c), MMIO UART (uart.c/h), assembly crt0 (main.asm)
-├── vendor/                         # External submodules
-│   ├── bc_clone_rs/                # Arbitrary-precision math engine & Zephyr app
-│   └── riscv-arch-test/            # RISC-V architectural compliance test suite
-├── zephyr_workspace/              # Out-of-Tree Zephyr RTOS & Rust integration
-│   ├── boards/                     # Out-of-Tree Board definition (vux9k)
-│   ├── dts/bindings/               # Custom DeviceTree YAML bindings (vux9k,uart)
-│   ├── drivers/                    # Custom Out-of-Tree drivers (uart_vux9k)
-│   ├── soc/                        # Out-of-Tree SoC definitions (soc.h, Kconfig)
-│   └── app/                        # Zephyr C entry + Rust staticlib application
-│       ├── CMakeLists.txt          # CMake Cargo integration
-│       ├── prj.conf                # Zephyr Kconfig options
-│       ├── src/main.c              # C kernel entry & Rust handover
-│       └── rust_app/               # Rust staticlib crate (riscv32i-unknown-none-elf)
-├── sim/                            # Simulation testbenches (Cocotb & SystemVerilog)
-│   ├── Makefile                    # Cocotb / Icarus test runner Makefile
-│   ├── emulator.py                 # Behavioral Python SoC emulator (fast MIPS, CLINT, UART FIFO)
-│   ├── sdcard_model.py             # Cocotb Virtual SD Card SPI Slave Model
-│   ├── tb_hex_runner.sv            # Fast SystemVerilog compliance testbench
-│   ├── test_rv32i_*.py             # CPU unit tests (ALU, Decode, Regfile, Compliance)
-│   ├── test_hack_*.py              # Hack unit tests (Translator, Ops, Firmware)
-│   ├── test_clk_timer.py           # UART Timer unit test
-│   ├── test_shift_registers.py     # UART Shift register unit test
-│   ├── test_fifo_sync.py           # UART FIFO unit test
-│   ├── test_uart_*.py              # UART TX, RX, Controller unit tests
-│   ├── test_soc_boot.py            # Hardware Boot Manager & Bridge RTL integration test
-│   ├── test_soc_rv32i.py           # RISC-V 32-bit SoC integration test
-│   ├── test_soc_hack.py            # Hack 16-bit SoC integration test
-│   ├── test_soc_zephyr.py          # Zephyr RTOS & Rust SoC RTL integration test
-│   └── test_soc_bc.py              # Zephyr bc_clone_rs self-tests & interactive REPL pytest suite
-└── scripts/                        # Utility & Tooling scripts
-    ├── vux_tool.py                 # Unified Host Flasher, Boot Trigger & Serial Monitor
-    ├── bin2hex.py                  # Raw binary to Hex word converter (supports RISC-V 32-bit and Hack 16-bit)
-    ├── elf2bin.py                  # ELF to raw binary extractor
-    ├── check_no_absolute_paths.py  # Path validation script
-    ├── link.ld                     # Linker script for architectural compliance
-    ├── run_arch_test.py            # Official riscv-arch-test automation runner
-    └── target_env/                 # Target environment headers for arch-tests
-```
-
----
-
-## Firmware Flashing & Host Tooling (`vux_tool.py`)
-
-VUX9K features an integrated host tool [`scripts/vux_tool.py`](scripts/vux_tool.py) that communicates with the on-chip `hw_boot_mgr` via USB-UART to flash firmware onto the SD card without physical removal, protecting existing FAT32/exFAT filesystems by writing to the MBR gap (LBA 64):
-
-```bash
-# 1. Flash firmware to SD Card (LBA 64 = 32 KB MBR gap) and auto-boot into serial monitor
-python3 scripts/vux_tool.py --port /dev/ttyUSB1 --flash firmware/firmware.bin
-
-# 2. Flash with custom LBA offset
-python3 scripts/vux_tool.py --port /dev/ttyUSB1 --flash firmware/firmware.bin --lba 64
-
-# 3. Trigger SD Auto-Load and boot
-python3 scripts/vux_tool.py --port /dev/ttyUSB1 --boot
-
-# 4. Open serial console monitor
-python3 scripts/vux_tool.py --port /dev/ttyUSB1 --monitor
-```
-
----
-
-## Verification & Build Commands
-
-### Prerequisites
-1. **Rust Toolchain**:
-   ```bash
-   rustup target add riscv32i-unknown-none-elf
-   ```
-2. **OSS CAD Suite** (Yosys, Icarus Verilog):
-   [YosysHQ/oss-cad-suite-build](https://github.com/YosysHQ/oss-cad-suite-build)
-3. **Veryl**:
-   ```bash
-   cargo install veryl --version 0.20.3
-   ```
-4. **Python Environment with `uv`**:
-   ```bash
-   uv venv --python 3.13 .venv
-   uv pip install cocotb pytest
-   ```
-5. **Hack Toolchain** (`has` assembler & `m2h` transpiler):
-   ```bash
-   make install-hack-tools
-   ```
-6. **Zephyr SDK & Toolchain** (for Zephyr RTOS / `bc_clone_rs` builds):
-   - Zephyr SDK `0.16.8` with `riscv64-zephyr-elf` toolchain and `west`.
-
-### Running Tests
-
-```bash
-# Clone / synchronize submodules (including vendor/bc_clone_rs)
-make submodule-sync
-
-# Run all module unit tests (ALU, Decoder, Regfile, Translator, UART modules)
-make sim-unit
-
-# Run official RISC-V Architectural Compliance Tests (riscv-arch-test 45/45: 39 RV32I + 6 Zicsr)
-make test-arch-compliance
-
-# Run SoC Integration Tests (Rust firmware & Hack binary on soc_top)
-make sim-soc
-
-# Build Hack 16-bit C / Assembly Firmware
-make build-hack
-
-# Run Hack Firmware Tests (Python SoC Emulator, Pytest suite, Cocotb RTL)
-make sim-hack
-
-# Build Zephyr RTOS bc_clone_rs math application
-make build-zephyr
-
-# Run Zephyr bc_clone_rs on Python SoC Emulator (10/10 math engine self-tests)
-make sim-zephyr-emu
-
-# Run automated Pytest suite for Zephyr bc_clone_rs self-tests & interactive REPL
-make sim-zephyr-repl
-
-# Run Full Zephyr RTOS & Rust Application Simulation (Python Emulator, REPL pytest, Cocotb RTL)
-make sim-zephyr
-
-# Run Full Verification Pipeline (Veryl check -> Firmware build -> Hack build -> Zephyr build -> All Tests -> Gowin Synthesis)
-make test
+│   ├── bootstrap/                  # Assembly start.s & linker script link.x
+│   └── src/                        # MicroSD SPI driver, UART CLI, and flasher
+├── firmware_hack/                  # Hack 16-bit C and Assembly test suite
+├── sim/                            # Cocotb & Pytest RTL simulation testbenches
+├── scripts/                        # Host tooling & flasher (vux_tool.py, run_arch_test.py)
+└── vendor/                         # Submodules (bc_clone_rs, riscv-arch-test)
 ```
 
 ---
 
 ## License
 
-This project is dual-licensed:
-
-- **Hardware RTL (Veryl/SV), Bare-Metal Firmware, Test Suites & Scripts**: [MIT License](LICENSE) (see [`LICENSES/MIT.txt`](LICENSES/MIT.txt))
-- **Zephyr RTOS Out-of-Tree BSP & Application**: [Apache License 2.0](LICENSES/Apache-2.0.txt) (compliant with upstream Zephyr RTOS licensing)
-- **External Submodules**:
-  - `vendor/bc_clone_rs`: [MIT License](https://github.com/takayuki-nagata/bc_clone_rs/blob/main/LICENSE)
-  - `vendor/riscv-arch-test`: [BSD 3-Clause License](https://github.com/riscv-non-isa/riscv-arch-test/blob/master/LICENSE)
-
-All source files contain explicit [SPDX-License-Identifier](https://spdx.dev/ids/) tags and copyright notices compliant with the [REUSE](https://reuse.software/) specification.
+This project is licensed under the **[MIT License](LICENSE)** (see [`LICENSES/MIT.txt`](LICENSES/MIT.txt)).
+Zephyr RTOS Out-of-Tree components are licensed under the **[Apache License 2.0](LICENSES/Apache-2.0.txt)**.
+All files include SPDX headers conforming to the [REUSE](https://reuse.software/) specification.

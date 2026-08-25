@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Takayuki Nagata
 // SPDX-License-Identifier: MIT
 
-// MMIO UART Driver with pure RV32I software conversions
+// MMIO UART Driver with standard formatting and non-blocking RX
 
 const UART_BASE: usize = 0x4000_0000;
 const UART_DATA: *mut u8 = UART_BASE as *mut u8;
@@ -9,21 +9,30 @@ const UART_STATUS: *const u32 = (UART_BASE + 0x4) as *const u32;
 
 pub struct Uart;
 
-fn divmod10(mut n: u32) -> (u32, u8) {
-    let mut q = 0;
-    while n >= 10 {
-        n -= 10;
-        q += 1;
-    }
-    (q, n as u8)
-}
-
 impl Uart {
+    #[inline(always)]
     pub fn write_byte(c: u8) {
         unsafe {
             // Wait while TX FIFO is full (bit 1 of status)
             while (core::ptr::read_volatile(UART_STATUS) & 0x2) != 0 {}
             core::ptr::write_volatile(UART_DATA, c);
+        }
+    }
+
+    #[inline(always)]
+    pub fn has_rx_data() -> bool {
+        unsafe {
+            // RX FIFO empty is bit 0 of status (1 = empty, 0 = has data)
+            (core::ptr::read_volatile(UART_STATUS) & 0x1) == 0
+        }
+    }
+
+    #[inline(always)]
+    pub fn read_byte() -> Option<u8> {
+        if Self::has_rx_data() {
+            unsafe { Some(core::ptr::read_volatile(UART_DATA)) }
+        } else {
+            None
         }
     }
 
@@ -41,6 +50,12 @@ impl Uart {
         }
     }
 
+    pub fn print_hex_byte(val: u8) {
+        const HEX_CHARS: &[u8; 16] = b"0123456789ABCDEF";
+        Self::write_byte(HEX_CHARS[(val >> 4) as usize]);
+        Self::write_byte(HEX_CHARS[(val & 0xF) as usize]);
+    }
+
     pub fn print_dec(mut val: u32) {
         if val == 0 {
             Self::write_byte(b'0');
@@ -49,9 +64,9 @@ impl Uart {
         let mut buf = [0u8; 10];
         let mut i = 0;
         while val > 0 {
-            let (q, rem) = divmod10(val);
+            let rem = (val % 10) as u8;
+            val /= 10;
             buf[i] = b'0' + rem;
-            val = q;
             i += 1;
         }
         while i > 0 {

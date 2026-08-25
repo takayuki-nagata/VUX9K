@@ -3,7 +3,7 @@
 
 // Robust Standard UART Receiver (8N1: Center-Sampled at 115200 baud)
 pub module uart_rx #(
-    param CNT  : u32 = 234,
+    param CNT  : u32 = 234, // 27 MHz / 115200 bps
     param CSIZE: u32 = 10 ,
 ) (
     clk : input  clock   ,
@@ -38,7 +38,7 @@ pub module uart_rx #(
             rx_rdy   = 1'b0;
 
             if !is_receiving {
-                // Falling edge / Start bit detection
+                // Detect falling edge of start bit
                 if rxd_sync == 2'b10 {
                     bit_counter  = 10'd0;
                     bit_index    = 4'd0;
@@ -47,18 +47,33 @@ pub module uart_rx #(
             } else {
                 if (bit_counter as u32) == CNT_M1 {
                     bit_counter = 10'd0;
-                    if bit_index == 4'd8 { // Stop bit reached
+                    if bit_index == 4'd9 {
+                        // End of stop bit period
                         is_receiving = 1'b0;
-                        if rxd_sync[1] == 1'b1 { // Valid stop bit
-                            rx_rdy = 1'b1;
-                        }
                     } else {
                         bit_index = bit_index + 1'b1;
                     }
                 } else {
-                    if (bit_counter as u32) == HALF_CNT && bit_index >: 4'd0 {
-                        // Sample bit in center of bit period (bits 1..8)
-                        rx_shift = {rxd_sync[1], rx_shift[7:1]};
+                    if (bit_counter as u32) == HALF_CNT {
+                        case bit_index {
+                            4'd0: {
+                                // Verify valid start bit (must be 0)
+                                if rxd_sync[1] != 1'b0 {
+                                    is_receiving = 1'b0; // Spurious glitch
+                                }
+                            }
+                            4'd1, 4'd2, 4'd3, 4'd4, 4'd5, 4'd6, 4'd7, 4'd8: {
+                                // Sample data bit in middle of period (LSB first)
+                                rx_shift = {rxd_sync[1], rx_shift[7:1]};
+                            }
+                            4'd9: {
+                                // Verify valid stop bit (must be 1) and assert ready pulse
+                                if rxd_sync[1] == 1'b1 {
+                                    rx_rdy = 1'b1;
+                                }
+                            }
+                            default: {}
+                        }
                     }
                     bit_counter = bit_counter + 1'b1;
                 }

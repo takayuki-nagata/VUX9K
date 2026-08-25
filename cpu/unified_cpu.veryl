@@ -15,6 +15,7 @@ pub module unified_cpu (
     data_addr   : output logic<32>,
     data_out    : output logic<32>,
     mem_write   : output logic    ,
+    mem_read_req: output logic    ,
     mem_byte_we : output logic<4> ,
     active_mode : output logic    , // 0: Hack 16-bit, 1: RISC-V 32-bit
 ) {
@@ -24,7 +25,8 @@ pub module unified_cpu (
         MEM_WAIT,
     }
 
-    var state        : CpuState ;
+    var state: CpuState;
+    assign mem_read_req = if (state == CpuState::MEM_WAIT) ? 1'b1 : 1'b0;
     var is_riscv_mode: logic    ;
     var pc_reg       : logic<32>;
     var next_pc      : logic<32>;
@@ -107,7 +109,12 @@ pub module unified_cpu (
     assign mem_byte_we = r_mem_byte_we;
     assign mem_write   = if (state == CpuState::EXECUTE) ? r_mem_write : 1'b0;
 
-    assign is_riscv_mode = 1'b1;
+    inst mode_detect: auto_mode_detector (
+        clk          : clk          ,
+        rst          : rst          ,
+        first_instr  : instr_in     ,
+        is_riscv_mode: is_riscv_mode,
+    );
 
     // Hack Translator (16-bit Front-End)
     var h_instr_16: logic<16>;
@@ -145,18 +152,22 @@ pub module unified_cpu (
 
     // Dual-Port Register File
     inst reg_file: rv32i_regfile (
-        clk     : clk        ,
-        rst     : rst        ,
-        we      : if (state == CpuState::EXECUTE && rv_op != rv32i_pkg::Opcode::LOAD) || (state == CpuState::MEM_WAIT) ? rf_we : 1'b0,
-        rd_addr : rf_rd_addr ,
-        wr_data : rf_wr_data ,
+        clk: clk,
+        rst: rst,
+        we : if (state == CpuState::EXECUTE && rv_op != rv32i_pkg::Opcode::LOAD) || (state == CpuState::MEM_WAIT) ?
+            rf_we
+        :
+            1'b0
+        ,
+        rd_addr : rf_rd_addr                                     ,
+        wr_data : rf_wr_data                                     ,
         we2     : if (state == CpuState::EXECUTE) ? rf_we2 : 1'b0,
-        rd2_addr: rf_rd2_addr,
-        wr2_data: rf_wr2_data,
-        rs1_addr: rf_rs1_addr,
-        rs2_addr: rf_rs2_addr,
-        rs1_data: rf_rs1_data,
-        rs2_data: rf_rs2_data,
+        rd2_addr: rf_rd2_addr                                    ,
+        wr2_data: rf_wr2_data                                    ,
+        rs1_addr: rf_rs1_addr                                    ,
+        rs2_addr: rf_rs2_addr                                    ,
+        rs1_data: rf_rs1_data                                    ,
+        rs2_data: rf_rs2_data                                    ,
     );
 
     // Main 32-bit ALU
@@ -173,7 +184,7 @@ pub module unified_cpu (
         clk         : clk                                                 ,
         rst         : rst                                                 ,
         csr_addr    : rv_csr_addr                                         ,
-        csr_wdata   : if rv_funct3[2] ? rv_uimm : rf_rs1_data             ,
+        csr_wdata   : if rv_funct3[2] ? rv_uimm : rf_rs1_data,
         csr_op      : if (state == CpuState::EXECUTE) ? rv_funct3 : 3'b000,
         csr_rdata   : csr_rdata                                           ,
         trap_entry  : trap_entry                                          ,
@@ -217,12 +228,12 @@ pub module unified_cpu (
         // Hack Jump Conditions
         case h_jump_cond {
             3'b001 : hack_jump_take = (!alu_zero) && (!is_neg); // JGT
-            3'b010 : hack_jump_take = alu_zero;                // JEQ
-            3'b011 : hack_jump_take = (!is_neg);               // JGE
-            3'b100 : hack_jump_take = is_neg;                  // JLT
-            3'b101 : hack_jump_take = !alu_zero;               // JNE
-            3'b110 : hack_jump_take = is_neg || alu_zero;      // JLE
-            3'b111 : hack_jump_take = 1'b1;                    // JMP
+            3'b010 : hack_jump_take = alu_zero; // JEQ
+            3'b011 : hack_jump_take = (!is_neg); // JGE
+            3'b100 : hack_jump_take = is_neg; // JLT
+            3'b101 : hack_jump_take = !alu_zero; // JNE
+            3'b110 : hack_jump_take = is_neg || alu_zero; // JLE
+            3'b111 : hack_jump_take = 1'b1; // JMP
             default: hack_jump_take = 1'b0;
         }
 
@@ -435,10 +446,18 @@ pub module unified_cpu (
             rf_rs1_addr = h_rs1;
             rf_rs2_addr = h_rs2;
             rf_rd_addr  = 5'd1;
-            rf_we       = if h_use_mem ? (if (state == CpuState::MEM_WAIT) ? h_we_reg_a : 1'b0) : (if (state == CpuState::EXECUTE) ? h_we_reg_a : 1'b0);
+            rf_we       = if h_use_mem ?
+                (if (state == CpuState::MEM_WAIT) ? h_we_reg_a : 1'b0)
+            :
+                (if (state == CpuState::EXECUTE) ? h_we_reg_a : 1'b0)
+            ;
             rf_wr_data  = alu_result;
             rf_rd2_addr = 5'd2;
-            rf_we2      = if h_use_mem ? (if (state == CpuState::MEM_WAIT) ? h_we_reg_d : 1'b0) : (if (state == CpuState::EXECUTE) ? h_we_reg_d : 1'b0);
+            rf_we2      = if h_use_mem ?
+                (if (state == CpuState::MEM_WAIT) ? h_we_reg_d : 1'b0)
+            :
+                (if (state == CpuState::EXECUTE) ? h_we_reg_d : 1'b0)
+            ;
             rf_wr2_data = alu_result;
 
             alu_operand_a = rf_rs1_data;
@@ -485,9 +504,9 @@ pub module unified_cpu (
     // Multi-Cycle CPU State Machine & PC Update
     always_ff (clk, rst) {
         if_reset {
-            state   = CpuState::FETCH;
-            pc_reg  = 32'd0;
-            ir_reg  = 32'h0000_0013; // NOP
+            state  = CpuState::FETCH;
+            pc_reg = 32'd0;
+            ir_reg = 32'h0000_0013; // NOP
         } else {
             case state {
                 CpuState::FETCH: {

@@ -30,6 +30,7 @@ VERILOG_SOURCES += $(PWD)/../uart/uart_controller.sv
 
 VERILOG_SOURCES += $(PWD)/../soc/timer_core.sv
 VERILOG_SOURCES += $(PWD)/../soc/sdcard_spi.sv
+VERILOG_SOURCES += $(PWD)/../soc/gpio_controller.sv
 VERILOG_SOURCES += $(PWD)/../soc/hw_boot_mgr.sv
 VERILOG_SOURCES += $(PWD)/../soc/soc_ram.sv
 VERILOG_SOURCES += $(PWD)/../soc/soc_top.sv

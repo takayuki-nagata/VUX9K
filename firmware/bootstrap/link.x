@@ -6,7 +6,7 @@
 /* Unified Linker Script for Tang Nano 9K SoC */
 MEMORY
 {
-  I_ROM (rx)  : ORIGIN = 0x00000000, LENGTH = 8K
+  I_ROM (rx)  : ORIGIN = 0x00000000, LENGTH = 16K
   D_RAM (rwx) : ORIGIN = 0x20000000, LENGTH = 4K
 }
 

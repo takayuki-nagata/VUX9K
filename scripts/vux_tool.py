@@ -4,327 +4,279 @@
 
 """
 VUX9K Host Tooling (vux_tool.py)
-Provides UART <-> SPI bridge communication, SD card sector flashing,
-hardware auto-load triggers, and integrated serial terminal monitoring.
+Provides unified communication with VUX9K Boot Manager on Tang Nano 9K:
+- Real-time Serial Terminal Monitor
+- Hardware Diagnostics Trigger
+- SD Card Sector 0 (MBR) Dump
+- SD Card Sector 64 (Boot Sector) Flashing & Verification (Multi-Sector Support)
+- SD Card Load & Boot Trigger
+- Dual-ISA (Hack / RISC-V) Binary Preparation
 """
 
 import sys
 import os
 import time
+import struct
 import argparse
-
-try:
-    import serial
-except ImportError:
-    serial = None
 
 try:
     import pyftdi.serialext
 except ImportError:
     pyftdi = None
 
-class VuxBridge:
-    def __init__(self, port="auto", baud=115200, timeout=1.0):
-        if port.startswith("ftdi://"):
-            if pyftdi is None:
-                raise RuntimeError("pyftdi is not installed! Please run 'uv pip install pyftdi'.")
-            self.ser = pyftdi.serialext.serial_for_url(port, baudrate=baud, timeout=timeout)
-        elif port == "auto":
-            # First try pyftdi with FT2232 Channel B (common for Tang Nano 9K)
-            connected = False
-            if pyftdi is not None:
+try:
+    import serial
+except ImportError:
+    serial = None
+
+VUX_MAGIC = 0x56555839  # "VUX9"
+DEFAULT_FTDI_URL = "ftdi://0x0403:0x6010/2"
+
+
+def open_port(port_name="auto", baudrate=115200, timeout=0.2):
+    if port_name == "auto" or port_name.startswith("ftdi://"):
+        url = DEFAULT_FTDI_URL if port_name == "auto" else port_name
+        if pyftdi is not None:
+            try:
+                ser = pyftdi.serialext.serial_for_url(url, baudrate=baudrate, timeout=timeout, rtscts=False, dsrdtr=False)
+                ser.dtr = False
+                ser.rts = False
+                return ser
+            except Exception as e:
+                if port_name != "auto":
+                    raise e
+        # Fallback to /dev/ttyUSB3
+        if serial is not None:
+            for p in ["/dev/ttyUSB3", "/dev/ttyUSB1", "/dev/ttyUSB0"]:
                 try:
-                    self.ser = pyftdi.serialext.serial_for_url("ftdi://ftdi:2232/2", baudrate=baud, timeout=timeout)
-                    connected = True
+                    ser = serial.Serial(p, baudrate=baudrate, timeout=timeout, rtscts=False, dsrdtr=False)
+                    ser.dtr = False
+                    ser.rts = False
+                    return ser
                 except Exception:
-                    pass
-            if not connected:
-                if serial is None:
-                    raise RuntimeError("Neither pyftdi nor pyserial could open port.")
-                for p in ["/dev/ttyUSB3", "/dev/ttyUSB1", "/dev/ttyUSB0"]:
-                    try:
-                        self.ser = serial.Serial(p, baudrate=baud, timeout=timeout)
-                        connected = True
-                        break
-                    except Exception:
-                        continue
-            if not connected:
-                raise RuntimeError("Could not open FTDI / Serial port automatically!")
-        else:
-            if serial is None:
-                raise RuntimeError("pyserial is not installed!")
-            self.ser = serial.Serial(port, baudrate=baud, timeout=timeout)
-        self.timeout = timeout
+                    continue
+        raise RuntimeError("Could not open Tang Nano 9K UART port automatically.")
+    else:
+        if serial is None:
+            raise RuntimeError("pyserial is not installed!")
+        ser = serial.Serial(port_name, baudrate=baudrate, timeout=timeout, rtscts=False, dsrdtr=False)
+        ser.dtr = False
+        ser.rts = False
+        return ser
 
-    def close(self):
-        if self.ser and self.ser.is_open:
-            self.ser.close()
 
-    def sync(self, retries=5):
-        """Send Sync byte (0x5A) and wait for ACK (0x5A)"""
-        for i in range(retries):
-            self.ser.write(bytes([0x5A]))
-            self.ser.flush()
-            resp = self.ser.read(1)
-            if resp and resp[0] == 0x5A:
-                return True
-            time.sleep(0.05)
-        return False
+def send_cmd_and_wait(ser, cmd_char, timeout=5.0):
+    ser.reset_input_buffer()
+    ser.write(cmd_char.encode("utf-8"))
+    ser.flush()
+    start = time.time()
+    buf = ""
+    while time.time() - start < timeout:
+        c = ser.read(256)
+        if c:
+            text = c.decode("utf-8", errors="replace")
+            buf += text
+            print(text, end="", flush=True)
+            if "vux> " in buf and len(buf) > 3:
+                break
+    return buf
 
-    def spi_xfer_byte(self, byte_val):
-        """Send 1 byte over SPI via bridge and receive 1 byte"""
-        self.ser.write(bytes([0x01, byte_val & 0xFF]))
-        resp = self.ser.read(1)
-        if not resp:
-            raise TimeoutError("Bridge SPI transfer timeout!")
-        return resp[0]
 
-    def spi_xfer(self, data: bytes) -> bytes:
-        """Transfer multiple bytes over SPI"""
-        res = bytearray()
-        for b in data:
-            res.append(self.spi_xfer_byte(b))
-        return bytes(res)
+def cmd_monitor(args):
+    """Interactive Serial Terminal Monitor"""
+    ser = open_port(args.port, baudrate=args.baud, timeout=0.1)
+    print(f"=== Connected to VUX9K on {args.port} ({args.baud} bps) ===")
+    print("Press Ctrl+C to exit terminal.\n")
+    try:
+        while True:
+            data = ser.read(256)
+            if data:
+                print(data.decode("utf-8", errors="replace"), end="", flush=True)
+            time.sleep(0.01)
+    except KeyboardInterrupt:
+        print("\n=== Disconnected ===")
+    finally:
+        ser.close()
 
-    def set_cs(self, active: bool):
-        """Control SD Card CS line (active = Low, inactive = High)"""
-        cmd = 0x02 if active else 0x03
-        self.ser.write(bytes([cmd]))
-        resp = self.ser.read(1)
-        if not resp or resp[0] != 0x06:
-            raise RuntimeError(f"Failed to set CS line (active={active})")
 
-    def trigger_boot(self):
-        """Trigger SD Card Auto-Load and CPU execution"""
-        self.ser.write(bytes([0x05]))
-        self.ser.flush()
+def cmd_diag(args):
+    """Run hardware diagnostic tests"""
+    ser = open_port(args.port, baudrate=args.baud)
+    send_cmd_and_wait(ser, "t", timeout=4.0)
+    ser.close()
 
-    def trigger_direct_boot(self):
-        """Skip SD load and release CPU reset directly"""
-        self.ser.write(bytes([0x06]))
-        self.ser.flush()
 
-class SdCardFlasher:
-    def __init__(self, bridge: VuxBridge):
-        self.bridge = bridge
+def cmd_dump_mbr(args):
+    """Dump Sector 0 (MBR) from SD Card"""
+    ser = open_port(args.port, baudrate=args.baud)
+    send_cmd_and_wait(ser, "d", timeout=5.0)
+    ser.close()
 
-    def init_sd(self) -> bool:
-        """Initialize SD Card in SPI mode (CMD0 -> CMD8 -> ACMD41)"""
-        print("[VUX9K] Initializing SD Card in SPI mode...")
-        # 80 dummy clocks with CS High
-        self.bridge.set_cs(False)
-        self.bridge.spi_xfer(b'\xFF' * 10)
 
-        # CMD0: GO_IDLE_STATE
-        self.bridge.set_cs(True)
-        resp = self._send_cmd(0, 0x00000000, 0x95)
-        if resp != 0x01:
-            print(f"[VUX9K] SD Card CMD0 failed, response: 0x{resp:02X}")
-            self.bridge.set_cs(False)
-            return False
+def cmd_inspect_sd(args):
+    """Inspect Sector 64 (Boot Sector) Header"""
+    ser = open_port(args.port, baudrate=args.baud)
+    send_cmd_and_wait(ser, "s", timeout=3.0)
+    ser.close()
 
-        # CMD8: SEND_IF_COND (check 2.7-3.6V range)
-        resp = self._send_cmd(8, 0x000001AA, 0x87)
-        if resp == 0x01:
-            # Read 4 bytes return
-            r7 = self.bridge.spi_xfer(b'\xFF' * 4)
-            if r7[2:] != b'\x01\xAA':
-                print("[VUX9K] SD Card CMD8 voltage mismatch!")
-                self.bridge.set_cs(False)
-                return False
 
-        # ACMD41: Initialize card
-        ready = False
-        for _ in range(100):
-            # CMD55 (APP_CMD)
-            self._send_cmd(55, 0x00000000, 0x65)
-            # ACMD41 (HCS = 1)
-            resp = self._send_cmd(41, 0x40000000, 0x77)
-            if resp == 0x00:
+def cmd_boot(args):
+    """Trigger Load & Boot from SD Card Sector 64"""
+    ser = open_port(args.port, baudrate=args.baud, timeout=0.2)
+    print("=== Triggering SD Card Boot [l] ===")
+    ser.reset_input_buffer()
+    ser.write(b"l")
+    ser.flush()
+    start = time.time()
+    while time.time() - start < 4.0:
+        c = ser.read(256)
+        if c:
+            print(c.decode("utf-8", errors="replace"), end="", flush=True)
+    ser.close()
+
+
+def cmd_flash_sd(args):
+    """Flash a binary image to SD Card Sector 64 (Multi-Sector Support)"""
+    if not os.path.exists(args.file):
+        print(f"Error: File {args.file} not found!")
+        sys.exit(1)
+
+    with open(args.file, "rb") as f:
+        payload = f.read()
+
+    mode_val = 0 if args.mode == "hack" else 1
+    size_bytes = len(payload)
+
+    # Header: 16 bytes (Magic, Mode, Size, Flags)
+    header = struct.pack("<IIII", VUX_MAGIC, mode_val, size_bytes, 0)
+    raw_data = header + payload
+
+    # Pad to multiple of 512 bytes
+    rem = len(raw_data) % 512
+    if rem != 0:
+        raw_data = raw_data + b"\x00" * (512 - rem)
+
+    num_sectors = len(raw_data) // 512
+    print(f"=== Preparing VUX9 Multi-Sector Boot Image ===")
+    print(f"  File: {args.file} ({size_bytes} bytes payload)")
+    print(f"  Mode: {args.mode.upper()} (mode={mode_val})")
+    print(f"  Total Sectors: {num_sectors} ({len(raw_data)} bytes)")
+
+    ser = open_port(args.port, baudrate=args.baud)
+    ser.reset_input_buffer()
+
+    print("=== Initiating Multi-Sector Flash to Sector 64 ===")
+    ser.write(b"w")
+    ser.flush()
+
+    # 1. Wait for [READY]
+    buf = b""
+    start = time.time()
+    ready = False
+    while time.time() - start < 3.0:
+        c = ser.read(64)
+        if c:
+            buf += c
+            if b"[READY]" in buf:
                 ready = True
                 break
-            time.sleep(0.01)
 
-        self.bridge.set_cs(False)
-        if not ready:
-            print("[VUX9K] SD Card ACMD41 timeout!")
-            return False
+    if not ready:
+        print(f"Error: SoC did not respond with [READY]. Output: {buf.decode('utf-8', errors='replace')}")
+        ser.close()
+        sys.exit(1)
 
-        print("[VUX9K] SD Card successfully initialized in SPI Mode! [OK]")
-        return True
+    # 2. Send sector count (1 byte)
+    ser.write(bytes([num_sectors]))
+    ser.flush()
 
-    def _send_cmd(self, cmd: int, arg: int, crc: int) -> int:
-        cmd_bytes = bytes([
-            0x40 | cmd,
-            (arg >> 24) & 0xFF,
-            (arg >> 16) & 0xFF,
-            (arg >> 8) & 0xFF,
-            arg & 0xFF,
-            crc & 0xFF
-        ])
-        self.bridge.spi_xfer(cmd_bytes)
-        # Wait for R1 response (MSB is 0)
-        for _ in range(64):
-            r = self.bridge.spi_xfer_byte(0xFF)
-            if (r & 0x80) == 0:
-                return r
-        return 0xFF
+    # 3. Stream sectors with per-sector handshake
+    for sec_idx in range(num_sectors):
+        # Wait for [READY-SEC:x]
+        sec_token = f"[READY-SEC:{sec_idx}]".encode("utf-8")
+        buf = b""
+        start = time.time()
+        ready_sec = False
+        while time.time() - start < 3.0:
+            c = ser.read(64)
+            if c:
+                buf += c
+                if sec_token in buf:
+                    ready_sec = True
+                    break
 
-    def write_sector(self, lba: int, data: bytes) -> bool:
-        """Write single 512-byte sector to SD card (CMD24)"""
-        if len(data) != 512:
-            raise ValueError(f"Sector data must be exactly 512 bytes, got {len(data)}")
+        if not ready_sec:
+            print(f"Error: Timeout waiting for token {sec_token.decode()}. Output: {buf.decode('utf-8', errors='replace')}")
+            ser.close()
+            sys.exit(1)
 
-        self.bridge.set_cs(True)
-        resp = self._send_cmd(24, lba, 0xFF)
-        if resp != 0x00:
-            print(f"[VUX9K] CMD24 failed at LBA {lba}, response: 0x{resp:02X}")
-            self.bridge.set_cs(False)
-            return False
+        print(f"Writing Sector {64 + sec_idx} ({sec_idx + 1}/{num_sectors})...")
+        sector_bytes = raw_data[sec_idx * 512 : (sec_idx + 1) * 512]
+        for b in sector_bytes:
+            ser.write(bytes([b]))
+            ser.flush()
+            time.sleep(0.001)
 
-        # Send Data Token 0xFE
-        self.bridge.spi_xfer_byte(0xFE)
-        # Send 512 bytes payload
-        self.bridge.spi_xfer(data)
-        # Send 2 bytes dummy CRC
-        self.bridge.spi_xfer(b'\xFF\xFF')
+    # 4. Wait for [SD-OK]
+    buf = b""
+    start = time.time()
+    while time.time() - start < 6.0:
+        c = ser.read(64)
+        if c:
+            buf += c
+            text = c.decode("utf-8", errors="replace")
+            print(text, end="", flush=True)
+            if b"vux> " in buf:
+                break
 
-        # Check Data Response (xxx00101b = 0x05: Data accepted)
-        data_resp = self.bridge.spi_xfer_byte(0xFF)
-        if (data_resp & 0x1F) != 0x05:
-            print(f"[VUX9K] Data rejected at LBA {lba}, response: 0x{data_resp:02X}")
-            self.bridge.set_cs(False)
-            return False
+    print("\n=== Verifying Sector 64 Header ===")
+    send_cmd_and_wait(ser, "s", timeout=2.0)
+    ser.close()
+    print("\n=== Multi-Sector Flash & Verification Complete! ===")
 
-        # Wait while busy (MISO held Low)
-        for _ in range(5000):
-            if self.bridge.spi_xfer_byte(0xFF) == 0xFF:
-                self.bridge.set_cs(False)
-                self.bridge.spi_xfer_byte(0xFF) # 8 trailing clocks
-                return True
-
-        print(f"[VUX9K] Write busy timeout at LBA {lba}!")
-        self.bridge.set_cs(False)
-        return False
-
-    def flash_binary(self, bin_path: str, start_lba: int = 64) -> bool:
-        """Flash binary file into SD Card starting at start_lba (default: LBA 64 = 32KB MBR gap)"""
-        if not os.path.exists(bin_path):
-            print(f"Error: File {bin_path} not found!")
-            return False
-
-        with open(bin_path, "rb") as f:
-            data = f.read()
-
-        total_bytes = len(data)
-        num_sectors = (total_bytes + 511) // 512
-        offset_kb = (start_lba * 512) // 1024
-        print(f"[VUX9K] Flashing {bin_path} ({total_bytes} bytes, {num_sectors} sectors) to SD Card @ LBA {start_lba} ({offset_kb} KB offset in MBR gap)...")
-
-        if not self.init_sd():
-            return False
-
-        for sec in range(num_sectors):
-            offset = sec * 512
-            chunk = data[offset:offset+512]
-            if len(chunk) < 512:
-                chunk = chunk + b'\x00' * (512 - len(chunk))
-
-            if not self.write_sector(start_lba + sec, chunk):
-                print(f"[VUX9K] Failed writing sector {start_lba + sec}!")
-                return False
-
-            pct = (sec + 1) * 100 // num_sectors
-            sys.stdout.write(f"\r[VUX9K] Progress: [{sec + 1}/{num_sectors}] {pct}%")
-            sys.stdout.flush()
-
-        print("\n[VUX9K] Firmware flash completed successfully! [OK]")
-        return True
-
-def monitor_serial(port: str, baud: int):
-    """Simple serial console monitor"""
-    print(f"[VUX9K] Starting serial monitor on {port} @ {baud} baud (Press Ctrl+C to exit)...")
-    try:
-        if port.startswith("ftdi://") or port == "auto":
-            if pyftdi is not None:
-                url = port if port.startswith("ftdi://") else "ftdi://ftdi:2232/2"
-                ser = pyftdi.serialext.serial_for_url(url, baudrate=baud, timeout=0.1)
-            else:
-                ser = serial.Serial("/dev/ttyUSB1", baudrate=baud, timeout=0.1)
-        else:
-            ser = serial.Serial(port, baudrate=baud, timeout=0.1)
-        while True:
-            data = ser.read(128)
-            if data:
-                sys.stdout.write(data.decode("utf-8", errors="replace"))
-                sys.stdout.flush()
-    except KeyboardInterrupt:
-        print("\n[VUX9K] Monitor terminated by user.")
-    except Exception as e:
-        print(f"\n[VUX9K] Serial error: {e}")
 
 def main():
-    parser = argparse.ArgumentParser(description="VUX9K SoC Host Tooling & Flasher")
-    parser.add_argument("--port", default="auto", help="Serial port (default: auto)")
-    parser.add_argument("--baud", type=int, default=115200, help="Baudrate (default: 115200)")
-    parser.add_argument("--flash", help="Path to firmware.bin to flash to SD card and boot")
-    parser.add_argument("--lba", type=int, default=64, help="Starting LBA sector on SD Card (default: 64 = 32KB MBR gap)")
-    parser.add_argument("--boot", action="store_true", help="Trigger SD Auto-Load and CPU boot")
-    parser.add_argument("--direct-boot", action="store_true", help="Release CPU reset directly")
-    parser.add_argument("--monitor", action="store_true", help="Open serial console monitor")
+    parser = argparse.ArgumentParser(description="VUX9K Host Tooling")
+    parser.add_argument("--port", default="auto", help="Serial/FTDI port URL (default: auto)")
+    parser.add_argument("--baud", type=int, default=115200, help="UART baud rate (default: 115200)")
+
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # monitor
+    subparsers.add_parser("monitor", help="Open serial terminal monitor")
+
+    # diag
+    subparsers.add_parser("diag", help="Run hardware diagnostics")
+
+    # dump-mbr
+    subparsers.add_parser("dump-mbr", help="Dump SD Card Sector 0 (MBR)")
+
+    # inspect-sd
+    subparsers.add_parser("inspect-sd", help="Inspect Sector 64 Boot Header")
+
+    # boot
+    subparsers.add_parser("boot", help="Load & Boot payload from SD Sector 64")
+
+    # flash-sd
+    sub_flash = subparsers.add_parser("flash-sd", help="Flash binary to SD Card Sector 64")
+    sub_flash.add_argument("file", help="Binary file to flash")
+    sub_flash.add_argument("--mode", choices=["hack", "riscv"], default="hack", help="Target ISA mode")
 
     args = parser.parse_args()
 
-    if not any([args.flash, args.boot, args.direct_boot, args.monitor]):
-        parser.print_help()
-        sys.exit(1)
+    if args.command == "monitor":
+        cmd_monitor(args)
+    elif args.command == "diag":
+        cmd_diag(args)
+    elif args.command == "dump-mbr":
+        cmd_dump_mbr(args)
+    elif args.command == "inspect-sd":
+        cmd_inspect_sd(args)
+    elif args.command == "boot":
+        cmd_boot(args)
+    elif args.command == "flash-sd":
+        cmd_flash_sd(args)
 
-    bridge = None
-    try:
-        if args.flash or args.boot or args.direct_boot:
-            print(f"[VUX9K] Connecting to VUX9K Bridge on {args.port}...")
-            bridge = VuxBridge(port=args.port, baud=args.baud)
-            if not bridge.sync():
-                print("[VUX9K] Could not synchronize with Hardware Boot Manager. (Is FPGA configured and reset?)")
-                sys.exit(1)
-            print("[VUX9K] Connected to Hardware Boot Manager in Bridge Mode [OK]")
-
-            if args.flash:
-                flasher = SdCardFlasher(bridge)
-                if not flasher.flash_binary(args.flash, start_lba=args.lba):
-                    sys.exit(1)
-                print("[VUX9K] Booting CPU from SD Card...")
-                bridge.trigger_boot()
-                bridge.close()
-                bridge = None
-                monitor_serial(args.port, args.baud)
-                return
-
-            if args.boot:
-                print("[VUX9K] Triggering SD Auto-Load & Boot...")
-                bridge.trigger_boot()
-                bridge.close()
-                bridge = None
-                monitor_serial(args.port, args.baud)
-                return
-
-            if args.direct_boot:
-                print("[VUX9K] Triggering Direct CPU Boot...")
-                bridge.trigger_direct_boot()
-                bridge.close()
-                bridge = None
-                monitor_serial(args.port, args.baud)
-                return
-
-        if args.monitor:
-            monitor_serial(args.port, args.baud)
-
-    except Exception as e:
-        print(f"Error: {e}")
-        sys.exit(1)
-    finally:
-        if bridge:
-            bridge.close()
 
 if __name__ == "__main__":
     main()

@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: MIT
 
 // Direct Verilog Harvard Memory Module with ROM Read Support
-// I-ROM/RAM: 8 KB (2048 x 32-bit words) in DPX9B BSRAMs (Dual Port: Port A = Instruction Fetch, Port B = Data Read)
+// I-ROM/RAM: 16 KB (4096 x 32-bit words) in DPX9B BSRAMs (Dual Port: Port A = Instruction Fetch, Port B = Data Read)
 // D-RAM:     4 KB (1024 x 32-bit words) in SPX9 BSRAMs
 module soc_ram #(
-    parameter integer I_MEM_WORDS = 2048, // 8 KB
+    parameter integer I_MEM_WORDS = 4096, // 16 KB
     parameter integer D_MEM_WORDS = 1024  // 4 KB
 ) (
     input  wire        clk,
@@ -14,7 +14,7 @@ module soc_ram #(
     input  wire [31:0] i_addr,
     output reg  [31:0] i_data_out,
     input  wire        i_we,
-    input  wire [10:0] i_waddr,
+    input  wire [11:0] i_waddr,
     input  wire [31:0] i_wdata,
     input  wire [31:0] d_addr,
     input  wire [31:0] d_data_in,
@@ -25,8 +25,8 @@ module soc_ram #(
 
     // 1. Instruction ROM / RAM (True Dual Port BSRAM)
     (* syn_ramstyle = "block_ram" *) reg [31:0] i_mem [0:I_MEM_WORDS-1];
-    wire [10:0] i_idx = i_addr[12:2];
-    wire [10:0] i_d_idx = d_addr[12:2];
+    wire [11:0] i_idx = i_addr[13:2];
+    wire [11:0] i_d_idx = d_addr[13:2];
     reg  [31:0] i_dout_b;
 
     initial begin
@@ -58,37 +58,36 @@ module soc_ram #(
 
     wire we0 = d_we && is_dram_access && (active_mode ? d_we_byte[0] : 1'b1);
     wire we1 = d_we && is_dram_access && (active_mode ? d_we_byte[1] : 1'b1);
-    wire we2 = d_we && is_dram_access && (active_mode ? d_we_byte[2] : 1'b0);
-    wire we3 = d_we && is_dram_access && (active_mode ? d_we_byte[3] : 1'b0);
+    wire we2 = d_we && is_dram_access && (active_mode ? d_we_byte[2] : 1'b1);
+    wire we3 = d_we && is_dram_access && (active_mode ? d_we_byte[3] : 1'b1);
 
-    reg [7:0] dout0, dout1, dout2, dout3;
+    reg [7:0] d_dout0;
+    reg [7:0] d_dout1;
+    reg [7:0] d_dout2;
+    reg [7:0] d_dout3;
 
     always @(posedge clk) begin
         if (we0) d_mem0[d_idx] <= d_data_in[7:0];
         if (we1) d_mem1[d_idx] <= d_data_in[15:8];
         if (we2) d_mem2[d_idx] <= d_data_in[23:16];
         if (we3) d_mem3[d_idx] <= d_data_in[31:24];
-        dout0 <= d_mem0[d_idx];
-        dout1 <= d_mem1[d_idx];
-        dout2 <= d_mem2[d_idx];
-        dout3 <= d_mem3[d_idx];
+
+        d_dout0 <= d_mem0[d_idx];
+        d_dout1 <= d_mem1[d_idx];
+        d_dout2 <= d_mem2[d_idx];
+        d_dout3 <= d_mem3[d_idx];
     end
 
-    // Multiplex between D-RAM and ROM data read
-    reg [31:0] d_data_out_reg;
-    reg        last_is_rom;
-
+    reg last_is_rom;
     always @(posedge clk) begin
-        last_is_rom <= (d_addr[31:20] == 12'h000);
+        last_is_rom <= (d_addr[31:16] == 16'h0000);
     end
 
     always @(*) begin
-        if (active_mode == 1'b0) begin
-            d_data_out = {16'h0000, dout1, dout0};
-        end else if (last_is_rom) begin
+        if (last_is_rom) begin
             d_data_out = i_dout_b;
         end else begin
-            d_data_out = {dout3, dout2, dout1, dout0};
+            d_data_out = {d_dout3, d_dout2, d_dout1, d_dout0};
         end
     end
 

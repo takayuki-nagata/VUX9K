@@ -7,22 +7,22 @@
 #[allow(unused_variable)]
 #[allow(unassign_variable)]
 pub module soc_top (
-    clk    : input  clock       ,
-    rst_n  : input  logic       , // Active-Low Hardware Reset (Button S1)
-    btn    : input  logic       , // Active-Low User Button (Button S2)
+    clk  : input clock,
+    rst_n: input logic, // Active-Low Hardware Reset (Button S1)
+    btn  : input logic, // Active-Low User Button (Button S2)
 
     // UART Interface
-    uart_rx: input  logic       ,
-    uart_tx: output logic       ,
+    uart_rx: input  logic,
+    uart_tx: output logic,
 
     // On-Board 6x LEDs (Active-Low)
-    led    : output logic<6>    ,
+    led: output logic<6>,
 
     // SD Card SPI Interface
-    sd_sclk: output logic       ,
-    sd_mosi: output logic       ,
-    sd_miso: input  logic       ,
-    sd_cs_n: output logic       ,
+    sd_sclk: output logic,
+    sd_mosi: output logic,
+    sd_miso: input  logic,
+    sd_cs_n: output logic,
 ) {
     // Mode Status (1 = RISC-V 32-bit, 0 = Hack 16-bit)
     var active_mode: logic;
@@ -40,7 +40,7 @@ pub module soc_top (
                 por_counter = por_counter + 1'b1;
                 raw_rst     = 1'b0;
             } else {
-                raw_rst     = 1'b1; // Permanently 1 (Running) after 19.4ms Power-on Reset delay
+                raw_rst = 1'b1; // Permanently 1 (Running) after 19.4ms Power-on Reset delay
             }
         }
     }
@@ -89,6 +89,8 @@ pub module soc_top (
     // 6x LEDs connected to Software GPIO (controlled by firmware / main.rs)
     assign led = raw_led;
 
+    var mem_read_req: logic;
+
     // Instantiate Unified Dual-ISA CPU Core (Veryl)
     inst cpu_inst: unified_cpu (
         clk         : clk         ,
@@ -102,6 +104,7 @@ pub module soc_top (
         data_addr   : data_addr   ,
         data_out    : cpu_data_out,
         mem_write   : mem_write   ,
+        mem_read_req: mem_read_req,
         mem_byte_we : cpu_byte_we ,
         active_mode : active_mode ,
     );
@@ -123,21 +126,24 @@ pub module soc_top (
         rxd  : uart_rx          ,
     );
 
-    // Instantiate Harvard Memory (8KB I-RAM + 4KB D-RAM BSRAMs)
+    var i_ram_we: logic;
+    assign i_ram_we = mem_write && ram_sel && (active_mode == 1'b1) && (data_addr[31:20] == 12'h000);
+
+    // Instantiate Harvard Memory (16KB I-RAM + 4KB D-RAM BSRAMs)
     inst ram_inst: soc_ram (
-        clk        : clk             ,
-        rst        : rst             ,
-        active_mode: active_mode     ,
-        i_addr     : instr_addr      ,
-        i_data_out : instr_data      ,
-        i_we       : 1'b0            ,
-        i_waddr    : 11'd0           ,
-        i_wdata    : 32'd0           ,
-        d_addr     : data_addr       ,
-        d_data_in  : cpu_data_out    ,
-        d_data_out : ram_data_out    ,
-        d_we       : ram_we          ,
-        d_we_byte  : ram_we_byte     ,
+        clk        : clk            ,
+        rst        : rst            ,
+        active_mode: active_mode    ,
+        i_addr     : instr_addr     ,
+        i_data_out : instr_data     ,
+        i_we       : i_ram_we       ,
+        i_waddr    : data_addr[13:2],
+        i_wdata    : cpu_data_out   ,
+        d_addr     : data_addr      ,
+        d_data_in  : cpu_data_out   ,
+        d_data_out : ram_data_out   ,
+        d_we       : ram_we         ,
+        d_we_byte  : ram_we_byte    ,
     );
 
     // Instantiate System Timer Core (Veryl)
@@ -169,15 +175,15 @@ pub module soc_top (
 
     // Instantiate GPIO Controller (Veryl)
     inst gpio_inst: gpio_controller (
-        clk     : clk            ,
-        rst     : rst            ,
-        addr    : data_addr[3:0] ,
-        data_in : cpu_data_out   ,
-        data_out: gpio_data_out  ,
-        we      : gpio_we        ,
-        re      : gpio_re        ,
-        gpio_led: raw_led        ,
-        gpio_btn: btn            ,
+        clk     : clk           ,
+        rst     : rst           ,
+        addr    : data_addr[3:0],
+        data_in : cpu_data_out  ,
+        data_out: gpio_data_out ,
+        we      : gpio_we       ,
+        re      : gpio_re       ,
+        gpio_led: raw_led       ,
+        gpio_btn: btn           ,
     );
 
     // Address Decoder Combinational Logic
@@ -221,14 +227,14 @@ pub module soc_top (
         sd_we       = mem_write && sd_sel;
         gpio_we     = mem_write && gpio_sel;
 
-        uart_re     = if active_mode == 1'b0 ?
+        uart_re  = if active_mode == 1'b0 ?
             (!mem_write && uart_sel)
         :
-            (!mem_write && uart_sel && (data_addr[3:0] == 4'h0))
+            (mem_read_req && uart_sel && (data_addr[3:0] == 4'h0))
         ;
-        timer_re    = 1'b1;
-        sd_re       = 1'b1;
-        gpio_re     = 1'b1;
+        timer_re = 1'b1;
+        sd_re    = 1'b1;
+        gpio_re  = 1'b1;
 
         if ram_sel {
             cpu_data_in = ram_data_out;

@@ -12,7 +12,7 @@ pub module auto_mode_detector (
     var riscv_flag  : logic   ;
     var opcode      : logic<7>;
 
-    assign opcode = first_instr[6:0];
+    assign opcode        = first_instr[6:0];
     assign is_riscv_mode = if mode_latched ? riscv_flag : 1'b1;
 
     always_ff (clk, rst) {
@@ -30,7 +30,8 @@ pub module auto_mode_detector (
                             == rv32i_pkg::OPCODE_AUIPC) {
                         riscv_flag   = 1'b1;
                         mode_latched = 1'b1;
-                    } else if (first_instr[15:13] == 3'b111) || (first_instr[15] == 1'b0 && first_instr[14:0] != 15'd0) {
+                    } else if (first_instr[15:13] == 3'b111)
+                        || (first_instr[15] == 1'b0 && first_instr[14:0] != 15'd0) {
                         riscv_flag   = 1'b0;
                         mode_latched = 1'b1;
                     }

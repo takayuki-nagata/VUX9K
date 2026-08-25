@@ -13,11 +13,11 @@ module gpio_controller (
     re      : input  logic    ,
 
     // External Pins
-    gpio_led: output logic<6> , // Active-Low output to LEDs
-    gpio_btn: input  logic    , // Active-Low input from S2 button
+    gpio_led: output logic<6>, // Active-Low output to LEDs
+    gpio_btn: input  logic   , // Active-Low input from S2 button
 ) {
-    var led_reg  : logic<6>;
-    var btn_sync : logic<2>;
+    var led_reg : logic<6>;
+    var btn_sync: logic<2>;
 
     // Invert outputs for Active-Low LEDs (1 in led_reg -> 0 to pin -> LED lights up)
     assign gpio_led = ~led_reg;

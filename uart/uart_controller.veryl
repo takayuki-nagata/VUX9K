@@ -38,8 +38,9 @@ pub module uart_controller #(
     var uart_rdy: logic   ;
 
     inst tx_fifo: fifo_sync #(
-        WIDTH    : 8,
-        LOG_DEPTH: 4,
+        WIDTH      : 8,
+        LOG_DEPTH  : 5,
+        COUNT_WIDTH: 6,
     ) (
         clk  : clk     ,
         rst  : rst     ,
@@ -96,8 +97,9 @@ pub module uart_controller #(
     );
 
     inst rx_fifo: fifo_sync #(
-        WIDTH    : 8,
-        LOG_DEPTH: 4,
+        WIDTH      : 8,
+        LOG_DEPTH  : 5,
+        COUNT_WIDTH: 6,
     ) (
         clk  : clk     ,
         rst  : rst     ,

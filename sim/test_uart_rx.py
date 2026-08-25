@@ -2,11 +2,11 @@
 # SPDX-License-Identifier: MIT
 
 import cocotb
-from cocotb.triggers import FallingEdge, Timer
+from cocotb.triggers import FallingEdge, Timer, ClockCycles
 from cocotb.clock import Clock
 
-async def send_uart_byte(dut, byte_val: int, cnt: int = 434):
-    """Helper to drive serial UART frame on rxd"""
+async def send_uart_byte(dut, byte_val: int, cnt: int = 234):
+    """Helper to drive serial UART frame on rxd at 27MHz / 115200bps (CNT=234)"""
     # 1. Start bit (0)
     dut.rxd.value = 0
     for _ in range(cnt):
@@ -26,7 +26,7 @@ async def send_uart_byte(dut, byte_val: int, cnt: int = 434):
 @cocotb.test()
 async def test_uart_rx(dut):
     """Test UART RX serial frame reception and ready pulse generation"""
-    clock = Clock(dut.clk, 20, unit="ns")
+    clock = Clock(dut.clk, 37038, unit="ps") # 27.0 MHz integer period in ps
     cocotb.start_soon(clock.start())
 
     # 1. Reset (active-low)
@@ -34,14 +34,13 @@ async def test_uart_rx(dut):
     dut.rst.value = 0
     dut.rxd.value = 1
 
-    await FallingEdge(dut.clk)
-    await FallingEdge(dut.clk)
+    await ClockCycles(dut.clk, 10)
     dut.rst.value = 1
-    await FallingEdge(dut.clk)
+    await ClockCycles(dut.clk, 10)
 
     # 2. Send Byte 1: 0xA5 (0b10100101)
     test_byte1 = 0xA5
-    cocotb.start_soon(send_uart_byte(dut, test_byte1))
+    cocotb.start_soon(send_uart_byte(dut, test_byte1, cnt=234))
 
     # Wait for rdy assertion
     while int(dut.rdy.value) == 0:
@@ -50,12 +49,12 @@ async def test_uart_rx(dut):
     assert int(dut.data.value) == test_byte1, f"Expected 0x{test_byte1:02X}, got 0x{int(dut.data.value):02X}"
     dut._log.info(f"Received Byte 1 successfully: 0x{test_byte1:02X}")
 
-    # Wait for rdy to clear
-    await FallingEdge(dut.clk)
+    # Wait for frame completion and idle line
+    await ClockCycles(dut.clk, 300)
 
     # 3. Send Byte 2: 0x3C (0b00111100)
     test_byte2 = 0x3C
-    cocotb.start_soon(send_uart_byte(dut, test_byte2))
+    cocotb.start_soon(send_uart_byte(dut, test_byte2, cnt=234))
 
     while int(dut.rdy.value) == 0:
         await FallingEdge(dut.clk)
@@ -63,4 +62,4 @@ async def test_uart_rx(dut):
     assert int(dut.data.value) == test_byte2, f"Expected 0x{test_byte2:02X}, got 0x{int(dut.data.value):02X}"
     dut._log.info(f"Received Byte 2 successfully: 0x{test_byte2:02X}")
 
-    dut._log.info("UART RX verified successfully [PASS]")
+    dut._log.info("UART RX serial frame reception test passed 100% [PASS]")
