@@ -10,10 +10,11 @@
 #[allow(unused_variable)]
 #[allow(unassign_variable)]
 pub module hw_boot_mgr #(
-    param UART_CNT      : u32 = 434   , // 50MHz / 115200 baud
-    param UART_CSIZE    : u32 = 10    ,
-    param TIMEOUT_CYCLES: u32 = 100000, // Sync wait timeout (~2ms in sim, configurable)
-    param LOAD_SECTORS  : u32 = 1     , // Number of 512B sectors to auto-load into I-RAM
+    param UART_CNT         : u32 = 434   , // 50MHz / 115200 baud
+    param UART_CSIZE       : u32 = 10    ,
+    param TIMEOUT_CYCLES   : u32 = 100000, // Sync wait timeout (~2ms in sim, configurable)
+    param BOOT_START_SECTOR: u32 = 64    , // LBA 64 (32 KB offset in MBR gap)
+    param LOAD_SECTORS     : u32 = 1     , // Number of 512B sectors to auto-load into I-RAM
 ) (
     clk: input clock,
     rst: input reset, // System Reset (active-low: 0 = reset)
@@ -107,11 +108,14 @@ pub module hw_boot_mgr #(
 
     // Sector & Word tracking for Auto-Loader
     var cur_sector   : logic<8> ;
+    var target_lba   : logic<32>;
     var byte_in_sec  : logic<10>; // 0..511
     var word_buf     : logic<32>;
     var iram_addr_reg: logic<16>;
     var iram_we_reg  : logic    ;
     var iram_data_reg: logic<32>;
+
+    assign target_lba = (BOOT_START_SECTOR as u32) + {24'd0, cur_sector};
 
     var bridge_cmd: logic<8>;
 
@@ -479,12 +483,12 @@ pub module hw_boot_mgr #(
                         spi_start   = 1'b1;
                         if spi_rx_byte == 8'h00 {
                             // SD Card Ready! Start Reading Sector
-                            // Setup CMD17 (Read Sector): 0x51, addr[31:24], addr[23:16], addr[15:8], addr[7:0], 0xFF
+                            // Setup CMD17 (Read Sector): 0x51, target_lba[31:24], [23:16], [15:8], [7:0], 0xFF
                             cmd_buf0     = 8'h51;
-                            cmd_buf1     = 8'h00;
-                            cmd_buf2     = 8'h00;
-                            cmd_buf3     = 8'h00;
-                            cmd_buf4     = cur_sector;
+                            cmd_buf1     = target_lba[31:24];
+                            cmd_buf2     = target_lba[23:16];
+                            cmd_buf3     = target_lba[15:8];
+                            cmd_buf4     = target_lba[7:0];
                             cmd_buf5     = 8'hff;
                             cmd_byte_idx = 3'd0;
                             state        = BootState::AUTO_CMD17_TX;
@@ -597,10 +601,10 @@ pub module hw_boot_mgr #(
                     } else {
                         // Read next sector
                         cmd_buf0     = 8'h51;
-                        cmd_buf1     = 8'h00;
-                        cmd_buf2     = 8'h00;
-                        cmd_buf3     = 8'h00;
-                        cmd_buf4     = cur_sector;
+                        cmd_buf1     = target_lba[31:24];
+                        cmd_buf2     = target_lba[23:16];
+                        cmd_buf3     = target_lba[15:8];
+                        cmd_buf4     = target_lba[7:0];
                         cmd_buf5     = 8'hff;
                         cmd_byte_idx = 3'd0;
                         state        = BootState::AUTO_CMD17_TX;

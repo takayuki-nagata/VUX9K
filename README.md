@@ -27,7 +27,8 @@ The RTL modules in this repository were originally authored in VHDL-2008 and hav
 - **CPU Core**: Dual-ISA `unified_cpu` (ported to Veryl from [`hack_cpu`](https://github.com/takayuki-nagata/hack_cpu)) with auto-detection of **RISC-V RV32I 32-bit** and **Nand2Tetris Hack 16-bit** instruction sets.
 - **Hardware Description**: 100% [Veryl](https://github.com/veryl-lang/veryl) (SystemVerilog output).
 - **Firmware**: Bare-Metal Rust (`no_std` + `alloc` heap, `riscv32i-unknown-none-elf` target).
-- **Peripherals**:
+- **Peripherals & Boot Controller**:
+  - **Hardware Boot Manager (`hw_boot_mgr`)**: UART <-> SPI byte-level bridge, SD Card hardware auto-loader (MBR gap LBA 64), and CPU reset multiplexer.
   - Full-Duplex UART Controller (`uart_controller`, ported from [`uart_controller`](https://github.com/takayuki-nagata/uart_controller)).
   - 64-bit RISC-V Machine Timer Core (`mtime` / `mtimecmp` for Zephyr RTOS tick compatibility).
   - SD Card SPI Master Controller (for bootloader & persistent ROM/storage access).
@@ -37,19 +38,28 @@ The RTL modules in this repository were originally authored in VHDL-2008 and hav
   - Python behavioral SoC emulator (`sim/emulator.py`).
   - Automated CI via GitHub Actions (`.github/workflows/ci.yml`).
 - **FPGA Synthesis**:
-  - [Yosys](https://yosyshq.net/yosys/) `synth_gowin` automated synthesis for Tang Nano 9K.
+  - [Yosys](https://yosyshq.net/yosys/) `synth_gowin` automated synthesis for Tang Nano 9K (~487 LUTs for Boot Manager).
 
 ---
 
-## Memory Map (Harvard & MMIO)
+## Memory & SD Card Sector Map
 
+### Harvard & MMIO Address Space
 | Address Range | Space / Peripheral | Description |
 |:---|:---|:---|
-| `0x0000_0000` - `0x0003_FFFF` | **Instruction ROM/RAM (256 KB)** | Code execution space (loaded from SD Card / HEX) |
+| `0x0000_0000` - `0x0003_FFFF` | **Instruction ROM/RAM (256 KB)** | Code execution space (loaded from SD Card LBA 64 / HEX) |
 | `0x2000_0000` - `0x2001_FFFF` | **Data RAM (128 KB)** | `.data`, `.bss`, stack, and `alloc` heap region |
 | `0x4000_0000` - `0x4000_000F` | **UART Controller** | TX/RX data registers & FIFO status |
 | `0x4000_1000` - `0x4000_101F` | **System Timer** | 64-bit `mtime` & `mtimecmp` registers |
 | `0x4000_2000` - `0x4000_200F` | **SD Card SPI Controller** | SPI data, CS control, status, clock divisor |
+
+### SD Card Sector Layout (Filesystem-Safe MBR Gap Boot)
+| LBA Range | Byte Offset | Allocation / Purpose | Filesystem Safety |
+|:---|:---|:---|:---|
+| `LBA 0` | `0x0000_0000` (512 B) | **MBR (Master Boot Record)** & Partition Table | Protected (Untouched) |
+| `LBA 1` - `LBA 63` | `0x0000_0200` - `0x0000_7FFF` | Reserved Header Area (31.5 KB) | Protected (Untouched) |
+| **`LBA 64` - `LBA 2047`** | **`0x0000_8000` - `0x000F_FFFF`** | **VUX9K Firmware Space (~1 MB MBR Gap)** | **Dedicated Boot Space** |
+| `LBA 2048`+ | `0x0010_0000`+ (1 MB+) | **FAT32 / exFAT Partition 1** (User Files) | **Fully Protected & Coexistent** |
 
 ---
 
@@ -79,6 +89,7 @@ VUX9K/
 │   ├── uart_rx.veryl               # 8N1 UART Receiver
 │   └── uart_controller.veryl       # Integrated UART Controller with FIFOs
 ├── soc/                            # Veryl SoC Top Level & Interconnect
+│   ├── hw_boot_mgr.veryl           # Hardware Boot Manager (UART-SPI bridge & SD auto-loader)
 │   ├── timer_core.veryl            # 64-bit mtime/mtimecmp timer core
 │   ├── sdcard_spi.veryl            # SD Card SPI master controller
 │   ├── soc_ram.veryl               # Harvard 256KB I-RAM + 128KB D-RAM module
@@ -106,6 +117,7 @@ VUX9K/
 ├── sim/                            # Simulation testbenches (Cocotb & SystemVerilog)
 │   ├── Makefile                    # Cocotb / Icarus test runner Makefile
 │   ├── emulator.py                 # Behavioral Python SoC emulator (fast MIPS, CLINT, UART FIFO)
+│   ├── sdcard_model.py             # Cocotb Virtual SD Card SPI Slave Model
 │   ├── tb_hex_runner.sv            # Fast SystemVerilog compliance testbench
 │   ├── test_rv32i_*.py             # CPU unit tests (ALU, Decode, Regfile, Compliance)
 │   ├── test_hack_*.py              # Hack unit tests (Translator, Ops, Firmware)
@@ -113,17 +125,39 @@ VUX9K/
 │   ├── test_shift_registers.py     # UART Shift register unit test
 │   ├── test_fifo_sync.py           # UART FIFO unit test
 │   ├── test_uart_*.py              # UART TX, RX, Controller unit tests
+│   ├── test_soc_boot.py            # Hardware Boot Manager & Bridge RTL integration test
 │   ├── test_soc_rv32i.py           # RISC-V 32-bit SoC integration test
 │   ├── test_soc_hack.py            # Hack 16-bit SoC integration test
 │   ├── test_soc_zephyr.py          # Zephyr RTOS & Rust SoC RTL integration test
 │   └── test_soc_bc.py              # Zephyr bc_clone_rs self-tests & interactive REPL pytest suite
-└── scripts/                        # Utility & Compliance scripts
+└── scripts/                        # Utility & Tooling scripts
+    ├── vux_tool.py                 # Unified Host Flasher, Boot Trigger & Serial Monitor
     ├── bin2hex.py                  # Raw binary to Hex word converter (supports RISC-V 32-bit and Hack 16-bit)
     ├── elf2bin.py                  # ELF to raw binary extractor
     ├── check_no_absolute_paths.py  # Path validation script
     ├── link.ld                     # Linker script for architectural compliance
     ├── run_arch_test.py            # Official riscv-arch-test automation runner
     └── target_env/                 # Target environment headers for arch-tests
+```
+
+---
+
+## Firmware Flashing & Host Tooling (`vux_tool.py`)
+
+VUX9K features an integrated host tool [`scripts/vux_tool.py`](scripts/vux_tool.py) that communicates with the on-chip `hw_boot_mgr` via USB-UART to flash firmware onto the SD card without physical removal, protecting existing FAT32/exFAT filesystems by writing to the MBR gap (LBA 64):
+
+```bash
+# 1. Flash firmware to SD Card (LBA 64 = 32 KB MBR gap) and auto-boot into serial monitor
+python3 scripts/vux_tool.py --port /dev/ttyUSB1 --flash firmware/firmware.bin
+
+# 2. Flash with custom LBA offset
+python3 scripts/vux_tool.py --port /dev/ttyUSB1 --flash firmware/firmware.bin --lba 64
+
+# 3. Trigger SD Auto-Load and boot
+python3 scripts/vux_tool.py --port /dev/ttyUSB1 --boot
+
+# 4. Open serial console monitor
+python3 scripts/vux_tool.py --port /dev/ttyUSB1 --monitor
 ```
 
 ---

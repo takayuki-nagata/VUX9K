@@ -63,7 +63,7 @@ async def test_boot_auto_load_standalone(dut):
     sd_model = SpiSdCardModel(dut.sd_sclk, dut.sd_mosi, dut.sd_miso, dut.sd_cs_n)
     cocotb.start_soon(sd_model.run())
 
-    # Preload simple RISC-V program into Sector 0 of SD Card:
+    # Preload simple RISC-V program into Sector 64 (MBR gap @ 32KB offset) of SD Card:
     # 0x00: 0x00000293  (addi t0, zero, 0)
     # 0x04: 0x00128293  (addi t0, t0, 1)
     # 0x08: 0xffdff06f  (j 0x04 - loop)
@@ -72,7 +72,7 @@ async def test_boot_auto_load_standalone(dut):
         0x93, 0x82, 0x12, 0x00, # addi t0, t0, 1
         0x6F, 0xF0, 0xDF, 0xFF, # j -4
     ])
-    sd_model.preload_sector(0, test_prog)
+    sd_model.preload_sector(64, test_prog)
 
     # Assert Reset (active-low)
     dut.rst.value = 0

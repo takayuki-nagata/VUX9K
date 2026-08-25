@@ -74,10 +74,11 @@ pub module soc_top (
 
     // Instantiate Hardware Boot Manager (Veryl)
     inst boot_mgr_inst: hw_boot_mgr #(
-        UART_CNT      : 434   ,
-        UART_CSIZE    : 10    ,
-        TIMEOUT_CYCLES: 100000,
-        LOAD_SECTORS  : 1     ,
+        UART_CNT         : 434   ,
+        UART_CSIZE       : 10    ,
+        TIMEOUT_CYCLES   : 100000,
+        BOOT_START_SECTOR: 64    ,
+        LOAD_SECTORS     : 1     ,
     ) (
         clk        : clk        ,
         rst        : rst        ,

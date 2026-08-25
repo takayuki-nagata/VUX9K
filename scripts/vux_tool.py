@@ -176,8 +176,8 @@ class SdCardFlasher:
         self.bridge.set_cs(False)
         return False
 
-    def flash_binary(self, bin_path: str, start_lba: int = 0) -> bool:
-        """Flash binary file into SD Card starting at start_lba"""
+    def flash_binary(self, bin_path: str, start_lba: int = 64) -> bool:
+        """Flash binary file into SD Card starting at start_lba (default: LBA 64 = 32KB MBR gap)"""
         if not os.path.exists(bin_path):
             print(f"Error: File {bin_path} not found!")
             return False
@@ -187,7 +187,8 @@ class SdCardFlasher:
 
         total_bytes = len(data)
         num_sectors = (total_bytes + 511) // 512
-        print(f"[VUX9K] Flashing {bin_path} ({total_bytes} bytes, {num_sectors} sectors) to SD Card @ LBA {start_lba}...")
+        offset_kb = (start_lba * 512) // 1024
+        print(f"[VUX9K] Flashing {bin_path} ({total_bytes} bytes, {num_sectors} sectors) to SD Card @ LBA {start_lba} ({offset_kb} KB offset in MBR gap)...")
 
         if not self.init_sd():
             return False
@@ -229,6 +230,7 @@ def main():
     parser.add_argument("--port", default="/dev/ttyUSB1", help="Serial port (default: /dev/ttyUSB1)")
     parser.add_argument("--baud", type=int, default=115200, help="Baudrate (default: 115200)")
     parser.add_argument("--flash", help="Path to firmware.bin to flash to SD card and boot")
+    parser.add_argument("--lba", type=int, default=64, help="Starting LBA sector on SD Card (default: 64 = 32KB MBR gap)")
     parser.add_argument("--boot", action="store_true", help="Trigger SD Auto-Load and CPU boot")
     parser.add_argument("--direct-boot", action="store_true", help="Release CPU reset directly")
     parser.add_argument("--monitor", action="store_true", help="Open serial console monitor")
@@ -251,7 +253,7 @@ def main():
 
             if args.flash:
                 flasher = SdCardFlasher(bridge)
-                if not flasher.flash_binary(args.flash):
+                if not flasher.flash_binary(args.flash, start_lba=args.lba):
                     sys.exit(1)
                 print("[VUX9K] Booting CPU from SD Card...")
                 bridge.trigger_boot()
