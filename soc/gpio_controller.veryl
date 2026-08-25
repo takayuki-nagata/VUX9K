@@ -1,0 +1,57 @@
+// Copyright (c) 2026 Takayuki Nagata
+// SPDX-License-Identifier: MIT
+
+// Veryl GPIO Controller for Tang Nano 9K
+// Controls 6x on-board LEDs and reads user push button
+module gpio_controller (
+    clk     : input  clock    ,
+    rst     : input  reset    ,
+    addr    : input  logic<4> ,
+    data_in : input  logic<32>,
+    data_out: output logic<32>,
+    we      : input  logic    ,
+    re      : input  logic    ,
+
+    // External Pins
+    gpio_led: output logic<6> , // Active-Low output to LEDs
+    gpio_btn: input  logic    , // Active-Low input from S2 button
+) {
+    var led_reg  : logic<6>;
+    var btn_sync : logic<2>;
+
+    // Invert outputs for Active-Low LEDs (1 in led_reg -> 0 to pin -> LED lights up)
+    assign gpio_led = ~led_reg;
+
+    // Synchronize button input
+    always_ff (clk, rst) {
+        if_reset {
+            btn_sync = 2'b11;
+        } else {
+            btn_sync = {btn_sync[0], gpio_btn};
+        }
+    }
+
+    // Button state: S2 is active-low (0 when pressed), so inverted -> 1 when pressed
+    var btn_pressed: logic;
+    assign btn_pressed = ~btn_sync[1];
+
+    always_ff (clk, rst) {
+        if_reset {
+            led_reg = 6'b000000;
+        } else {
+            if we {
+                if addr == 4'h0 {
+                    led_reg = data_in[5:0];
+                }
+            }
+        }
+    }
+
+    always_comb {
+        case addr {
+            4'h0   : data_out = {26'd0, led_reg};
+            4'h4   : data_out = {31'd0, btn_pressed};
+            default: data_out = 32'd0;
+        }
+    }
+}

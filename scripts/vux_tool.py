@@ -18,11 +18,42 @@ try:
 except ImportError:
     serial = None
 
+try:
+    import pyftdi.serialext
+except ImportError:
+    pyftdi = None
+
 class VuxBridge:
-    def __init__(self, port="/dev/ttyUSB1", baud=115200, timeout=1.0):
-        if serial is None:
-            raise RuntimeError("pyserial is not installed! Please run 'uv pip install pyserial' or 'pip install pyserial'.")
-        self.ser = serial.Serial(port, baudrate=baud, timeout=timeout)
+    def __init__(self, port="auto", baud=115200, timeout=1.0):
+        if port.startswith("ftdi://"):
+            if pyftdi is None:
+                raise RuntimeError("pyftdi is not installed! Please run 'uv pip install pyftdi'.")
+            self.ser = pyftdi.serialext.serial_for_url(port, baudrate=baud, timeout=timeout)
+        elif port == "auto":
+            # First try pyftdi with FT2232 Channel B (common for Tang Nano 9K)
+            connected = False
+            if pyftdi is not None:
+                try:
+                    self.ser = pyftdi.serialext.serial_for_url("ftdi://ftdi:2232/2", baudrate=baud, timeout=timeout)
+                    connected = True
+                except Exception:
+                    pass
+            if not connected:
+                if serial is None:
+                    raise RuntimeError("Neither pyftdi nor pyserial could open port.")
+                for p in ["/dev/ttyUSB3", "/dev/ttyUSB1", "/dev/ttyUSB0"]:
+                    try:
+                        self.ser = serial.Serial(p, baudrate=baud, timeout=timeout)
+                        connected = True
+                        break
+                    except Exception:
+                        continue
+            if not connected:
+                raise RuntimeError("Could not open FTDI / Serial port automatically!")
+        else:
+            if serial is None:
+                raise RuntimeError("pyserial is not installed!")
+            self.ser = serial.Serial(port, baudrate=baud, timeout=timeout)
         self.timeout = timeout
 
     def close(self):
@@ -214,7 +245,14 @@ def monitor_serial(port: str, baud: int):
     """Simple serial console monitor"""
     print(f"[VUX9K] Starting serial monitor on {port} @ {baud} baud (Press Ctrl+C to exit)...")
     try:
-        ser = serial.Serial(port, baudrate=baud, timeout=0.1)
+        if port.startswith("ftdi://") or port == "auto":
+            if pyftdi is not None:
+                url = port if port.startswith("ftdi://") else "ftdi://ftdi:2232/2"
+                ser = pyftdi.serialext.serial_for_url(url, baudrate=baud, timeout=0.1)
+            else:
+                ser = serial.Serial("/dev/ttyUSB1", baudrate=baud, timeout=0.1)
+        else:
+            ser = serial.Serial(port, baudrate=baud, timeout=0.1)
         while True:
             data = ser.read(128)
             if data:
@@ -227,7 +265,7 @@ def monitor_serial(port: str, baud: int):
 
 def main():
     parser = argparse.ArgumentParser(description="VUX9K SoC Host Tooling & Flasher")
-    parser.add_argument("--port", default="/dev/ttyUSB1", help="Serial port (default: /dev/ttyUSB1)")
+    parser.add_argument("--port", default="auto", help="Serial port (default: auto)")
     parser.add_argument("--baud", type=int, default=115200, help="Baudrate (default: 115200)")
     parser.add_argument("--flash", help="Path to firmware.bin to flash to SD card and boot")
     parser.add_argument("--lba", type=int, default=64, help="Starting LBA sector on SD Card (default: 64 = 32KB MBR gap)")

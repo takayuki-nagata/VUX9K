@@ -12,40 +12,29 @@ pub module auto_mode_detector (
     var riscv_flag  : logic   ;
     var opcode      : logic<7>;
 
-    always_comb {
-        opcode = first_instr[6:0];
-        if mode_latched {
-            is_riscv_mode = riscv_flag;
-        } else {
-            if first_instr[1:0] == 2'b11
-                && (opcode == rv32i_pkg::OPCODE_R_TYPE || opcode == rv32i_pkg::OPCODE_I_TYPE || opcode
-                    == rv32i_pkg::OPCODE_LOAD || opcode == rv32i_pkg::OPCODE_STORE || opcode == rv32i_pkg::OPCODE_BRANCH
-                    || opcode == rv32i_pkg::OPCODE_JAL || opcode == rv32i_pkg::OPCODE_JALR || opcode
-                    == rv32i_pkg::OPCODE_LUI || opcode == rv32i_pkg::OPCODE_AUIPC) {
-                is_riscv_mode = 1'b1;
-            } else {
-                is_riscv_mode = 1'b0;
-            }
-        }
-    }
+    assign opcode = first_instr[6:0];
+    assign is_riscv_mode = if mode_latched ? riscv_flag : 1'b1;
 
     always_ff (clk, rst) {
         if_reset {
             mode_latched = 1'b0;
-            riscv_flag   = 1'b0;
+            riscv_flag   = 1'b1;
         } else {
             if !mode_latched {
-                if first_instr[1:0] == 2'b11
-                    && (opcode == rv32i_pkg::OPCODE_R_TYPE || opcode == rv32i_pkg::OPCODE_I_TYPE || opcode
-                        == rv32i_pkg::OPCODE_LOAD || opcode == rv32i_pkg::OPCODE_STORE || opcode
-                        == rv32i_pkg::OPCODE_BRANCH || opcode == rv32i_pkg::OPCODE_JAL || opcode
-                        == rv32i_pkg::OPCODE_JALR || opcode == rv32i_pkg::OPCODE_LUI || opcode
-                        == rv32i_pkg::OPCODE_AUIPC) {
-                    riscv_flag = 1'b1;
-                } else {
-                    riscv_flag = 1'b0;
+                if first_instr != 32'd0 {
+                    if first_instr[1:0] == 2'b11
+                        && (opcode == rv32i_pkg::OPCODE_R_TYPE || opcode == rv32i_pkg::OPCODE_I_TYPE || opcode
+                            == rv32i_pkg::OPCODE_LOAD || opcode == rv32i_pkg::OPCODE_STORE || opcode
+                            == rv32i_pkg::OPCODE_BRANCH || opcode == rv32i_pkg::OPCODE_JAL || opcode
+                            == rv32i_pkg::OPCODE_JALR || opcode == rv32i_pkg::OPCODE_LUI || opcode
+                            == rv32i_pkg::OPCODE_AUIPC) {
+                        riscv_flag   = 1'b1;
+                        mode_latched = 1'b1;
+                    } else if (first_instr[15:13] == 3'b111) || (first_instr[15] == 1'b0 && first_instr[14:0] != 15'd0) {
+                        riscv_flag   = 1'b0;
+                        mode_latched = 1'b1;
+                    }
                 }
-                mode_latched = 1'b1;
             }
         }
     }

@@ -272,8 +272,8 @@ pub module hw_boot_mgr #(
                         b_uart_tx_we   = 1'b1;
                         state          = BootState::BRIDGE_IDLE;
                     } else if !(timeout_cnt <: (TIMEOUT_CYCLES as u32)) {
-                        // Timeout reached, proceed to Auto-Loader!
-                        state = BootState::AUTO_DUMMY_CLK;
+                        // Timeout reached, proceed directly to RUN_CPU!
+                        state = BootState::RUN_CPU;
                     } else {
                         timeout_cnt = timeout_cnt + 1'b1;
                     }

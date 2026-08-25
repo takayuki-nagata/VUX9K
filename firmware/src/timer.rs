@@ -6,36 +6,33 @@
 const TIMER_BASE: usize = 0x4000_1000;
 const MTIME_LOW: *const u32 = TIMER_BASE as *const u32;
 const MTIME_HIGH: *const u32 = (TIMER_BASE + 0x4) as *const u32;
-const MTIMECMP_LOW: *mut u32 = (TIMER_BASE + 0x8) as *mut u32;
-const MTIMECMP_HIGH: *mut u32 = (TIMER_BASE + 0xC) as *mut u32;
+
+const FREQ_KHZ: u64 = 27_000; // 27 MHz clock = 27,000 ticks per millisecond
 
 pub struct Timer;
 
 impl Timer {
+    #[inline(always)]
     pub fn get_mtime() -> u64 {
         unsafe {
-            loop {
-                let high1 = core::ptr::read_volatile(MTIME_HIGH);
-                let low = core::ptr::read_volatile(MTIME_LOW);
-                let high2 = core::ptr::read_volatile(MTIME_HIGH);
-                if high1 == high2 {
-                    return ((high1 as u64) << 32) | (low as u64);
-                }
-            }
-        }
-    }
-
-    pub fn set_mtimecmp(val: u64) {
-        unsafe {
-            // Prevent spurious triggers while setting 64-bit value
-            core::ptr::write_volatile(MTIMECMP_LOW, 0xFFFF_FFFF);
-            core::ptr::write_volatile(MTIMECMP_HIGH, (val >> 32) as u32);
-            core::ptr::write_volatile(MTIMECMP_LOW, val as u32);
+            let low = core::ptr::read_volatile(MTIME_LOW);
+            let high = core::ptr::read_volatile(MTIME_HIGH);
+            ((high as u64) << 32) | (low as u64)
         }
     }
 
     pub fn delay_ticks(ticks: u64) {
         let start = Self::get_mtime();
-        while Self::get_mtime() - start < ticks {}
+        let target = start.wrapping_add(ticks);
+        if target >= start {
+            while Self::get_mtime() < target {}
+        } else {
+            // Target wrapped around 64-bit boundary
+            while Self::get_mtime() >= start || Self::get_mtime() < target {}
+        }
+    }
+
+    pub fn delay_ms(ms: u32) {
+        Self::delay_ticks((ms as u64) * FREQ_KHZ);
     }
 }

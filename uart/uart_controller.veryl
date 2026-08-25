@@ -39,7 +39,7 @@ pub module uart_controller #(
 
     inst tx_fifo: fifo_sync #(
         WIDTH    : 8,
-        LOG_DEPTH: 8,
+        LOG_DEPTH: 4,
     ) (
         clk  : clk     ,
         rst  : rst     ,
@@ -97,7 +97,7 @@ pub module uart_controller #(
 
     inst rx_fifo: fifo_sync #(
         WIDTH    : 8,
-        LOG_DEPTH: 8,
+        LOG_DEPTH: 4,
     ) (
         clk  : clk     ,
         rst  : rst     ,

@@ -7,6 +7,7 @@ __pycache__/
 firmware/target/
 firmware/firmware.bin
 firmware/firmware.hex
+firmware.hex
 build_hack/
 zephyr_workspace/**/target/
 zephyr_workspace/**/build/
@@ -21,6 +22,8 @@ sim/sim_build*/
 sim/results.xml
 sim/soc_top
 sim/e~*
+sim_soc_real
+tb_runner
 
 # Veryl build artifacts
 .build/
@@ -37,8 +40,10 @@ sim/*.sv
 sim/*.map
 
 # Synthesis outputs
-soc.json
+*.json
 pack.fs
+*.log
+*.pretty
 
 # System & temporary files
 /tmp/

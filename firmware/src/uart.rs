@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Takayuki Nagata
 // SPDX-License-Identifier: MIT
 
-// MMIO UART Driver with software divmod for pure RV32I compatibility
+// MMIO UART Driver with pure RV32I software conversions
 
 const UART_BASE: usize = 0x4000_0000;
 const UART_DATA: *mut u8 = UART_BASE as *mut u8;
@@ -30,6 +30,14 @@ impl Uart {
     pub fn print_str(s: &str) {
         for b in s.bytes() {
             Self::write_byte(b);
+        }
+    }
+
+    pub fn print_hex(val: u32) {
+        const HEX_CHARS: &[u8; 16] = b"0123456789ABCDEF";
+        for shift in (0..8).rev() {
+            let nibble = ((val >> (shift * 4)) & 0xF) as usize;
+            Self::write_byte(HEX_CHARS[nibble]);
         }
     }
 

@@ -2,27 +2,50 @@
 // SPDX-License-Identifier: MIT
 
 // Tang Nano 9K Top-Level SoC Wrapper in Veryl
-// Integrates CPU, RAMs, UART, Machine Timer, SD Card SPI, and Address Decoder
+// Integrates CPU, RAMs, UART, Machine Timer, SD Card SPI, GPIO, and Address Decoder
 
 #[allow(unused_variable)]
 #[allow(unassign_variable)]
 pub module soc_top (
-    clk: input clock,
-    rst: input reset,
+    clk    : input  clock       ,
+    rst_n  : input  logic       , // Active-Low Hardware Reset (Button S1)
+    btn    : input  logic       , // Active-Low User Button (Button S2)
 
     // UART Interface
-    uart_rx: input  logic,
-    uart_tx: output logic,
+    uart_rx: input  logic       ,
+    uart_tx: output logic       ,
+
+    // On-Board 6x LEDs (Active-Low)
+    led    : output logic<6>    ,
 
     // SD Card SPI Interface
-    sd_sclk: output logic,
-    sd_mosi: output logic,
-    sd_miso: input  logic,
-    sd_cs_n: output logic,
-
-    // Status Indicator
-    active_mode: output logic, // 1 = RISC-V 32-bit, 0 = Hack 16-bit
+    sd_sclk: output logic       ,
+    sd_mosi: output logic       ,
+    sd_miso: input  logic       ,
+    sd_cs_n: output logic       ,
 ) {
+    // Mode Status (1 = RISC-V 32-bit, 0 = Hack 16-bit)
+    var active_mode: logic;
+
+    // Power-on Reset & Synchronizer (Active-Low: 0 = Reset, 1 = Running)
+    var por_counter: logic<20>;
+    var raw_rst    : logic    ;
+
+    always_ff (clk) {
+        if ~rst_n {
+            por_counter = '0;
+            raw_rst     = 1'b0;
+        } else {
+            if por_counter[19] == 1'b0 {
+                por_counter = por_counter + 1'b1;
+                raw_rst     = 1'b0;
+            } else {
+                raw_rst     = 1'b1; // Permanently 1 (Running) after 19.4ms Power-on Reset delay
+            }
+        }
+    }
+    let rst: reset = raw_rst as reset;
+
     // Bus Interconnect Signals
     var instr_addr: logic<32>;
     var instr_data: logic<32>;
@@ -36,6 +59,7 @@ pub module soc_top (
     var ram_data_out  : logic<32>;
     var timer_data_out: logic<32>;
     var sd_data_out   : logic<32>;
+    var gpio_data_out : logic<32>;
     var uart_rdata    : logic<8> ;
     var uart_empty    : logic    ;
     var uart_full     : logic    ;
@@ -45,6 +69,7 @@ pub module soc_top (
     var uart_sel : logic;
     var timer_sel: logic;
     var sd_sel   : logic;
+    var gpio_sel : logic;
 
     var uart_we    : logic   ;
     var uart_re    : logic   ;
@@ -52,59 +77,22 @@ pub module soc_top (
     var timer_re   : logic   ;
     var sd_we      : logic   ;
     var sd_re      : logic   ;
+    var gpio_we    : logic   ;
+    var gpio_re    : logic   ;
     var ram_we     : logic   ;
     var ram_we_byte: logic<4>;
 
     var timer_irq  : logic   ;
     var cpu_byte_we: logic<4>;
+    var raw_led    : logic<6>;
 
-    // Boot Manager Signals
-    var cpu_rst    : reset    ;
-    var boot_active: logic    ;
-    var iram_we    : logic    ;
-    var iram_waddr : logic<16>;
-    var iram_wdata : logic<32>;
-
-    var soc_uart_tx: logic;
-    var soc_uart_rx: logic;
-    var soc_sd_sclk: logic;
-    var soc_sd_mosi: logic;
-    var soc_sd_miso: logic;
-    var soc_sd_cs_n: logic;
-
-    // Instantiate Hardware Boot Manager (Veryl)
-    inst boot_mgr_inst: hw_boot_mgr #(
-        UART_CNT         : 434   ,
-        UART_CSIZE       : 10    ,
-        TIMEOUT_CYCLES   : 100000,
-        BOOT_START_SECTOR: 64    ,
-        LOAD_SECTORS     : 1     ,
-    ) (
-        clk        : clk        ,
-        rst        : rst        ,
-        ext_uart_rx: uart_rx    ,
-        ext_uart_tx: uart_tx    ,
-        sd_sclk    : sd_sclk    ,
-        sd_mosi    : sd_mosi    ,
-        sd_miso    : sd_miso    ,
-        sd_cs_n    : sd_cs_n    ,
-        cpu_rst    : cpu_rst    ,
-        boot_active: boot_active,
-        iram_we    : iram_we    ,
-        iram_waddr : iram_waddr ,
-        iram_wdata : iram_wdata ,
-        soc_uart_tx: soc_uart_tx,
-        soc_uart_rx: soc_uart_rx,
-        soc_sd_sclk: soc_sd_sclk,
-        soc_sd_mosi: soc_sd_mosi,
-        soc_sd_miso: soc_sd_miso,
-        soc_sd_cs_n: soc_sd_cs_n,
-    );
+    // 6x LEDs connected to Software GPIO (controlled by firmware / main.rs)
+    assign led = raw_led;
 
     // Instantiate Unified Dual-ISA CPU Core (Veryl)
     inst cpu_inst: unified_cpu (
         clk         : clk         ,
-        rst         : cpu_rst     ,
+        rst         : rst         ,
         instr_in    : instr_data  ,
         data_in     : cpu_data_in ,
         timer_irq_in: timer_irq   ,
@@ -118,9 +106,9 @@ pub module soc_top (
         active_mode : active_mode ,
     );
 
-    // Instantiate UART Controller (Veryl)
+    // Instantiate UART Controller (Veryl) - 27MHz / 115200 baud -> CNT=234
     inst uart_inst: uart_controller #(
-        CNT  : 434,
+        CNT  : 234,
         CSIZE: 10 ,
     ) (
         clk  : clk              ,
@@ -131,25 +119,25 @@ pub module soc_top (
         we   : uart_we          ,
         empty: uart_empty       ,
         full : uart_full        ,
-        txd  : soc_uart_tx      ,
-        rxd  : soc_uart_rx      ,
+        txd  : uart_tx          ,
+        rxd  : uart_rx          ,
     );
 
-    // Instantiate Harvard Memory (256KB I-RAM + 128KB D-RAM)
+    // Instantiate Harvard Memory (8KB I-RAM + 4KB D-RAM BSRAMs)
     inst ram_inst: soc_ram (
-        clk        : clk         ,
-        rst        : rst         ,
-        active_mode: active_mode ,
-        i_addr     : instr_addr  ,
-        i_data_out : instr_data  ,
-        i_we       : iram_we     ,
-        i_waddr    : iram_waddr  ,
-        i_wdata    : iram_wdata  ,
-        d_addr     : data_addr   ,
-        d_data_in  : cpu_data_out,
-        d_data_out : ram_data_out,
-        d_we       : ram_we      ,
-        d_we_byte  : ram_we_byte ,
+        clk        : clk             ,
+        rst        : rst             ,
+        active_mode: active_mode     ,
+        i_addr     : instr_addr      ,
+        i_data_out : instr_data      ,
+        i_we       : 1'b0            ,
+        i_waddr    : 11'd0           ,
+        i_wdata    : 32'd0           ,
+        d_addr     : data_addr       ,
+        d_data_in  : cpu_data_out    ,
+        d_data_out : ram_data_out    ,
+        d_we       : ram_we          ,
+        d_we_byte  : ram_we_byte     ,
     );
 
     // Instantiate System Timer Core (Veryl)
@@ -173,10 +161,23 @@ pub module soc_top (
         data_out: sd_data_out   ,
         we      : sd_we         ,
         re      : sd_re         ,
-        spi_sclk: soc_sd_sclk   ,
-        spi_mosi: soc_sd_mosi   ,
-        spi_miso: soc_sd_miso   ,
-        spi_cs_n: soc_sd_cs_n   ,
+        spi_sclk: sd_sclk       ,
+        spi_mosi: sd_mosi       ,
+        spi_miso: sd_miso       ,
+        spi_cs_n: sd_cs_n       ,
+    );
+
+    // Instantiate GPIO Controller (Veryl)
+    inst gpio_inst: gpio_controller (
+        clk     : clk            ,
+        rst     : rst            ,
+        addr    : data_addr[3:0] ,
+        data_in : cpu_data_out   ,
+        data_out: gpio_data_out  ,
+        we      : gpio_we        ,
+        re      : gpio_re        ,
+        gpio_led: raw_led        ,
+        gpio_btn: btn            ,
     );
 
     // Address Decoder Combinational Logic
@@ -185,11 +186,14 @@ pub module soc_top (
         uart_sel  = 1'b0;
         timer_sel = 1'b0;
         sd_sel    = 1'b0;
+        gpio_sel  = 1'b0;
 
         if active_mode == 1'b0 {
             // Hack Mode
             if data_addr[15:0] == 16'h6000 {
                 uart_sel = 1'b1;
+            } else if data_addr[15:0] == 16'h6004 {
+                gpio_sel = 1'b1;
             } else if data_addr[15:0] <: 16'h6000 {
                 ram_sel = 1'b1;
             }
@@ -204,6 +208,8 @@ pub module soc_top (
                     timer_sel = 1'b1;
                 } else if data_addr[15:4] == 12'h200 {
                     sd_sel = 1'b1;
+                } else if data_addr[15:4] == 12'h300 {
+                    gpio_sel = 1'b1;
                 }
             }
         }
@@ -213,6 +219,8 @@ pub module soc_top (
         uart_we     = mem_write && uart_sel;
         timer_we    = mem_write && timer_sel;
         sd_we       = mem_write && sd_sel;
+        gpio_we     = mem_write && gpio_sel;
+
         uart_re     = if active_mode == 1'b0 ?
             (!mem_write && uart_sel)
         :
@@ -220,6 +228,7 @@ pub module soc_top (
         ;
         timer_re    = 1'b1;
         sd_re       = 1'b1;
+        gpio_re     = 1'b1;
 
         if ram_sel {
             cpu_data_in = ram_data_out;
@@ -227,6 +236,8 @@ pub module soc_top (
             cpu_data_in = timer_data_out;
         } else if sd_sel {
             cpu_data_in = sd_data_out;
+        } else if gpio_sel {
+            cpu_data_in = gpio_data_out;
         } else if uart_sel {
             if active_mode == 1'b0 {
                 cpu_data_in = {24'h0, uart_rdata};

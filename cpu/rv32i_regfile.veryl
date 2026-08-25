@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // RISC-V RV32I Dual-Write Register File (with Hack multi-dest support)
+// Single-write-port prioritized structure for optimal FPGA Distributed RAM mapping
 pub module rv32i_regfile (
     clk     : input  clock    ,
     rst     : input  reset    ,
@@ -18,34 +19,14 @@ pub module rv32i_regfile (
 ) {
     var registers: logic<32> [32];
 
-    always_comb {
-        if rs1_addr == 5'd0 {
-            rs1_data = 32'd0;
-        } else {
-            rs1_data = registers[rs1_addr];
-        }
-    }
+    assign rs1_data = if rs1_addr == 5'd0 ? 32'd0 : registers[rs1_addr];
+    assign rs2_data = if rs2_addr == 5'd0 ? 32'd0 : registers[rs2_addr];
 
-    always_comb {
-        if rs2_addr == 5'd0 {
-            rs2_data = 32'd0;
-        } else {
-            rs2_data = registers[rs2_addr];
-        }
-    }
-
-    always_ff (clk, rst) {
-        if_reset {
-            for i in 0..32 {
-                registers[i] = 32'd0;
-            }
-        } else {
-            if we && rd_addr != 5'd0 {
-                registers[rd_addr] = wr_data;
-            }
-            if we2 && rd2_addr != 5'd0 {
-                registers[rd2_addr] = wr2_data;
-            }
+    always_ff (clk) {
+        if we && rd_addr != 5'd0 {
+            registers[rd_addr] = wr_data;
+        } else if we2 && rd2_addr != 5'd0 {
+            registers[rd2_addr] = wr2_data;
         }
     }
 }

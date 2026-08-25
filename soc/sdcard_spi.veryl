@@ -1,8 +1,8 @@
 // Copyright (c) 2026 Takayuki Nagata
 // SPDX-License-Identifier: MIT
 
-// Veryl SD Card SPI Master Controller
-module sdcard_spi (
+// Robust Hardware SPI Master Controller for MicroSD Card Interface
+pub module sdcard_spi (
     clk     : input  clock    ,
     rst     : input  reset    ,
     addr    : input  logic<4> ,
@@ -15,37 +15,75 @@ module sdcard_spi (
     spi_miso: input  logic    ,
     spi_cs_n: output logic    ,
 ) {
+    // 27MHz / (34 * 2) = ~400kHz for robust SD card initialization
+    const CLK_DIV_HALF: u32 = 34;
+
     var cs_n_reg: logic   ;
     var sclk_reg: logic   ;
+    var mosi_reg: logic   ;
     var shift_tx: logic<8>;
     var shift_rx: logic<8>;
     var busy    : logic   ;
-    var rx_ready: logic   ;
+
+    var clk_cnt  : logic<8>;
+    var bit_idx  : logic<4>;
+    var spi_phase: logic   ;
 
     assign spi_cs_n = cs_n_reg;
     assign spi_sclk = sclk_reg;
-    assign spi_mosi = shift_tx[7];
+    assign spi_mosi = mosi_reg;
 
     always_ff (clk, rst) {
         if_reset {
-            cs_n_reg = 1'b1;
-            sclk_reg = 1'b0;
-            shift_tx = 8'hff;
-            shift_rx = 8'hff;
-            busy     = 1'b0;
-            rx_ready = 1'b0;
+            cs_n_reg  = 1'b1;
+            sclk_reg  = 1'b0;
+            mosi_reg  = 1'b1;
+            shift_tx  = 8'hff;
+            shift_rx  = 8'hff;
+            busy      = 1'b0;
+            clk_cnt   = 8'd0;
+            bit_idx   = 4'd0;
+            spi_phase = 1'b0;
         } else {
-            if we {
+            if we && !busy {
                 case addr {
                     4'h0: {
-                        if !busy {
-                            shift_tx = data_in[7:0];
-                            busy     = 1'b1;
-                            rx_ready = 1'b0;
+                        shift_tx  = data_in[7:0];
+                        mosi_reg  = data_in[7];
+                        busy      = 1'b1;
+                        clk_cnt   = 8'd0;
+                        bit_idx   = 4'd0;
+                        spi_phase = 1'b0;
+                        sclk_reg  = 1'b0;
+                    }
+                    4'h4: {
+                        cs_n_reg = data_in[0];
+                    }
+                    default: {}
+                }
+            } else if busy {
+                if (clk_cnt as u32) >= (CLK_DIV_HALF - 1) {
+                    clk_cnt = 8'd0;
+                    if !spi_phase {
+                        // Rising edge: Sample MISO
+                        sclk_reg  = 1'b1;
+                        shift_rx  = {shift_rx[6:0], spi_miso};
+                        spi_phase = 1'b1;
+                    } else {
+                        // Falling edge: Shift out next MOSI bit
+                        sclk_reg  = 1'b0;
+                        spi_phase = 1'b0;
+                        if bit_idx == 4'd7 {
+                            busy     = 1'b0;
+                            mosi_reg = 1'b1;
+                        } else {
+                            bit_idx  = bit_idx + 1'b1;
+                            shift_tx = {shift_tx[6:0], 1'b1};
+                            mosi_reg = shift_tx[6];
                         }
                     }
-                    4'h4   : cs_n_reg = data_in[0];
-                    default: {}
+                } else {
+                    clk_cnt = clk_cnt + 1'b1;
                 }
             }
         }
@@ -55,7 +93,7 @@ module sdcard_spi (
         case addr {
             4'h0   : data_out = {24'd0, shift_rx};
             4'h4   : data_out = {31'd0, cs_n_reg};
-            4'h8   : data_out = {30'd0, rx_ready, busy};
+            4'h8   : data_out = {31'd0, busy};
             default: data_out = 32'd0;
         }
     }

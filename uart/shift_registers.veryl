@@ -1,11 +1,12 @@
 // Copyright (c) 2026 Takayuki Nagata
 // SPDX-License-Identifier: MIT
 
-// Parameterized Shift Register with Parallel Load and Right Shift Capability
+// Parameterized Shift Register with Parallel Load, Reset, and Right Shift Capability
 pub module shift_registers #(
     param SIZE: u32 = 10,
 ) (
     clk : input  clock      ,
+    rst : input  reset      ,
     ce  : input  logic      ,
     set : input  logic      ,
     sin : input  logic      ,
@@ -15,12 +16,16 @@ pub module shift_registers #(
 ) {
     var sregs: logic<SIZE>;
 
-    always_ff (clk) {
-        if ce {
-            if set {
-                sregs = pin;
-            } else {
-                sregs = {sin, sregs[SIZE - 1:1]};
+    always_ff (clk, rst) {
+        if_reset {
+            sregs = '1; // Default to all-1 (UART Idle = High)
+        } else {
+            if ce {
+                if set {
+                    sregs = pin;
+                } else {
+                    sregs = {sin, sregs[SIZE - 1:1]};
+                }
             }
         }
     }

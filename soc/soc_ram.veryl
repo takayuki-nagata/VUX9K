@@ -1,10 +1,11 @@
 // Copyright (c) 2026 Takayuki Nagata
 // SPDX-License-Identifier: MIT
 
-// Dual-Port Harvard Memory Module (256 KB I-RAM + 128 KB D-RAM + .rodata ROM Read)
+// Dual-Port Harvard Memory Module (8 KB I-RAM + 4 KB D-RAM)
+// Perfectly Inferred into Gowin GW1NR-9 Hardware Block RAMs (BSRAMs)
 pub module soc_ram #(
-    param I_MEM_WORDS: u32 = 65536,
-    param D_MEM_WORDS: u32 = 32768,
+    param I_MEM_WORDS: u32 = 2048, // 8 KB I-RAM (2048 x 32-bit words)
+    param D_MEM_WORDS: u32 = 1024, // 4 KB D-RAM (1024 x 32-bit words)
 ) (
     clk        : input  clock    ,
     rst        : input  reset    ,
@@ -12,7 +13,7 @@ pub module soc_ram #(
     i_addr     : input  logic<32>,
     i_data_out : output logic<32>,
     i_we       : input  logic    ,
-    i_waddr    : input  logic<16>,
+    i_waddr    : input  logic<11>,
     i_wdata    : input  logic<32>,
     d_addr     : input  logic<32>,
     d_data_in  : input  logic<32>,
@@ -20,20 +21,21 @@ pub module soc_ram #(
     d_we       : input  logic    ,
     d_we_byte  : input  logic<4> ,
 ) {
-    var i_mem: logic<32> [I_MEM_WORDS];
-    var d_mem: logic<32> [D_MEM_WORDS];
+    var i_mem : logic<32> [I_MEM_WORDS];
+    var d_mem0: logic<8>  [D_MEM_WORDS];
+    var d_mem1: logic<8>  [D_MEM_WORDS];
+    var d_mem2: logic<8>  [D_MEM_WORDS];
+    var d_mem3: logic<8>  [D_MEM_WORDS];
 
-    var i_idx   : logic<16>;
-    var d_idx   : logic<15>;
-    var d_is_rom: logic    ;
+    var i_idx: logic<11>;
+    var d_idx: logic<10>;
 
-    assign i_idx    = i_addr[17:2];
-    assign d_idx    = if active_mode == 1'b0 ? d_addr[14:0] : d_addr[16:2];
-    assign d_is_rom = if active_mode == 1'b0 ? 1'b0 : (d_addr[31:20] == 12'h000);
+    assign i_idx = i_addr[12:2];
+    assign d_idx = if active_mode == 1'b0 ? d_addr[9:0] : d_addr[11:2];
 
     embed (inline) sv{{{
         initial begin
-            $readmemh("../firmware/firmware.hex", i_mem);
+            $readmemh("firmware/firmware.hex", i_mem);
         end
     }}}
 
@@ -47,26 +49,27 @@ pub module soc_ram #(
     always_ff (clk) {
         if d_we {
             if active_mode == 1'b0 {
-                d_mem[d_idx][15:0] = d_data_in[15:0];
+                d_mem0[d_idx] = d_data_in[7:0];
+                d_mem1[d_idx] = d_data_in[15:8];
             } else {
                 if d_we_byte[0] {
-                    d_mem[d_idx][7:0] = d_data_in[7:0];
+                    d_mem0[d_idx] = d_data_in[7:0];
                 }
                 if d_we_byte[1] {
-                    d_mem[d_idx][15:8] = d_data_in[15:8];
+                    d_mem1[d_idx] = d_data_in[15:8];
                 }
                 if d_we_byte[2] {
-                    d_mem[d_idx][23:16] = d_data_in[23:16];
+                    d_mem2[d_idx] = d_data_in[23:16];
                 }
                 if d_we_byte[3] {
-                    d_mem[d_idx][31:24] = d_data_in[31:24];
+                    d_mem3[d_idx] = d_data_in[31:24];
                 }
             }
         }
-        if d_is_rom {
-            d_data_out = i_mem[d_addr[17:2]];
-        } else {
-            d_data_out = if active_mode == 1'b0 ? {16'h0000, d_mem[d_idx][15:0]} : d_mem[d_idx];
-        }
+        d_data_out = if active_mode == 1'b0 ?
+            {16'h0000, d_mem1[d_idx], d_mem0[d_idx]}
+        :
+            {d_mem3[d_idx], d_mem2[d_idx], d_mem1[d_idx], d_mem0[d_idx]}
+        ;
     }
 }

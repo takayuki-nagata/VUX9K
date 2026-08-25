@@ -4,7 +4,9 @@
 VERYL = veryl
 YOSYS = yosys
 GOWIN_PACK = gowin_pack
-NEXTPNR = nextpnr-gowin
+NEXTPNR ?= nextpnr-himbaechel
+OPENFPGALOADER ?= openFPGALoader
+CST_FILE ?= tangnano9k.cst
 CARGO = cargo
 PYTHON = python3
 UV = uv
@@ -17,7 +19,7 @@ CARGO_BIN ?= $(HOME)/.cargo/bin
 
 export PATH := $(PWD)/$(VENV_PATH)/bin:$(OSS_CAD_SUITE_BIN):$(CARGO_BIN):$(ZEPHYR_SDK_INSTALL_DIR)/riscv64-zephyr-elf/bin:$(PATH)
 
-.PHONY: all veryl check check-paths fmt test build synth clean venv setup firmware sim-unit sim-boot sim-soc sim test-arch-compliance zephyr-rust-lib zephyr-bc-lib build-zephyr sim-zephyr-emu sim-zephyr-repl sim-zephyr-rtl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack
+.PHONY: all veryl check check-paths fmt test build synth synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware sim-unit sim-boot sim-soc sim test-arch-compliance zephyr-rust-lib zephyr-bc-lib build-zephyr sim-zephyr-emu sim-zephyr-repl sim-zephyr-rtl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack
 
 all: test
 
@@ -52,6 +54,7 @@ firmware:
 	cd firmware && $(CARGO) build --release
 	$(PYTHON) scripts/elf2bin.py firmware/target/riscv32i-unknown-none-elf/release/firmware firmware/firmware.bin
 	$(PYTHON) scripts/bin2hex.py firmware/firmware.bin firmware/firmware.hex
+	cp firmware/firmware.hex ./firmware.hex
 
 BC_APP_DIR ?= vendor/bc_clone_rs/examples/zephyr_app
 ZEPHYR_BUILD_DIR ?= build_zephyr
@@ -197,6 +200,27 @@ synth: veryl
 		read_verilog -sv cpu/rv32i_pkg.sv cpu/auto_mode_detector.sv cpu/hack_translator.sv cpu/rv32i_alu.sv cpu/rv32i_decode.sv cpu/rv32i_regfile.sv cpu/rv32i_csrs.sv cpu/unified_cpu.sv uart/*.sv soc/timer_core.sv soc/sdcard_spi.sv soc/hw_boot_mgr.sv; \
 		synth_gowin -top hw_boot_mgr -json soc.json; \
 	"
+
+synth-top: veryl
+	$(YOSYS) -p "\
+		read_verilog -sv cpu/rv32i_pkg.sv cpu/auto_mode_detector.sv cpu/hack_translator.sv cpu/rv32i_alu.sv cpu/rv32i_decode.sv cpu/rv32i_regfile.sv cpu/rv32i_csrs.sv cpu/unified_cpu.sv uart/clk_timer.sv uart/fifo_sync.sv uart/shift_registers.sv uart/uart_tx.sv uart/uart_rx.sv uart/uart_controller.sv soc/timer_core.sv soc/sdcard_spi.sv soc/gpio_controller.sv soc/hw_boot_mgr.sv soc/soc_ram.v soc/soc_top.sv; \
+		synth_gowin -top soc_top -json soc.json; \
+	"
+
+pnr: synth-top
+	$(NEXTPNR) --device GW1NR-LV9QN88PC6/I5 --vopt family=GW1N-9C --vopt cst=$(CST_FILE) --json soc.json --write soc_pnr.json
+
+bitstream: pnr
+	$(GOWIN_PACK) -d GW1N-9C -o pack.fs soc_pnr.json
+
+build-hw: firmware bitstream
+	@echo "=== Hardware Bitstream pack.fs Built Successfully! ==="
+
+prog-sram:
+	$(OPENFPGALOADER) -b tangnano9k pack.fs
+
+prog-flash:
+	$(OPENFPGALOADER) -b tangnano9k -f pack.fs
 
 test: check firmware zephyr-rust-lib zephyr-bc-lib build-hack sim synth
 	@echo "========================================================================"
