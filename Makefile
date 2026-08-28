@@ -19,7 +19,7 @@ CARGO_BIN ?= $(HOME)/.cargo/bin
 
 export PATH := $(PWD)/$(VENV_PATH)/bin:$(OSS_CAD_SUITE_BIN):$(CARGO_BIN):$(ZEPHYR_SDK_INSTALL_DIR)/riscv64-zephyr-elf/bin:$(PATH)
 
-.PHONY: all veryl check check-paths fmt test test-ci test-hw test-hardware build synth synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware sim-unit sim-boot sim-soc sim test-arch-compliance zephyr-rust-lib zephyr-bc-lib build-zephyr sim-zephyr-emu sim-zephyr-repl sim-zephyr-rtl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack
+.PHONY: all veryl check check-paths fmt test test-ci test-hw test-hardware build synth synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware sim-unit sim-boot sim-soc sim test-arch-compliance zephyr-rust-lib zephyr-bc-lib build-zephyr sim-zephyr-emu sim-zephyr-repl sim-zephyr-rtl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls sim-sdf
 
 all: test-ci
 
@@ -32,7 +32,7 @@ $(VENV_PATH)/bin/activate:
 	fi
 
 setup: venv
-	$(UV) pip install --python $(VENV_PATH)/bin/python cocotb pytest
+	$(UV) pip install --python $(VENV_PATH)/bin/python cocotb pytest pyserial
 	@if [ -d ".git" ]; then \
 		echo "Configuring Git core.hooksPath to .githooks..."; \
 		git config core.hooksPath .githooks; \
@@ -55,6 +55,7 @@ firmware:
 	$(PYTHON) scripts/elf2bin.py firmware/target/riscv32i-unknown-none-elf/release/firmware firmware/firmware.bin
 	$(PYTHON) scripts/bin2hex.py firmware/firmware.bin firmware/firmware.hex
 	cp firmware/firmware.hex ./firmware.hex
+	cp firmware/firmware.hex ./sim/firmware.hex 2>/dev/null || true
 
 BC_APP_DIR ?= vendor/bc_clone_rs/examples/zephyr_app
 ZEPHYR_BUILD_DIR ?= build_zephyr
@@ -193,40 +194,81 @@ sim-hack-rtl: build-hack
 
 sim-hack: sim-hack-emu sim-hack-pytest sim-hack-rtl
 
-sim: sim-unit test-arch-compliance sim-soc sim-zephyr sim-hack
+synth-units: veryl
+	@echo "=== Synthesizing Submodules to Gowin Netlists for GLS Unit Tests ==="
+	$(YOSYS) -p "read_verilog -sv cpu/rv32i_pkg.sv cpu/auto_mode_detector.sv cpu/hack_translator.sv cpu/rv32i_alu.sv cpu/rv32i_decode.sv cpu/rv32i_regfile.sv cpu/rv32i_csrs.sv cpu/unified_cpu.sv; synth_gowin -top unified_cpu; write_verilog -noattr unified_cpu_syn.v"
+	$(YOSYS) -p "read_verilog -sv uart/clk_timer.sv uart/shift_registers.sv uart/fifo_sync.sv uart/uart_tx.sv uart/uart_rx.sv uart/uart_controller.sv; synth_gowin -top uart_controller; write_verilog -noattr uart_controller_syn.v"
+	$(YOSYS) -p "read_verilog -sv cpu/rv32i_pkg.sv cpu/auto_mode_detector.sv; synth_gowin -top auto_mode_detector; write_verilog -noattr auto_mode_detector_syn.v"
+
+sim-gls-unit: synth-units
+	@echo "=== Running Gowin Primitive GLS: Unified CPU Tests ==="
+	$(MAKE) -C sim TOPLEVEL=unified_cpu MODULE=test_unified_cpu SIM_GLS=1
+	@echo "=== Running Gowin Primitive GLS: Hack CPU Ops Tests ==="
+	$(MAKE) -C sim TOPLEVEL=unified_cpu MODULE=test_hack_cpu_ops SIM_GLS=1
+	@echo "=== Running Gowin Primitive GLS: RV32I ISA Compliance Tests ==="
+	$(MAKE) -C sim TOPLEVEL=unified_cpu MODULE=test_rv32i_compliance SIM_GLS=1
+	@echo "=== Running Gowin Primitive GLS: UART Controller Loopback Tests ==="
+	$(MAKE) -C sim TOPLEVEL=uart_controller MODULE=test_uart_controller SIM_GLS=1
+	@echo "=== Running Gowin Primitive GLS: Auto Mode Detector Tests ==="
+	$(MAKE) -C sim TOPLEVEL=auto_mode_detector MODULE=test_auto_mode_detector SIM_GLS=1
+
+sim-soc-fast: veryl firmware
+	@echo "=== Running Fast SoC Top Boot & Execution Verification (RTL) ==="
+	$(MAKE) -C sim TOPLEVEL=soc_top MODULE=test_soc_fast
+
+sim-soc-gls-fast: synth-top firmware
+	@echo "=== Running Fast SoC Top Boot & Execution Verification (GLS Netlist) ==="
+	$(MAKE) -C sim TOPLEVEL=soc_top MODULE=test_soc_fast SIM_GLS=1
+
+sim-hw-flow: firmware build-hack
+	@echo "=== Running SoC Top End-to-End Hardware Verification Flow (RTL Simulation) ==="
+	$(MAKE) -C sim TOPLEVEL=soc_top MODULE=test_soc_hardware_flow
+
+sim-gls-hw-flow: synth-top firmware build-hack
+	@echo "=== Running SoC Top End-to-End Hardware Verification Flow (GLS Simulation) ==="
+	$(MAKE) -C sim TOPLEVEL=soc_top MODULE=test_soc_hardware_flow SIM_GLS=1
+
+sim: sim-unit test-arch-compliance sim-gls-unit sim-soc-fast
 
 synth: veryl
 	$(YOSYS) -p "\
 		read_verilog -sv cpu/rv32i_pkg.sv cpu/auto_mode_detector.sv cpu/hack_translator.sv cpu/rv32i_alu.sv cpu/rv32i_decode.sv cpu/rv32i_regfile.sv cpu/rv32i_csrs.sv cpu/unified_cpu.sv uart/*.sv soc/timer_core.sv soc/sdcard_spi.sv soc/hw_boot_mgr.sv; \
-		synth_gowin -top hw_boot_mgr -json soc.json; \
+		synth_gowin -top hw_boot_mgr -json hw_boot.json; \
 	"
 
-synth-top: veryl
+synth-top: veryl firmware
 	$(YOSYS) -p "\
 		read_verilog -sv cpu/rv32i_pkg.sv cpu/auto_mode_detector.sv cpu/hack_translator.sv cpu/rv32i_alu.sv cpu/rv32i_decode.sv cpu/rv32i_regfile.sv cpu/rv32i_csrs.sv cpu/unified_cpu.sv uart/clk_timer.sv uart/fifo_sync.sv uart/shift_registers.sv uart/uart_tx.sv uart/uart_rx.sv uart/uart_controller.sv soc/timer_core.sv soc/sdcard_spi.sv soc/gpio_controller.sv soc/hw_boot_mgr.sv soc/soc_ram.v soc/soc_top.sv; \
 		synth_gowin -top soc_top -json soc.json; \
+		write_verilog -noattr soc_syn.v; \
 	"
 
+sim-gls: sim-gls-unit sim-soc-gls-fast
+
 pnr: synth-top
-	$(NEXTPNR) --device GW1NR-LV9QN88PC6/I5 --vopt family=GW1N-9C --vopt cst=$(CST_FILE) --json soc.json --write soc_pnr.json
+	$(NEXTPNR) --device GW1NR-LV9QN88PC6/I5 --vopt family=GW1N-9C --vopt cst=$(CST_FILE) --json soc.json --write soc_pnr.json --sdf soc.sdf
+
+sim-sdf: pnr firmware build-hack
+	@echo "=== Running Post-PnR Timing Simulation with SDF Back-Annotation ==="
+	$(MAKE) -C sim TOPLEVEL=tb_soc_sdf MODULE=test_soc_sdf SIM_SDF=1
 
 bitstream: pnr
 	$(GOWIN_PACK) -d GW1N-9C -o pack.fs soc_pnr.json
 
-build-hw: firmware bitstream
+build-hw: bitstream
 	@echo "=== Hardware Bitstream pack.fs Built Successfully! ==="
 
-prog-sram:
+prog-sram: bitstream
 	$(OPENFPGALOADER) -b tangnano9k pack.fs
 
-prog-flash:
+prog-flash: bitstream
 	$(OPENFPGALOADER) -b tangnano9k -f pack.fs
 
 test: test-ci
  
-test-ci: check firmware zephyr-rust-lib zephyr-bc-lib build-hack build-zephyr sim synth synth-top
+test-ci: check firmware zephyr-rust-lib zephyr-bc-lib build-hack build-zephyr sim-unit test-arch-compliance sim-gls-unit sim-soc-fast synth-top sim-soc-gls-fast
 	@echo "========================================================================"
-	@echo "  [CI] ALL VERYL CPU, UART, ARCH-COMPLIANCE & SOC SIM TESTS PASSED 100%! "
+	@echo "  [CI] ALL RTL, GLS NETLIST, COMPLIANCE & SOC INTEGRATION TESTS PASSED! "
 	@echo "========================================================================"
 
 test-hardware: test-hw
@@ -244,5 +286,4 @@ clean:
 	cd zephyr_workspace/app/rust_app && $(CARGO) clean
 	cd vendor/bc_clone_rs/crates/bc_zephyr 2>/dev/null && $(CARGO) clean || true
 	$(MAKE) -C firmware_hack clean
-	rm -rf sim/sim_build* sim/results.xml soc.json pack.fs firmware/firmware.bin firmware/firmware.hex build_arch_test build_hack zephyr_workspace/app/build $(ZEPHYR_BUILD_DIR)
-
+	rm -rf sim/sim_build* sim/results.xml *.json *_syn.v sim/*_syn.v *.sdf pack.fs firmware/firmware.bin firmware/firmware.hex build_arch_test build_hack zephyr_workspace/app/build $(ZEPHYR_BUILD_DIR)

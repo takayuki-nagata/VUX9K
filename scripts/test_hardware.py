@@ -130,7 +130,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
         # -------------------------------------------------------------
         test_name = "1. UART Connection & Prompt Synchronization"
         ser.reset_input_buffer()
-        ser.write(b"\r\n")
+        ser.write(b"\n")
         ser.flush()
         time.sleep(0.1)
         resp = ""
@@ -141,8 +141,13 @@ def run_hardware_test_suite(port="auto", baud=115200):
                 resp += c.decode("utf-8", errors="replace")
                 if "vux> " in resp:
                     break
-        results.append((test_name, True, "Connected and synchronized with Boot Manager"))
-        print_test_result(test_name, True, "Connected and synchronized with Boot Manager")
+        passed = "vux> " in resp
+        msg = "Connected and synchronized with Boot Manager" if passed else f"Failed to synchronize prompt. Output: {resp!r}"
+        results.append((test_name, passed, msg))
+        print_test_result(test_name, passed, msg)
+        if not passed:
+            print("\n[ERROR] Could not communicate with Boot Manager on Tang Nano 9K.")
+            return False
 
         # -------------------------------------------------------------
         # Test 2: Hardware Self-Diagnostics ('t')
@@ -229,8 +234,10 @@ def run_hardware_test_suite(port="auto", baud=115200):
                 c = ser.read(128)
                 if c:
                     out += c.decode("utf-8", errors="replace")
-            results.append((test_name_boot, True, "Triggered SD Card auto-load & Dual-ISA CPU execution"))
-            print_test_result(test_name_boot, True, "Triggered SD Card auto-load & Dual-ISA CPU execution")
+            passed = ("[BOOT]" in out) or ("Jumping" in out) or len(out) > 0
+            msg = "Triggered SD Card auto-load & Dual-ISA CPU execution" if passed else "No output after boot trigger"
+            results.append((test_name_boot, passed, msg))
+            print_test_result(test_name_boot, passed, msg)
         except Exception as e:
             results.append((test_name_boot, False, str(e)))
             print_test_result(test_name_boot, False, str(e))

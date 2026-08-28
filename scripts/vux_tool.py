@@ -33,36 +33,60 @@ VUX_MAGIC = 0x56555839  # "VUX9"
 DEFAULT_FTDI_URL = "ftdi://ftdi:2232/2"
 
 
+def find_tangnano_uart_port():
+    by_id_dir = "/dev/serial/by-id"
+    if os.path.exists(by_id_dir):
+        try:
+            entries = os.listdir(by_id_dir)
+            # Priority 1: SIPEED / Debugger interface 01 (UART port)
+            for entry in entries:
+                entry_lower = entry.lower()
+                if ("sipeed" in entry_lower or "debugger" in entry_lower or "tang" in entry_lower or "gowin" in entry_lower) and ("if01" in entry_lower or "if1" in entry_lower):
+                    return os.path.join(by_id_dir, entry)
+            # Priority 2: Any interface 01 device that is NOT FT232R (excluding other host FT232R UARTs)
+            for entry in entries:
+                entry_lower = entry.lower()
+                if "ft232r" not in entry_lower and ("if01" in entry_lower or "if1" in entry_lower):
+                    return os.path.join(by_id_dir, entry)
+        except Exception:
+            pass
+
+    # Priority 3: /dev/ttyUSB3 (standard for Tang Nano 9K when ttyUSB2 is JTAG and ttyUSB0/1 are other hosts)
+    if os.path.exists("/dev/ttyUSB3"):
+        return "/dev/ttyUSB3"
+    return None
+
+
 def open_port(port_name="auto", baudrate=115200, timeout=0.2):
-    if port_name == "auto" or port_name.startswith("ftdi://"):
-        url = DEFAULT_FTDI_URL if port_name == "auto" else port_name
-        if pyftdi is not None:
+    if port_name == "auto":
+        port = find_tangnano_uart_port()
+        if port is not None and serial is not None:
             try:
-                ser = pyftdi.serialext.serial_for_url(url, baudrate=baudrate, timeout=timeout, rtscts=False, dsrdtr=False)
+                ser = serial.Serial(port, baudrate=baudrate, timeout=timeout, rtscts=False, dsrdtr=False)
                 ser.dtr = False
                 ser.rts = False
                 return ser
             except Exception as e:
-                if port_name != "auto":
-                    raise e
+                pass
 
-        # Fallback to SIPEED /dev/serial/by-id or /dev/ttyUSB3
-        candidate_ports = []
-        sipeed_id = "/dev/serial/by-id/usb-SIPEED_JTAG_Debugger_FactoryAIOT_Pro-if01-port0"
-        if os.path.exists(sipeed_id):
-            candidate_ports.append(sipeed_id)
-        candidate_ports.extend(["/dev/ttyUSB3", "/dev/ttyUSB2", "/dev/ttyUSB1", "/dev/ttyUSB0"])
+        # If pyftdi is available and by-id did not work, try pyftdi URL
+        if pyftdi is not None:
+            try:
+                ser = pyftdi.serialext.serial_for_url(DEFAULT_FTDI_URL, baudrate=baudrate, timeout=timeout, rtscts=False, dsrdtr=False)
+                ser.dtr = False
+                ser.rts = False
+                return ser
+            except Exception:
+                pass
 
-        if serial is not None:
-            for p in candidate_ports:
-                try:
-                    ser = serial.Serial(p, baudrate=baudrate, timeout=timeout, rtscts=False, dsrdtr=False)
-                    ser.dtr = False
-                    ser.rts = False
-                    return ser
-                except Exception:
-                    continue
-        raise RuntimeError("Could not open Tang Nano 9K UART port automatically.")
+        raise RuntimeError("Could not open Tang Nano 9K UART port automatically. Ensure Tang Nano 9K is connected.")
+    elif port_name.startswith("ftdi://"):
+        if pyftdi is None:
+            raise RuntimeError("pyftdi is not installed for ftdi:// URLs!")
+        ser = pyftdi.serialext.serial_for_url(port_name, baudrate=baudrate, timeout=timeout, rtscts=False, dsrdtr=False)
+        ser.dtr = False
+        ser.rts = False
+        return ser
     else:
         if serial is None:
             raise RuntimeError("pyserial is not installed!")

@@ -27,7 +27,7 @@ pub module auto_mode_detector (
                             == rv32i_pkg::OPCODE_LOAD || opcode == rv32i_pkg::OPCODE_STORE || opcode
                             == rv32i_pkg::OPCODE_BRANCH || opcode == rv32i_pkg::OPCODE_JAL || opcode
                             == rv32i_pkg::OPCODE_JALR || opcode == rv32i_pkg::OPCODE_LUI || opcode
-                            == rv32i_pkg::OPCODE_AUIPC) {
+                            == rv32i_pkg::OPCODE_AUIPC || opcode == rv32i_pkg::OPCODE_SYSTEM) {
                         riscv_flag   = 1'b1;
                         mode_latched = 1'b1;
                     } else if (first_instr[15:13] == 3'b111)

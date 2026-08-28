@@ -94,7 +94,7 @@ pub module soc_ram #(
         if last_is_rom {
             d_data_out = i_dout_b;
         } else {
-            d_data_out = {d_dout3, d_dout1, d_dout2, d_dout0};
+            d_data_out = {d_dout3, d_dout2, d_dout1, d_dout0};
         }
     }
 }

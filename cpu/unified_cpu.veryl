@@ -104,7 +104,7 @@ pub module unified_cpu (
 
     assign active_mode = is_riscv_mode;
     assign pc_out      = if (state == CpuState::EXECUTE || state == CpuState::MEM_WAIT) ? next_pc : pc_reg;
-    assign data_addr   = if is_riscv_mode ? alu_result : rf_rs2_data;
+    assign data_addr   = if is_riscv_mode ? (rf_rs1_data + rv_imm) : rf_rs2_data;
     assign data_out    = r_data_out;
     assign mem_byte_we = r_mem_byte_we;
     assign mem_write   = if (state == CpuState::EXECUTE) ? r_mem_write : 1'b0;

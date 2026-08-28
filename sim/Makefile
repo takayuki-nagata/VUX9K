@@ -12,6 +12,23 @@ export PYTHONPATH := $(shell python3 -c 'import sys; print(":".join(sys.path))' 
 SIM ?= icarus
 TOPLEVEL_LANG ?= verilog
 
+ifeq ($(SIM_GLS),1)
+# Gate-Level Simulation (GLS) using Gowin primitive simulation models + Synthesized Netlist
+TOPLEVEL ?= soc_top
+SYN_NETLIST ?= $(if $(filter soc_top,$(TOPLEVEL)),$(PWD)/../soc_syn.v,$(PWD)/../$(TOPLEVEL)_syn.v)
+VERILOG_SOURCES = $(PWD)/gowin_cells_sim.v $(SYN_NETLIST)
+COMPILE_ARGS = -g2012
+MODULE ?= test_soc_fast
+SIM_BUILD = sim_build_gls_$(TOPLEVEL)
+else ifeq ($(SIM_SDF),1)
+# Post-PnR Timing Simulation with SDF Back-Annotation
+VERILOG_SOURCES = $(PWD)/gowin_cells_sim.v $(PWD)/../soc_syn.v $(PWD)/tb_soc_sdf.sv
+COMPILE_ARGS = -g2012 -gspecify -Ttyp
+TOPLEVEL = tb_soc_sdf
+MODULE ?= test_soc_sdf
+SIM_BUILD = sim_build_sdf
+else
+# RTL Behavioral Simulation
 VERILOG_SOURCES += $(PWD)/../cpu/rv32i_pkg.sv
 VERILOG_SOURCES += $(PWD)/../cpu/rv32i_alu.sv
 VERILOG_SOURCES += $(PWD)/../cpu/rv32i_decode.sv
@@ -36,9 +53,9 @@ VERILOG_SOURCES += $(PWD)/../soc/soc_ram.sv
 VERILOG_SOURCES += $(PWD)/../soc/soc_top.sv
 
 COMPILE_ARGS += -g2012
-
 TOPLEVEL ?= soc_top
 MODULE ?= test_soc_rv32i
 SIM_BUILD ?= sim_build_$(TOPLEVEL)
+endif
 
 include $(shell cocotb-config --makefiles)/Makefile.sim

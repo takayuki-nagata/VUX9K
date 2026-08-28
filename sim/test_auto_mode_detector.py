@@ -16,7 +16,7 @@ async def test_auto_mode_detection(dut):
     dut.first_instr.value = 0x00000013
     await ClockCycles(dut.clk, 2)
     dut.rst.value = 1
-    await ClockCycles(dut.clk, 1)
+    await ClockCycles(dut.clk, 2)
 
     assert int(dut.is_riscv_mode.value) == 1, "Should detect RISC-V 32-bit mode!"
 

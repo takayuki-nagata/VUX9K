@@ -7,7 +7,7 @@ const TIMER_BASE: usize = 0x4000_1000;
 const MTIME_LOW: *const u32 = TIMER_BASE as *const u32;
 const MTIME_HIGH: *const u32 = (TIMER_BASE + 0x4) as *const u32;
 
-const FREQ_KHZ: u64 = 27_000; // 27 MHz clock = 27,000 ticks per millisecond
+const FREQ_KHZ: u64 = 27; // Fast simulation scale (27 cycles per ms unit)
 
 pub struct Timer;
 

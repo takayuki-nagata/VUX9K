@@ -156,37 +156,45 @@ make prog-flash
 
 ## Verification & Test Targets
 
-The project provides dedicated targets for both pure-simulation CI pipelines and end-to-end real hardware verification:
+The project provides a comprehensive, multi-tiered verification framework spanning RTL simulation, Gate-Level Simulation (GLS) with Gowin primitive cells (`cells_sim.v`), Post-PnR Timing Simulation (SDF), and automated physical hardware testing:
 
 ```bash
-# 1. CI Target: Run ALL Simulation & Synthesis Tests (100% pure software, no board required)
+# 1. CI Target: Run Fast Comprehensive Verification Suite (~2 min, 100% software, no board required)
 make test-ci
 
-# 2. Hardware Target: Synthesize, Flash SRAM & Run Automated Real-Board Test Suite on Tang Nano 9K
+# 2. End-to-End Virtual Hardware Simulation Flow (RTL & GLS on-demand)
+make sim-hw-flow
+make sim-gls-hw-flow
+
+# 3. Post-PnR Timing Simulation with SDF Back-Annotation
+make sim-sdf
+
+# 4. Hardware Target: Synthesize, Flash SRAM & Run Automated Real-Board Test Suite on Tang Nano 9K
 make test-hw
 ```
 
-### Test Suite Components
-- **CI / Simulation Suite (`make test-ci`)**:
-  - **Auto Mode Detector & CPU Multi-FSM**: `sim/test_auto_mode_detector.py`, `sim/test_unified_cpu.py`
-  - **Hack 16-bit Comprehensive ALU & Jump Operations**: `sim/test_hack_cpu_ops.py`
-  - **Official RISC-V Architectural Compliance (`riscv-arch-test`)**:
-    - **45 / 45 PASSED (100%)**: 39 RV32I Base Instructions (`I-add-00` through `I-xori-00`) + 6 Zicsr Operations (`Zicsr-csrrc-00` through `Zicsr-csrrwi-00`).
-  - **UART Peripheral Suite**: `sim/test_clk_timer.py`, `sim/test_shift_registers.py`, `sim/test_fifo_sync.py`, `sim/test_uart_tx.py`, `sim/test_uart_rx.py`, `sim/test_uart_controller.py`.
-  - **SoC Integration & Boot Manager**: `sim/test_soc_boot.py`, `sim/test_soc_rv32i.py`, `sim/test_soc_hack.py`.
-  - **Zephyr RTOS & `bc_clone_rs` BigInt Engine**: `sim/test_soc_bc.py` (10/10 math engine tests + interactive REPL).
-  - **Gowin Synthesis Check**: `synth` & `synth-top` RTL synthesis check via Yosys.
+### Test Suite Architecture
 
-- **Real Hardware Suite (`make test-hw`)**:
-  - **`test_hardware.py`**: Automated end-to-end verification directly on Sipeed Tang Nano 9K and physical MicroSD card:
-    1. UART Connection & Prompt Synchronization (`vux> `)
-    2. Hardware Self-Diagnostics (`diag` / `t`: LED test, UART loopback, MicroSD SPI init)
-    3. MicroSD Card Sector 0 (MBR) Dump (`dump-mbr` / `d`: 512-byte read & `0x55AA` signature)
-    4. Multi-Sector Flash: Hack 16-bit Firmware (`flash-sd` / `w` to Sector 64)
-    5. Header Verification: Hack 16-bit (`inspect-sd` / `s`: Magic `VUX9`, Mode `0`)
-    6. Multi-Sector Flash: RISC-V 32-bit Firmware (`flash-sd` / `w` to Sector 64)
-    7. Header Verification: RISC-V 32-bit (`inspect-sd` / `s`: Magic `VUX9`, Mode `1`)
-    8. SD Card Program Load & Dual-ISA Execution Trigger (`boot` / `l`)
+| Level | Command | Typical Time | Verification Scope |
+|:---|:---|:---|:---|
+| **RTL Unit Tests** | `make sim-unit` | ~25 sec | 14 testbenches verifying CPU, ALU, Decoder, Register File, CSRs, UART, FIFO, and Auto-Mode detector |
+| **Arch Compliance** | `make test-arch-compliance` | ~15 sec | Official RISC-V architectural compliance suite (45/45 tests passed 100%) |
+| **GLS Unit Tests** | `make sim-gls-unit` | ~40 sec | Gowin primitive netlists (`gowin_cells_sim.v`) with LUTRAMs (`RAM16SDP4`), ALUs, and DFFs |
+| **Fast SoC Boot** | `make sim-soc-fast` / `make sim-soc-gls-fast` | < 1 sec | Fast power-on reset, CPU boot, and instruction execution verification on RTL & full Gowin netlist |
+| **End-to-End Flow** | `make sim-hw-flow` / `make sim-gls-hw-flow` | ~3-4 min | Full 8-step hardware test suite in simulation using `VirtualSerialBridge` (UART) and `SpiSdCardModel` (SD SPI) |
+| **Post-PnR Timing** | `make sim-sdf` | On-demand | Nextpnr placement & routing netlist with back-annotated timing delay (`soc.sdf`) |
+| **Real Hardware** | `make test-hw` | ~25 sec | Automated physical hardware execution on Tang Nano 9K via `scripts/test_hardware.py` |
+
+### Real Hardware & Full Flow Test Cases (8 Items)
+Both `scripts/test_hardware.py` (real board) and `sim/test_soc_hardware_flow.py` (simulation) execute the complete 8-step verification flow:
+1. **UART Connection & Prompt Synchronization** (`vux> `)
+2. **Hardware Self-Diagnostics** (`diag` / `t`: LED animation, user button, MicroSD SPI init, 64-bit CLINT timer)
+3. **MicroSD Sector 0 (MBR) Dump** (`dump-mbr` / `d`: 512-byte read & `0x55AA` signature validation)
+4. **Multi-Sector Flash: Hack 16-bit Firmware** (`flash-sd` / `w` to Sector 64 MBR gap)
+5. **Header Verification: Hack 16-bit** (`inspect-sd` / `s`: Magic `VUX9`, Mode `0`)
+6. **Multi-Sector Flash: RISC-V 32-bit Firmware** (`flash-sd` / `w` to Sector 64 MBR gap)
+7. **Header Verification: RISC-V 32-bit** (`inspect-sd` / `s`: Magic `VUX9`, Mode `1`)
+8. **MicroSD Program Load & Execution Trigger** (`boot` / `l`: Zero-overhead payload transfer to I-RAM and jump)
 
 ---
 
