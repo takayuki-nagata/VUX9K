@@ -50,6 +50,7 @@ async def test_rv32i_full_compliance(dut):
     dut.instr_in.value = encode_i(0, 0, 0, 0, 0x13) # ADDI x0, x0, 0
 
     await ClockCycles(dut.clk, 2)
+    await FallingEdge(dut.clk)
     dut.rst.value = 1
     await ClockCycles(dut.clk, 2)
     assert int(dut.active_mode.value) == 1, "Failed to enter RISC-V mode!"
@@ -108,27 +109,26 @@ async def test_rv32i_full_compliance(dut):
     dut.instr_in.value = encode_i(16, rs1=0, funct3=2, rd=12, opcode=0x03)
     await ClockCycles(dut.clk, 2) # FETCH -> EXECUTE -> MEM_WAIT
     await ClockCycles(dut.clk, 1)
+    await Timer(1, unit="ns")
 
     # 13. BEQ x7, x7, +16 (Should take branch)
     pc_before_beq = int(dut.pc_out.value)
     dut.instr_in.value = encode_b(16, rs2=7, rs1=7, funct3=0)
-    await ClockCycles(dut.clk, 1) # FETCH -> EXECUTE
+    await ClockCycles(dut.clk, 2) # FETCH -> EXECUTE -> Update PC
     await Timer(1, unit="ns")
     assert int(dut.pc_out.value) == pc_before_beq + 16, f"Expected PC={pc_before_beq + 16}, got {int(dut.pc_out.value)}"
-    await ClockCycles(dut.clk, 1)
 
     # 14. BNE x7, x8, +12 (Should take branch)
     pc_before_bne = int(dut.pc_out.value)
     dut.instr_in.value = encode_b(12, rs2=8, rs1=7, funct3=1)
-    await ClockCycles(dut.clk, 1) # FETCH -> EXECUTE
+    await ClockCycles(dut.clk, 2) # FETCH -> EXECUTE -> Update PC
     await Timer(1, unit="ns")
     assert int(dut.pc_out.value) == pc_before_bne + 12, f"Expected PC={pc_before_bne + 12}, got {int(dut.pc_out.value)}"
-    await ClockCycles(dut.clk, 1)
 
     # 15. JAL x1, +28 (Should jump)
     pc_before_jal = int(dut.pc_out.value)
     dut.instr_in.value = encode_j(28, rd=1)
-    await ClockCycles(dut.clk, 1) # FETCH -> EXECUTE
+    await ClockCycles(dut.clk, 2) # FETCH -> EXECUTE -> Update PC
     await Timer(1, unit="ns")
     assert int(dut.pc_out.value) == pc_before_jal + 28, f"Expected PC={pc_before_jal + 28}, got {int(dut.pc_out.value)}"
     await ClockCycles(dut.clk, 1)

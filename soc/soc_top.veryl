@@ -203,22 +203,20 @@ pub module soc_top (
             }
         } else {
             // RISC-V Mode
-            if data_addr[31:20] == 12'h200 || data_addr[31:20] == 12'h000 {
+            if data_addr[31:28] == 4'h0 || data_addr[31:28] == 4'h2 {
                 ram_sel = 1'b1;
-            } else if data_addr[31:16] == 16'h4000 {
-                if data_addr[15:4] == 12'h000 {
-                    uart_sel = 1'b1;
-                } else if data_addr[15:4] == 12'h100 {
-                    timer_sel = 1'b1;
-                } else if data_addr[15:4] == 12'h200 {
-                    sd_sel = 1'b1;
-                } else if data_addr[15:4] == 12'h300 {
-                    gpio_sel = 1'b1;
+            } else if data_addr[31:28] == 4'h4 {
+                case data_addr[11:8] {
+                    4'h0   : uart_sel  = 1'b1;
+                    4'h1   : timer_sel = 1'b1;
+                    4'h2   : sd_sel    = 1'b1;
+                    4'h3   : gpio_sel  = 1'b1;
+                    default: {}
                 }
             }
         }
 
-        ram_we      = mem_write && ram_sel && ((active_mode == 1'b0) || (data_addr[31:20] == 12'h200));
+        ram_we      = mem_write && ram_sel && ((active_mode == 1'b0) || (data_addr[31:28] == 4'h2));
         ram_we_byte = cpu_byte_we;
         uart_we     = mem_write && uart_sel;
         timer_we    = mem_write && timer_sel;
@@ -233,19 +231,46 @@ pub module soc_top (
         timer_re = 1'b1;
         sd_re    = 1'b1;
         gpio_re  = 1'b1;
+    }
 
-        if ram_sel {
+    var last_ram_sel  : logic   ;
+    var last_timer_sel: logic   ;
+    var last_sd_sel   : logic   ;
+    var last_gpio_sel : logic   ;
+    var last_uart_sel : logic   ;
+    var last_addr_low : logic<4>;
+
+    always_ff (clk, rst) {
+        if_reset {
+            last_ram_sel   = 1'b0;
+            last_timer_sel = 1'b0;
+            last_sd_sel    = 1'b0;
+            last_gpio_sel  = 1'b0;
+            last_uart_sel  = 1'b0;
+            last_addr_low  = 4'd0;
+        } else {
+            last_ram_sel   = ram_sel;
+            last_timer_sel = timer_sel;
+            last_sd_sel    = sd_sel;
+            last_gpio_sel  = gpio_sel;
+            last_uart_sel  = uart_sel;
+            last_addr_low  = data_addr[3:0];
+        }
+    }
+
+    always_comb {
+        if last_ram_sel {
             cpu_data_in = ram_data_out;
-        } else if timer_sel {
+        } else if last_timer_sel {
             cpu_data_in = timer_data_out;
-        } else if sd_sel {
+        } else if last_sd_sel {
             cpu_data_in = sd_data_out;
-        } else if gpio_sel {
+        } else if last_gpio_sel {
             cpu_data_in = gpio_data_out;
-        } else if uart_sel {
+        } else if last_uart_sel {
             if active_mode == 1'b0 {
                 cpu_data_in = {24'h0, uart_rdata};
-            } else if data_addr[3:0] == 4'h0 {
+            } else if last_addr_low == 4'h0 {
                 cpu_data_in = {24'h0, uart_rdata};
             } else {
                 cpu_data_in = {30'h0, uart_full, uart_empty};

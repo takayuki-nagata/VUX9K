@@ -250,7 +250,7 @@ pnr: synth-top
 
 sta: pnr
 	@echo "=== Generating Static Timing Analysis (STA) Report ==="
-	$(PYTHON) scripts/report_sta.py soc_sta.json
+	$(PYTHON) scripts/report_sta.py soc_sta.json --strict
 
 bitstream: pnr
 	$(GOWIN_PACK) -d GW1N-9C -o pack.fs soc_pnr.json
@@ -264,12 +264,17 @@ prog-sram: bitstream
 prog-flash: bitstream
 	$(OPENFPGALOADER) -b tangnano9k -f pack.fs
 
-test: test-ci
- 
-test-ci: check firmware zephyr-rust-lib zephyr-bc-lib build-hack build-zephyr sim-unit test-arch-compliance sim-gls-unit sim-soc-fast synth-top sim-soc-gls-fast
+test-sim: check firmware zephyr-rust-lib zephyr-bc-lib build-hack build-zephyr sim-unit test-arch-compliance sim-gls-unit sim-soc-fast synth-top sim-soc-gls-fast
 	@echo "========================================================================"
-	@echo "  [CI] ALL RTL, GLS NETLIST, COMPLIANCE & SOC INTEGRATION TESTS PASSED! "
+	@echo "  [SIM] ALL RTL, GLS NETLIST, COMPLIANCE & SOC SIMULATION TESTS PASSED! "
 	@echo "========================================================================"
+
+test: test-sim sta
+	@echo "========================================================================"
+	@echo "  [TEST] ALL SIMULATION & STATIC TIMING ANALYSIS (STA) PASSED 100%!     "
+	@echo "========================================================================"
+
+test-ci: test
 
 test-hardware: test-hw
 

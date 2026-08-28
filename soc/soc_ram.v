@@ -51,15 +51,12 @@ module soc_ram #(
     (* syn_ramstyle = "block_ram" *) reg [7:0] d_mem1 [0:D_MEM_WORDS-1];
     (* syn_ramstyle = "block_ram" *) reg [7:0] d_mem2 [0:D_MEM_WORDS-1];
     (* syn_ramstyle = "block_ram" *) reg [7:0] d_mem3 [0:D_MEM_WORDS-1];
-
     wire [9:0] d_idx = (active_mode == 1'b0) ? d_addr[9:0] : d_addr[11:2];
 
-    wire is_dram_access = (active_mode == 1'b0) || (d_addr[31:20] == 12'h200);
-
-    wire we0 = d_we && is_dram_access && (active_mode ? d_we_byte[0] : 1'b1);
-    wire we1 = d_we && is_dram_access && (active_mode ? d_we_byte[1] : 1'b1);
-    wire we2 = d_we && is_dram_access && (active_mode ? d_we_byte[2] : 1'b1);
-    wire we3 = d_we && is_dram_access && (active_mode ? d_we_byte[3] : 1'b1);
+    wire we0 = d_we && (active_mode ? d_we_byte[0] : 1'b1);
+    wire we1 = d_we && (active_mode ? d_we_byte[1] : 1'b1);
+    wire we2 = d_we && (active_mode ? d_we_byte[2] : 1'b1);
+    wire we3 = d_we && (active_mode ? d_we_byte[3] : 1'b1);
 
     reg [7:0] d_dout0;
     reg [7:0] d_dout1;

@@ -105,12 +105,17 @@ jobs:
           uv venv --python 3.13 .venv
           uv pip install --python .venv/bin/python cocotb pytest https://github.com/takayuki-nagata/hack_tools/releases/download/v0.2.0/m2h-0.2.0.tar.gz -r $HOME/zephyrproject/zephyr/scripts/requirements-base.txt
 
-      - name: Run Full SoC Test Suite (Simulation & Synthesis)
+      - name: Run Full SoC Simulation Suite (RTL, Compliance & GLS)
         run: |
           export PATH=$PWD/.venv/bin:$HOME/.local/bin:$HOME/.local/msp430-gcc/bin:$HOME/.local/zephyr-sdk-0.16.8/riscv64-zephyr-elf/bin:$PATH
           export ZEPHYR_BASE=$HOME/zephyrproject/zephyr
           export ZEPHYR_SDK_INSTALL_DIR=$HOME/.local/zephyr-sdk-0.16.8
-          make test-ci
+          make test-sim
+
+      - name: Run Static Timing Analysis (STA & Physical Timing Closure)
+        run: |
+          export PATH=$PWD/.venv/bin:$HOME/.local/bin:$HOME/.local/msp430-gcc/bin:$HOME/.local/zephyr-sdk-0.16.8/riscv64-zephyr-elf/bin:$PATH
+          make sta
 
       - name: Check Submodule Cleanliness
         run: |

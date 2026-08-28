@@ -29,6 +29,7 @@ async def test_hack_cpu_comprehensive(dut):
     dut.instr_in.value = make_hack_a(1) # First instruction @1
 
     await ClockCycles(dut.clk, 2)
+    await FallingEdge(dut.clk)
     dut.rst.value = 1
 
     # Cycle 1: Fetch -> Cycle 2: Execute
@@ -63,10 +64,9 @@ async def test_hack_cpu_comprehensive(dut):
     # 6. Test Conditional Jump: JGT with D > 0 (D = 0x123F > 0 -> should jump to A = 0x123F)
     # PC should become (0x123F << 1) = 0x247E
     dut.instr_in.value = make_hack_c(a=0, c=0x0C, d=0b000, j=0b001) # D;JGT
-    await ClockCycles(dut.clk, 1) # FETCH -> EXECUTE
+    await ClockCycles(dut.clk, 2) # FETCH -> EXECUTE -> Update PC
     await Timer(1, unit="ns")
     assert int(dut.pc_out.value) == (0x123F << 1), f"Expected jumped PC={0x123F << 1}, got {int(dut.pc_out.value)}"
-    await ClockCycles(dut.clk, 1)
 
     # 7. Test Read Memory M: D=M (with data_in = 0x55AA)
     dut.data_in.value = 0x55AA

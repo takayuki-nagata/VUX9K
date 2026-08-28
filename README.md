@@ -159,17 +159,20 @@ make prog-flash
 The project provides a comprehensive, multi-tiered verification framework spanning RTL simulation, Gate-Level Simulation (GLS) with Gowin primitive cells (`cells_sim.v`), Static Timing Analysis (STA) with Nextpnr, and automated physical hardware testing:
 
 ```bash
-# 1. CI Target: Run Fast Comprehensive Verification Suite (~2 min, 100% software, no board required)
-make test-ci
+# 1. Full Verification Suite (All Simulation Suites + Static Timing Analysis STA)
+make test
 
-# 2. End-to-End Virtual Hardware Simulation Flow (RTL & GLS on-demand)
+# 2. Simulation-Only Verification Suite (RTL, Arch Compliance & GLS Netlists)
+make test-sim
+
+# 3. Static Timing Analysis (STA) & Physical Timing Closure (27.0 MHz)
+make sta
+
+# 4. End-to-End Virtual Hardware Simulation Flow (RTL & GLS on-demand)
 make sim-hw-flow
 make sim-gls-hw-flow
 
-# 3. Static Timing Analysis (STA) Report & Timing Verification
-make sta
-
-# 4. Hardware Target: Synthesize, Flash SRAM & Run Automated Real-Board Test Suite on Tang Nano 9K
+# 5. Hardware Target: Synthesize, Flash SRAM & Run Automated Real-Board Test Suite on Tang Nano 9K
 make test-hw
 ```
 

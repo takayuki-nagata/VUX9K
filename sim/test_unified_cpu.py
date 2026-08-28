@@ -23,21 +23,25 @@ async def test_unified_cpu_hack_and_riscv(dut):
     dut.instr_in.value = (0x000F << 16) | 0x000F # Hack @15 (Load 15 into A/x1)
 
     await ClockCycles(dut.clk, 2)
+    await FallingEdge(dut.clk)
     dut.rst.value = 1
 
     # Cycle 1: Fetch -> Cycle 2: Execute (@15) -> Next PC becomes 2
     await ClockCycles(dut.clk, 2)
+    await Timer(1, unit="ns")
     assert int(dut.active_mode.value) == 0, "Hack mode auto-detection failed!"
     assert int(dut.pc_out.value) == 2, f"Expected PC=2, got {int(dut.pc_out.value)}"
 
     # PC=2: Hack C-instruction D=A (0xEC10 -> "1110110000010000")
     dut.instr_in.value = (0xEC10 << 16) | 0xEC10
     await ClockCycles(dut.clk, 2)
+    await Timer(1, unit="ns")
     assert int(dut.pc_out.value) == 4, f"Expected PC=4, got {int(dut.pc_out.value)}"
 
     # PC=4: Hack C-instruction D=D+1 (0xE7D0 -> "1110011111010000")
     dut.instr_in.value = (0xE7D0 << 16) | 0xE7D0
     await ClockCycles(dut.clk, 2)
+    await Timer(1, unit="ns")
     assert int(dut.pc_out.value) == 6, f"Expected PC=6, got {int(dut.pc_out.value)}"
 
     # PC=6: Hack C-instruction M=D (0xE308 -> "1110001100001000")
@@ -57,16 +61,19 @@ async def test_unified_cpu_hack_and_riscv(dut):
     dut.rst.value = 0
     dut.instr_in.value = 0x02a00513 # ADDI x10, x0, 42
     await ClockCycles(dut.clk, 2)
+    await FallingEdge(dut.clk)
     dut.rst.value = 1
 
     # Cycle 1: Fetch -> Cycle 2: Execute -> PC becomes 4
     await ClockCycles(dut.clk, 2)
+    await Timer(1, unit="ns")
     assert int(dut.active_mode.value) == 1, "RISC-V mode auto-detection failed!"
     assert int(dut.pc_out.value) == 4, f"Expected PC=4, got {int(dut.pc_out.value)}"
 
     # PC=4: ADDI x11, x10, 8 (42 + 8 = 50)
     dut.instr_in.value = 0x00850593
     await ClockCycles(dut.clk, 2)
+    await Timer(1, unit="ns")
     assert int(dut.pc_out.value) == 8, f"Expected PC=8, got {int(dut.pc_out.value)}"
 
     # PC=8: SW x11, 100(x0) (Store 50 to address 100)
