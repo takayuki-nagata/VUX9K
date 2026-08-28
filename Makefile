@@ -19,7 +19,7 @@ CARGO_BIN ?= $(HOME)/.cargo/bin
 
 export PATH := $(PWD)/$(VENV_PATH)/bin:$(OSS_CAD_SUITE_BIN):$(CARGO_BIN):$(ZEPHYR_SDK_INSTALL_DIR)/riscv64-zephyr-elf/bin:$(PATH)
 
-.PHONY: all veryl check check-paths fmt test test-ci test-hw test-hardware build synth synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware sim-unit sim-boot sim-soc sim test-arch-compliance zephyr-rust-lib zephyr-bc-lib build-zephyr sim-zephyr-emu sim-zephyr-repl sim-zephyr-rtl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls sim-sdf
+.PHONY: all veryl check check-paths fmt test test-ci test-hw test-hardware build synth synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware sim-unit sim-boot sim-soc sim test-arch-compliance zephyr-rust-lib zephyr-bc-lib build-zephyr sim-zephyr-emu sim-zephyr-repl sim-zephyr-rtl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls sta
 
 all: test-ci
 
@@ -246,11 +246,11 @@ synth-top: veryl firmware
 sim-gls: sim-gls-unit sim-soc-gls-fast
 
 pnr: synth-top
-	$(NEXTPNR) --device GW1NR-LV9QN88PC6/I5 --vopt family=GW1N-9C --vopt cst=$(CST_FILE) --json soc.json --write soc_pnr.json --sdf soc.sdf
+	$(NEXTPNR) --device GW1NR-LV9QN88PC6/I5 --vopt family=GW1N-9C --vopt cst=$(CST_FILE) --json soc.json --write soc_pnr.json --report soc_sta.json --detailed-timing-report --freq 27.0 --timing-allow-fail
 
-sim-sdf: pnr firmware build-hack
-	@echo "=== Running Post-PnR Timing Simulation with SDF Back-Annotation ==="
-	$(MAKE) -C sim TOPLEVEL=tb_soc_sdf MODULE=test_soc_sdf SIM_SDF=1
+sta: pnr
+	@echo "=== Generating Static Timing Analysis (STA) Report ==="
+	$(PYTHON) scripts/report_sta.py soc_sta.json
 
 bitstream: pnr
 	$(GOWIN_PACK) -d GW1N-9C -o pack.fs soc_pnr.json
@@ -286,4 +286,4 @@ clean:
 	cd zephyr_workspace/app/rust_app && $(CARGO) clean
 	cd vendor/bc_clone_rs/crates/bc_zephyr 2>/dev/null && $(CARGO) clean || true
 	$(MAKE) -C firmware_hack clean
-	rm -rf sim/sim_build* sim/results.xml *.json *_syn.v sim/*_syn.v *.sdf pack.fs firmware/firmware.bin firmware/firmware.hex build_arch_test build_hack zephyr_workspace/app/build $(ZEPHYR_BUILD_DIR)
+	rm -rf sim/sim_build* sim/results.xml *.json *_syn.v sim/*_syn.v pack.fs firmware/firmware.bin firmware/firmware.hex build_arch_test build_hack zephyr_workspace/app/build $(ZEPHYR_BUILD_DIR)

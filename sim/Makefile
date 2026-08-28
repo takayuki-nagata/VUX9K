@@ -20,13 +20,6 @@ VERILOG_SOURCES = $(PWD)/gowin_cells_sim.v $(SYN_NETLIST)
 COMPILE_ARGS = -g2012
 MODULE ?= test_soc_fast
 SIM_BUILD = sim_build_gls_$(TOPLEVEL)
-else ifeq ($(SIM_SDF),1)
-# Post-PnR Timing Simulation with SDF Back-Annotation
-VERILOG_SOURCES = $(PWD)/gowin_cells_sim.v $(PWD)/../soc_syn.v $(PWD)/tb_soc_sdf.sv
-COMPILE_ARGS = -g2012 -gspecify -Ttyp
-TOPLEVEL = tb_soc_sdf
-MODULE ?= test_soc_sdf
-SIM_BUILD = sim_build_sdf
 else
 # RTL Behavioral Simulation
 VERILOG_SOURCES += $(PWD)/../cpu/rv32i_pkg.sv

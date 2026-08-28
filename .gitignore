@@ -44,6 +44,7 @@ sim/*.map
 pack.fs
 *.log
 *.pretty
+*_syn.v
 
 # System & temporary files
 /tmp/

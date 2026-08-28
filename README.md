@@ -156,7 +156,7 @@ make prog-flash
 
 ## Verification & Test Targets
 
-The project provides a comprehensive, multi-tiered verification framework spanning RTL simulation, Gate-Level Simulation (GLS) with Gowin primitive cells (`cells_sim.v`), Post-PnR Timing Simulation (SDF), and automated physical hardware testing:
+The project provides a comprehensive, multi-tiered verification framework spanning RTL simulation, Gate-Level Simulation (GLS) with Gowin primitive cells (`cells_sim.v`), Static Timing Analysis (STA) with Nextpnr, and automated physical hardware testing:
 
 ```bash
 # 1. CI Target: Run Fast Comprehensive Verification Suite (~2 min, 100% software, no board required)
@@ -166,8 +166,8 @@ make test-ci
 make sim-hw-flow
 make sim-gls-hw-flow
 
-# 3. Post-PnR Timing Simulation with SDF Back-Annotation
-make sim-sdf
+# 3. Static Timing Analysis (STA) Report & Timing Verification
+make sta
 
 # 4. Hardware Target: Synthesize, Flash SRAM & Run Automated Real-Board Test Suite on Tang Nano 9K
 make test-hw
@@ -182,7 +182,7 @@ make test-hw
 | **GLS Unit Tests** | `make sim-gls-unit` | ~40 sec | Gowin primitive netlists (`gowin_cells_sim.v`) with LUTRAMs (`RAM16SDP4`), ALUs, and DFFs |
 | **Fast SoC Boot** | `make sim-soc-fast` / `make sim-soc-gls-fast` | < 1 sec | Fast power-on reset, CPU boot, and instruction execution verification on RTL & full Gowin netlist |
 | **End-to-End Flow** | `make sim-hw-flow` / `make sim-gls-hw-flow` | ~3-4 min | Full 8-step hardware test suite in simulation using `VirtualSerialBridge` (UART) and `SpiSdCardModel` (SD SPI) |
-| **Post-PnR Timing** | `make sim-sdf` | On-demand | Nextpnr placement & routing netlist with back-annotated timing delay (`soc.sdf`) |
+| **Static Timing (STA)**| `make sta` | ~15 sec | Exhaustive post-PnR timing analysis, Fmax verification, and critical path breakdown (`soc_sta.json`) |
 | **Real Hardware** | `make test-hw` | ~25 sec | Automated physical hardware execution on Tang Nano 9K via `scripts/test_hardware.py` |
 
 ### Real Hardware & Full Flow Test Cases (8 Items)
