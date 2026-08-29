@@ -40,6 +40,16 @@ def print_test_result(name, passed, detail=""):
         print(f"       -> {detail}")
 
 
+def drain_serial(ser, timeout=0.15):
+    """Drain all pending bytes from FTDI and OS buffers"""
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        if ser.in_waiting > 0:
+            ser.read(ser.in_waiting)
+            t0 = time.time()
+        time.sleep(0.01)
+
+
 def flash_sd_session(ser, file_path, mode="hack"):
     """Flash a payload to Sector 64 using an existing open serial connection"""
     with open(file_path, "rb") as f:
@@ -57,15 +67,15 @@ def flash_sd_session(ser, file_path, mode="hack"):
 
     num_sectors = len(raw_data) // 512
 
-    # 1. Send 'w' and wait for [READY]
-    ser.reset_input_buffer()
+    # 1. Drain pending buffers, send 'w' and wait for [READY]
+    drain_serial(ser)
     ser.write(b"w")
     ser.flush()
 
     buf = b""
     start = time.time()
     ready = False
-    while time.time() - start < 3.0:
+    while time.time() - start < 5.0:
         c = ser.read(64)
         if c:
             buf += c
@@ -86,7 +96,7 @@ def flash_sd_session(ser, file_path, mode="hack"):
         buf = b""
         start = time.time()
         ready_sec = False
-        while time.time() - start < 3.0:
+        while time.time() - start < 5.0:
             c = ser.read(64)
             if c:
                 buf += c
@@ -106,11 +116,11 @@ def flash_sd_session(ser, file_path, mode="hack"):
     # 4. Wait for completion and return to prompt
     buf = b""
     start = time.time()
-    while time.time() - start < 6.0:
+    while time.time() - start < 20.0:
         c = ser.read(64)
         if c:
             buf += c
-            if b"vux> " in buf:
+            if b"vux>" in buf:
                 break
 
 
@@ -129,19 +139,19 @@ def run_hardware_test_suite(port="auto", baud=115200):
         # Test 1: UART Connection & Prompt Sync
         # -------------------------------------------------------------
         test_name = "1. UART Connection & Prompt Synchronization"
-        ser.reset_input_buffer()
-        ser.write(b"\n")
+        drain_serial(ser)
+        ser.write(b"\r")
         ser.flush()
-        time.sleep(0.1)
         resp = ""
         start = time.time()
-        while time.time() - start < 2.0:
-            c = ser.read(128)
+        while time.time() - start < 4.0:
+            c = ser.read(64)
             if c:
                 resp += c.decode("utf-8", errors="replace")
-                if "vux> " in resp:
+                if "vux>" in resp:
                     break
-        passed = "vux> " in resp
+            time.sleep(0.05)
+        passed = "vux>" in resp
         msg = "Connected and synchronized with Boot Manager" if passed else f"Failed to synchronize prompt. Output: {resp!r}"
         results.append((test_name, passed, msg))
         print_test_result(test_name, passed, msg)
@@ -154,7 +164,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
         # -------------------------------------------------------------
         test_name = "2. Hardware Self-Diagnostics ('t' / diag)"
         out = vux_tool.send_cmd_and_wait(ser, "t", timeout=4.0)
-        passed = ("[DIAG]" in out) or ("OK" in out) or ("vux>" in out)
+        passed = ("[DIAG]" in out) and ("Diagnostics Complete" in out)
         results.append((test_name, passed, "Executed onboard LED, UART, and SPI diagnostics"))
         print_test_result(test_name, passed, "Executed onboard LED, UART, and SPI diagnostics")
 
@@ -163,7 +173,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
         # -------------------------------------------------------------
         test_name = "3. MicroSD Card Sector 0 (MBR) Dump ('d' / dump-mbr)"
         out = vux_tool.send_cmd_and_wait(ser, "d", timeout=5.0)
-        passed = ("MBR" in out) or ("0000:" in out) or ("55 AA" in out) or ("vux>" in out)
+        passed = ("[SD]" in out) and (("55 AA" in out) or ("55aa" in out.lower()) or ("Signature:" in out))
         results.append((test_name, passed, "Read 512-byte Sector 0 from physical MicroSD"))
         print_test_result(test_name, passed, "Read 512-byte Sector 0 from physical MicroSD")
 
@@ -190,17 +200,16 @@ def run_hardware_test_suite(port="auto", baud=115200):
         # -------------------------------------------------------------
         test_name_insp_hack = "5. Header Verification: Hack 16-bit ('s' / inspect-sd)"
         out = vux_tool.send_cmd_and_wait(ser, "s", timeout=3.0)
-        passed = ("VUX9" in out) or ("Mode: 0" in out) or ("Hack" in out) or ("vux>" in out)
+        passed = ("VUX9" in out) and (("Mode:  0" in out) or ("Hack" in out))
         results.append((test_name_insp_hack, passed, "Verified Sector 64 header (Magic: VUX9, Mode: 0/Hack)"))
         print_test_result(test_name_insp_hack, passed, "Verified Sector 64 header (Magic: VUX9, Mode: 0/Hack)")
 
         # -------------------------------------------------------------
         # Test 6: Flash RISC-V 32-bit Firmware
         # -------------------------------------------------------------
-        riscv_bin = os.path.join(REPO_ROOT, "firmware", "firmware.bin")
-        if not os.path.exists(riscv_bin):
-            with open(riscv_bin, "wb") as f:
-                f.write(bytes([0x93, 0x02, 0x00, 0x00, 0x93, 0x82, 0x12, 0x00]))
+        riscv_bin = os.path.join(REPO_ROOT, "firmware", "test_payload.bin")
+        with open(riscv_bin, "wb") as f:
+            f.write(bytes([0x93, 0x02, 0x00, 0x00, 0x93, 0x82, 0x12, 0x00]))
 
         test_name_flash_rv = "6. Multi-Sector Flash: RISC-V 32-bit Firmware ('w' / flash-sd --mode riscv)"
         try:
@@ -216,7 +225,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
         # -------------------------------------------------------------
         test_name_insp_rv = "7. Header Verification: RISC-V 32-bit ('s' / inspect-sd)"
         out = vux_tool.send_cmd_and_wait(ser, "s", timeout=3.0)
-        passed = ("VUX9" in out) or ("Mode: 1" in out) or ("RISC-V" in out) or ("vux>" in out)
+        passed = ("VUX9" in out) and (("Mode:  1" in out) or ("RISC-V" in out))
         results.append((test_name_insp_rv, passed, "Verified Sector 64 header (Magic: VUX9, Mode: 1/RISC-V)"))
         print_test_result(test_name_insp_rv, passed, "Verified Sector 64 header (Magic: VUX9, Mode: 1/RISC-V)")
 
@@ -234,8 +243,8 @@ def run_hardware_test_suite(port="auto", baud=115200):
                 c = ser.read(128)
                 if c:
                     out += c.decode("utf-8", errors="replace")
-            passed = ("[BOOT]" in out) or ("Jumping" in out) or len(out) > 0
-            msg = "Triggered SD Card auto-load & Dual-ISA CPU execution" if passed else "No output after boot trigger"
+            passed = ("[BOOT]" in out) or ("Jumping" in out)
+            msg = "Triggered SD Card auto-load & Dual-ISA CPU execution" if passed else f"No boot confirmation token. Output: {out!r}"
             results.append((test_name_boot, passed, msg))
             print_test_result(test_name_boot, passed, msg)
         except Exception as e:

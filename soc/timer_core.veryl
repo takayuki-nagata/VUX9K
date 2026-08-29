@@ -19,6 +19,7 @@ module timer_core (
         if_reset {
             mtime    = 64'd0;
             mtimecmp = 64'hffff_ffff_ffff_ffff;
+            data_out = 32'd0;
         } else {
             mtime = mtime + 1'b1;
             if we {
@@ -30,17 +31,17 @@ module timer_core (
                     default: {}
                 }
             }
+            case addr {
+                4'h0   : data_out = mtime[31:0];
+                4'h4   : data_out = mtime[63:32];
+                4'h8   : data_out = mtimecmp[31:0];
+                4'hc   : data_out = mtimecmp[63:32];
+                default: data_out = 32'd0;
+            }
         }
     }
 
     always_comb {
-        case addr {
-            4'h0   : data_out = mtime[31:0];
-            4'h4   : data_out = mtime[63:32];
-            4'h8   : data_out = mtimecmp[31:0];
-            4'hc   : data_out = mtimecmp[63:32];
-            default: data_out = 32'd0;
-        }
         if mtime >= mtimecmp {
             timer_irq = 1'b1;
         } else {

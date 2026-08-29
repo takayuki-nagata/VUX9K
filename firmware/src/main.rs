@@ -157,9 +157,10 @@ fn inspect_sector_64() {
 }
 
 fn read_uart_byte_timeout(timeout_ms: u32) -> Option<u8> {
-    let start_time = Timer::get_mtime();
-    let limit_ticks = (27_000 * timeout_ms) as u64;
-    while Timer::get_mtime().wrapping_sub(start_time) < limit_ticks {
+    const MTIME_LOW: *const u32 = 0x4000_1000 as *const u32;
+    let start_time = unsafe { core::ptr::read_volatile(MTIME_LOW) };
+    let limit_ticks = 27_000 * timeout_ms;
+    while (unsafe { core::ptr::read_volatile(MTIME_LOW) }).wrapping_sub(start_time) < limit_ticks {
         if let Some(b) = Uart::read_byte() {
             return Some(b);
         }
@@ -168,15 +169,30 @@ fn read_uart_byte_timeout(timeout_ms: u32) -> Option<u8> {
 }
 
 fn write_sectors_from_uart() {
+    // Flush any pending bytes in RX FIFO
+    while Uart::has_rx_data() {
+        let _ = Uart::read_byte();
+    }
+
     Uart::print_str("[READY]\n");
 
-    let num_sectors = match read_uart_byte_timeout(3000) {
-        Some(n) if n >= 1 && n <= 32 => n as u32,
-        _ => {
-            Uart::print_str("[SD-ERR] Invalid sector count!\n");
-            return;
+    const MTIME_LOW: *const u32 = 0x4000_1000 as *const u32;
+    let mut num_sectors: u32 = 0;
+    let start_time = unsafe { core::ptr::read_volatile(MTIME_LOW) };
+    while (unsafe { core::ptr::read_volatile(MTIME_LOW) }).wrapping_sub(start_time) < 27_000 * 5000
+    {
+        if let Some(n) = Uart::read_byte() {
+            if n >= 1 && n <= 32 {
+                num_sectors = n as u32;
+                break;
+            }
         }
-    };
+    }
+
+    if num_sectors == 0 {
+        Uart::print_str("[SD-ERR] Invalid sector count!\n");
+        return;
+    }
 
     Uart::print_str("[READY-COUNT:");
     Uart::print_dec(num_sectors);
@@ -189,7 +205,7 @@ fn write_sectors_from_uart() {
         Uart::print_str("]\n");
 
         for i in 0..512 {
-            match read_uart_byte_timeout(2000) {
+            match read_uart_byte_timeout(3000) {
                 Some(b) => buf[i] = b,
                 None => {
                     Uart::print_str("[SD-ERR] Timeout at sector ");
@@ -318,8 +334,21 @@ pub extern "C" fn main() -> ! {
     print_banner();
     print_help();
 
+    let mut loop_count: u32 = 0;
+    let mut led_val: u8 = 0x3E;
     loop {
+        loop_count = loop_count.wrapping_add(1);
+        if loop_count == 500_000 {
+            loop_count = 0;
+            led_val ^= 0x01;
+            Gpio::set_leds(led_val);
+        }
         if let Some(cmd) = Uart::read_byte() {
+            if cmd != b'\r' && cmd != b'\n' && cmd != 0 {
+                Uart::print_str("[CMD:0x");
+                Uart::print_hex_byte(cmd);
+                Uart::print_str("]\n");
+            }
             match cmd {
                 b'h' | b'?' => {
                     Uart::print_str("h\n");
@@ -369,6 +398,7 @@ pub extern "C" fn main() -> ! {
                             Timer::delay_ms(10);
                         }
                     }
+                    Gpio::set_leds(0x01);
                     Uart::print_str("[LED] Done.\n\nvux> ");
                 }
                 b'r' => {
@@ -378,12 +408,11 @@ pub extern "C" fn main() -> ! {
                         core::arch::asm!("jr {0}", in(reg) 0x0000_0000usize, options(noreturn));
                     }
                 }
-                b'\n' | b'\r' => {
+                b'\r' => {
                     Uart::print_str("\nvux> ");
                 }
-                _ => {
-                    Uart::print_str("Unknown command. Press 'h' for help.\nvux> ");
-                }
+                b'\n' | 0 => {}
+                _ => {}
             }
         }
     }

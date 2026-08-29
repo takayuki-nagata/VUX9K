@@ -7,7 +7,11 @@ __pycache__/
 firmware/target/
 firmware/firmware.bin
 firmware/firmware.hex
-firmware.hex
+firmware/test_payload.bin
+firmware*.hex
+firmware*.bin
+firmware*_d*.hex
+firmware/firmware*_d*.hex
 build_hack/
 zephyr_workspace/**/target/
 zephyr_workspace/**/build/
@@ -26,6 +30,7 @@ sim_soc_real
 tb_runner
 
 # Veryl build artifacts
+.veryl_build
 .build/
 dependencies/
 Veryl.lock

@@ -6,9 +6,12 @@ from cocotb.triggers import FallingEdge, Timer
 from cocotb.clock import Clock
 
 async def loopback_wire(dut):
-    """Continuously loop back txd to rxd"""
+    """Continuously loop back txd to rxd (X/Z-safe for GLS)"""
     while True:
-        dut.rxd.value = dut.txd.value
+        try:
+            dut.rxd.value = int(dut.txd.value) & 1
+        except ValueError:
+            dut.rxd.value = 1  # Treat X/Z as idle (high) like real hardware pull-up
         await FallingEdge(dut.clk)
 
 @cocotb.test()
@@ -50,7 +53,12 @@ async def test_uart_controller(dut):
     for expected_byte in test_bytes:
         # Wait until byte arrives in RX FIFO (empty == 0)
         timeout = 0
-        while int(dut.empty.value) == 1 and timeout < 20000:
+        while timeout < 20000:
+            try:
+                if int(dut.empty.value) == 0:
+                    break
+            except ValueError:
+                pass  # X/Z values in GLS - keep waiting
             await FallingEdge(dut.clk)
             timeout += 1
 

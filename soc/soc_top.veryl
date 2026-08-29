@@ -8,7 +8,7 @@
 #[allow(unassign_variable)]
 pub module soc_top (
     clk  : input clock,
-    rst_n: input logic, // Active-Low Hardware Reset (Button S1)
+    rst_n: input reset, // Active-Low Hardware Reset (Button S1)
     btn  : input logic, // Active-Low User Button (Button S2)
 
     // UART Interface
@@ -31,15 +31,15 @@ pub module soc_top (
     var por_counter: logic<20>;
     var raw_rst    : logic    ;
 
-    always_ff (clk) {
-        if por_counter[19] == 1'b0 {
+    always_ff (clk, rst_n) {
+        if_reset {
+            por_counter = {1'b1, 19'd0};
+            raw_rst     = 1'b0;
+        } else if por_counter[19] == 1'b0 {
             por_counter = por_counter + 1'b1;
             raw_rst     = 1'b0;
-        } else if ~rst_n {
-            por_counter = '0;
-            raw_rst     = 1'b0;
         } else {
-            raw_rst = 1'b1; // Permanently 1 (Running) after 19.4ms Power-on Reset delay
+            raw_rst     = 1'b1; // Permanently 1 (Running) after Power-on Reset delay
         }
     }
     let rst: reset = raw_rst as reset;
@@ -88,6 +88,13 @@ pub module soc_top (
     assign led = raw_led;
 
     var mem_read_req: logic;
+
+    var last_ram_sel  : logic   ;
+    var last_timer_sel: logic   ;
+    var last_sd_sel   : logic   ;
+    var last_gpio_sel : logic   ;
+    var last_uart_sel : logic   ;
+    var last_addr_low : logic<4>;
 
     // Instantiate Unified Dual-ISA CPU Core (Veryl)
     inst cpu_inst: unified_cpu (
@@ -206,7 +213,7 @@ pub module soc_top (
             if data_addr[31:28] == 4'h0 || data_addr[31:28] == 4'h2 {
                 ram_sel = 1'b1;
             } else if data_addr[31:28] == 4'h4 {
-                case data_addr[11:8] {
+                case data_addr[15:12] {
                     4'h0   : uart_sel  = 1'b1;
                     4'h1   : timer_sel = 1'b1;
                     4'h2   : sd_sel    = 1'b1;
@@ -226,19 +233,12 @@ pub module soc_top (
         uart_re  = if active_mode == 1'b0 ?
             (!mem_write && uart_sel)
         :
-            (mem_read_req && uart_sel && (data_addr[3:0] == 4'h0))
+            (mem_read_req && last_uart_sel && (last_addr_low == 4'h0))
         ;
         timer_re = 1'b1;
         sd_re    = 1'b1;
         gpio_re  = 1'b1;
     }
-
-    var last_ram_sel  : logic   ;
-    var last_timer_sel: logic   ;
-    var last_sd_sel   : logic   ;
-    var last_gpio_sel : logic   ;
-    var last_uart_sel : logic   ;
-    var last_addr_low : logic<4>;
 
     always_ff (clk, rst) {
         if_reset {

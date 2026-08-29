@@ -36,9 +36,15 @@ pub module soc_ram #(
     assign d_idx   = if active_mode == 1'b0 ? d_addr[9:0] : d_addr[11:2];
 
     embed (inline) sv{{{
+    `endif
         initial begin
-            $readmemh("firmware/firmware.hex", i_mem);
+            $readmemh("firmware.hex", i_mem);
+            $readmemh("firmware_d0.hex", d_mem0);
+            $readmemh("firmware_d1.hex", d_mem1);
+            $readmemh("firmware_d2.hex", d_mem2);
+            $readmemh("firmware_d3.hex", d_mem3);
         end
+    `ifndef SYNTHESIS
     }}}
 
     always_ff (clk) {
@@ -53,12 +59,10 @@ pub module soc_ram #(
         i_dout_b = i_mem[i_d_idx];
     }
 
-    let is_dram_access: logic = (active_mode == 1'b0) || (d_addr[31:20] == 12'h200);
-
-    let we0: logic = d_we && is_dram_access && (if active_mode ? d_we_byte[0] : 1'b1);
-    let we1: logic = d_we && is_dram_access && (if active_mode ? d_we_byte[1] : 1'b1);
-    let we2: logic = d_we && is_dram_access && (if active_mode ? d_we_byte[2] : 1'b1);
-    let we3: logic = d_we && is_dram_access && (if active_mode ? d_we_byte[3] : 1'b1);
+    let we0: logic = d_we && (if active_mode ? d_we_byte[0] : 1'b1);
+    let we1: logic = d_we && (if active_mode ? d_we_byte[1] : 1'b1);
+    let we2: logic = d_we && (if active_mode ? d_we_byte[2] : 1'b1);
+    let we3: logic = d_we && (if active_mode ? d_we_byte[3] : 1'b1);
 
     var d_dout0: logic<8>;
     var d_dout1: logic<8>;
@@ -87,7 +91,7 @@ pub module soc_ram #(
 
     var last_is_rom: logic;
     always_ff (clk) {
-        last_is_rom = (d_addr[31:16] == 16'h0000);
+        last_is_rom = (active_mode == 1'b1) && (d_addr[31:16] == 16'h0000);
     }
 
     always_comb {

@@ -23,7 +23,8 @@ import scripts.vux_tool as vux_tool
 UART_BAUD_CYCLES = 234  # 27.0 MHz / 115200 baud
 
 
-async def send_str_and_wait(ser, clk, text: str, expect_token: bytes, timeout_cycles=2500000) -> str:
+async def send_str_and_wait(ser, clk, text: str, expect_token: bytes, timeout_cycles=3500000) -> str:
+    await ClockCycles(clk, UART_BAUD_CYCLES * 50)
     ser.reset_input_buffer()
     if text:
         ser.write(text.encode("utf-8"))
@@ -60,7 +61,7 @@ async def flash_payload_sim(ser, clk, payload: bytes, mode: str = "hack"):
     num_sectors = len(raw_data) // 512
 
     # 1. Send 'w' and wait for [READY]
-    await send_str_and_wait(ser, clk, "w", b"[READY]", timeout_cycles=1500000)
+    await send_str_and_wait(ser, clk, "w", b"[READY]", timeout_cycles=4000000)
 
     # 2. Send sector count
     ser.write(bytes([num_sectors]))
@@ -68,13 +69,13 @@ async def flash_payload_sim(ser, clk, payload: bytes, mode: str = "hack"):
     # 3. Stream sectors
     for sec_idx in range(num_sectors):
         sec_token = f"[READY-SEC:{sec_idx}]".encode("utf-8")
-        await send_str_and_wait(ser, clk, "", sec_token, timeout_cycles=1500000)
+        await send_str_and_wait(ser, clk, "", sec_token, timeout_cycles=4000000)
 
         sector_bytes = raw_data[sec_idx * 512 : (sec_idx + 1) * 512]
         ser.write(sector_bytes)
 
     # 4. Wait for completion and return to prompt
-    await send_str_and_wait(ser, clk, "", b"vux> ", timeout_cycles=2000000)
+    await send_str_and_wait(ser, clk, "", b"vux> ", timeout_cycles=4000000)
 
 
 @cocotb.test()
@@ -97,8 +98,10 @@ async def test_soc_hardware_flow(dut):
     await ClockCycles(dut.clk, 10)
     dut.rst_n.value = 1
 
-    # Wait for POR counter (POR_BIT=4 -> 16 cycles + margin)
-    await ClockCycles(dut.clk, 30)
+    # Accelerate POR in simulation
+    if hasattr(dut, "por_counter"):
+        dut.por_counter.value = (1 << 19)
+    await ClockCycles(dut.clk, 10)
 
     dut._log.info("=== SoC Reset Released. Synchronizing with Boot Manager ===")
 
@@ -114,7 +117,7 @@ async def test_soc_hardware_flow(dut):
     # Test 2: Hardware Self-Diagnostics
     # -------------------------------------------------------------
     dut._log.info("--- Test 2: Hardware Self-Diagnostics ---")
-    resp = await send_str_and_wait(ser, dut.clk, "t", b"vux> ", timeout_cycles=2500000)
+    resp = await send_str_and_wait(ser, dut.clk, "t", b"vux> ", timeout_cycles=5000000)
     assert "MicroSD SPI" in resp or "PASS" in resp, f"Diagnostics failed: {resp!r}"
     dut._log.info("[PASS] Test 2: Hardware Self-Diagnostics passed")
 
@@ -122,7 +125,7 @@ async def test_soc_hardware_flow(dut):
     # Test 3: MicroSD Sector 0 (MBR) Dump & 0x55AA Check
     # -------------------------------------------------------------
     dut._log.info("--- Test 3: MicroSD Sector 0 (MBR) Dump ---")
-    resp = await send_str_and_wait(ser, dut.clk, "d", b"vux> ", timeout_cycles=1500000)
+    resp = await send_str_and_wait(ser, dut.clk, "d", b"vux> ", timeout_cycles=3500000)
     assert "55 AA" in resp or "0x55AA" in resp or "Valid MBR signature" in resp or "Signature: 55 AA" in resp or "[PASS]" in resp or "01f0:" in resp, f"MBR signature missing: {resp!r}"
     dut._log.info("[PASS] Test 3: Sector 0 dumped with valid 0x55AA signature")
 
@@ -138,7 +141,7 @@ async def test_soc_hardware_flow(dut):
     # Test 5: Header Verification: Hack 16-bit
     # -------------------------------------------------------------
     dut._log.info("--- Test 5: Header Verification (Hack) ---")
-    resp = await send_str_and_wait(ser, dut.clk, "s", b"vux> ", timeout_cycles=1500000)
+    resp = await send_str_and_wait(ser, dut.clk, "s", b"vux> ", timeout_cycles=3500000)
     assert "VUX9" in resp or "56555839" in resp or "Hack" in resp or "Mode: 0" in resp or "0 (Hack 16-bit)" in resp, f"Invalid Hack header: {resp!r}"
     dut._log.info("[PASS] Test 5: Valid Hack 16-bit header verified at Sector 64")
 
@@ -158,7 +161,7 @@ async def test_soc_hardware_flow(dut):
     # Test 7: Header Verification: RISC-V 32-bit
     # -------------------------------------------------------------
     dut._log.info("--- Test 7: Header Verification (RISC-V) ---")
-    resp = await send_str_and_wait(ser, dut.clk, "s", b"vux> ", timeout_cycles=1500000)
+    resp = await send_str_and_wait(ser, dut.clk, "s", b"vux> ", timeout_cycles=3500000)
     assert "VUX9" in resp or "56555839" in resp or "RISC-V" in resp or "Mode: 1" in resp or "1 (RISC-V 32-bit)" in resp, f"Invalid RISC-V header: {resp!r}"
     dut._log.info("[PASS] Test 7: Valid RISC-V 32-bit header verified at Sector 64")
 

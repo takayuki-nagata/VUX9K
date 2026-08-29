@@ -19,8 +19,16 @@ SECTIONS
     KEEP(*(.text.entry))
     *(.text)
     *(.text.*)
+  } > I_ROM
+
+  .rodata :
+  {
+    . = ALIGN(4);
     *(.rodata)
     *(.rodata.*)
+    *(.srodata)
+    *(.srodata.*)
+    . = ALIGN(4);
   } > I_ROM
 
   .data :

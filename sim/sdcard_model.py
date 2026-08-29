@@ -67,8 +67,18 @@ class SpiSdCardModel:
                 await self._send_byte(0xFF)
                 await self._send_byte(0x00) # R1: Ready (0x00)
 
+            elif cmd == 58: # CMD58: READ_OCR
+                await self._send_byte(0xFF)
+                await self._send_byte(0x00) # R1: Success
+                # OCR with CCS=1 (bit 30) and Powered Up (bit 31) -> 0xC0
+                await self._send_bytes(bytes([0xC0, 0xFF, 0x80, 0x00]))
+
+            elif cmd == 16: # CMD16: SET_BLOCKLEN
+                await self._send_byte(0xFF)
+                await self._send_byte(0x00) # R1: Success
+
             elif cmd == 17: # CMD17: READ_SINGLE_BLOCK
-                lba = arg
+                lba = arg if arg < 0x10000 else (arg >> 9)
                 sector_data = self.sectors.get(lba, bytearray(512))
                 await self._send_byte(0xFF)
                 await self._send_byte(0x00) # R1: Success
@@ -78,7 +88,7 @@ class SpiSdCardModel:
                 await self._send_bytes(bytes([0x12, 0x34])) # 2 bytes CRC
 
             elif cmd == 24: # CMD24: WRITE_SINGLE_BLOCK
-                lba = arg
+                lba = arg if arg < 0x10000 else (arg >> 9)
                 await self._send_byte(0xFF)
                 await self._send_byte(0x00) # R1: Success
                 # Wait for Data Token 0xFE

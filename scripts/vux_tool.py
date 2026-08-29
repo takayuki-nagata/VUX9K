@@ -62,9 +62,7 @@ def open_port(port_name="auto", baudrate=115200, timeout=0.2):
         port = find_tangnano_uart_port()
         if port is not None and serial is not None:
             try:
-                ser = serial.Serial(port, baudrate=baudrate, timeout=timeout, rtscts=False, dsrdtr=False)
-                ser.dtr = False
-                ser.rts = False
+                ser = serial.Serial(port, baudrate=baudrate, timeout=timeout)
                 return ser
             except Exception as e:
                 pass
@@ -72,9 +70,7 @@ def open_port(port_name="auto", baudrate=115200, timeout=0.2):
         # If pyftdi is available and by-id did not work, try pyftdi URL
         if pyftdi is not None:
             try:
-                ser = pyftdi.serialext.serial_for_url(DEFAULT_FTDI_URL, baudrate=baudrate, timeout=timeout, rtscts=False, dsrdtr=False)
-                ser.dtr = False
-                ser.rts = False
+                ser = pyftdi.serialext.serial_for_url(DEFAULT_FTDI_URL, baudrate=baudrate, timeout=timeout)
                 return ser
             except Exception:
                 pass
@@ -83,25 +79,23 @@ def open_port(port_name="auto", baudrate=115200, timeout=0.2):
     elif port_name.startswith("ftdi://"):
         if pyftdi is None:
             raise RuntimeError("pyftdi is not installed for ftdi:// URLs!")
-        ser = pyftdi.serialext.serial_for_url(port_name, baudrate=baudrate, timeout=timeout, rtscts=False, dsrdtr=False)
-        ser.dtr = False
-        ser.rts = False
+        ser = pyftdi.serialext.serial_for_url(port_name, baudrate=baudrate, timeout=timeout)
         return ser
     else:
         if serial is None:
             raise RuntimeError("pyserial is not installed!")
-        ser = serial.Serial(port_name, baudrate=baudrate, timeout=timeout, rtscts=False, dsrdtr=False)
-        ser.dtr = False
-        ser.rts = False
+        ser = serial.Serial(port_name, baudrate=baudrate, timeout=timeout)
         return ser
 
 
 def send_cmd_and_wait(ser, cmd_char, timeout=5.0):
-    ser.reset_input_buffer()
-    ser.write(b"\r\n")
-    ser.flush()
-    time.sleep(0.05)
-    ser.reset_input_buffer()
+    t0 = time.time()
+    while time.time() - t0 < 0.1:
+        if ser.in_waiting > 0:
+            ser.read(ser.in_waiting)
+            t0 = time.time()
+        time.sleep(0.01)
+
     ser.write(cmd_char.encode("utf-8"))
     ser.flush()
     start = time.time()
@@ -111,8 +105,7 @@ def send_cmd_and_wait(ser, cmd_char, timeout=5.0):
         if c:
             text = c.decode("utf-8", errors="replace")
             buf += text
-            print(text, end="", flush=True)
-            if "vux> " in buf and len(buf) > 3:
+            if "vux>" in buf:
                 break
     return buf
 
@@ -137,21 +130,24 @@ def cmd_monitor(args):
 def cmd_diag(args):
     """Run hardware diagnostic tests"""
     ser = open_port(args.port, baudrate=args.baud)
-    send_cmd_and_wait(ser, "t", timeout=4.0)
+    out = send_cmd_and_wait(ser, "t", timeout=6.0)
+    print(out)
     ser.close()
 
 
 def cmd_dump_mbr(args):
     """Dump Sector 0 (MBR) from SD Card"""
     ser = open_port(args.port, baudrate=args.baud)
-    send_cmd_and_wait(ser, "d", timeout=5.0)
+    out = send_cmd_and_wait(ser, "d", timeout=6.0)
+    print(out)
     ser.close()
 
 
 def cmd_inspect_sd(args):
     """Inspect Sector 64 (Boot Sector) Header"""
     ser = open_port(args.port, baudrate=args.baud)
-    send_cmd_and_wait(ser, "s", timeout=3.0)
+    out = send_cmd_and_wait(ser, "s", timeout=4.0)
+    print(out)
     ser.close()
 
 

@@ -38,8 +38,13 @@ setup: venv
 		git config core.hooksPath .githooks; \
 	fi
 
-veryl:
+VERYL_SRCS = $(wildcard cpu/*.veryl) $(wildcard soc/*.veryl) $(wildcard uart/*.veryl) Veryl.toml
+
+.veryl_build: $(VERYL_SRCS)
 	$(VERYL) build
+	@touch .veryl_build
+
+veryl: .veryl_build
 
 check-paths:
 	$(PYTHON) scripts/check_no_absolute_paths.py
@@ -50,12 +55,17 @@ check: check-paths
 fmt:
 	$(VERYL) fmt
 
-firmware:
+FIRMWARE_SRCS = $(wildcard firmware/src/*.rs) $(wildcard firmware/bootstrap/*) firmware/Cargo.toml firmware/Cargo.lock
+
+firmware/firmware.hex: $(FIRMWARE_SRCS)
 	cd firmware && $(CARGO) build --release
 	$(PYTHON) scripts/elf2bin.py firmware/target/riscv32i-unknown-none-elf/release/firmware firmware/firmware.bin
 	$(PYTHON) scripts/bin2hex.py firmware/firmware.bin firmware/firmware.hex
 	cp firmware/firmware.hex ./firmware.hex
 	cp firmware/firmware.hex ./sim/firmware.hex 2>/dev/null || true
+	cp firmware_d*.hex ./sim/ 2>/dev/null || true
+
+firmware: firmware/firmware.hex
 
 BC_APP_DIR ?= vendor/bc_clone_rs/examples/zephyr_app
 ZEPHYR_BUILD_DIR ?= build_zephyr
@@ -218,7 +228,7 @@ sim-soc-fast: veryl firmware
 
 sim-soc-gls-fast: synth-top firmware
 	@echo "=== Running Fast SoC Top Boot & Execution Verification (GLS Netlist) ==="
-	$(MAKE) -C sim TOPLEVEL=soc_top MODULE=test_soc_fast SIM_GLS=1
+	$(MAKE) -C sim TOPLEVEL=soc_top MODULE=test_soc_gls_fast SIM_GLS=1
 
 sim-hw-flow: firmware build-hack
 	@echo "=== Running SoC Top End-to-End Hardware Verification Flow (RTL Simulation) ==="
@@ -236,33 +246,46 @@ synth: veryl
 		synth_gowin -top hw_boot_mgr -json hw_boot.json; \
 	"
 
-synth-top: veryl firmware
+SOC_RTL_SRCS = cpu/rv32i_pkg.sv cpu/auto_mode_detector.sv cpu/hack_translator.sv \
+               cpu/rv32i_alu.sv cpu/rv32i_decode.sv cpu/rv32i_regfile.sv cpu/rv32i_csrs.sv \
+               cpu/unified_cpu.sv uart/clk_timer.sv uart/fifo_sync.sv uart/shift_registers.sv \
+               uart/uart_tx.sv uart/uart_rx.sv uart/uart_controller.sv soc/timer_core.sv \
+               soc/sdcard_spi.sv soc/gpio_controller.sv soc/hw_boot_mgr.sv soc/soc_ram.sv soc/soc_top.sv
+
+soc.json soc_syn.v: .veryl_build firmware/firmware.hex $(SOC_RTL_SRCS)
 	$(YOSYS) -p "\
-		read_verilog -sv cpu/rv32i_pkg.sv cpu/auto_mode_detector.sv cpu/hack_translator.sv cpu/rv32i_alu.sv cpu/rv32i_decode.sv cpu/rv32i_regfile.sv cpu/rv32i_csrs.sv cpu/unified_cpu.sv uart/clk_timer.sv uart/fifo_sync.sv uart/shift_registers.sv uart/uart_tx.sv uart/uart_rx.sv uart/uart_controller.sv soc/timer_core.sv soc/sdcard_spi.sv soc/gpio_controller.sv soc/hw_boot_mgr.sv soc/soc_ram.v soc/soc_top.sv; \
+		read_verilog -sv $(SOC_RTL_SRCS); \
 		synth_gowin -top soc_top -json soc.json; \
 		write_verilog -noattr soc_syn.v; \
 	"
 
+synth-top: soc.json
+
 sim-gls: sim-gls-unit sim-soc-gls-fast
 
-pnr: synth-top
+soc_pnr.json soc_sta.json: soc.json $(CST_FILE)
 	$(NEXTPNR) --device GW1NR-LV9QN88PC6/I5 --vopt family=GW1N-9C --vopt cst=$(CST_FILE) --json soc.json --write soc_pnr.json --report soc_sta.json --detailed-timing-report --freq 27.0 --timing-allow-fail
 
-sta: pnr
+pnr: soc_pnr.json
+
+sta: soc_sta.json
 	@echo "=== Generating Static Timing Analysis (STA) Report ==="
 	$(PYTHON) scripts/report_sta.py soc_sta.json --strict
 
-bitstream: pnr
+pack.fs: soc_pnr.json
 	$(GOWIN_PACK) -d GW1N-9C -o pack.fs soc_pnr.json
 
-build-hw: bitstream
+bitstream: pack.fs
+
+build-hw: pack.fs
 	@echo "=== Hardware Bitstream pack.fs Built Successfully! ==="
 
-prog-sram: bitstream
+prog-sram: pack.fs
 	$(OPENFPGALOADER) -b tangnano9k pack.fs
 
-prog-flash: bitstream
+prog-flash: pack.fs
 	$(OPENFPGALOADER) -b tangnano9k -f pack.fs
+	$(OPENFPGALOADER) -b tangnano9k pack.fs
 
 test-sim: check firmware zephyr-rust-lib zephyr-bc-lib build-hack build-zephyr sim-unit test-arch-compliance sim-gls-unit sim-soc-fast synth-top sim-soc-gls-fast
 	@echo "========================================================================"
@@ -291,4 +314,4 @@ clean:
 	cd zephyr_workspace/app/rust_app && $(CARGO) clean
 	cd vendor/bc_clone_rs/crates/bc_zephyr 2>/dev/null && $(CARGO) clean || true
 	$(MAKE) -C firmware_hack clean
-	rm -rf sim/sim_build* sim/results.xml *.json *_syn.v sim/*_syn.v pack.fs firmware/firmware.bin firmware/firmware.hex build_arch_test build_hack zephyr_workspace/app/build $(ZEPHYR_BUILD_DIR)
+	rm -rf sim/sim_build* sim/results.xml *.json *_syn.v sim/*_syn.v pack.fs firmware/firmware.bin firmware/firmware.hex build_arch_test build_hack zephyr_workspace/app/build $(ZEPHYR_BUILD_DIR) .veryl_build

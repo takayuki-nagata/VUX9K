@@ -12,13 +12,20 @@ pub module rv32i_alu (
     var res_int: logic<32>;
 
     always_comb {
-        let shift_amt: u32 = b[4:0] as u32;
+        let shift_amt: u32       = b[4:0] as u32;
+        let is_sub   : logic     = (alu_op == rv32i_pkg::AluOp::SUB) || (alu_op == rv32i_pkg::AluOp::SLT)
+            || (alu_op == rv32i_pkg::AluOp::SLTU);
+        let b_inv    : logic<32> = if is_sub ? ~b : b;
+        let sum_33   : logic<33> = {1'b0, a} + {1'b0, b_inv} + (if is_sub ? 33'd1 : 33'd0);
+        let slt_res  : logic     = if (a[31] != b[31]) ? a[31] : sum_33[31];
+        let sltu_res : logic     = !sum_33[32]; // borrow out
+
         case alu_op {
-            rv32i_pkg::AluOp::ADD   : res_int = (a as i32 + b as i32) as u32;
-            rv32i_pkg::AluOp::SUB   : res_int = (a as i32 - b as i32) as u32;
+            rv32i_pkg::AluOp::ADD   : res_int = sum_33[31:0];
+            rv32i_pkg::AluOp::SUB   : res_int = sum_33[31:0];
+            rv32i_pkg::AluOp::SLT   : res_int = {31'd0, slt_res};
+            rv32i_pkg::AluOp::SLTU  : res_int = {31'd0, sltu_res};
             rv32i_pkg::AluOp::SLL   : res_int = a << shift_amt;
-            rv32i_pkg::AluOp::SLT   : res_int = if (a as i32) <: (b as i32) ? 32'd1 : 32'd0;
-            rv32i_pkg::AluOp::SLTU  : res_int = if (a as u32) <: (b as u32) ? 32'd1 : 32'd0;
             rv32i_pkg::AluOp::XOR   : res_int = a ^ b;
             rv32i_pkg::AluOp::SRL   : res_int = a >> shift_amt;
             rv32i_pkg::AluOp::SRA   : res_int = (a as i32 >>> shift_amt) as u32;

@@ -38,9 +38,12 @@ async def test_uart_rx(dut):
     dut.rst.value = 1
     await ClockCycles(dut.clk, 10)
 
+    cnt = int(dut.CNT.value) if hasattr(dut, "CNT") else 434
+    dut._log.info(f"Using UART baud cnt = {cnt}")
+
     # 2. Send Byte 1: 0xA5 (0b10100101)
     test_byte1 = 0xA5
-    cocotb.start_soon(send_uart_byte(dut, test_byte1, cnt=234))
+    cocotb.start_soon(send_uart_byte(dut, test_byte1, cnt=cnt))
 
     # Wait for rdy assertion
     while int(dut.rdy.value) == 0:
@@ -54,7 +57,7 @@ async def test_uart_rx(dut):
 
     # 3. Send Byte 2: 0x3C (0b00111100)
     test_byte2 = 0x3C
-    cocotb.start_soon(send_uart_byte(dut, test_byte2, cnt=234))
+    cocotb.start_soon(send_uart_byte(dut, test_byte2, cnt=cnt))
 
     while int(dut.rdy.value) == 0:
         await FallingEdge(dut.clk)

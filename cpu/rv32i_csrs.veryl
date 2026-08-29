@@ -55,26 +55,17 @@ pub module rv32i_csrs (
 
     // CSR Read Combinational Mux
     always_comb {
-        if csr_addr == rv32i_pkg::CSR_MSTATUS {
-            read_val = mstatus;
-        } else if csr_addr == rv32i_pkg::CSR_MISA {
-            read_val = 32'h4000_0100; // RV32I Base Integer ISA
-        } else if csr_addr == rv32i_pkg::CSR_MIE {
-            read_val = mie;
-        } else if csr_addr == rv32i_pkg::CSR_MTVEC {
-            read_val = mtvec;
-        } else if csr_addr == rv32i_pkg::CSR_MSCRATCH {
-            read_val = mscratch;
-        } else if csr_addr == rv32i_pkg::CSR_MEPC {
-            read_val = mepc;
-        } else if csr_addr == rv32i_pkg::CSR_MCAUSE {
-            read_val = mcause;
-        } else if csr_addr == rv32i_pkg::CSR_MTVAL {
-            read_val = mtval;
-        } else if csr_addr == rv32i_pkg::CSR_MIP {
-            read_val = mip;
-        } else {
-            read_val = 32'd0;
+        case csr_addr {
+            12'h300: read_val = mstatus;
+            12'h301: read_val = 32'h4000_0100;
+            12'h304: read_val = mie;
+            12'h305: read_val = mtvec;
+            12'h340: read_val = mscratch;
+            12'h341: read_val = mepc;
+            12'h342: read_val = mcause;
+            12'h343: read_val = mtval;
+            12'h344: read_val = mip;
+            default: read_val = 32'd0;
         }
     }
 
@@ -119,20 +110,15 @@ pub module rv32i_csrs (
 
                 // 3. Explicit CSR Write Instruction Execution
             } else if csr_op != 3'b000 {
-                if csr_addr == rv32i_pkg::CSR_MSTATUS {
-                    mstatus = write_val;
-                } else if csr_addr == rv32i_pkg::CSR_MIE {
-                    mie = write_val;
-                } else if csr_addr == rv32i_pkg::CSR_MTVEC {
-                    mtvec = write_val;
-                } else if csr_addr == rv32i_pkg::CSR_MSCRATCH {
-                    mscratch = write_val;
-                } else if csr_addr == rv32i_pkg::CSR_MEPC {
-                    mepc = write_val;
-                } else if csr_addr == rv32i_pkg::CSR_MCAUSE {
-                    mcause = write_val;
-                } else if csr_addr == rv32i_pkg::CSR_MTVAL {
-                    mtval = write_val;
+                case csr_addr {
+                    12'h300: mstatus  = write_val;
+                    12'h304: mie      = write_val;
+                    12'h305: mtvec    = write_val;
+                    12'h340: mscratch = write_val;
+                    12'h341: mepc     = write_val;
+                    12'h342: mcause   = write_val;
+                    12'h343: mtval    = write_val;
+                    default: {}
                 }
             }
         }
