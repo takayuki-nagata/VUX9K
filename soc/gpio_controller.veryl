@@ -37,21 +37,19 @@ module gpio_controller (
 
     always_ff (clk, rst) {
         if_reset {
-            led_reg = 6'b000000;
+            led_reg  = 6'b000000;
+            data_out = 32'd0;
         } else {
             if we {
                 if addr == 4'h0 {
                     led_reg = data_in[5:0];
                 }
             }
-        }
-    }
-
-    always_comb {
-        case addr {
-            4'h0   : data_out = {26'd0, led_reg};
-            4'h4   : data_out = {31'd0, btn_pressed};
-            default: data_out = 32'd0;
+            case addr {
+                4'h0   : data_out = {26'd0, led_reg};
+                4'h4   : data_out = {31'd0, btn_pressed};
+                default: data_out = 32'd0;
+            }
         }
     }
 }

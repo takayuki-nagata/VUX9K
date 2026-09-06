@@ -89,6 +89,10 @@ def open_port(port_name="auto", baudrate=115200, timeout=0.2):
 
 
 def send_cmd_and_wait(ser, cmd_char, timeout=5.0):
+    try:
+        ser.reset_input_buffer()
+    except Exception:
+        pass
     t0 = time.time()
     while time.time() - t0 < 0.1:
         if ser.in_waiting > 0:

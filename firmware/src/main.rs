@@ -84,7 +84,7 @@ fn run_diagnostics() {
 
     // 4. MicroSD Card Init
     Uart::print_str(" 4. MicroSD SPI Card: ");
-    if SdCard::init() {
+    if SdCard::force_init() {
         Uart::print_str("Detected & Initialized [PASS]\n");
     } else {
         Uart::print_str("No Card / Timeout [FAIL]\n");
@@ -95,7 +95,7 @@ fn run_diagnostics() {
 fn dump_sector_0() {
     Uart::print_str("[SD] Reading Sector 0 (MBR)...\n");
     let mut buf = [0u8; 512];
-    if !SdCard::init() {
+    if !SdCard::ensure_init() {
         Uart::print_str("[SD] Card init failed!\n");
         return;
     }
@@ -129,7 +129,7 @@ fn dump_sector_0() {
 fn inspect_sector_64() {
     Uart::print_str("[SD] Inspecting Boot Sector 64...\n");
     let mut buf = [0u8; 512];
-    if !SdCard::init() || !SdCard::read_block(BOOT_SECTOR, &mut buf) {
+    if !SdCard::ensure_init() || !SdCard::read_block(BOOT_SECTOR, &mut buf) {
         Uart::print_str("[SD] Failed to read Sector 64!\n");
         return;
     }
@@ -169,43 +169,39 @@ fn read_uart_byte_timeout(timeout_ms: u32) -> Option<u8> {
 }
 
 fn write_sectors_from_uart() {
-    // Flush any pending bytes in RX FIFO
-    while Uart::has_rx_data() {
-        let _ = Uart::read_byte();
-    }
-
     Uart::print_str("[READY]\n");
 
-    const MTIME_LOW: *const u32 = 0x4000_1000 as *const u32;
-    let mut num_sectors: u32 = 0;
-    let start_time = unsafe { core::ptr::read_volatile(MTIME_LOW) };
-    while (unsafe { core::ptr::read_volatile(MTIME_LOW) }).wrapping_sub(start_time) < 27_000 * 5000
-    {
-        if let Some(n) = Uart::read_byte() {
-            if n >= 1 && n <= 32 {
-                num_sectors = n as u32;
-                break;
-            }
+    let num_sectors = match read_uart_byte_timeout(5000) {
+        Some(n) if n >= 1 && n <= 32 => n as u32,
+        Some(invalid) => {
+            Uart::print_str("[SD-ERR] Invalid sector count: 0x");
+            Uart::print_hex_byte(invalid);
+            Uart::print_str("\n");
+            return;
         }
-    }
-
-    if num_sectors == 0 {
-        Uart::print_str("[SD-ERR] Invalid sector count!\n");
-        return;
-    }
+        None => {
+            Uart::print_str("[SD-ERR] Sector count timeout!\n");
+            return;
+        }
+    };
 
     Uart::print_str("[READY-COUNT:");
     Uart::print_dec(num_sectors);
     Uart::print_str("]\n");
 
     let mut buf = [0u8; 512];
+    if !SdCard::ensure_init() {
+        Uart::print_str("[SD-ERR] Failed to initialize SD card!\n");
+        return;
+    }
+
     for sec_idx in 0..num_sectors {
         Uart::print_str("[READY-SEC:");
         Uart::print_dec(sec_idx);
         Uart::print_str("]\n");
 
         for i in 0..512 {
-            match read_uart_byte_timeout(3000) {
+            match read_uart_byte_timeout(5000) {
                 Some(b) => buf[i] = b,
                 None => {
                     Uart::print_str("[SD-ERR] Timeout at sector ");
@@ -218,7 +214,7 @@ fn write_sectors_from_uart() {
             }
         }
 
-        if !SdCard::init() || !SdCard::write_block(BOOT_SECTOR + sec_idx, &buf) {
+        if !SdCard::write_block(BOOT_SECTOR + sec_idx, &buf) {
             Uart::print_str("[SD-ERR] Failed to write block at sector ");
             Uart::print_dec(BOOT_SECTOR + sec_idx);
             Uart::print_str("\n");
@@ -234,7 +230,7 @@ fn write_sectors_from_uart() {
 fn load_and_boot_sector_64() {
     Uart::print_str("[BOOT] Reading payload header at Sector 64...\n");
     let mut buf = [0u8; 512];
-    if !SdCard::init() || !SdCard::read_block(BOOT_SECTOR, &mut buf) {
+    if !SdCard::ensure_init() || !SdCard::read_block(BOOT_SECTOR, &mut buf) {
         Uart::print_str("[BOOT-ERR] SD card read failed!\n");
         return;
     }
@@ -356,7 +352,7 @@ pub extern "C" fn main() -> ! {
                 }
                 b'i' => {
                     Uart::print_str("i\n[SD] Initializing...\n");
-                    if SdCard::init() {
+                    if SdCard::force_init() {
                         Uart::print_str("[SD] Card Ready! [OK]\n");
                     } else {
                         Uart::print_str("[SD] Init Failed / No Card!\n");

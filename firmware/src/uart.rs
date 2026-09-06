@@ -61,17 +61,29 @@ impl Uart {
             Self::write_byte(b'0');
             return;
         }
-        let mut buf = [0u8; 10];
-        let mut i = 0;
-        while val > 0 {
-            let rem = (val % 10) as u8;
-            val /= 10;
-            buf[i] = b'0' + rem;
-            i += 1;
-        }
-        while i > 0 {
-            i -= 1;
-            Self::write_byte(buf[i]);
+        const POWERS: [u32; 10] = [
+            1_000_000_000,
+            100_000_000,
+            10_000_000,
+            1_000_000,
+            100_000,
+            10_000,
+            1_000,
+            100,
+            10,
+            1,
+        ];
+        let mut started = false;
+        for &p in POWERS.iter() {
+            let mut digit = 0u8;
+            while val >= p {
+                val -= p;
+                digit += 1;
+            }
+            if digit > 0 || started || p == 1 {
+                started = true;
+                Self::write_byte(b'0' + digit);
+            }
         }
     }
 }

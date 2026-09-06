@@ -29,22 +29,31 @@ pub module sdcard_spi (
     var bit_idx  : logic<4>;
     var spi_phase: logic   ;
 
+    var miso_sync_0: logic;
+    var miso_sync_1: logic;
+
     assign spi_cs_n = cs_n_reg;
     assign spi_sclk = sclk_reg;
     assign spi_mosi = mosi_reg;
 
     always_ff (clk, rst) {
         if_reset {
-            cs_n_reg  = 1'b1;
-            sclk_reg  = 1'b0;
-            mosi_reg  = 1'b1;
-            shift_tx  = 8'hff;
-            shift_rx  = 8'hff;
-            busy      = 1'b0;
-            clk_cnt   = 8'd0;
-            bit_idx   = 4'd0;
-            spi_phase = 1'b0;
+            cs_n_reg    = 1'b1;
+            sclk_reg    = 1'b0;
+            mosi_reg    = 1'b1;
+            shift_tx    = 8'hff;
+            shift_rx    = 8'hff;
+            busy        = 1'b0;
+            clk_cnt     = 8'd0;
+            bit_idx     = 4'd0;
+            spi_phase   = 1'b0;
+            data_out    = 32'd0;
+            miso_sync_0 = 1'b1;
+            miso_sync_1 = 1'b1;
         } else {
+            miso_sync_0 = spi_miso;
+            miso_sync_1 = miso_sync_0;
+
             if we && !busy {
                 case addr {
                     4'h0: {
@@ -67,7 +76,7 @@ pub module sdcard_spi (
                     if !spi_phase {
                         // Rising edge: Sample MISO
                         sclk_reg  = 1'b1;
-                        shift_rx  = {shift_rx[6:0], spi_miso};
+                        shift_rx  = {shift_rx[6:0], miso_sync_1};
                         spi_phase = 1'b1;
                     } else {
                         // Falling edge: Shift out next MOSI bit
@@ -86,15 +95,12 @@ pub module sdcard_spi (
                     clk_cnt = clk_cnt + 1'b1;
                 }
             }
-        }
-    }
-
-    always_comb {
-        case addr {
-            4'h0   : data_out = {24'd0, shift_rx};
-            4'h4   : data_out = {31'd0, cs_n_reg};
-            4'h8   : data_out = {31'd0, busy};
-            default: data_out = 32'd0;
+            case addr {
+                4'h0   : data_out = {24'd0, shift_rx};
+                4'h4   : data_out = {31'd0, cs_n_reg};
+                4'h8   : data_out = {31'd0, busy};
+                default: data_out = 32'd0;
+            }
         }
     }
 }

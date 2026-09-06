@@ -37,10 +37,17 @@ class SpiSdCardModel:
             if self.cs_n.value != 0:
                 await FallingEdge(self.cs_n)
 
-            # Receive 6-byte command (0x40 | cmd, arg[31:24], arg[23:16], arg[15:8], arg[7:0], crc)
-            cmd_bytes = await self._recv_bytes(6)
-            if not cmd_bytes or self.cs_n.value != 0:
+            # Receive command: wait for start byte (01xxxxxx)
+            first_byte = 0xFF
+            while (first_byte & 0xC0) != 0x40 and self.cs_n.value == 0:
+                first_byte = await self._recv_byte()
+            if self.cs_n.value != 0 or (first_byte & 0xC0) != 0x40:
                 continue
+
+            rest_bytes = await self._recv_bytes(5)
+            if len(rest_bytes) < 5 or self.cs_n.value != 0:
+                continue
+            cmd_bytes = bytes([first_byte]) + rest_bytes
 
             cmd = cmd_bytes[0] & 0x3F
             arg = (cmd_bytes[1] << 24) | (cmd_bytes[2] << 16) | (cmd_bytes[3] << 8) | cmd_bytes[4]

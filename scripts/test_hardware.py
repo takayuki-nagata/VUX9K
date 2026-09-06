@@ -96,7 +96,7 @@ def flash_sd_session(ser, file_path, mode="hack"):
         buf = b""
         start = time.time()
         ready_sec = False
-        while time.time() - start < 5.0:
+        while time.time() - start < 10.0:
             c = ser.read(64)
             if c:
                 buf += c
@@ -163,19 +163,21 @@ def run_hardware_test_suite(port="auto", baud=115200):
         # Test 2: Hardware Self-Diagnostics ('t')
         # -------------------------------------------------------------
         test_name = "2. Hardware Self-Diagnostics ('t' / diag)"
-        out = vux_tool.send_cmd_and_wait(ser, "t", timeout=4.0)
+        out = vux_tool.send_cmd_and_wait(ser, "t", timeout=8.0)
         passed = ("[DIAG]" in out) and ("Diagnostics Complete" in out)
-        results.append((test_name, passed, "Executed onboard LED, UART, and SPI diagnostics"))
-        print_test_result(test_name, passed, "Executed onboard LED, UART, and SPI diagnostics")
+        msg = "Executed onboard LED, UART, and SPI diagnostics" if passed else f"Failed diagnostics. Output: {out!r}"
+        results.append((test_name, passed, msg))
+        print_test_result(test_name, passed, msg)
 
         # -------------------------------------------------------------
         # Test 3: MicroSD Sector 0 (MBR) Dump ('d')
         # -------------------------------------------------------------
         test_name = "3. MicroSD Card Sector 0 (MBR) Dump ('d' / dump-mbr)"
-        out = vux_tool.send_cmd_and_wait(ser, "d", timeout=5.0)
+        out = vux_tool.send_cmd_and_wait(ser, "d", timeout=8.0)
         passed = ("[SD]" in out) and (("55 AA" in out) or ("55aa" in out.lower()) or ("Signature:" in out))
-        results.append((test_name, passed, "Read 512-byte Sector 0 from physical MicroSD"))
-        print_test_result(test_name, passed, "Read 512-byte Sector 0 from physical MicroSD")
+        msg = "Read 512-byte Sector 0 from physical MicroSD" if passed else f"Failed sector dump. Output: {out!r}"
+        results.append((test_name, passed, msg))
+        print_test_result(test_name, passed, msg)
 
         # -------------------------------------------------------------
         # Test 4: Flash Hack 16-bit Firmware
@@ -201,8 +203,9 @@ def run_hardware_test_suite(port="auto", baud=115200):
         test_name_insp_hack = "5. Header Verification: Hack 16-bit ('s' / inspect-sd)"
         out = vux_tool.send_cmd_and_wait(ser, "s", timeout=3.0)
         passed = ("VUX9" in out) and (("Mode:  0" in out) or ("Hack" in out))
-        results.append((test_name_insp_hack, passed, "Verified Sector 64 header (Magic: VUX9, Mode: 0/Hack)"))
-        print_test_result(test_name_insp_hack, passed, "Verified Sector 64 header (Magic: VUX9, Mode: 0/Hack)")
+        msg = "Verified Sector 64 header (Magic: VUX9, Mode: 0/Hack)" if passed else f"Failed inspect. Output: {out!r}"
+        results.append((test_name_insp_hack, passed, msg))
+        print_test_result(test_name_insp_hack, passed, msg)
 
         # -------------------------------------------------------------
         # Test 6: Flash RISC-V 32-bit Firmware
