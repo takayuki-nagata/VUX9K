@@ -264,7 +264,7 @@ synth-top: soc.json
 sim-gls: sim-gls-unit sim-soc-gls-fast
 
 soc_pnr.json soc_sta.json: soc.json $(CST_FILE)
-	$(NEXTPNR) --device GW1NR-LV9QN88PC6/I5 --vopt family=GW1N-9C --vopt cst=$(CST_FILE) --json soc.json --write soc_pnr.json --report soc_sta.json --detailed-timing-report --freq 27.0 --timing-allow-fail
+	$(NEXTPNR) --device GW1NR-LV9QN88PC6/I5 --vopt family=GW1N-9C --vopt cst=$(CST_FILE) --json soc.json --write soc_pnr.json --report soc_sta.json --detailed-timing-report --freq 27.0 --timing-allow-fail --tmg-ripup
 
 pnr: soc_pnr.json
 

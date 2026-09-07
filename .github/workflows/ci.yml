@@ -31,8 +31,6 @@ jobs:
 
       - name: Setup OSS CAD Suite (Yosys, Icarus, Verilator, etc.)
         uses: YosysHQ/setup-oss-cad-suite@v3
-        with:
-          version: '2024-01-20'
 
       - name: Install Host Dependencies
         run: |
