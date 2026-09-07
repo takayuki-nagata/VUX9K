@@ -148,7 +148,7 @@ Connecting any terminal (115200 bps 8N1) presents the interactive `vux>` prompt:
    [YosysHQ/oss-cad-suite-build](https://github.com/YosysHQ/oss-cad-suite-build)
 3. **Veryl Compiler**:
    ```bash
-   cargo install veryl --version 0.20.3
+   cargo install veryl --version 0.21.0
    ```
 4. **Python Environment**:
    ```bash

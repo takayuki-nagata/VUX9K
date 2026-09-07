@@ -49,11 +49,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/veryl
-          key: ${{ runner.os }}-veryl-v0.20.3
+          key: ${{ runner.os }}-veryl-v0.21.0
 
       - name: Install Veryl
         if: steps.cache-veryl.outputs.cache-hit != 'true'
-        run: cargo install veryl --version 0.20.3
+        run: cargo install veryl --version 0.21.0
 
       - name: Cache MSP430 GCC Toolchain
         id: cache-msp430-gcc
