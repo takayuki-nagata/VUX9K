@@ -4,7 +4,7 @@
  */
 
 OUTPUT_ARCH( "riscv" )
-ENTRY( rvmodel_boot )
+ENTRY( rvtest_entry_point )
 
 SECTIONS
 {

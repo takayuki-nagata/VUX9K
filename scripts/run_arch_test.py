@@ -38,6 +38,9 @@ ARCH_TEST_DIR = os.path.join(VENDOR_DIR, "riscv-arch-test")
 BUILD_DIR = os.path.join(REPO_DIR, "build_arch_test")
 TARGET_ENV_DIR = os.path.join(REPO_DIR, "scripts", "target_env")
 
+ARCH_TEST_REPO = "https://github.com/riscv-non-isa/riscv-arch-test.git"
+ARCH_TEST_COMMIT = "74efcaac81f48f437f58868771daf2ed2776d422"
+
 def run_cmd(cmd, cwd=None):
     res = subprocess.run(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     return res.returncode, res.stdout, res.stderr
@@ -48,10 +51,20 @@ def setup_repo():
     
     test_src = os.path.join(ARCH_TEST_DIR, "tests", "rv32i", "I")
     if not os.path.exists(test_src) or not os.listdir(test_src):
-        print("[INFO] Cloning riscv-arch-test repository...")
-        code, out, err = run_cmd(["git", "clone", "--depth", "1", "https://github.com/riscv-non-isa/riscv-arch-test.git", ARCH_TEST_DIR])
+        print(f"[INFO] Fetching riscv-arch-test repository (commit {ARCH_TEST_COMMIT[:8]})...")
+        os.makedirs(ARCH_TEST_DIR, exist_ok=True)
+        code, out, err = run_cmd(["git", "init"], cwd=ARCH_TEST_DIR)
         if code != 0:
-            print(f"[ERROR] Failed to clone riscv-arch-test: {err}")
+            print(f"[ERROR] Failed to init riscv-arch-test git: {err}")
+            sys.exit(1)
+        run_cmd(["git", "remote", "add", "origin", ARCH_TEST_REPO], cwd=ARCH_TEST_DIR)
+        code, out, err = run_cmd(["git", "fetch", "--depth", "1", "origin", ARCH_TEST_COMMIT], cwd=ARCH_TEST_DIR)
+        if code != 0:
+            print(f"[ERROR] Failed to fetch riscv-arch-test commit {ARCH_TEST_COMMIT}: {err}")
+            sys.exit(1)
+        code, out, err = run_cmd(["git", "checkout", "FETCH_HEAD"], cwd=ARCH_TEST_DIR)
+        if code != 0:
+            print(f"[ERROR] Failed to checkout riscv-arch-test: {err}")
             sys.exit(1)
 
 def compile_verilog():
