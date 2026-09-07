@@ -17,7 +17,7 @@ ZEPHYR_SDK_INSTALL_DIR ?= $(HOME)/.local/zephyr-sdk-0.16.8
 OSS_CAD_SUITE_BIN ?= $(HOME)/.local/oss-cad-suite/bin
 CARGO_BIN ?= $(HOME)/.cargo/bin
 
-export PATH := $(PWD)/$(VENV_PATH)/bin:$(OSS_CAD_SUITE_BIN):$(CARGO_BIN):$(ZEPHYR_SDK_INSTALL_DIR)/riscv64-zephyr-elf/bin:$(PATH)
+export PATH := $(CURDIR)/$(VENV_PATH)/bin:$(OSS_CAD_SUITE_BIN):$(CARGO_BIN):$(ZEPHYR_SDK_INSTALL_DIR)/riscv64-zephyr-elf/bin:$(PATH)
 
 .PHONY: all veryl check check-paths fmt test test-ci test-hw test-hardware build synth synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware sim-unit sim-boot sim-soc sim test-arch-compliance zephyr-rust-lib zephyr-bc-lib build-zephyr sim-zephyr-emu sim-zephyr-repl sim-zephyr-rtl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls sta
 
@@ -82,14 +82,14 @@ zephyr-bc-lib:
 build-zephyr:
 	@if [ -d "$(ZEPHYR_BASE)" ] && [ -d "$(ZEPHYR_SDK_INSTALL_DIR)" ]; then \
 		echo "=== Building Zephyr bc_clone_rs Application (vux9k) ==="; \
-		export PATH=$(PWD)/$(VENV_PATH)/bin:$(ZEPHYR_SDK_INSTALL_DIR)/riscv64-zephyr-elf/bin:$(PATH) && \
+		export PATH=$(CURDIR)/$(VENV_PATH)/bin:$(ZEPHYR_SDK_INSTALL_DIR)/riscv64-zephyr-elf/bin:$(PATH) && \
 		export ZEPHYR_BASE=$(ZEPHYR_BASE) && \
 		export ZEPHYR_SDK_INSTALL_DIR=$(ZEPHYR_SDK_INSTALL_DIR) && \
 		export ZEPHYR_TOOLCHAIN_VARIANT=zephyr && \
 		west build -p auto -b vux9k $(BC_APP_DIR) -d $(ZEPHYR_BUILD_DIR) -- \
-			-DBOARD_ROOT=$(PWD)/zephyr_workspace \
-			-DSOC_ROOT=$(PWD)/zephyr_workspace \
-			-DEXTRA_ZEPHYR_MODULES=$(PWD)/zephyr_workspace \
+			-DBOARD_ROOT=$(CURDIR)/zephyr_workspace \
+			-DSOC_ROOT=$(CURDIR)/zephyr_workspace \
+			-DEXTRA_ZEPHYR_MODULES=$(CURDIR)/zephyr_workspace \
 			-DRUST_TARGET=riscv32i-unknown-none-elf && \
 		$(PYTHON) scripts/elf2bin.py $(ZEPHYR_BUILD_DIR)/zephyr/zephyr.elf $(ZEPHYR_BUILD_DIR)/zephyr/zephyr.bin; \
 	else \
