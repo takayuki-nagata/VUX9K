@@ -40,7 +40,7 @@ def main():
     parser.add_argument("--json", required=True)
     parser.add_argument("--write", required=True)
     parser.add_argument("--report", required=True)
-    parser.add_argument("--freq", type=float, default=27.0)
+    parser.add_argument("--freq", type=float, default=30.0)
     parser.add_argument("--seeds", nargs="+", type=int, default=[1, 42, 100, 7, 13])
     args, unknown = parser.parse_known_args()
 

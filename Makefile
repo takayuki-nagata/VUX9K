@@ -264,13 +264,13 @@ synth-top: soc.json
 sim-gls: sim-gls-unit sim-soc-gls-fast
 
 soc_pnr.json soc_sta.json: soc.json $(CST_FILE)
-	$(NEXTPNR) --device GW1NR-LV9QN88PC6/I5 --vopt family=GW1N-9C --vopt cst=$(CST_FILE) --json soc.json --write soc_pnr.json --report soc_sta.json --detailed-timing-report --freq 27.0 --timing-allow-fail
+	$(PYTHON) scripts/run_pnr.py --device GW1NR-LV9QN88PC6/I5 --vopt family=GW1N-9C --vopt cst=$(CST_FILE) --json soc.json --write soc_pnr.json --report soc_sta.json --freq 30.0
 
 pnr: soc_pnr.json
 
 sta: soc_sta.json
-	@echo "=== Generating Static Timing Analysis (STA) Report ==="
-	$(PYTHON) scripts/report_sta.py soc_sta.json --strict
+	@echo "=== Generating Static Timing Analysis (STA) Report (Target: 30.0 MHz, 10% Safety Margin) ==="
+	$(PYTHON) scripts/report_sta.py soc_sta.json --freq 30.0 --strict
 
 pack.fs: soc_pnr.json
 	$(GOWIN_PACK) -d GW1N-9C -o pack.fs soc_pnr.json

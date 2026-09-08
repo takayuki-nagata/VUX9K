@@ -105,7 +105,8 @@ pub module unified_cpu (
 
     assign active_mode = is_riscv_mode;
     assign pc_out      = if state == CpuState::FETCH ? pc_reg : next_pc;
-    assign data_addr   = if is_riscv_mode ? alu_result : rf_rs2_data;
+    let rv_mem_addr: logic<32> = rf_rs1_data + rv_imm;
+    assign data_addr   = if is_riscv_mode ? rv_mem_addr : rf_rs2_data;
     assign data_out    = r_data_out;
     assign mem_byte_we = r_mem_byte_we;
     assign mem_write   = if (state == CpuState::EXECUTE) ? r_mem_write : 1'b0;
@@ -481,27 +482,26 @@ pub module unified_cpu (
 
     // Next PC Calculation (Shared PC-Relative Adder)
     var is_branch_taken: logic    ;
-    var is_pc_rel      : logic    ;
-    var pc_rel_target  : logic<32>;
     var jalr_target    : logic<32>;
 
     always_comb {
         is_branch_taken = (rv_op == rv32i_pkg::Opcode::BRANCH) && rv_branch_take;
-        is_pc_rel       = (rv_op == rv32i_pkg::Opcode::JAL) || is_branch_taken;
-        pc_rel_target   = (pc_reg as u32 + rv_imm as u32) as u32;
-        jalr_target     = ((rf_rs1_data as u32 + rv_imm as u32) & 32'hffff_fffe) as u32;
+        let pc_plus_4   : logic<32> = (pc_reg as u32 + 4) as u32;
+        let pc_plus_imm : logic<32> = (pc_reg as u32 + rv_imm as u32) as u32;
+        jalr_target     = ((rv_mem_addr as u32) & 32'hffff_fffe) as u32;
 
         if is_riscv_mode {
             if trap_entry {
                 next_pc = mtvec_out;
             } else if is_mret {
                 next_pc = mepc_out;
-            } else if is_pc_rel {
-                next_pc = pc_rel_target;
-            } else if rv_op == rv32i_pkg::Opcode::JALR {
-                next_pc = jalr_target;
             } else {
-                next_pc = (pc_reg as u32 + 4) as u32;
+                case rv_op {
+                    rv32i_pkg::Opcode::BRANCH: next_pc = if rv_branch_take ? pc_plus_imm : pc_plus_4;
+                    rv32i_pkg::Opcode::JAL   : next_pc = pc_plus_imm;
+                    rv32i_pkg::Opcode::JALR  : next_pc = jalr_target;
+                    default                  : next_pc = pc_plus_4;
+                }
             }
         } else {
             if hack_jump_take {
