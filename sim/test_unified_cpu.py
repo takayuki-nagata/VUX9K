@@ -78,11 +78,11 @@ async def test_unified_cpu_hack_and_riscv(dut):
 
     # PC=8: SW x11, 100(x0) (Store 50 to address 100)
     dut.instr_in.value = 0x06b02223
-    await ClockCycles(dut.clk, 1) # FETCH -> EXECUTE
+    await ClockCycles(dut.clk, 2) # FETCH -> EXECUTE -> MEM_WAIT
     await Timer(1, unit="ns")
     assert int(dut.mem_write.value) == 1, "SW memory write assertion failed"
     assert int(dut.data_addr.value) == 100, f"Expected addr=100, got {int(dut.data_addr.value)}"
     assert int(dut.data_out.value) == 50, f"Expected data=50, got {int(dut.data_out.value)}"
-    await ClockCycles(dut.clk, 1)
+    await ClockCycles(dut.clk, 1) # MEM_WAIT -> FETCH
 
     dut._log.info("[PASS] Unified CPU: RISC-V 32-bit program execution verified!")

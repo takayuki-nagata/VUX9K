@@ -26,7 +26,8 @@ pub module unified_cpu (
     }
 
     var state: CpuState;
-    assign mem_read_req = if (state == CpuState::MEM_WAIT) ? 1'b1 : 1'b0;
+    var r_load_we: logic;
+    assign mem_read_req = if (state == CpuState::MEM_WAIT && r_load_we) ? 1'b1 : 1'b0;
     var is_riscv_mode: logic    ;
     var pc_reg       : logic<32>;
     var next_pc      : logic<32>;
@@ -95,6 +96,10 @@ pub module unified_cpu (
     var r_load_byte_sel: logic            <2> ;
     var r_load_f3      : rv32i_pkg::Funct3    ;
     var r_load_rd      : logic            <5> ;
+    var r_store_addr   : logic            <32>;
+    var r_store_data   : logic            <32>;
+    var r_store_byte_we: logic            <4> ;
+    var r_store_we     : logic                ;
     var r_mem_write    : logic                ;
     var r_mem_byte_we  : logic            <4> ;
     var r_data_out     : logic            <32>;
@@ -106,10 +111,18 @@ pub module unified_cpu (
     assign active_mode = is_riscv_mode;
     assign pc_out      = if state == CpuState::FETCH ? pc_reg : next_pc;
     let rv_mem_addr: logic<32> = rf_rs1_data + rv_imm;
-    assign data_addr   = if is_riscv_mode ? rv_mem_addr : rf_rs2_data;
-    assign data_out    = r_data_out;
-    assign mem_byte_we = r_mem_byte_we;
-    assign mem_write   = if (state == CpuState::EXECUTE) ? r_mem_write : 1'b0;
+    assign data_addr   = if is_riscv_mode ?
+        (if state == CpuState::MEM_WAIT ? r_store_addr : rv_mem_addr)
+    :
+        rf_rs2_data
+    ;
+    assign data_out    = if is_riscv_mode ? r_store_data : r_data_out;
+    assign mem_byte_we = if is_riscv_mode ? r_store_byte_we : r_mem_byte_we;
+    assign mem_write   = if is_riscv_mode ?
+        r_store_we
+    :
+        (if (state == CpuState::EXECUTE) ? r_mem_write : 1'b0)
+    ;
 
     inst mode_detect: auto_mode_detector (
         clk          : clk          ,
@@ -397,9 +410,15 @@ pub module unified_cpu (
 
             // Writeback
             if state == CpuState::MEM_WAIT {
-                rf_rd_addr = r_load_rd;
-                rf_we      = 1'b1;
-                rf_wr_data = load_val;
+                if r_load_we {
+                    rf_rd_addr = r_load_rd;
+                    rf_we      = 1'b1;
+                    rf_wr_data = load_val;
+                } else {
+                    rf_rd_addr = 5'd0;
+                    rf_we      = 1'b0;
+                    rf_wr_data = 32'd0;
+                }
             } else {
                 rf_rd_addr = rv_rd;
                 case rv_op {
@@ -521,12 +540,19 @@ pub module unified_cpu (
             r_load_byte_sel = 2'd0;
             r_load_f3       = rv32i_pkg::Funct3::ADD_SUB;
             r_load_rd       = 5'd0;
+            r_store_addr    = 32'd0;
+            r_store_data    = 32'd0;
+            r_store_byte_we = 4'd0;
+            r_store_we      = 1'b0;
+            r_load_we       = 1'b0;
         } else {
             case state {
                 CpuState::FETCH: {
                     // Latch fetched instruction from synchronous BRAM
-                    ir_reg = instr_in;
-                    state  = CpuState::EXECUTE;
+                    ir_reg     = instr_in;
+                    r_store_we = 1'b0;
+                    r_load_we  = 1'b0;
+                    state      = CpuState::EXECUTE;
                 }
                 CpuState::EXECUTE: {
                     if is_riscv_mode && rv_op == rv32i_pkg::Opcode::LOAD {
@@ -534,15 +560,31 @@ pub module unified_cpu (
                         r_load_byte_sel = rf_rs1_data[1:0] + rv_imm[1:0];
                         r_load_f3       = rv_f3;
                         r_load_rd       = rv_rd;
+                        r_load_we       = 1'b1;
+                        r_store_we      = 1'b0;
+                        state           = CpuState::MEM_WAIT;
+                    } else if is_riscv_mode && rv_op == rv32i_pkg::Opcode::STORE {
+                        // 1 cycle wait for store data/address stabilization
+                        r_store_addr    = rv_mem_addr;
+                        r_store_data    = r_data_out;
+                        r_store_byte_we = r_mem_byte_we;
+                        r_store_we      = 1'b1;
+                        r_load_we       = 1'b0;
                         state           = CpuState::MEM_WAIT;
                     } else if !is_riscv_mode && h_use_mem {
-                        state = CpuState::MEM_WAIT;
+                        r_store_we = 1'b0;
+                        r_load_we  = 1'b0;
+                        state      = CpuState::MEM_WAIT;
                     } else {
-                        pc_reg = next_pc;
-                        state  = CpuState::FETCH;
+                        r_store_we = 1'b0;
+                        r_load_we  = 1'b0;
+                        pc_reg     = next_pc;
+                        state      = CpuState::FETCH;
                     }
                 }
                 CpuState::MEM_WAIT: {
+                    r_store_we = 1'b0;
+                    r_load_we  = 1'b0;
                     if is_riscv_mode {
                         pc_reg = (pc_reg as u32 + 4) as u32;
                     } else {

@@ -97,12 +97,12 @@ async def test_rv32i_full_compliance(dut):
 
     # 11. SW x8, 16(x0) (Store 0xAA to address 16)
     dut.instr_in.value = encode_s(16, rs2=8, rs1=0, funct3=2)
-    await ClockCycles(dut.clk, 1) # FETCH -> EXECUTE
+    await ClockCycles(dut.clk, 2) # FETCH -> EXECUTE -> MEM_WAIT
     await Timer(1, unit="ns")
     assert int(dut.mem_write.value) == 1, "SW mem_write failed"
     assert int(dut.data_addr.value) == 16, f"Expected store addr 16, got {int(dut.data_addr.value)}"
     assert int(dut.data_out.value) == 0xAA, f"Expected store data 0xAA, got {hex(int(dut.data_out.value))}"
-    await ClockCycles(dut.clk, 1)
+    await ClockCycles(dut.clk, 1) # MEM_WAIT -> FETCH
 
     # 12. LW x12, 16(x0) with data_in = 0xAA
     dut.data_in.value = 0xAA
