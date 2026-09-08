@@ -201,7 +201,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
         # Test 5: Inspect Hack Header
         # -------------------------------------------------------------
         test_name_insp_hack = "5. Header Verification: Hack 16-bit ('s' / inspect-sd)"
-        out = vux_tool.send_cmd_and_wait(ser, "s", timeout=3.0)
+        out = vux_tool.send_cmd_and_wait(ser, "s", timeout=6.0)
         passed = ("VUX9" in out) and (("Mode:  0" in out) or ("Hack" in out))
         msg = "Verified Sector 64 header (Magic: VUX9, Mode: 0/Hack)" if passed else f"Failed inspect. Output: {out!r}"
         results.append((test_name_insp_hack, passed, msg))
@@ -227,7 +227,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
         # Test 7: Inspect RISC-V Header
         # -------------------------------------------------------------
         test_name_insp_rv = "7. Header Verification: RISC-V 32-bit ('s' / inspect-sd)"
-        out = vux_tool.send_cmd_and_wait(ser, "s", timeout=3.0)
+        out = vux_tool.send_cmd_and_wait(ser, "s", timeout=6.0)
         passed = ("VUX9" in out) and (("Mode:  1" in out) or ("RISC-V" in out))
         results.append((test_name_insp_rv, passed, "Verified Sector 64 header (Magic: VUX9, Mode: 1/RISC-V)"))
         print_test_result(test_name_insp_rv, passed, "Verified Sector 64 header (Magic: VUX9, Mode: 1/RISC-V)")

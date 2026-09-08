@@ -56,7 +56,6 @@ def main():
         "--detailed-timing-report",
         "--freq", str(args.freq),
         "--timing-allow-fail",
-        "--tmg-ripup",
     ])
     base_cmd.extend(unknown)
 
