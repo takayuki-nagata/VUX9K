@@ -23,7 +23,7 @@ jobs:
       - name: Setup uv Python Environment
         uses: astral-sh/setup-uv@v5
         with:
-          version: "latest"
+          version: "0.11.6"
           enable-cache: true
 
       - name: Check No Hardcoded Absolute Paths
@@ -31,6 +31,8 @@ jobs:
 
       - name: Setup OSS CAD Suite (Yosys, Icarus, Verilator, etc.)
         uses: YosysHQ/setup-oss-cad-suite@v3
+        with:
+          version: '2026-08-21'
 
       - name: Install Host Dependencies
         run: |
@@ -38,8 +40,9 @@ jobs:
           sudo apt-get install -y gcc-riscv64-linux-gnu device-tree-compiler ninja-build
 
       - name: Install Rust Toolchain & Target
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: "1.95.0"
           targets: riscv32i-unknown-none-elf
 
       - name: Cache Veryl Binary
@@ -101,7 +104,7 @@ jobs:
         run: |
           uv python install 3.13
           uv venv --python 3.13 .venv
-          uv pip install --python .venv/bin/python cocotb pytest https://github.com/takayuki-nagata/hack_tools/releases/download/v0.2.0/m2h-0.2.0.tar.gz -r $HOME/zephyrproject/zephyr/scripts/requirements-base.txt
+          uv pip install --python .venv/bin/python cocotb==2.0.1 pytest==9.1.1 https://github.com/takayuki-nagata/hack_tools/releases/download/v0.2.0/m2h-0.2.0.tar.gz -r $HOME/zephyrproject/zephyr/scripts/requirements-base.txt
 
       - name: Run Full SoC Simulation Suite (RTL, Compliance & GLS)
         run: |
