@@ -4,8 +4,8 @@
 // Dual-Port Harvard Memory Module (16 KB I-RAM + 4 KB D-RAM)
 // Perfectly Inferred into Gowin GW1NR-9 Hardware Block RAMs (BSRAMs)
 pub module soc_ram #(
-    param I_MEM_WORDS: u32 = 4096, // 16 KB I-RAM (4096 x 32-bit words)
-    param D_MEM_WORDS: u32 = 1024, // 4 KB D-RAM (1024 x 32-bit words)
+    param I_MEM_WORDS: u32 = 5120, // 20 KB I-RAM (5120 x 32-bit words)
+    param D_MEM_WORDS: u32 = 2048, // 8 KB D-RAM (2048 x 32-bit words)
 ) (
     clk        : input  clock    ,
     rst        : input  reset    ,
@@ -13,7 +13,7 @@ pub module soc_ram #(
     i_addr     : input  logic<32>,
     i_data_out : output logic<32>,
     i_we       : input  logic    ,
-    i_waddr    : input  logic<12>,
+    i_waddr    : input  logic<13>,
     i_wdata    : input  logic<32>,
     d_addr     : input  logic<32>,
     d_data_in  : input  logic<32>,
@@ -27,13 +27,13 @@ pub module soc_ram #(
     var d_mem2: logic<8>  [D_MEM_WORDS];
     var d_mem3: logic<8>  [D_MEM_WORDS];
 
-    var i_idx  : logic<12>;
-    var i_d_idx: logic<12>;
-    var d_idx  : logic<10>;
+    var i_idx  : logic<13>;
+    var i_d_idx: logic<13>;
+    var d_idx  : logic<11>;
 
-    assign i_idx   = i_addr[13:2];
-    assign i_d_idx = d_addr[13:2];
-    assign d_idx   = if active_mode == 1'b0 ? d_addr[9:0] : d_addr[11:2];
+    assign i_idx   = i_addr[14:2];
+    assign i_d_idx = d_addr[14:2];
+    assign d_idx   = if active_mode == 1'b0 ? d_addr[10:0] : d_addr[12:2];
 
     embed (inline) sv{{{
     `endif

@@ -3,21 +3,25 @@
 
 // Unified Dual-ISA CPU Core (RISC-V 32-bit + Hack 16-bit) in Veryl
 // Robust 2-Stage Multi-Cycle FSM Architecture (Fetch -> Execute) for 100% Gowin FPGA Synchronous Block RAM Compatibility
-pub module unified_cpu (
-    clk         : input  clock    ,
-    rst         : input  reset    ,
-    instr_in    : input  logic<32>,
-    data_in     : input  logic<32>,
-    timer_irq_in: input  logic    ,
-    ext_irq_in  : input  logic    ,
-    sw_irq_in   : input  logic    ,
-    pc_out      : output logic<32>,
-    data_addr   : output logic<32>,
-    data_out    : output logic<32>,
-    mem_write   : output logic    ,
-    mem_read_req: output logic    ,
-    mem_byte_we : output logic<4> ,
-    active_mode : output logic    , // 0: Hack 16-bit, 1: RISC-V 32-bit
+pub module unified_cpu #(
+    param RESET_VECTOR: u32 = 32'h0000_4800,
+) (
+    clk           : input  clock    ,
+    rst           : input  reset    ,
+    target_mode   : input  logic    , // 0: Hack 16-bit, 1: RISC-V 32-bit
+    target_mode_en: input  logic    , // 0: Auto detection, 1: Explicit override
+    instr_in      : input  logic<32>,
+    data_in       : input  logic<32>,
+    timer_irq_in  : input  logic    ,
+    ext_irq_in    : input  logic    ,
+    sw_irq_in     : input  logic    ,
+    pc_out        : output logic<32>,
+    data_addr     : output logic<32>,
+    data_out      : output logic<32>,
+    mem_write     : output logic    ,
+    mem_read_req  : output logic    ,
+    mem_byte_we   : output logic<4> ,
+    active_mode   : output logic    , // 0: Hack 16-bit, 1: RISC-V 32-bit
 ) {
     enum CpuState {
         FETCH,
@@ -124,12 +128,21 @@ pub module unified_cpu (
         (if (state == CpuState::EXECUTE) ? r_mem_write : 1'b0)
     ;
 
+    var auto_riscv_mode: logic;
     inst mode_detect: auto_mode_detector (
-        clk          : clk          ,
-        rst          : rst          ,
-        first_instr  : instr_in     ,
-        is_riscv_mode: is_riscv_mode,
+        clk          : clk            ,
+        rst          : rst            ,
+        first_instr  : instr_in       ,
+        is_riscv_mode: auto_riscv_mode,
     );
+
+    always_ff (clk, rst) {
+        if_reset {
+            is_riscv_mode = 1'b1;
+        } else {
+            is_riscv_mode = if target_mode_en == 1'b1 ? target_mode : auto_riscv_mode;
+        }
+    }
 
     // Hack Translator (16-bit Front-End)
     var h_instr_16: logic<16>;
@@ -535,7 +548,7 @@ pub module unified_cpu (
     always_ff (clk, rst) {
         if_reset {
             state           = CpuState::FETCH;
-            pc_reg          = 32'd0;
+            pc_reg          = RESET_VECTOR;
             ir_reg          = 32'h0000_0013; // NOP
             r_load_byte_sel = 2'd0;
             r_load_f3       = rv32i_pkg::Funct3::ADD_SUB;
