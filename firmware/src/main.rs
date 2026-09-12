@@ -22,7 +22,7 @@ use uart::Uart;
 
 const VUX_MAGIC: u32 = 0x56555839; // "VUX9"
 const MAILBOX_REG: *mut u32 = 0x2000_1FFC as *mut u32;
-const RESIDENT_LOADER_ENTRY: usize = 0x0000_4800;
+const RESIDENT_LOADER_ENTRY: usize = 0x0000_3800;
 
 #[inline(always)]
 fn slot_sector(slot: u32) -> u32 {
@@ -32,7 +32,7 @@ fn slot_sector(slot: u32) -> u32 {
 fn print_banner() {
     Uart::print_str("\n");
     Uart::print_str("====================================================\n");
-    Uart::print_str("  VUX9K Dual-ISA RISC-V / Hack SoC Boot Manager\n");
+    Uart::print_str("  VUX9K Dual-ISA RISC-V / Hack SoC Boot Manager (v1)\n");
     Uart::print_str("  Board: Sipeed Tang Nano 9K (Gowin GW1NR-9)\n");
     Uart::print_str("  Clock: 27.0 MHz | UART: 115200 bps | SPI: 400 kHz\n");
     Uart::print_str("====================================================\n\n");
@@ -133,11 +133,125 @@ fn dump_sector_0() {
     Uart::print_str(" [PASS]\n\n");
 }
 
+const BOOT_MGR_VERSION: u32 = 10;
+const SLOT_UPDATE_MAGIC: u32 = 0xA55A_0000;
+const SLOT_UPDATED_BOOT_MAGIC: u32 = 0x5A5A_B002;
+
 struct SlotInfo {
     mode: u32,
     size: u32,
     flags: u32,
     name: [u8; 32],
+    crc32: u32,
+    version: u32,
+}
+
+fn crc32_update(data: &[u8], mut crc: u32) -> u32 {
+    for &b in data {
+        crc ^= b as u32;
+        for _ in 0..8 {
+            crc = if (crc & 1) != 0 {
+                (crc >> 1) ^ 0xEDB8_8320
+            } else {
+                crc >> 1
+            };
+        }
+    }
+    crc
+}
+
+#[inline(never)]
+fn check_boot_manager_update() {
+    // 0. Update boot check: if newly loaded from an update, skip checks and clear mailbox
+    let mailbox = unsafe { core::ptr::read_volatile(MAILBOX_REG) };
+    if mailbox == SLOT_UPDATED_BOOT_MAGIC {
+        unsafe { core::ptr::write_volatile(MAILBOX_REG, 0); }
+        Uart::print_str("\n[UPDATE] Booted newly updated Boot Manager!\n\n");
+        return;
+    }
+
+    // 1. Safe Mode check: if S2 is held down during reset/POR, bypass Slot 0 update completely
+    if Gpio::get_button() {
+        Uart::print_str("\n[SAFE MODE] Button S2 held. Bypassing Slot 0 auto-update.\n\n");
+        return;
+    }
+
+    // 2. Read Slot 0 header from MicroSD (Sector 64)
+    let mut sec_buf = [0u8; 512];
+    let info = match read_slot_info(0, &mut sec_buf) {
+        Some(info) => info,
+        None => return, // No SD card or no valid VUX9 header in Slot 0
+    };
+
+    // 3. Pre-Verification:
+    // - Mode must be 1 (RISC-V 32-bit ISA)
+    if info.mode != 1 {
+        return;
+    }
+    // - Size must be <= 14 KB (14336 bytes, Lower I-RAM limit)
+    if info.size == 0 || info.size > 14 * 1024 {
+        Uart::print_str("\n[UPDATE] Slot 0 image size invalid (");
+        Uart::print_dec(info.size);
+        Uart::print_str(" bytes > 14KB limit). Bypassing.\n\n");
+        return;
+    }
+    // - Version must be strictly greater than current Boot Manager version
+    if info.version <= BOOT_MGR_VERSION {
+        return;
+    }
+
+    // - Entry instruction opcode sanity check (first 4 bytes of payload at offset 64)
+    let entry_instr = u32::from_le_bytes([sec_buf[64], sec_buf[65], sec_buf[66], sec_buf[67]]);
+    if entry_instr == 0x0000_0000 || entry_instr == 0xFFFF_FFFF {
+        Uart::print_str("\n[UPDATE] Slot 0 entry instruction invalid (0x");
+        Uart::print_hex(entry_instr);
+        Uart::print_str("). Bypassing.\n\n");
+        return;
+    }
+
+    // 4. Verify Payload CRC32 Checksum
+    let mut calc_crc: u32 = 0xFFFF_FFFF;
+    let first_chunk_len = if (info.size as usize) < 448 { info.size as usize } else { 448 };
+    calc_crc = crc32_update(&sec_buf[64..64 + first_chunk_len], calc_crc);
+
+    let mut remaining = (info.size as usize) - first_chunk_len;
+    let mut next_sec = slot_sector(0) + 1;
+    while remaining > 0 {
+        if !SdCard::read_block(next_sec, &mut sec_buf) {
+            Uart::print_str("\n[UPDATE] Error reading Slot 0 sector ");
+            Uart::print_dec(next_sec);
+            Uart::print_str(". Bypassing update.\n\n");
+            return;
+        }
+        let chunk_len = if remaining < 512 { remaining } else { 512 };
+        calc_crc = crc32_update(&sec_buf[..chunk_len], calc_crc);
+        remaining -= chunk_len;
+        next_sec += 1;
+    }
+    let final_crc = calc_crc ^ 0xFFFF_FFFF;
+
+    if final_crc != info.crc32 {
+        Uart::print_str("\n[UPDATE] Slot 0 CRC32 mismatch (computed 0x");
+        Uart::print_hex(final_crc);
+        Uart::print_str(", expected 0x");
+        Uart::print_hex(info.crc32);
+        Uart::print_str("). Corrupted payload! Bypassing.\n\n");
+        return;
+    }
+
+    // 5. All checks passed: Launch update via Resident Loader
+    Uart::print_str("\n[UPDATE] Verified valid Boot Manager update (v");
+    Uart::print_dec(info.version);
+    Uart::print_str(", CRC32: 0x");
+    Uart::print_hex(final_crc);
+    Uart::print_str("). Auto-updating Lower I-RAM via Resident Loader...\n\n");
+    Timer::delay_ms(10);
+
+    let sdhc_bit = if SdCard::is_sdhc() { 0x100 } else { 0 };
+    unsafe {
+        core::ptr::write_volatile(0x2000_1FFC as *mut u32, SLOT_UPDATE_MAGIC | sdhc_bit);
+        core::arch::asm!("jr {0}", in(reg) 0x0000_3800usize, options(noreturn));
+    }
 }
 
 fn read_slot_info(slot: u32, buf: &mut [u8; 512]) -> Option<SlotInfo> {
@@ -154,11 +268,15 @@ fn read_slot_info(slot: u32, buf: &mut [u8; 512]) -> Option<SlotInfo> {
     let flags = u32::from_le_bytes([buf[12], buf[13], buf[14], buf[15]]);
     let mut name = [0u8; 32];
     name.copy_from_slice(&buf[16..48]);
+    let crc32 = u32::from_le_bytes([buf[48], buf[49], buf[50], buf[51]]);
+    let version = u32::from_le_bytes([buf[52], buf[53], buf[54], buf[55]]);
     Some(SlotInfo {
         mode,
         size,
         flags,
         name,
+        crc32,
+        version,
     })
 }
 
@@ -176,6 +294,7 @@ fn print_slot_name(name: &[u8; 32]) {
     }
 }
 
+#[inline(never)]
 fn list_slots() {
     Uart::print_str("\n--- VUX9 Program Slots Catalog (MBR Gap LBA 64-703) ---\n");
     let mut buf = [0u8; 512];
@@ -213,6 +332,7 @@ fn list_slots() {
     Uart::print_str("-------------------------------------------------------\n\n");
 }
 
+#[inline(never)]
 fn inspect_slot(slot: u32) {
     Uart::print_str("[SD] Inspecting Slot ");
     Uart::print_dec(slot);
@@ -237,6 +357,12 @@ fn inspect_slot(slot: u32) {
         Uart::print_str("  Flags: 0x");
         Uart::print_hex(info.flags);
         Uart::print_str("\n");
+        Uart::print_str("  Version: ");
+        Uart::print_dec(info.version);
+        Uart::print_str("\n");
+        Uart::print_str("  CRC32: 0x");
+        Uart::print_hex(info.crc32);
+        Uart::print_str("\n");
     } else {
         Uart::print_str("  [Empty or invalid VUX9 header]\n");
     }
@@ -247,16 +373,31 @@ fn boot_slot(slot: u32) -> ! {
     Uart::print_dec(slot);
     Uart::print_str(" via Resident Loader...\n\n");
     Timer::delay_ms(10);
+    let sdhc_bit = if SdCard::is_sdhc() { 0x100 } else { 0 };
     unsafe {
-        core::ptr::write_volatile(MAILBOX_REG, slot);
+        core::ptr::write_volatile(MAILBOX_REG, slot | sdhc_bit);
         core::arch::asm!("jr {0}", in(reg) RESIDENT_LOADER_ENTRY, options(noreturn));
     }
 }
 
+#[inline(never)]
+pub fn mul_u32(mut a: u32, mut b: u32) -> u32 {
+    let mut res = 0u32;
+    while b != 0 {
+        if (b & 1) != 0 {
+            res = res.wrapping_add(a);
+        }
+        a <<= 1;
+        b >>= 1;
+    }
+    res
+}
+
+#[inline(never)]
 fn read_uart_byte_timeout(timeout_ms: u32) -> Option<u8> {
     const MTIME_LOW: *const u32 = 0x4000_1000 as *const u32;
     let start_time = unsafe { core::ptr::read_volatile(MTIME_LOW) };
-    let limit_ticks = 27_000 * timeout_ms;
+    let limit_ticks = mul_u32(timeout_ms, 27_000);
     while (unsafe { core::ptr::read_volatile(MTIME_LOW) }).wrapping_sub(start_time) < limit_ticks {
         if let Some(b) = Uart::read_byte() {
             return Some(b);
@@ -265,20 +406,27 @@ fn read_uart_byte_timeout(timeout_ms: u32) -> Option<u8> {
     None
 }
 
+#[inline(never)]
 fn write_sectors_from_uart() {
+    // Drain any leftover bytes in UART RX FIFO before starting protocol
+    while Uart::read_byte().is_some() {}
+
     Uart::print_str("[READY]\n");
 
-    let slot_id = match read_uart_byte_timeout(5000) {
-        Some(s) if s <= 9 => s as u32,
-        Some(invalid) => {
-            Uart::print_str("[SD-ERR] Invalid slot ID: 0x");
-            Uart::print_hex_byte(invalid);
-            Uart::print_str("\n");
-            return;
-        }
-        None => {
-            Uart::print_str("[SD-ERR] Slot ID timeout!\n");
-            return;
+    let slot_id = loop {
+        match read_uart_byte_timeout(5000) {
+            Some(b'\r') | Some(b'\n') => continue,
+            Some(s) if s <= 9 => break s as u32,
+            Some(invalid) => {
+                Uart::print_str("[SD-ERR] Invalid slot ID: 0x");
+                Uart::print_hex_byte(invalid);
+                Uart::print_str("\n");
+                return;
+            }
+            None => {
+                Uart::print_str("[SD-ERR] Slot ID timeout!\n");
+                return;
+            }
         }
     };
 
@@ -286,17 +434,20 @@ fn write_sectors_from_uart() {
     Uart::print_dec(slot_id);
     Uart::print_str("]\n");
 
-    let num_sectors = match read_uart_byte_timeout(5000) {
-        Some(n) if n >= 1 && n <= 64 => n as u32,
-        Some(invalid) => {
-            Uart::print_str("[SD-ERR] Invalid sector count: 0x");
-            Uart::print_hex_byte(invalid);
-            Uart::print_str("\n");
-            return;
-        }
-        None => {
-            Uart::print_str("[SD-ERR] Sector count timeout!\n");
-            return;
+    let num_sectors = loop {
+        match read_uart_byte_timeout(5000) {
+            Some(b'\r') | Some(b'\n') => continue,
+            Some(n) if n >= 1 && n <= 64 => break n as u32,
+            Some(invalid) => {
+                Uart::print_str("[SD-ERR] Invalid sector count: 0x");
+                Uart::print_hex_byte(invalid);
+                Uart::print_str("\n");
+                return;
+            }
+            None => {
+                Uart::print_str("[SD-ERR] Sector count timeout!\n");
+                return;
+            }
         }
     };
 
@@ -350,6 +501,8 @@ fn write_sectors_from_uart() {
 #[no_mangle]
 pub extern "C" fn main() -> ! {
     Gpio::set_leds(0x3F);
+
+    check_boot_manager_update();
 
     print_banner();
     print_help();

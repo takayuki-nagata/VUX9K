@@ -36,12 +36,18 @@ async def test_soc_fast_boot(dut):
     sd_model = SpiSdCardModel(dut.sd_sclk, dut.sd_mosi, dut.sd_miso, dut.sd_cs_n)
     cocotb.start_soon(sd_model.run())
 
-    # Preload Slot 1 (LBA 128) with a minimal test payload:
-    # 64-byte VUX9 v2 header + instructions
-    payload = bytes([
-        0x13, 0x05, 0x20, 0x04,  # addi a0, zero, 0x42
-        0x6F, 0x00, 0x00, 0x00,  # j .
-    ])
+    # Preload Sector 0 with valid MBR signature 0x55AA
+    mbr = bytearray(512)
+    mbr[510] = 0x55
+    mbr[511] = 0xAA
+    sd_model.preload_sector(0, bytes(mbr))
+
+    # Preload Slot 1 (LBA 128) with test payload that writes '#' (0x23) to UART (0x4000_0000):
+    # lui a1, 0x40000    -> 0x400005b7
+    # addi a0, zero, 0x23 -> 0x02300513
+    # sb a0, 0(a1)        -> 0x00a58023
+    # j .                 -> 0x0000006f
+    payload = struct.pack("<IIII", 0x400005b7, 0x02300513, 0x00a58023, 0x0000006f)
     header = struct.pack("<IIII32s16s", VUX_MAGIC, 1, len(payload), 1, b"TestApp\x00".ljust(32, b"\x00"), b"\x00" * 16)
     sd_model.preload_sector(128, header + payload)
 
@@ -50,10 +56,11 @@ async def test_soc_fast_boot(dut):
     # Assert active-low reset
     await ClockCycles(dut.clk, 10)
     dut.rst_n.value = 1
+    await ClockCycles(dut.clk, 5)
 
     # Accelerate POR in simulation
     if hasattr(dut, "por_counter"):
-        dut.por_counter.value = (1 << 19)
+        dut.por_counter.value = (1 << 15)
     await ClockCycles(dut.clk, 10)
     dut._log.info("SoC Reset released.")
 
@@ -61,7 +68,7 @@ async def test_soc_fast_boot(dut):
     buf = b""
     cycles = 0
     last_report = 0
-    while cycles < 2500000:
+    while cycles < 3000000:
         if ser.in_waiting:
             c = ser.read(ser.in_waiting)
             buf += c
@@ -77,24 +84,43 @@ async def test_soc_fast_boot(dut):
     assert b"vux> " in buf, f"Failed to receive boot prompt from UART. Output: {buf.decode('utf-8', errors='replace')!r}"
     dut._log.info("SoC Fast Boot & UART Prompt verified successfully!")
 
-    # Test S2 button press to launch Slot 1
+    # -------------------------------------------------------------------------
+    # TEST: S2 Button Launch & Full Slot 1 Execution
+    # -------------------------------------------------------------------------
     dut._log.info("Testing S2 button launch for Slot 1...")
-    dut.btn.value = 0  # Button S2 pressed (active-low on pin)
-    await ClockCycles(dut.clk, 27000 * 25)  # Hold for 25ms (passes 20ms debounce)
+    dut.btn.value = 0  # Button S2 pressed
+    await ClockCycles(dut.clk, 27000 * 25)  # 25ms debounce
     dut.btn.value = 1  # Release button
     await ClockCycles(dut.clk, 27000 * 15)
 
     # Wait for Resident Loader "[RL] Slot 1" confirmation
-    btn_buf = b""
+    rl_buf = b""
     cycles = 0
-    while cycles < 1000000:
+    while cycles < 2000000:
         if ser.in_waiting:
             c = ser.read(ser.in_waiting)
-            btn_buf += c
-            if b"[RL] Slot 1" in btn_buf:
+            rl_buf += c
+            if b"[RL] Slot 1" in rl_buf:
                 break
         await ClockCycles(dut.clk, 234)
         cycles += 234
 
-    assert b"[RL] Slot 1" in btn_buf, f"Button S2 launch failed. Output: {btn_buf.decode('utf-8', errors='replace')!r}"
-    dut._log.info("S2 button launch of Slot 1 verified successfully!")
+    assert b"[RL] Slot 1" in rl_buf, f"Resident loader did not trigger. Output: {rl_buf!r}"
+    dut._log.info("Resident Loader triggered for Slot 1!")
+
+    # Wait for the loaded application to execute and output '#'
+    app_buf = b""
+    cycles = 0
+    while cycles < 2000000:
+        if ser.in_waiting:
+            c = ser.read(ser.in_waiting)
+            app_buf += c
+            if b"#" in app_buf:
+                break
+        await ClockCycles(dut.clk, 234)
+        cycles += 234
+
+    assert b"#" in app_buf, (
+        f"Loaded application failed to execute! Output: {app_buf.decode('utf-8', errors='replace')!r}"
+    )
+    dut._log.info("Slot 1 loaded and executed payload ('#') successfully!")

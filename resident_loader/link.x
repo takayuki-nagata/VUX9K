@@ -5,7 +5,7 @@
 
 MEMORY
 {
-  I_RAM (rx)  : ORIGIN = 0x00004800, LENGTH = 2K
+  I_RAM (rx)  : ORIGIN = 0x00003800, LENGTH = 2K
   D_RAM (rwx) : ORIGIN = 0x20000000, LENGTH = 8K
 }
 

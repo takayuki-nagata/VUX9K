@@ -97,10 +97,11 @@ async def test_soc_hardware_flow(dut):
 
     await ClockCycles(dut.clk, 10)
     dut.rst_n.value = 1
+    await ClockCycles(dut.clk, 5)
 
     # Accelerate POR in simulation
     if hasattr(dut, "por_counter"):
-        dut.por_counter.value = (1 << 19)
+        dut.por_counter.value = (1 << 15)
     await ClockCycles(dut.clk, 10)
 
     dut._log.info("=== SoC Reset Released. Synchronizing with Boot Manager ===")

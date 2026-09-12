@@ -22,9 +22,9 @@ async def test_soc_gls_fast_boot(dut):
     clock = Clock(dut.clk, 37038, unit="ps")
     cocotb.start_soon(clock.start())
 
-    # Initialize external pins
+    # Initialize external pins (hold Button S2 for Boot Manager Safe Mode)
     dut.rst_n.value = 0
-    dut.btn.value = 1
+    dut.btn.value = 0
     dut.uart_rx.value = 1
     dut.sd_miso.value = 1
 
@@ -34,12 +34,12 @@ async def test_soc_gls_fast_boot(dut):
     await ClockCycles(dut.clk, 10)
     dut.rst_n.value = 1
     await ClockCycles(dut.clk, 10)
-    dut._log.info("GLS: SoC Reset released.")
+    dut._log.info("GLS: SoC Reset released (Safe Mode S2 held).")
 
-    # Wait for first character from UART (boot banner starts with newline)
+    # Wait for first character from UART (Safe Mode banner starts with newline)
     buf = b""
     cycles = 0
-    while cycles < 30000:
+    while cycles < 80000:
         if ser.in_waiting:
             c = ser.read(ser.in_waiting)
             buf += c
@@ -47,6 +47,8 @@ async def test_soc_gls_fast_boot(dut):
                 break
         await ClockCycles(dut.clk, 234)
         cycles += 234
+
+    dut.btn.value = 1  # Release button S2
 
     assert len(buf) > 0 or dut.uart_tx.value == 0, f"No UART activity detected in GLS netlist. Output: {buf!r}"
     dut._log.info("GLS: Synthesized netlist boot and UART transmission verified successfully!")

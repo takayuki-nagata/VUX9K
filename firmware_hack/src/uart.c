@@ -5,7 +5,8 @@
 
 #include "uart.h"
 
-void uart_putc(char c) {
+__attribute__((noinline)) void uart_putc(char c) {
+    for (volatile int i = 0; i < 50; i++);
     *HACK_UART_TX = (int)c;
 }
 

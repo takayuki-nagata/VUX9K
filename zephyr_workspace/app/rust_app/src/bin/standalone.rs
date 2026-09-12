@@ -104,6 +104,7 @@ pub extern "C" fn vux9k_k_uptime_get_32() -> u32 {
 
 #[no_mangle]
 pub extern "C" fn main() -> ! {
+    vux9k_print_str(b"\n[Rust App] Started\n\0".as_ptr());
     vux9k_rust_app::rust_main();
 
     vux9k_print_str(b"\n[Rust App] Returning to Boot Manager...\n\0".as_ptr());
@@ -113,7 +114,7 @@ pub extern "C" fn main() -> ! {
         core::ptr::write_volatile(0x4000_3008 as *mut u32, 0);
         // Clear mailbox to 0 (boot Slot 0 / Boot Manager)
         core::ptr::write_volatile(0x2000_1FFC as *mut u32, 0);
-        // Jump to Resident Loader at 0x0000_4800
-        core::arch::asm!("jr {0}", in(reg) 0x0000_4800usize, options(noreturn));
+        // Jump to Resident Loader at 0x0000_3800
+        core::arch::asm!("jr {0}", in(reg) 0x0000_3800usize, options(noreturn));
     }
 }

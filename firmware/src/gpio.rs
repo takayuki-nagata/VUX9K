@@ -26,4 +26,13 @@ impl Gpio {
             (read_volatile(GPIO_BTN_REG) & 0x1) != 0
         }
     }
+
+    /// Toggle specific LED bit (0-5) for activity indicator
+    #[inline(always)]
+    pub fn toggle_led(bit: u8) {
+        unsafe {
+            let current = (read_volatile(GPIO_LED_REG) & 0x3F) as u8;
+            write_volatile(GPIO_LED_REG, (current ^ (1 << bit)) as u32);
+        }
+    }
 }

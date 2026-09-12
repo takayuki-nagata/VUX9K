@@ -172,7 +172,12 @@ impl SdCard {
         true
     }
 
+    pub fn is_sdhc() -> bool {
+        unsafe { IS_SDHC }
+    }
+
     pub fn read_block(sector_num: u32, buf: &mut [u8; 512]) -> bool {
+        crate::gpio::Gpio::toggle_led(5);
         let addr = unsafe { if IS_SDHC { sector_num } else { sector_num << 9 } };
 
         let r1 = Self::send_cmd(17, addr, 0xFF);
@@ -206,6 +211,7 @@ impl SdCard {
     }
 
     pub fn write_block(sector_num: u32, buf: &[u8; 512]) -> bool {
+        crate::gpio::Gpio::toggle_led(5);
         let addr = unsafe { if IS_SDHC { sector_num } else { sector_num << 9 } };
 
         let r1 = Self::send_cmd(24, addr, 0xFF);

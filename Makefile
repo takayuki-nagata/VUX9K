@@ -267,8 +267,10 @@ synth-top: soc.json
 
 sim-gls: sim-gls-unit sim-soc-gls-fast
 
+PNR_SEEDS ?= 100 1 42 7 13
+
 soc_pnr.json soc_sta.json: soc.json $(CST_FILE)
-	$(PYTHON) scripts/run_pnr.py --device GW1NR-LV9QN88PC6/I5 --vopt family=GW1N-9C --vopt cst=$(CST_FILE) --json soc.json --write soc_pnr.json --report soc_sta.json --freq 30.0 --seeds 1
+	$(PYTHON) scripts/run_pnr.py --device GW1NR-LV9QN88PC6/I5 --vopt family=GW1N-9C --vopt cst=$(CST_FILE) --json soc.json --write soc_pnr.json --report soc_sta.json --freq 30.0 --seeds $(PNR_SEEDS)
 
 pnr: soc_pnr.json
 
@@ -289,7 +291,6 @@ prog-sram: pack.fs
 
 prog-flash: pack.fs
 	$(OPENFPGALOADER) -b tangnano9k -f pack.fs
-	$(OPENFPGALOADER) -b tangnano9k pack.fs
 
 test-sim: check firmware zephyr-rust-lib zephyr-bc-lib build-hack build-zephyr sim-unit test-arch-compliance sim-gls-unit sim-soc-fast synth-top sim-soc-gls-fast
 	@echo "========================================================================"
@@ -305,7 +306,7 @@ test-ci: test
 
 test-hardware: test-hw
 
-test-hw: firmware build-hack build-hw prog-sram
+test-hw: zephyr-rust-lib firmware build-hack build-hw prog-sram
 	@echo "=== Running Automated End-to-End Hardware Test Suite on Tang Nano 9K ==="
 	$(PYTHON) scripts/test_hardware.py
 	@echo "========================================================================"

@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: MIT
 
 """
-Merge Boot Manager binary and Resident Loader binary into a 5120-word (20KB) hex file.
-- Words 0..4607   (18 KB): Boot Manager (or NOP if empty)
-- Words 4608..5119 (2 KB): Resident Loader
+Merge Boot Manager binary and Resident Loader binary into a 4096-word (16KB) hex file.
+- Words 0..3583   (14 KB): Boot Manager (or NOP if empty)
+- Words 3584..4095 (2 KB): Resident Loader
 """
 
 import sys
@@ -25,32 +25,31 @@ def merge_hex(bm_path, rl_path, out_hex_path):
         with open(rl_path, "rb") as f:
             rl_data = f.read()
 
-    # If rl_data was extracted with absolute offset from 0, slice at 0x4800 (18432 bytes)
-    if len(rl_data) >= 0x4800:
-        rl_data = rl_data[0x4800:]
+    # If rl_data was extracted with absolute offset from 0, slice at 0x3800 (14336 bytes)
+    if len(rl_data) >= 0x3800:
+        rl_data = rl_data[0x3800:]
 
-    # Total 5120 words (20 KB)
-    words = [NOP] * 5120
+    words = [NOP] * 4096
 
-    # Fill Boot Manager words (0..4607)
-    for i in range(0, min(len(bm_data), 4608 * 4), 4):
+    # 1. Boot Manager (up to 14 KB / 3584 words)
+    for i in range(0, min(len(bm_data), 3584 * 4), 4):
         chunk = bm_data[i:i+4]
         if len(chunk) < 4:
             chunk = chunk + b'\x00' * (4 - len(chunk))
         words[i // 4] = struct.unpack('<I', chunk)[0]
 
-    # Fill Resident Loader words (4608..5119)
+    # 2. Resident Loader (up to 2 KB / 512 words) at word offset 3584 (0x3800)
     for i in range(0, min(len(rl_data), 512 * 4), 4):
         chunk = rl_data[i:i+4]
         if len(chunk) < 4:
             chunk = chunk + b'\x00' * (4 - len(chunk))
-        words[4608 + (i // 4)] = struct.unpack('<I', chunk)[0]
+        words[3584 + (i // 4)] = struct.unpack('<I', chunk)[0]
 
     with open(out_hex_path, "w") as f:
         for w in words:
             f.write(f"{w:08x}\n")
 
-    print(f"Generated {out_hex_path} (5120 words / 20 KB)")
+    print(f"Generated {out_hex_path} (4096 words / 16 KB: 14KB BM + 2KB RL)")
 
 if __name__ == "__main__":
     if len(sys.argv) < 4:

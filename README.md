@@ -30,7 +30,7 @@ The SoC features a multi-cycle Unified CPU core capable of seamlessly executing 
 |    +-------------------+-------------------+------------------+-----------------+ |
 |    |                   |                   |                  |                 | |
 | +-------+         +---------+         +---------+        +---------+       +----+ |
-| | 20KB  |         |  8KB    |         | UART    |        | Timer   |       | SD | |
+| | 16KB  |         |  8KB    |         | UART    |        | Timer   |       | SD | |
 | | I-RAM |         |  D-RAM  |         | 115200  |        | 64-bit  |       | SPI| |
 | +-------+         +---------+         +---------+        +---------+       +----+ |
 +----+-------------------+-------------------+------------------+-----------------+-+
@@ -60,8 +60,8 @@ The RTL modules in this repository were originally authored in VHDL-2008 and hav
 ### System Address Space
 | Address Range | Size | Component | Description |
 |:---|:---|:---|:---|
-| `0x0000_0000` - `0x0000_47FF` | 18 KB | **Instruction RAM (Lower)** | Preloaded with Rust Boot Manager (factory fallback); target region for SD slot application execution |
-| `0x0000_4800` - `0x0000_4FFF` | 2 KB | **Resident Loader (Upper I-RAM)** | Immutable resident bootloader at `RESET_VECTOR = 0x0000_4800`; checks Mailbox and loads SD slots |
+| `0x0000_0000` - `0x0000_37FF` | 14 KB | **Instruction RAM (Lower)** | Preloaded with Rust Boot Manager (factory fallback); target region for SD slot application execution |
+| `0x0000_3800` - `0x0000_3FFF` | 2 KB | **Resident Loader (Upper I-RAM)** | Immutable resident bootloader at `RESET_VECTOR = 0x0000_3800`; checks Mailbox and loads SD slots |
 | `0x2000_0000` - `0x2000_1FFF` | 8 KB | **Data RAM** | `.data`, `.bss`, stack, and heap. Mailbox register located at `0x2000_1FFC` |
 | `0x4000_0000` - `0x4000_000F` | 16 B | **UART Controller** | Full-duplex 115200 bps TX/RX data registers & status flags |
 | `0x4000_1000` - `0x4000_101F` | 32 B | **System Timer (CLINT)** | 64-bit `mtime` and `mtimecmp` registers |
@@ -89,11 +89,13 @@ Each slot begins at byte 0 of its starting sector with a 64-byte VUX9 v2 header 
 | Offset | Field | Type | Value / Meaning |
 |:---|:---|:---|:---|
 | `0x00` - `0x03` | Magic Number | `u32` (LE) | `0x56555839` (`"VUX9"` ASCII) |
-| `0x04` - `0x07` | Header Version | `u32` (LE) | `1` (legacy 16-byte) or `2` (extended 64-byte) |
-| `0x08` - `0x0B` | Binary Byte Length | `u32` (LE) | Exact size of executable binary in bytes (max 20480 B) |
-| `0x0C` - `0x0F` | ISA Mode | `u32` (LE) | `0` = Nand2Tetris Hack 16-bit, `1` = RISC-V RV32I |
+| `0x04` - `0x07` | ISA Mode | `u32` (LE) | `0` = Nand2Tetris Hack 16-bit, `1` = RISC-V RV32I |
+| `0x08` - `0x0B` | Binary Byte Length | `u32` (LE) | Exact size of executable binary in bytes (max 14336 B) |
+| `0x0C` - `0x0F` | Slot Flags | `u32` (LE) | Bit 0 = valid (`0x1`), Bit 2 = system slot (`0x4`) |
 | `0x10` - `0x2F` | Program Name | `32 bytes` | Null-terminated ASCII/UTF-8 application name |
-| `0x30` - `0x3F` | Reserved / Flags | `16 bytes` | Reserved (`0x0000_0000...`) |
+| `0x30` - `0x33` | Payload CRC32 | `u32` (LE) | IEEE 802.3 CRC32 of payload for integrity verification |
+| `0x34` - `0x37` | Image Version | `u32` (LE) | Version number (e.g. `1`, `2` for Boot Manager self-update) |
+| `0x38` - `0x3F` | Reserved | `8 bytes` | Reserved padding (`0x0000_0000...`) |
 | `0x40` - `0x1FF` | Payload (Start Sector) | `bytes` | First chunk of binary machine code (up to 448 bytes) |
 
 Subsequent 512-byte sectors continue the payload until the full binary length is loaded into I-RAM at `0x0000_0000`.
@@ -226,21 +228,25 @@ make test-hw
 | **Fast SoC Boot** | `make sim-soc-fast` / `make sim-soc-gls-fast` | < 1 sec | Fast power-on reset, CPU boot, and instruction execution verification on RTL & full Gowin netlist |
 | **End-to-End Flow** | `make sim-hw-flow` / `make sim-gls-hw-flow` | ~3-4 min | Full 8-step hardware test suite in simulation using `VirtualSerialBridge` (UART) and `SpiSdCardModel` (SD SPI) |
 | **Static Timing (STA)**| `make sta` | ~15 sec | Exhaustive post-PnR timing analysis, Fmax verification, and critical path breakdown (`soc_sta.json`) |
-| **Real Hardware** | `make test-hw` | ~30 sec | Automated physical hardware execution on Tang Nano 9K via `scripts/test_hardware.py` (11/11 PASS 100%) |
+| **Real Hardware** | `make test-hw` | ~60 sec | Automated physical hardware execution on Tang Nano 9K via `scripts/test_hardware.py` (15 tests) |
 
-### Real Hardware Test Suite (11 Automated Checks)
-`scripts/test_hardware.py` automatically executes an exhaustive 11-step hardware validation workflow:
-1. **UART Connection & Prompt Synchronization** (`vux> `)
-2. **Hardware Self-Diagnostics** (`diag` / `t`: LED animation, user button S2, MicroSD SPI init, 64-bit CLINT timer)
-3. **MicroSD Sector 0 (MBR) Dump** (`dump-mbr` / `d`: 512-byte read & `0x55AA` signature validation)
-4. **Multi-Sector Flash: Slot 2 (Hack 16-bit)** (`flash-sd --slot 2 --name "HackDemo"`)
-5. **Multi-Sector Flash: Slot 1 (RISC-V 32-bit)** (`flash-sd --slot 1 --name "RiscvDemo"`)
-6. **Multi-Sector Flash: Slot 0 (Boot Manager SD Override)** (`flash-sd --slot 0 --name "BootMgrSD"`)
-7. **Catalog Listing Verification** (`list-slots` / `l`: Validate catalog output for Slots 0, 1, 2)
-8. **Slot Header Inspections** (`inspect-sd --slot 0/1/2`: Verify Magic `VUX9`, ISA modes, byte lengths, program names)
-9. **Boot & Execution Verification: Slot 1** (`boot --slot 1`: Resident loader mailbox boot & UART banner check)
-10. **Boot & Execution Verification: Slot 2** (`boot --slot 2`: Resident loader mailbox boot & UART banner check)
-11. **Return to Boot Manager Prompt & Slot 0 Cleanup** (Restore pristine state)
+### Real Hardware Test Suite (15 Automated Checks)
+`scripts/test_hardware.py` automatically executes an exhaustive 15-step hardware validation workflow:
+1. **UART Connection & Prompt Synchronization** (`vux> ` prompt sync)
+2. **Hardware Self-Diagnostics** (`t` / `vux_tool.run_diag`: LED animation, user button S2, MicroSD SPI init, 64-bit CLINT timer)
+3. **MicroSD Sector 0 (MBR) Dump** (`d` / `vux_tool.dump_mbr`: 512-byte read & `0x55AA` signature validation)
+4. **Flash Slot 0: Boot Manager** (`w` / `vux_tool.flash_slot`: 23 sectors to LBA 64)
+5. **Header Verification: Slot 0** (`s0` / `vux_tool.inspect_slot`: Magic `VUX9`, Mode 1/RISC-V)
+6. **Flash Slot 1: Default RISC-V App** (`w` / `vux_tool.flash_slot`: 4 sectors to LBA 128)
+7. **Header Verification: Slot 1** (`s1` / `vux_tool.inspect_slot`: Magic `VUX9`, Mode 1/RISC-V)
+8. **Flash Slot 2: Hack 16-bit Firmware** (`w` / `vux_tool.flash_slot`: 6 sectors to LBA 192)
+9. **Header Verification: Slot 2** (`s2` / `vux_tool.inspect_slot`: Magic `VUX9`, Mode 0/Hack)
+10. **Program Slots Catalog Listing** (`l` / `vux_tool.list_slots`: Multi-slot catalog listing)
+11. **Boot Slot 1: Rust App Execution & Return** (`1` / `vux_tool.boot_slot`: Standalone Rust app execution and clean return to Boot Manager)
+12. **Boot Slot 2: Hack 16-bit Firmware Execution** (`2` / `vux_tool.boot_slot`: Hack C firmware execution and test pass)
+13. **Negative Test: CRC32 Corrupted Payload Rejection** (Rejects corrupted image before flashing)
+14. **Negative Test: Invalid Magic Header Rejection** (Rejects header without `VUX9` magic)
+15. **Boot Manager v2 Self-Update & Rollback** (Verifies in-place I-RAM bootloader update and factory rollback)
 
 ---
 
@@ -271,10 +277,10 @@ VUX9K/
 │   ├── gpio_controller.veryl       # LED & button GPIO controller
 │   ├── sdcard_spi.veryl            # MicroSD SPI Master controller
 │   ├── timer_core.veryl            # 64-bit mtime/mtimecmp timer core
-│   ├── soc_ram.veryl               # Harvard 20KB I-RAM + 8KB D-RAM memory
+│   ├── soc_ram.veryl               # Harvard 16KB I-RAM + 4KB D-RAM memory
 │   └── soc_top.veryl               # Tang Nano 9K SoC top-level wrapper
-├── resident_loader/                # Bare-metal Rust Resident Loader (2KB at 0x0000_4800)
-├── firmware/                       # Bare-metal Rust Boot Manager & drivers (18KB at 0x0000_0000)
+├── resident_loader/                # Bare-metal Rust Resident Loader (2KB at 0x0000_3800)
+├── firmware/                       # Bare-metal Rust Boot Manager & drivers (14KB at 0x0000_0000)
 │   ├── Cargo.toml
 │   ├── bootstrap/                  # Assembly start.s & linker script link.x
 │   └── src/                        # MicroSD SPI driver, UART CLI, catalog manager, flasher

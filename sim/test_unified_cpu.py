@@ -16,6 +16,9 @@ async def test_unified_cpu_hack_and_riscv(dut):
     # =========================================================================
     await FallingEdge(dut.clk)
     dut.rst.value = 0
+    if hasattr(dut, "target_mode"):
+        dut.target_mode.value = 0
+        dut.target_mode_en.value = 1
     dut.data_in.value = 0
     dut.timer_irq_in.value = 0
     dut.ext_irq_in.value = 0
@@ -59,6 +62,9 @@ async def test_unified_cpu_hack_and_riscv(dut):
     # TEST 2: RISC-V 32-bit Mode Execution
     # =========================================================================
     dut.rst.value = 0
+    if hasattr(dut, "target_mode"):
+        dut.target_mode.value = 1
+        dut.target_mode_en.value = 1
     dut.instr_in.value = 0x02a00513 # ADDI x10, x0, 42
     await ClockCycles(dut.clk, 2)
     await FallingEdge(dut.clk)
@@ -83,6 +89,33 @@ async def test_unified_cpu_hack_and_riscv(dut):
     assert int(dut.mem_write.value) == 1, "SW memory write assertion failed"
     assert int(dut.data_addr.value) == 100, f"Expected addr=100, got {int(dut.data_addr.value)}"
     assert int(dut.data_out.value) == 50, f"Expected data=50, got {int(dut.data_out.value)}"
+    await ClockCycles(dut.clk, 1) # MEM_WAIT -> FETCH
+
+    # PC=12: LW x12, 208(x0) (Load from address 208)
+    # Binary: imm[11:0]=0x0D0, rs1=0, funct3=010, rd=12, opcode=0x03 -> 0x0D002603
+    dut.instr_in.value = 0x0D002603
+    await ClockCycles(dut.clk, 1) # FETCH -> EXECUTE
+    await Timer(1, unit="ns")
+    assert int(dut.pc_out.value) == 16, f"Expected next PC=16, got {int(dut.pc_out.value)}"
+    assert int(dut.data_addr.value) == 208, f"Expected load addr=208 during EXECUTE, got {int(dut.data_addr.value)}"
+
+    # Provide data_in for the memory read
+    dut.data_in.value = 0xCAFEBABE
+    await ClockCycles(dut.clk, 1) # EXECUTE -> MEM_WAIT
+    await Timer(1, unit="ns")
+
+    # In MEM_WAIT during a LOAD, mem_write must be 0 (read phase)
+    assert int(dut.mem_write.value) == 0, f"Expected mem_write=0 on LOAD, got {int(dut.mem_write.value)}"
+    await ClockCycles(dut.clk, 1) # MEM_WAIT -> FETCH
+
+    # PC=16: SW x12, 300(x0) (Store loaded value to verify x12 was written with data_in)
+    # imm=300: imm[11:5]=0001001, rs2=12, rs1=0, funct3=010, imm[4:0]=01100, opcode=0100011 -> 0x12c02623
+    dut.instr_in.value = 0x12c02623
+    await ClockCycles(dut.clk, 2) # FETCH -> EXECUTE -> MEM_WAIT
+    await Timer(1, unit="ns")
+    assert int(dut.mem_write.value) == 1, "SW memory write assertion failed"
+    assert int(dut.data_addr.value) == 300, f"Expected addr=300, got {int(dut.data_addr.value)}"
+    assert int(dut.data_out.value) == 0xCAFEBABE, f"Expected loaded data=0xCAFEBABE, got {hex(int(dut.data_out.value))}"
     await ClockCycles(dut.clk, 1) # MEM_WAIT -> FETCH
 
     dut._log.info("[PASS] Unified CPU: RISC-V 32-bit program execution verified!")

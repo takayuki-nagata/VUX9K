@@ -22,6 +22,9 @@ async def test_hack_cpu_comprehensive(dut):
     # Reset in Hack Mode
     await FallingEdge(dut.clk)
     dut.rst.value = 0
+    if hasattr(dut, "target_mode"):
+        dut.target_mode.value = 0
+        dut.target_mode_en.value = 1
     dut.data_in.value = 0
     dut.timer_irq_in.value = 0
     dut.ext_irq_in.value = 0
@@ -73,5 +76,27 @@ async def test_hack_cpu_comprehensive(dut):
     dut.instr_in.value = make_hack_c(a=1, c=0x30, d=0b010, j=0) # D=M
     await ClockCycles(dut.clk, 2) # FETCH -> EXECUTE -> MEM_WAIT
     await ClockCycles(dut.clk, 1)
+
+    # 8. Test Read-Modify-Write Memory: M=M-1 (with A=10, data_in = 41)
+    dut.instr_in.value = make_hack_a(10)
+    await ClockCycles(dut.clk, 2)
+    # M=M-1: a=1, c=110010=0x32, d=001 (M), j=0
+    dut.instr_in.value = make_hack_c(a=1, c=0x32, d=0b001, j=0)
+    # FETCH -> EXECUTE -> MEM_WAIT -> HACK_WB -> FETCH
+    await ClockCycles(dut.clk, 1) # Instruction pre-fetch cycle
+    await Timer(1, unit="ns")
+    dut.data_in.value = 41
+    await ClockCycles(dut.clk, 1) # FETCH -> EXECUTE
+    await Timer(1, unit="ns")
+    assert int(dut.mem_write.value) == 0, "mem_write should be 0 during EXECUTE for M=M-1"
+    await ClockCycles(dut.clk, 1) # EXECUTE -> MEM_WAIT (latch data_in)
+    await Timer(1, unit="ns")
+    assert int(dut.mem_write.value) == 0, "mem_write should be 0 during MEM_WAIT for M=M-1 (read phase)"
+    await ClockCycles(dut.clk, 1) # MEM_WAIT -> HACK_WB (ALU compute and write to memory)
+    await Timer(1, unit="ns")
+    assert int(dut.mem_write.value) == 1, "mem_write should be 1 during HACK_WB for M=M-1"
+    assert int(dut.data_addr.value) == 10, f"Expected store addr=10, got {int(dut.data_addr.value)}"
+    assert int(dut.data_out.value) == 40, f"Expected store data=40, got {int(dut.data_out.value)}"
+    await ClockCycles(dut.clk, 1) # HACK_WB -> FETCH
 
     dut._log.info("Comprehensive Hack CPU ops test passed [PASS]")

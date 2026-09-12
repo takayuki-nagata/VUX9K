@@ -14,23 +14,26 @@ import os
 import argparse
 
 
-def check_timing_closure(report_path, target_freq_mhz=27.0):
+def get_timing_info(report_path, target_freq_mhz=27.0):
     if not os.path.exists(report_path):
-        return False
+        return False, None
     try:
         with open(report_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         critical_paths = data.get("critical_paths", [])
         if not critical_paths:
-            return True
+            return True, 0.0
         target_period_ns = 1000.0 / target_freq_mhz
+        worst_slack = float("inf")
         for cp in critical_paths:
             total_delay = sum(elem.get("delay", 0.0) for elem in cp.get("path", []))
-            if total_delay > target_period_ns:
-                return False
-        return True
+            slack = target_period_ns - total_delay
+            if slack < worst_slack:
+                worst_slack = slack
+        is_closure = (worst_slack >= 0.0)
+        return is_closure, worst_slack
     except Exception:
-        return False
+        return False, None
 
 
 def main():
@@ -41,7 +44,7 @@ def main():
     parser.add_argument("--write", required=True)
     parser.add_argument("--report", required=True)
     parser.add_argument("--freq", type=float, default=30.0)
-    parser.add_argument("--seeds", nargs="+", type=int, default=[1, 42, 100, 7, 13])
+    parser.add_argument("--seeds", nargs="+", type=int, default=[100])
     args, unknown = parser.parse_known_args()
 
     nextpnr_bin = os.environ.get("NEXTPNR", "nextpnr-himbaechel")
@@ -67,13 +70,23 @@ def main():
             print(f"nextpnr returned non-zero exit code: {res.returncode}")
             continue
 
-        if check_timing_closure(args.report, target_freq_mhz=args.freq):
-            print(f"\n✅ [TIMING CLOSURE] Successfully met timing constraints with seed={seed}!\n")
+        closure, slack = get_timing_info(args.report, target_freq_mhz=args.freq)
+        if closure:
+            slack_str = f"+{slack:.2f} ns" if slack is not None else ">= 0 ns"
+            print(f"\n✅ [TIMING CLOSURE] Successfully met timing constraints with seed={seed} (Slack: {slack_str})!\n")
             return 0
         else:
-            print(f"⚠️ Seed {seed} did not meet timing constraints, trying next candidate seed...")
+            slack_str = f"{slack:.2f} ns" if slack is not None else "unknown"
+            print(f"⚠️ Seed {seed} did not meet timing constraints (Slack: {slack_str}).")
+            # If slack is severely violated (< -1.50 ns), seed variation cannot close timing.
+            if slack is not None and slack < -1.50:
+                print(f"🛑 [EARLY ABORT] Slack violation is too severe ({slack:.2f} ns < -1.50 ns).")
+                print("   Seed jitter (~0.3-0.8 ns) cannot close this gap. Aborting multi-seed search early.\n")
+                break
+            elif i < len(args.seeds):
+                print(f"   Trying next candidate seed...")
 
-    print("❌ [WARNING] Exhausted all candidate seeds without achieving timing closure.")
+    print("❌ [WARNING] Exhausted candidate seeds or aborted early without achieving timing closure.")
     return 0
 
 

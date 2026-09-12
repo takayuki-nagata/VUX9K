@@ -17,9 +17,10 @@ module timer_core (
 
     always_ff (clk, rst) {
         if_reset {
-            mtime    = 64'd0;
-            mtimecmp = 64'hffff_ffff_ffff_ffff;
-            data_out = 32'd0;
+            mtime     = 64'd0;
+            mtimecmp  = 64'hffff_ffff_ffff_ffff;
+            data_out  = 32'd0;
+            timer_irq = 1'b0;
         } else {
             mtime = mtime + 1'b1;
             if we {
@@ -38,14 +39,7 @@ module timer_core (
                 4'hc   : data_out = mtimecmp[63:32];
                 default: data_out = 32'd0;
             }
-        }
-    }
-
-    always_comb {
-        if mtime >= mtimecmp {
-            timer_irq = 1'b1;
-        } else {
-            timer_irq = 1'b0;
+            timer_irq = if mtime >= mtimecmp ? 1'b1 : 1'b0;
         }
     }
 }

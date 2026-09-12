@@ -190,56 +190,29 @@ module ALU #(
     localparam CUPCDN = 8;
     localparam MULT   = 9;
 
-    reg S, C;
+    wire S = (ALU_MODE == ADD)    ? (I0 ^ I1) :
+             (ALU_MODE == SUB)    ? (I0 ^ ~I1) :
+             (ALU_MODE == ADDSUB) ? (I3 ? (I0 ^ I1) : (I0 ^ ~I1)) :
+             (ALU_MODE == NE)     ? (I0 ^ ~I1) :
+             (ALU_MODE == GE)     ? (I0 ^ ~I1) :
+             (ALU_MODE == LE)     ? (~I0 ^ I1) :
+             (ALU_MODE == CUP)    ? I0 :
+             (ALU_MODE == CDN)    ? ~I0 :
+             (ALU_MODE == CUPCDN) ? (I3 ? I0 : ~I0) :
+             (ALU_MODE == MULT)   ? ((I0 & I1) ^ I3) :
+             (I0 ^ I1);
 
-    always @* begin
-        case (ALU_MODE)
-            ADD: begin
-                S = I0 ^ I1;
-                C = I0;
-            end
-            SUB: begin
-                S = I0 ^ ~I1;
-                C = I0;
-            end
-            ADDSUB: begin
-                S = I3 ? (I0 ^ I1) : (I0 ^ ~I1);
-                C = I0;
-            end
-            NE: begin
-                S = I0 ^ ~I1;
-                C = 1'b1;
-            end
-            GE: begin
-                S = I0 ^ ~I1;
-                C = I0;
-            end
-            LE: begin
-                S = ~I0 ^ I1;
-                C = I1;
-            end
-            CUP: begin
-                S = I0;
-                C = 1'b0;
-            end
-            CDN: begin
-                S = ~I0;
-                C = 1'b1;
-            end
-            CUPCDN: begin
-                S = I3 ? I0 : ~I0;
-                C = I0;
-            end
-            MULT: begin
-                S = (I0 & I1) ^ I3;
-                C = I0 & I1;
-            end
-            default: begin
-                S = I0 ^ I1;
-                C = I0;
-            end
-        endcase
-    end
+    wire C = (ALU_MODE == ADD)    ? I0 :
+             (ALU_MODE == SUB)    ? I0 :
+             (ALU_MODE == ADDSUB) ? I0 :
+             (ALU_MODE == NE)     ? 1'b1 :
+             (ALU_MODE == GE)     ? I0 :
+             (ALU_MODE == LE)     ? I1 :
+             (ALU_MODE == CUP)    ? 1'b0 :
+             (ALU_MODE == CDN)    ? 1'b1 :
+             (ALU_MODE == CUPCDN) ? I0 :
+             (ALU_MODE == MULT)   ? (I0 & I1) :
+             I0;
 
     assign SUM  = S ^ CIN;
     assign COUT = S ? CIN : C;

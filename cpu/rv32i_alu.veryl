@@ -20,6 +20,9 @@ pub module rv32i_alu (
         let slt_res  : logic     = if (a[31] != b[31]) ? a[31] : sum_33[31];
         let sltu_res : logic     = !sum_33[32]; // borrow out
 
+        let sra_mask: logic<32> = ~(32'hffff_ffff >> shift_amt);
+        let sra_res : logic<32> = if a[31] ? ((a >> shift_amt) | sra_mask) : (a >> shift_amt);
+
         case alu_op {
             rv32i_pkg::AluOp::ADD   : res_int = sum_33[31:0];
             rv32i_pkg::AluOp::SUB   : res_int = sum_33[31:0];
@@ -28,7 +31,7 @@ pub module rv32i_alu (
             rv32i_pkg::AluOp::SLL   : res_int = a << shift_amt;
             rv32i_pkg::AluOp::XOR   : res_int = a ^ b;
             rv32i_pkg::AluOp::SRL   : res_int = a >> shift_amt;
-            rv32i_pkg::AluOp::SRA   : res_int = (a as i32 >>> shift_amt) as u32;
+            rv32i_pkg::AluOp::SRA   : res_int = sra_res;
             rv32i_pkg::AluOp::OR    : res_int = a | b;
             rv32i_pkg::AluOp::AND   : res_int = a & b;
             rv32i_pkg::AluOp::COPY_B: res_int = b;
