@@ -62,7 +62,7 @@ SECTIONS
   .stack (NOLOAD) :
   {
     . = ALIGN(16);
-    _stack_end = ORIGIN(D_RAM) + LENGTH(D_RAM) - 16;
+    _stack_end = ORIGIN(D_RAM) + LENGTH(D_RAM) - 32;
   } > D_RAM
 
   /DISCARD/ :

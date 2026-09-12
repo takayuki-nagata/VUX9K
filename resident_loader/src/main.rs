@@ -13,7 +13,7 @@ global_asm!(
     .global _start
     .type _start, @function
     _start:
-        la sp, 0x20002000
+        la sp, 0x20001FE0
         call loader_main
     1:
         j 1b
@@ -82,7 +82,7 @@ fn sd_send_cmd(cmd: u8, arg: u32, crc: u8) -> u8 {
     spi_transfer(arg as u8);
     spi_transfer(crc);
 
-    for _ in 0..200 {
+    for _ in 0..32 {
         let res = spi_transfer(0xFF);
         if res != 0xFF {
             return res;
@@ -96,17 +96,17 @@ fn sd_init() -> Option<bool> {
     for _ in 0..16 {
         spi_transfer(0xFF);
     }
-    delay(50_000);
+    delay(1_000);
 
     // CMD0 (GO_IDLE_STATE)
     let mut ok = false;
-    for _ in 0..20 {
+    for _ in 0..5 {
         if sd_send_cmd(0, 0, 0x95) == 0x01 {
             ok = true;
             break;
         }
         spi_deselect();
-        delay(10_000);
+        delay(1_000);
     }
     if !ok {
         return None;
@@ -122,7 +122,7 @@ fn sd_init() -> Option<bool> {
     // ACMD41 loop
     let arg = if is_v2 { 0x4000_0000 } else { 0 };
     let mut ready = false;
-    for _ in 0..1000 {
+    for _ in 0..500 {
         sd_send_cmd(55, 0, 0x65);
         spi_deselect();
 
@@ -131,7 +131,7 @@ fn sd_init() -> Option<bool> {
             break;
         }
         spi_deselect();
-        delay(10_000);
+        delay(1_000);
     }
     if !ready {
         return None;
@@ -164,7 +164,7 @@ fn sd_read_block(is_sdhc: bool, sector_num: u32, buf: &mut [u8; 512]) -> bool {
     }
 
     let mut ready = false;
-    for _ in 0..50000 {
+    for _ in 0..3000 {
         if spi_transfer(0xFF) == 0xFE {
             ready = true;
             break;
@@ -242,6 +242,8 @@ fn load_slot_from_sd(is_sdhc: bool, slot_id: u32) -> bool {
 pub extern "C" fn loader_main() -> ! {
     let target = unsafe { core::ptr::read_volatile(MAILBOX_REG) };
     unsafe { core::ptr::write_volatile(MAILBOX_REG, 0); }
+
+    uart_puts(b"\n[RL] Boot\n");
 
     let sd_opt = sd_init();
 
