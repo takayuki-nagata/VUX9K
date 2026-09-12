@@ -23,7 +23,7 @@ def elf2bin(elf_path, bin_path):
     e_phnum = struct.unpack('<H', data[0x2C:0x2E])[0]
 
     rom_data = bytearray()
-    ram_data = bytearray(4096) # 4 KB D-RAM
+    ram_data = bytearray(8192) # 8 KB D-RAM
 
     for i in range(e_phnum):
         off = e_phoff + i * e_phentsize
@@ -49,7 +49,7 @@ def elf2bin(elf_path, bin_path):
     d1_lines = []
     d2_lines = []
     d3_lines = []
-    for w_idx in range(1024):
+    for w_idx in range(2048):
         b0 = ram_data[w_idx * 4 + 0]
         b1 = ram_data[w_idx * 4 + 1]
         b2 = ram_data[w_idx * 4 + 2]
@@ -59,12 +59,20 @@ def elf2bin(elf_path, bin_path):
         d2_lines.append(f"{b2:02x}\n")
         d3_lines.append(f"{b3:02x}\n")
 
+    import os
     for idx, lines in enumerate([d0_lines, d1_lines, d2_lines, d3_lines]):
         out_name = f"firmware_d{idx}.hex"
-        with open(out_name, 'w') as df:
-            df.writelines(lines)
-        with open(f"firmware/{out_name}", 'w') as df:
-            df.writelines(lines)
+        try:
+            with open(out_name, 'w') as df:
+                df.writelines(lines)
+        except Exception:
+            pass
+        if os.path.isdir("firmware"):
+            try:
+                with open(f"firmware/{out_name}", 'w') as df:
+                    df.writelines(lines)
+            except Exception:
+                pass
     print("Successfully generated D-RAM preloads: firmware_d0..3.hex")
 
 if __name__ == '__main__':

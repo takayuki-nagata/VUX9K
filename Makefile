@@ -56,11 +56,14 @@ fmt:
 	$(VERYL) fmt
 
 FIRMWARE_SRCS = $(wildcard firmware/src/*.rs) $(wildcard firmware/bootstrap/*) firmware/Cargo.toml firmware/Cargo.lock
+LOADER_SRCS = $(wildcard resident_loader/src/*.rs) resident_loader/link.x resident_loader/Cargo.toml
 
-firmware/firmware.hex: $(FIRMWARE_SRCS)
+firmware/firmware.hex: $(FIRMWARE_SRCS) $(LOADER_SRCS)
+	cd resident_loader && $(CARGO) build --release
+	$(PYTHON) scripts/elf2bin.py resident_loader/target/riscv32i-unknown-none-elf/release/resident_loader resident_loader/resident_loader.bin
 	cd firmware && $(CARGO) build --release
 	$(PYTHON) scripts/elf2bin.py firmware/target/riscv32i-unknown-none-elf/release/firmware firmware/firmware.bin
-	$(PYTHON) scripts/bin2hex.py firmware/firmware.bin firmware/firmware.hex
+	$(PYTHON) scripts/merge_firmware_hex.py firmware/firmware.bin resident_loader/resident_loader.bin firmware/firmware.hex
 	cp firmware/firmware.hex ./firmware.hex
 	cp firmware/firmware.hex ./sim/firmware.hex 2>/dev/null || true
 	cp firmware_d*.hex ./sim/ 2>/dev/null || true

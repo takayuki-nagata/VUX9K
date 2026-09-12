@@ -8,6 +8,8 @@ firmware/target/
 firmware/firmware.bin
 firmware/firmware.hex
 firmware/test_payload.bin
+resident_loader/target/
+resident_loader/*.bin
 firmware*.hex
 firmware*.bin
 firmware*_d*.hex
