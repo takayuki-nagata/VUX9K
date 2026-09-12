@@ -17,6 +17,7 @@ firmware/firmware*_d*.hex
 build_hack/
 zephyr_workspace/**/target/
 zephyr_workspace/**/build/
+zephyr_workspace/**/*.bin
 build_zephyr/
 
 # Architectural compliance test artifacts

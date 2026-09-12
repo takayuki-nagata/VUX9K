@@ -1,12 +1,11 @@
 /*
  * Copyright (c) 2026 Takayuki Nagata
- * SPDX-License-Identifier: MIT
+ * SPDX-License-Identifier: Apache-2.0
  */
 
-/* Unified Linker Script for Tang Nano 9K SoC */
 MEMORY
 {
-  I_ROM (rx)  : ORIGIN = 0x00000000, LENGTH = 18K
+  I_RAM (rx)  : ORIGIN = 0x00000000, LENGTH = 18K
   D_RAM (rwx) : ORIGIN = 0x20000000, LENGTH = 8K
 }
 
@@ -19,7 +18,7 @@ SECTIONS
     KEEP(*(.text.entry))
     *(.text)
     *(.text.*)
-  } > I_ROM
+  } > I_RAM
 
   .rodata :
   {
@@ -29,7 +28,7 @@ SECTIONS
     *(.srodata)
     *(.srodata.*)
     . = ALIGN(4);
-  } > I_ROM
+  } > I_RAM
 
   .data :
   {
@@ -42,7 +41,7 @@ SECTIONS
     *(.sdata.*)
     . = ALIGN(4);
     _edata = .;
-  } > D_RAM AT > I_ROM
+  } > D_RAM AT > I_RAM
 
   _sidata = LOADADDR(.data);
 

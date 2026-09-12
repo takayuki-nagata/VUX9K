@@ -78,6 +78,7 @@ submodule-sync:
 
 zephyr-rust-lib:
 	cd zephyr_workspace/app/rust_app && $(CARGO) build --release --target riscv32i-unknown-none-elf
+	$(PYTHON) scripts/elf2bin.py zephyr_workspace/app/rust_app/target/riscv32i-unknown-none-elf/release/standalone zephyr_workspace/app/rust_app/app.bin
 
 zephyr-bc-lib:
 	cd vendor/bc_clone_rs/crates/bc_zephyr && $(CARGO) build --release --target riscv32i-unknown-none-elf --no-default-features

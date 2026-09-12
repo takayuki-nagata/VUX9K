@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 
 use crate::timer::Timer;
-use crate::uart::Uart;
 
 const SD_BASE: usize = 0x4000_2000;
 const SD_DATA: *mut u32 = SD_BASE as *mut u32;
@@ -21,6 +20,7 @@ impl SdCard {
         }
     }
 
+    #[allow(dead_code)]
     pub fn is_initialized() -> bool {
         unsafe { IS_INITIALIZED }
     }

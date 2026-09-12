@@ -21,7 +21,13 @@ use timer::Timer;
 use uart::Uart;
 
 const VUX_MAGIC: u32 = 0x56555839; // "VUX9"
-const BOOT_SECTOR: u32 = 64;
+const MAILBOX_REG: *mut u32 = 0x2000_1FFC as *mut u32;
+const RESIDENT_LOADER_ENTRY: usize = 0x0000_4800;
+
+#[inline(always)]
+fn slot_sector(slot: u32) -> u32 {
+    64 + (slot << 6)
+}
 
 fn print_banner() {
     Uart::print_str("\n");
@@ -35,14 +41,15 @@ fn print_banner() {
 fn print_help() {
     Uart::print_str("Available Commands:\n");
     Uart::print_str("  [h] Help menu\n");
-    Uart::print_str("  [i] Re-initialize MicroSD Card\n");
+    Uart::print_str("  [l] List program slots catalog (Slots 0-9)\n");
+    Uart::print_str("  [1-9] Launch program in Slot 1-9 (S2 button = Slot 1)\n");
+    Uart::print_str("  [w] Write program slot from UART (Multi-Sector Host Flash)\n");
+    Uart::print_str("  [s] Inspect Slot 0 Boot Manager Header\n");
     Uart::print_str("  [d] Dump Sector 0 (MBR)\n");
-    Uart::print_str("  [s] Inspect Boot Header at Sector 64\n");
-    Uart::print_str("  [w] Write Boot Image from UART (Multi-Sector Host Flash)\n");
-    Uart::print_str("  [l] Load & Boot payload from SD Sector 64\n");
+    Uart::print_str("  [i] Re-initialize MicroSD Card\n");
     Uart::print_str("  [t] Run hardware diagnostic tests\n");
     Uart::print_str("  [k] Toggle Knight Rider animation\n");
-    Uart::print_str("  [r] Software Reset SoC\n");
+    Uart::print_str("  [r] Reboot SoC via Resident Loader\n");
     Uart::print_str("vux> ");
 }
 
@@ -126,33 +133,123 @@ fn dump_sector_0() {
     Uart::print_str(" [PASS]\n\n");
 }
 
-fn inspect_sector_64() {
-    Uart::print_str("[SD] Inspecting Boot Sector 64...\n");
-    let mut buf = [0u8; 512];
-    if !SdCard::ensure_init() || !SdCard::read_block(BOOT_SECTOR, &mut buf) {
-        Uart::print_str("[SD] Failed to read Sector 64!\n");
-        return;
-    }
+struct SlotInfo {
+    mode: u32,
+    size: u32,
+    flags: u32,
+    name: [u8; 32],
+}
 
+fn read_slot_info(slot: u32, buf: &mut [u8; 512]) -> Option<SlotInfo> {
+    let sector = slot_sector(slot);
+    if !SdCard::ensure_init() || !SdCard::read_block(sector, buf) {
+        return None;
+    }
     let magic = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
+    if magic != VUX_MAGIC {
+        return None;
+    }
     let mode = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]);
     let size = u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]);
+    let flags = u32::from_le_bytes([buf[12], buf[13], buf[14], buf[15]]);
+    let mut name = [0u8; 32];
+    name.copy_from_slice(&buf[16..48]);
+    Some(SlotInfo {
+        mode,
+        size,
+        flags,
+        name,
+    })
+}
 
-    Uart::print_str("  Magic: 0x");
-    Uart::print_hex(magic);
-    if magic == VUX_MAGIC {
-        Uart::print_str(" (\"VUX9\" Valid Header) [OK]\n");
+fn print_slot_name(name: &[u8; 32]) {
+    let mut len = 0;
+    while len < 32 && name[len] != 0 && name[len] >= 0x20 && name[len] <= 0x7E {
+        len += 1;
+    }
+    if len == 0 {
+        Uart::print_str("(unnamed)");
+    } else {
+        for &b in &name[..len] {
+            Uart::write_byte(b);
+        }
+    }
+}
+
+fn list_slots() {
+    Uart::print_str("\n--- VUX9 Program Slots Catalog (MBR Gap LBA 64-703) ---\n");
+    let mut buf = [0u8; 512];
+    for slot in 0..=9 {
+        Uart::print_str("  Slot ");
+        Uart::print_dec(slot);
+        Uart::print_str(" (LBA ");
+        Uart::print_dec(slot_sector(slot));
+        Uart::print_str("): ");
+        if let Some(info) = read_slot_info(slot, &mut buf) {
+            Uart::print_str("\"");
+            print_slot_name(&info.name);
+            Uart::print_str("\" [");
+            if info.mode == 0 {
+                Uart::print_str("Hack 16b, ");
+            } else {
+                Uart::print_str("RV32I, ");
+            }
+            Uart::print_dec(info.size);
+            Uart::print_str(" B]");
+            if slot == 0 {
+                Uart::print_str(" (Boot Manager)");
+            } else if slot == 1 {
+                Uart::print_str(" (Default / Button S2)");
+            }
+            Uart::print_str("\n");
+        } else {
+            if slot == 0 {
+                Uart::print_str("[Empty / Using BRAM Fallback]\n");
+            } else {
+                Uart::print_str("[Empty]\n");
+            }
+        }
+    }
+    Uart::print_str("-------------------------------------------------------\n\n");
+}
+
+fn inspect_slot(slot: u32) {
+    Uart::print_str("[SD] Inspecting Slot ");
+    Uart::print_dec(slot);
+    Uart::print_str(" (Sector ");
+    Uart::print_dec(slot_sector(slot));
+    Uart::print_str(")...\n");
+    let mut buf = [0u8; 512];
+    if let Some(info) = read_slot_info(slot, &mut buf) {
+        Uart::print_str("  Magic: 0x56555839 (\"VUX9\" Valid Header) [OK]\n");
+        Uart::print_str("  Name:  \"");
+        print_slot_name(&info.name);
+        Uart::print_str("\"\n");
         Uart::print_str("  Mode:  ");
-        if mode == 0 {
+        if info.mode == 0 {
             Uart::print_str("0 (Hack 16-bit ISA)\n");
         } else {
             Uart::print_str("1 (RISC-V 32-bit ISA)\n");
         }
         Uart::print_str("  Size:  ");
-        Uart::print_dec(size);
+        Uart::print_dec(info.size);
         Uart::print_str(" bytes\n");
+        Uart::print_str("  Flags: 0x");
+        Uart::print_hex(info.flags);
+        Uart::print_str("\n");
     } else {
-        Uart::print_str(" (Not a valid VUX9 boot header)\n");
+        Uart::print_str("  [Empty or invalid VUX9 header]\n");
+    }
+}
+
+fn boot_slot(slot: u32) -> ! {
+    Uart::print_str("[BOOT] Launching Slot ");
+    Uart::print_dec(slot);
+    Uart::print_str(" via Resident Loader...\n\n");
+    Timer::delay_ms(10);
+    unsafe {
+        core::ptr::write_volatile(MAILBOX_REG, slot);
+        core::arch::asm!("jr {0}", in(reg) RESIDENT_LOADER_ENTRY, options(noreturn));
     }
 }
 
@@ -171,8 +268,26 @@ fn read_uart_byte_timeout(timeout_ms: u32) -> Option<u8> {
 fn write_sectors_from_uart() {
     Uart::print_str("[READY]\n");
 
+    let slot_id = match read_uart_byte_timeout(5000) {
+        Some(s) if s <= 9 => s as u32,
+        Some(invalid) => {
+            Uart::print_str("[SD-ERR] Invalid slot ID: 0x");
+            Uart::print_hex_byte(invalid);
+            Uart::print_str("\n");
+            return;
+        }
+        None => {
+            Uart::print_str("[SD-ERR] Slot ID timeout!\n");
+            return;
+        }
+    };
+
+    Uart::print_str("[READY-SLOT:");
+    Uart::print_dec(slot_id);
+    Uart::print_str("]\n");
+
     let num_sectors = match read_uart_byte_timeout(5000) {
-        Some(n) if n >= 1 && n <= 32 => n as u32,
+        Some(n) if n >= 1 && n <= 64 => n as u32,
         Some(invalid) => {
             Uart::print_str("[SD-ERR] Invalid sector count: 0x");
             Uart::print_hex_byte(invalid);
@@ -195,6 +310,7 @@ fn write_sectors_from_uart() {
         return;
     }
 
+    let base_sector = slot_sector(slot_id);
     for sec_idx in 0..num_sectors {
         Uart::print_str("[READY-SEC:");
         Uart::print_dec(sec_idx);
@@ -214,9 +330,9 @@ fn write_sectors_from_uart() {
             }
         }
 
-        if !SdCard::write_block(BOOT_SECTOR + sec_idx, &buf) {
+        if !SdCard::write_block(base_sector + sec_idx, &buf) {
             Uart::print_str("[SD-ERR] Failed to write block at sector ");
-            Uart::print_dec(BOOT_SECTOR + sec_idx);
+            Uart::print_dec(base_sector + sec_idx);
             Uart::print_str("\n");
             return;
         }
@@ -224,103 +340,11 @@ fn write_sectors_from_uart() {
 
     Uart::print_str("[SD] Successfully wrote ");
     Uart::print_dec(num_sectors);
-    Uart::print_str(" sectors starting at Sector 64! [OK]\n\n");
-}
-
-fn load_and_boot_sector_64() {
-    Uart::print_str("[BOOT] Reading payload header at Sector 64...\n");
-    let mut buf = [0u8; 512];
-    if !SdCard::ensure_init() || !SdCard::read_block(BOOT_SECTOR, &mut buf) {
-        Uart::print_str("[BOOT-ERR] SD card read failed!\n");
-        return;
-    }
-
-    let magic = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
-    let mode = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]);
-    let size = u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]);
-
-    if magic != VUX_MAGIC {
-        Uart::print_str("[BOOT-ERR] Invalid VUX9 header magic!\n");
-        return;
-    }
-
-    Uart::print_str("[BOOT] Target Mode: ");
-    if mode == 0 {
-        Uart::print_str("Hack 16-bit\n");
-    } else {
-        Uart::print_str("RISC-V 32-bit\n");
-    }
-    Uart::print_str("[BOOT] Payload Size: ");
-    Uart::print_dec(size);
-    Uart::print_str(" bytes\n");
-
-    let words_total = ((size + 3) / 4) as usize;
-    let i_ram_words = 0x0000_0000usize as *mut u32;
-
-    // Load Sector 64 payload (offset 16)
-    let words_in_sec0 = if words_total > ((512 - 16) / 4) {
-        (512 - 16) / 4
-    } else {
-        words_total
-    };
-    unsafe {
-        for w in 0..words_in_sec0 {
-            let offset = 16 + w * 4;
-            let word = u32::from_le_bytes([
-                buf[offset],
-                buf[offset + 1],
-                buf[offset + 2],
-                buf[offset + 3],
-            ]);
-            core::ptr::write_volatile(i_ram_words.add(w), word);
-        }
-    }
-
-    // Load subsequent sectors if needed
-    let mut words_copied = words_in_sec0;
-    let mut cur_sector = BOOT_SECTOR + 1;
-
-    while words_copied < words_total {
-        if !SdCard::read_block(cur_sector, &mut buf) {
-            Uart::print_str("[BOOT-ERR] Read failed at sector ");
-            Uart::print_dec(cur_sector);
-            Uart::print_str("\n");
-            return;
-        }
-
-        let words_remaining = words_total - words_copied;
-        let chunk_words = if words_remaining > 128 {
-            128
-        } else {
-            words_remaining
-        };
-
-        unsafe {
-            for w in 0..chunk_words {
-                let offset = w * 4;
-                let word = u32::from_le_bytes([
-                    buf[offset],
-                    buf[offset + 1],
-                    buf[offset + 2],
-                    buf[offset + 3],
-                ]);
-                core::ptr::write_volatile(i_ram_words.add(words_copied + w), word);
-            }
-        }
-
-        words_copied += chunk_words;
-        cur_sector += 1;
-    }
-
-    Uart::print_str("[BOOT] Payload loaded successfully into I-RAM (0x00000000).\n");
-    Uart::print_str("[BOOT] Jumping to entry point 0x00000000...\n\n");
-
-    Timer::delay_ms(10);
-
-    // Jump to 0x0000_0000
-    unsafe {
-        core::arch::asm!("jr {0}", in(reg) 0x0000_0000usize, options(noreturn));
-    }
+    Uart::print_str(" sectors to Slot ");
+    Uart::print_dec(slot_id);
+    Uart::print_str(" (Sector ");
+    Uart::print_dec(base_sector);
+    Uart::print_str(")! [OK]\n\n");
 }
 
 #[no_mangle]
@@ -339,6 +363,19 @@ pub extern "C" fn main() -> ! {
             led_val ^= 0x01;
             Gpio::set_leds(led_val);
         }
+
+        // Poll S2 button (debounced)
+        if Gpio::get_button() {
+            Timer::delay_ms(20);
+            if Gpio::get_button() {
+                Uart::print_str("\n[BUTTON] S2 Pressed! Launching Slot 1 (Default App)...\n");
+                while Gpio::get_button() {
+                    Timer::delay_ms(10);
+                }
+                boot_slot(1);
+            }
+        }
+
         if let Some(cmd) = Uart::read_byte() {
             if cmd != b'\r' && cmd != b'\n' && cmd != 0 {
                 Uart::print_str("[CMD:0x");
@@ -349,6 +386,17 @@ pub extern "C" fn main() -> ! {
                 b'h' | b'?' => {
                     Uart::print_str("h\n");
                     print_help();
+                }
+                b'l' => {
+                    Uart::print_str("l\n");
+                    list_slots();
+                    Uart::print_str("vux> ");
+                }
+                b'1'..=b'9' => {
+                    let slot = (cmd - b'0') as u32;
+                    Uart::write_byte(cmd);
+                    Uart::print_str("\n");
+                    boot_slot(slot);
                 }
                 b'i' => {
                     Uart::print_str("i\n[SD] Initializing...\n");
@@ -366,15 +414,15 @@ pub extern "C" fn main() -> ! {
                 }
                 b's' => {
                     Uart::print_str("s\n");
-                    inspect_sector_64();
+                    let slot = match read_uart_byte_timeout(50) {
+                        Some(b @ b'0'..=b'9') => (b - b'0') as u32,
+                        _ => 0,
+                    };
+                    inspect_slot(slot);
                     Uart::print_str("vux> ");
                 }
                 b'w' => {
                     write_sectors_from_uart();
-                    Uart::print_str("vux> ");
-                }
-                b'l' => {
-                    load_and_boot_sector_64();
                     Uart::print_str("vux> ");
                 }
                 b't' => {
@@ -400,9 +448,7 @@ pub extern "C" fn main() -> ! {
                 b'r' => {
                     Uart::print_str("r\n[RESET] Rebooting Boot Manager...\n\n");
                     Timer::delay_ms(10);
-                    unsafe {
-                        core::arch::asm!("jr {0}", in(reg) 0x0000_0000usize, options(noreturn));
-                    }
+                    boot_slot(0);
                 }
                 b'\r' => {
                     Uart::print_str("\nvux> ");
