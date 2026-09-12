@@ -148,19 +148,29 @@ def cmd_dump_mbr(args):
 
 
 def cmd_inspect_sd(args):
-    """Inspect Sector 64 (Boot Sector) Header"""
+    """Inspect SD Slot Boot Header (Slots 0-9)"""
     ser = open_port(args.port, baudrate=args.baud)
-    out = send_cmd_and_wait(ser, "s", timeout=4.0)
+    cmd = f"s{args.slot}" if hasattr(args, "slot") and args.slot is not None else "s0"
+    out = send_cmd_and_wait(ser, cmd, timeout=4.0)
+    print(out)
+    ser.close()
+
+
+def cmd_list_slots(args):
+    """List Program Slots Catalog (Slots 0-9)"""
+    ser = open_port(args.port, baudrate=args.baud)
+    out = send_cmd_and_wait(ser, "l", timeout=5.0)
     print(out)
     ser.close()
 
 
 def cmd_boot(args):
-    """Trigger Load & Boot from SD Card Sector 64"""
+    """Launch Program in Slot 1-9"""
+    slot = getattr(args, "slot", 1)
     ser = open_port(args.port, baudrate=args.baud, timeout=0.2)
-    print("=== Triggering SD Card Boot [l] ===")
+    print(f"=== Launching Slot {slot} via Boot Manager [{slot}] ===")
     ser.reset_input_buffer()
-    ser.write(b"l")
+    ser.write(str(slot).encode("ascii"))
     ser.flush()
     start = time.time()
     while time.time() - start < 4.0:
@@ -171,7 +181,7 @@ def cmd_boot(args):
 
 
 def cmd_flash_sd(args):
-    """Flash a binary image to SD Card Sector 64 (Multi-Sector Support)"""
+    """Flash a binary image to SD Card Slot 0-9 (Multi-Sector Support)"""
     if not os.path.exists(args.file):
         print(f"Error: File {args.file} not found!")
         sys.exit(1)
@@ -181,9 +191,17 @@ def cmd_flash_sd(args):
 
     mode_val = 0 if args.mode == "hack" else 1
     size_bytes = len(payload)
+    slot = getattr(args, "slot", 1)
+    name = getattr(args, "name", "")
+    if not name:
+        name = os.path.splitext(os.path.basename(args.file))[0]
+    name_bytes = name.encode("ascii", errors="replace")[:32].ljust(32, b"\x00")
+    flags = 1  # valid
+    if slot == 0:
+        flags |= 4  # system slot
 
-    # Header: 16 bytes (Magic, Mode, Size, Flags)
-    header = struct.pack("<IIII", VUX_MAGIC, mode_val, size_bytes, 0)
+    # VUX9 v2 Header: 64 bytes
+    header = struct.pack("<IIII32s16s", VUX_MAGIC, mode_val, size_bytes, flags, name_bytes, b"\x00" * 16)
     raw_data = header + payload
 
     # Pad to multiple of 512 bytes
@@ -192,19 +210,25 @@ def cmd_flash_sd(args):
         raw_data = raw_data + b"\x00" * (512 - rem)
 
     num_sectors = len(raw_data) // 512
-    print(f"=== Preparing VUX9 Multi-Sector Boot Image ===")
+    if num_sectors > 64:
+        print(f"Error: Binary with header ({num_sectors} sectors) exceeds 32KB slot limit (64 sectors)!")
+        sys.exit(1)
+
+    start_sector = 64 + (slot << 6)
+    print(f"=== Preparing VUX9 v2 Slot Boot Image ===")
     print(f"  File: {args.file} ({size_bytes} bytes payload)")
+    print(f"  Slot: {slot} (Sector {start_sector}, LBA {start_sector})")
+    print(f"  Name: {name!r}")
     print(f"  Mode: {args.mode.upper()} (mode={mode_val})")
     print(f"  Total Sectors: {num_sectors} ({len(raw_data)} bytes)")
 
     ser = open_port(args.port, baudrate=args.baud, timeout=0.1)
     ser.reset_input_buffer()
 
-    print("=== Initiating Multi-Sector Flash to Sector 64 ===")
+    print(f"=== Initiating Flash to Slot {slot} (Sector {start_sector}) ===")
     
     # 1. Wait for [READY] with gentle retry
     buf = b""
-    start = time.time()
     ready = False
     for attempt in range(3):
         ser.reset_input_buffer()
@@ -228,13 +252,48 @@ def cmd_flash_sd(args):
         ser.close()
         sys.exit(1)
 
-    # 2. Send sector count (1 byte)
+    # 2. Send slot ID (1 byte)
+    ser.write(bytes([slot]))
+    ser.flush()
+
+    slot_token = f"[READY-SLOT:{slot}]".encode("utf-8")
+    buf = b""
+    start = time.time()
+    ready_slot = False
+    while time.time() - start < 3.0:
+        c = ser.read(64)
+        if c:
+            buf += c
+            if slot_token in buf:
+                ready_slot = True
+                break
+    if not ready_slot:
+        print(f"Error: Timeout waiting for token {slot_token.decode()}. Output: {buf.decode('utf-8', errors='replace')}")
+        ser.close()
+        sys.exit(1)
+
+    # 3. Send sector count (1 byte)
     ser.write(bytes([num_sectors]))
     ser.flush()
 
-    # 3. Stream sectors with per-sector handshake
+    count_token = f"[READY-COUNT:{num_sectors}]".encode("utf-8")
+    buf = b""
+    start = time.time()
+    ready_count = False
+    while time.time() - start < 3.0:
+        c = ser.read(64)
+        if c:
+            buf += c
+            if count_token in buf:
+                ready_count = True
+                break
+    if not ready_count:
+        print(f"Error: Timeout waiting for token {count_token.decode()}. Output: {buf.decode('utf-8', errors='replace')}")
+        ser.close()
+        sys.exit(1)
+
+    # 4. Stream sectors with per-sector handshake
     for sec_idx in range(num_sectors):
-        # Wait for [READY-SEC:x]
         sec_token = f"[READY-SEC:{sec_idx}]".encode("utf-8")
         buf = b""
         start = time.time()
@@ -252,14 +311,14 @@ def cmd_flash_sd(args):
             ser.close()
             sys.exit(1)
 
-        print(f"Writing Sector {64 + sec_idx} ({sec_idx + 1}/{num_sectors})...")
+        print(f"Writing Sector {start_sector + sec_idx} ({sec_idx + 1}/{num_sectors})...")
         sector_bytes = raw_data[sec_idx * 512 : (sec_idx + 1) * 512]
         for b in sector_bytes:
             ser.write(bytes([b]))
             ser.flush()
             time.sleep(0.001)
 
-    # 4. Wait for [SD-OK]
+    # 5. Wait for completion
     buf = b""
     start = time.time()
     while time.time() - start < 6.0:
@@ -271,10 +330,10 @@ def cmd_flash_sd(args):
             if b"vux> " in buf:
                 break
 
-    print("\n=== Verifying Sector 64 Header ===")
-    send_cmd_and_wait(ser, "s", timeout=2.0)
+    print(f"\n=== Verifying Slot {slot} Header ===")
+    send_cmd_and_wait(ser, f"s{slot}", timeout=2.0)
     ser.close()
-    print("\n=== Multi-Sector Flash & Verification Complete! ===")
+    print(f"\n=== Multi-Sector Flash & Verification Complete! ===")
 
 
 def main():
@@ -293,15 +352,22 @@ def main():
     # dump-mbr
     subparsers.add_parser("dump-mbr", help="Dump SD Card Sector 0 (MBR)")
 
+    # list-slots
+    subparsers.add_parser("list-slots", help="List Program Slots Catalog (Slots 0-9)")
+
     # inspect-sd
-    subparsers.add_parser("inspect-sd", help="Inspect Sector 64 Boot Header")
+    sub_insp = subparsers.add_parser("inspect-sd", help="Inspect SD Slot Boot Header (Slots 0-9)")
+    sub_insp.add_argument("--slot", type=int, default=0, choices=range(0, 10), help="Slot number (0-9, default: 0)")
 
     # boot
-    subparsers.add_parser("boot", help="Load & Boot payload from SD Sector 64")
+    sub_boot = subparsers.add_parser("boot", help="Launch program in Slot 1-9")
+    sub_boot.add_argument("--slot", type=int, default=1, choices=range(1, 10), help="Slot number (1-9, default: 1)")
 
     # flash-sd
-    sub_flash = subparsers.add_parser("flash-sd", help="Flash binary to SD Card Sector 64")
+    sub_flash = subparsers.add_parser("flash-sd", help="Flash binary to SD Card Slot 0-9")
     sub_flash.add_argument("file", help="Binary file to flash")
+    sub_flash.add_argument("--slot", type=int, default=1, choices=range(0, 10), help="Slot number (0-9, default: 1)")
+    sub_flash.add_argument("--name", default="", help="Program name (max 32 characters)")
     sub_flash.add_argument("--mode", choices=["hack", "riscv"], default="hack", help="Target ISA mode")
 
     args = parser.parse_args()
@@ -312,6 +378,8 @@ def main():
         cmd_diag(args)
     elif args.command == "dump-mbr":
         cmd_dump_mbr(args)
+    elif args.command == "list-slots":
+        cmd_list_slots(args)
     elif args.command == "inspect-sd":
         cmd_inspect_sd(args)
     elif args.command == "boot":

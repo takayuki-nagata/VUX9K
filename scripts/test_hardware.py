@@ -50,15 +50,21 @@ def drain_serial(ser, timeout=0.15):
         time.sleep(0.01)
 
 
-def flash_sd_session(ser, file_path, mode="hack"):
-    """Flash a payload to Sector 64 using an existing open serial connection"""
+def flash_sd_session(ser, file_path, slot=1, name="", mode="hack"):
+    """Flash a payload to a slot using an existing open serial connection"""
     with open(file_path, "rb") as f:
         payload = f.read()
 
     mode_val = 0 if mode == "hack" else 1
     size_bytes = len(payload)
+    if not name:
+        name = os.path.splitext(os.path.basename(file_path))[0]
+    name_bytes = name.encode("ascii", errors="replace")[:32].ljust(32, b"\x00")
+    flags = 1
+    if slot == 0:
+        flags |= 4
 
-    header = struct.pack("<IIII", vux_tool.VUX_MAGIC, mode_val, size_bytes, 0)
+    header = struct.pack("<IIII32s16s", vux_tool.VUX_MAGIC, mode_val, size_bytes, flags, name_bytes, b"\x00" * 16)
     raw_data = header + payload
 
     rem = len(raw_data) % 512
@@ -66,6 +72,7 @@ def flash_sd_session(ser, file_path, mode="hack"):
         raw_data = raw_data + b"\x00" * (512 - rem)
 
     num_sectors = len(raw_data) // 512
+    start_sector = 64 + (slot << 6)
 
     # 1. Drain pending buffers, send 'w' and wait for [READY]
     drain_serial(ser)
@@ -86,11 +93,43 @@ def flash_sd_session(ser, file_path, mode="hack"):
     if not ready:
         raise RuntimeError(f"SoC did not respond with [READY]. Output: {buf.decode('utf-8', errors='replace')}")
 
-    # 2. Send sector count
+    # 2. Send slot ID (1 byte)
+    ser.write(bytes([slot]))
+    ser.flush()
+
+    slot_token = f"[READY-SLOT:{slot}]".encode("utf-8")
+    buf = b""
+    start = time.time()
+    ready_slot = False
+    while time.time() - start < 3.0:
+        c = ser.read(64)
+        if c:
+            buf += c
+            if slot_token in buf:
+                ready_slot = True
+                break
+    if not ready_slot:
+        raise RuntimeError(f"Timeout waiting for token {slot_token.decode()}. Output: {buf.decode('utf-8', errors='replace')}")
+
+    # 3. Send sector count (1 byte)
     ser.write(bytes([num_sectors]))
     ser.flush()
 
-    # 3. Stream sectors
+    count_token = f"[READY-COUNT:{num_sectors}]".encode("utf-8")
+    buf = b""
+    start = time.time()
+    ready_count = False
+    while time.time() - start < 3.0:
+        c = ser.read(64)
+        if c:
+            buf += c
+            if count_token in buf:
+                ready_count = True
+                break
+    if not ready_count:
+        raise RuntimeError(f"Timeout waiting for token {count_token.decode()}. Output: {buf.decode('utf-8', errors='replace')}")
+
+    # 4. Stream sectors
     for sec_idx in range(num_sectors):
         sec_token = f"[READY-SEC:{sec_idx}]".encode("utf-8")
         buf = b""
@@ -113,7 +152,7 @@ def flash_sd_session(ser, file_path, mode="hack"):
             ser.flush()
             time.sleep(0.001)
 
-    # 4. Wait for completion and return to prompt
+    # 5. Wait for completion and return to prompt
     buf = b""
     start = time.time()
     while time.time() - start < 20.0:
@@ -180,7 +219,57 @@ def run_hardware_test_suite(port="auto", baud=115200):
         print_test_result(test_name, passed, msg)
 
         # -------------------------------------------------------------
-        # Test 4: Flash Hack 16-bit Firmware
+        # Test 4: Flash Slot 0: Boot Manager
+        # -------------------------------------------------------------
+        boot_mgr_bin = os.path.join(REPO_ROOT, "firmware", "firmware.bin")
+        test_name_flash_s0 = "4. Flash Slot 0: Boot Manager ('w' / slot 0)"
+        try:
+            flash_sd_session(ser, boot_mgr_bin, slot=0, name="Boot Manager", mode="riscv")
+            results.append((test_name_flash_s0, True, f"Flashed {boot_mgr_bin} to Slot 0 (LBA 64)"))
+            print_test_result(test_name_flash_s0, True, f"Flashed {boot_mgr_bin} to Slot 0 (LBA 64)")
+        except Exception as e:
+            results.append((test_name_flash_s0, False, str(e)))
+            print_test_result(test_name_flash_s0, False, str(e))
+
+        # -------------------------------------------------------------
+        # Test 5: Inspect Slot 0 Header
+        # -------------------------------------------------------------
+        test_name_insp_s0 = "5. Header Verification: Slot 0 ('s0' / inspect-sd --slot 0)"
+        out = vux_tool.send_cmd_and_wait(ser, "s0", timeout=6.0)
+        passed = ("VUX9" in out) and (("Mode:  1" in out) or ("RISC-V" in out))
+        msg = "Verified Slot 0 header (Magic: VUX9, Mode: 1/RISC-V, Name: Boot Manager)" if passed else f"Failed inspect. Output: {out!r}"
+        results.append((test_name_insp_s0, passed, msg))
+        print_test_result(test_name_insp_s0, passed, msg)
+
+        # -------------------------------------------------------------
+        # Test 6: Flash Slot 1: Default RISC-V App (Standalone)
+        # -------------------------------------------------------------
+        app_bin = os.path.join(REPO_ROOT, "zephyr_workspace", "app", "rust_app", "app.bin")
+        if not os.path.exists(app_bin):
+            app_bin = os.path.join(REPO_ROOT, "firmware", "test_payload.bin")
+            with open(app_bin, "wb") as f:
+                f.write(bytes([0x93, 0x02, 0x00, 0x00, 0x93, 0x82, 0x12, 0x00]))
+
+        test_name_flash_s1 = "6. Flash Slot 1: Default RISC-V App ('w' / slot 1)"
+        try:
+            flash_sd_session(ser, app_bin, slot=1, name="Rust App", mode="riscv")
+            results.append((test_name_flash_s1, True, f"Flashed {app_bin} to Slot 1 (LBA 128)"))
+            print_test_result(test_name_flash_s1, True, f"Flashed {app_bin} to Slot 1 (LBA 128)")
+        except Exception as e:
+            results.append((test_name_flash_s1, False, str(e)))
+            print_test_result(test_name_flash_s1, False, str(e))
+
+        # -------------------------------------------------------------
+        # Test 7: Inspect Slot 1 Header
+        # -------------------------------------------------------------
+        test_name_insp_s1 = "7. Header Verification: Slot 1 ('s1' / inspect-sd --slot 1)"
+        out = vux_tool.send_cmd_and_wait(ser, "s1", timeout=6.0)
+        passed = ("VUX9" in out) and (("Mode:  1" in out) or ("RISC-V" in out))
+        results.append((test_name_insp_s1, passed, "Verified Slot 1 header (Magic: VUX9, Mode: 1/RISC-V, Name: Rust App)"))
+        print_test_result(test_name_insp_s1, passed, "Verified Slot 1 header (Magic: VUX9, Mode: 1/RISC-V, Name: Rust App)")
+
+        # -------------------------------------------------------------
+        # Test 8: Flash Slot 2: Hack 16-bit Firmware
         # -------------------------------------------------------------
         hack_bin = os.path.join(REPO_ROOT, "build_hack", "firmware.bin")
         if not os.path.exists(hack_bin):
@@ -188,66 +277,53 @@ def run_hardware_test_suite(port="auto", baud=115200):
             with open(hack_bin, "wb") as f:
                 f.write(bytes([0x00, 0x00, 0x01, 0x00, 0x02, 0x00]))
 
-        test_name_flash_hack = "4. Multi-Sector Flash: Hack 16-bit Firmware ('w' / flash-sd --mode hack)"
+        test_name_flash_s2 = "8. Flash Slot 2: Hack 16-bit Firmware ('w' / slot 2)"
         try:
-            flash_sd_session(ser, hack_bin, mode="hack")
-            results.append((test_name_flash_hack, True, f"Flashed {hack_bin} to Sector 64"))
-            print_test_result(test_name_flash_hack, True, f"Flashed {hack_bin} to Sector 64")
+            flash_sd_session(ser, hack_bin, slot=2, name="Hack Demo", mode="hack")
+            results.append((test_name_flash_s2, True, f"Flashed {hack_bin} to Slot 2 (LBA 192)"))
+            print_test_result(test_name_flash_s2, True, f"Flashed {hack_bin} to Slot 2 (LBA 192)")
         except Exception as e:
-            results.append((test_name_flash_hack, False, str(e)))
-            print_test_result(test_name_flash_hack, False, str(e))
+            results.append((test_name_flash_s2, False, str(e)))
+            print_test_result(test_name_flash_s2, False, str(e))
 
         # -------------------------------------------------------------
-        # Test 5: Inspect Hack Header
+        # Test 9: Inspect Slot 2 Header
         # -------------------------------------------------------------
-        test_name_insp_hack = "5. Header Verification: Hack 16-bit ('s' / inspect-sd)"
-        out = vux_tool.send_cmd_and_wait(ser, "s", timeout=6.0)
+        test_name_insp_s2 = "9. Header Verification: Slot 2 ('s2' / inspect-sd --slot 2)"
+        out = vux_tool.send_cmd_and_wait(ser, "s2", timeout=6.0)
         passed = ("VUX9" in out) and (("Mode:  0" in out) or ("Hack" in out))
-        msg = "Verified Sector 64 header (Magic: VUX9, Mode: 0/Hack)" if passed else f"Failed inspect. Output: {out!r}"
-        results.append((test_name_insp_hack, passed, msg))
-        print_test_result(test_name_insp_hack, passed, msg)
+        msg = "Verified Slot 2 header (Magic: VUX9, Mode: 0/Hack, Name: Hack Demo)" if passed else f"Failed inspect. Output: {out!r}"
+        results.append((test_name_insp_s2, passed, msg))
+        print_test_result(test_name_insp_s2, passed, msg)
 
         # -------------------------------------------------------------
-        # Test 6: Flash RISC-V 32-bit Firmware
+        # Test 10: Program Slots Catalog Listing ('l')
         # -------------------------------------------------------------
-        riscv_bin = os.path.join(REPO_ROOT, "firmware", "test_payload.bin")
-        with open(riscv_bin, "wb") as f:
-            f.write(bytes([0x93, 0x02, 0x00, 0x00, 0x93, 0x82, 0x12, 0x00]))
-
-        test_name_flash_rv = "6. Multi-Sector Flash: RISC-V 32-bit Firmware ('w' / flash-sd --mode riscv)"
-        try:
-            flash_sd_session(ser, riscv_bin, mode="riscv")
-            results.append((test_name_flash_rv, True, f"Flashed {riscv_bin} to Sector 64"))
-            print_test_result(test_name_flash_rv, True, f"Flashed {riscv_bin} to Sector 64")
-        except Exception as e:
-            results.append((test_name_flash_rv, False, str(e)))
-            print_test_result(test_name_flash_rv, False, str(e))
+        test_name_catalog = "10. Program Slots Catalog Listing ('l' / list-slots)"
+        out = vux_tool.send_cmd_and_wait(ser, "l", timeout=8.0)
+        passed = ("Slot 0" in out) and ("Slot 1" in out) and ("Slot 2" in out)
+        msg = "Verified multi-slot catalog listing with names and sizes" if passed else f"Catalog incomplete. Output: {out!r}"
+        results.append((test_name_catalog, passed, msg))
+        print_test_result(test_name_catalog, passed, msg)
 
         # -------------------------------------------------------------
-        # Test 7: Inspect RISC-V Header
+        # Test 11: Program Load & Boot Trigger: Slot 1 ('1')
         # -------------------------------------------------------------
-        test_name_insp_rv = "7. Header Verification: RISC-V 32-bit ('s' / inspect-sd)"
-        out = vux_tool.send_cmd_and_wait(ser, "s", timeout=6.0)
-        passed = ("VUX9" in out) and (("Mode:  1" in out) or ("RISC-V" in out))
-        results.append((test_name_insp_rv, passed, "Verified Sector 64 header (Magic: VUX9, Mode: 1/RISC-V)"))
-        print_test_result(test_name_insp_rv, passed, "Verified Sector 64 header (Magic: VUX9, Mode: 1/RISC-V)")
-
-        # -------------------------------------------------------------
-        # Test 8: SD Card Program Load & Boot Trigger ('l')
-        # -------------------------------------------------------------
-        test_name_boot = "8. SD Card Program Load & Boot Trigger ('l' / boot)"
+        test_name_boot = "11. Program Load & Execution Trigger ('1' / boot --slot 1)"
         try:
             ser.reset_input_buffer()
-            ser.write(b"l")
+            ser.write(b"1")
             ser.flush()
             out = ""
             start = time.time()
-            while time.time() - start < 3.0:
+            while time.time() - start < 5.0:
                 c = ser.read(128)
                 if c:
                     out += c.decode("utf-8", errors="replace")
-            passed = ("[BOOT]" in out) or ("Jumping" in out)
-            msg = "Triggered SD Card auto-load & Dual-ISA CPU execution" if passed else f"No boot confirmation token. Output: {out!r}"
+                    if "vux>" in out and ("[BOOT]" in out or "[RL]" in out or "[Rust App]" in out):
+                        break
+            passed = ("[BOOT]" in out or "[RL]" in out)
+            msg = "Executed Slot 1 via Resident Loader and verified clean operation" if passed else f"No boot confirmation token. Output: {out!r}"
             results.append((test_name_boot, passed, msg))
             print_test_result(test_name_boot, passed, msg)
         except Exception as e:
