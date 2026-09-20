@@ -6,23 +6,22 @@
 pub module unified_cpu #(
     param RESET_VECTOR: u32 = 32'h0000_0000,
 ) (
-    clk           : input  clock    ,
-    rst           : input  reset    ,
-    target_mode   : input  logic    , // 0: Hack 16-bit, 1: RISC-V 32-bit
-    target_mode_en: input  logic    , // 0: Auto detection, 1: Explicit override
-    instr_in      : input  logic<32>,
-    data_in       : input  logic<32>,
-    timer_irq_in  : input  logic    ,
-    ext_irq_in    : input  logic    ,
-    sw_irq_in     : input  logic    ,
-    pc_out        : output logic<32>,
-    data_addr     : output logic<32>,
-    data_waddr    : output logic<32>,
-    data_out      : output logic<32>,
-    mem_write     : output logic    ,
-    mem_read_req  : output logic    ,
-    mem_byte_we   : output logic<4> ,
-    active_mode   : output logic    , // 0: Hack 16-bit, 1: RISC-V 32-bit
+    clk         : input  clock    ,
+    rst         : input  reset    ,
+    soft_rst    : input  logic    ,
+    instr_in    : input  logic<32>,
+    data_in     : input  logic<32>,
+    timer_irq_in: input  logic    ,
+    ext_irq_in  : input  logic    ,
+    sw_irq_in   : input  logic    ,
+    pc_out      : output logic<32>,
+    data_addr   : output logic<32>,
+    data_waddr  : output logic<32>,
+    data_out    : output logic<32>,
+    mem_write   : output logic    ,
+    mem_read_req: output logic    ,
+    mem_byte_we : output logic<4> ,
+    active_mode : output logic    , // 0: Hack 16-bit, 1: RISC-V 32-bit
 ) {
     enum CpuState {
         FETCH,
@@ -135,21 +134,13 @@ pub module unified_cpu #(
         )
     ;
 
-    var auto_riscv_mode: logic;
     inst mode_detect: auto_mode_detector (
-        clk          : clk            ,
-        rst          : rst            ,
-        first_instr  : instr_in       ,
-        is_riscv_mode: auto_riscv_mode,
+        clk          : clk          ,
+        rst          : rst          ,
+        soft_rst     : soft_rst     ,
+        first_instr  : instr_in     ,
+        is_riscv_mode: is_riscv_mode,
     );
-
-    always_ff (clk, rst) {
-        if_reset {
-            is_riscv_mode = 1'b1;
-        } else {
-            is_riscv_mode = if target_mode_en == 1'b1 ? target_mode : auto_riscv_mode;
-        }
-    }
 
     // Hack Translator (16-bit Front-End)
     var h_instr_16: logic<16>;
@@ -214,6 +205,7 @@ pub module unified_cpu #(
     inst csrs_inst: rv32i_csrs (
         clk         : clk                                                                                ,
         rst         : rst                                                                                ,
+        soft_rst    : soft_rst                                                                           ,
         csr_addr    : rv_csr_addr                                                                        ,
         csr_wdata   : if (state == CpuState::EXECUTE) ? (if rv_funct3[2] ? rv_uimm : rf_rs1_data) : 32'd0,
         csr_op      : if (state == CpuState::EXECUTE) ? rv_funct3 : 3'b000,
@@ -565,6 +557,21 @@ pub module unified_cpu #(
     // Multi-Cycle CPU State Machine & PC Update
     always_ff (clk, rst) {
         if_reset {
+            state           = CpuState::FETCH;
+            pc_reg          = RESET_VECTOR;
+            pc_plus_4_reg   = (RESET_VECTOR as u32 + 4) as u32;
+            ir_reg          = 32'h0000_0013; // NOP
+            r_load_byte_sel = 2'd0;
+            r_load_f3       = rv32i_pkg::Funct3::ADD_SUB;
+            r_load_rd       = 5'd0;
+            r_store_addr    = 32'd0;
+            r_store_data    = 32'd0;
+            r_store_byte_we = 4'd0;
+            r_store_we      = 1'b0;
+            r_load_we       = 1'b0;
+            r_hack_mem_we   = 1'b0;
+            r_hack_data     = 32'd0;
+        } else if soft_rst {
             state           = CpuState::FETCH;
             pc_reg          = RESET_VECTOR;
             pc_plus_4_reg   = (RESET_VECTOR as u32 + 4) as u32;

@@ -48,7 +48,7 @@ async def test_soc_fast_boot(dut):
     # sb a0, 0(a1)        -> 0x00a58023
     # j .                 -> 0x0000006f
     payload = struct.pack("<IIII", 0x400005b7, 0x02300513, 0x00a58023, 0x0000006f)
-    header = struct.pack("<IIII32s16s", VUX_MAGIC, 1, len(payload), 1, b"TestApp\x00".ljust(32, b"\x00"), b"\x00" * 16)
+    header = struct.pack("<IHHIIIIII32s", VUX_MAGIC, 3, 1, 1, len(payload), 0, 0, 0, 1, b"TestApp\x00".ljust(32, b"\x00"))
     sd_model.preload_sector(128, header + payload)
 
     ser = VirtualSerialBridge(dut, baud_cycles=234)

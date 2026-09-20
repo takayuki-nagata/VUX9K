@@ -6,6 +6,7 @@
 pub module rv32i_csrs (
     clk         : input  clock    ,
     rst         : input  reset    ,
+    soft_rst    : input  logic    ,
     csr_addr    : input  logic<12>,
     csr_wdata   : input  logic<32>,
     csr_op      : input  logic<3> ,
@@ -87,6 +88,14 @@ pub module rv32i_csrs (
     // Synchronous Register Update & Trap State Machine
     always_ff (clk, rst) {
         if_reset {
+            mstatus  = 32'd0;
+            mie      = 32'd0;
+            mtvec    = 32'd0;
+            mscratch = 32'd0;
+            mepc     = 32'd0;
+            mcause   = 32'd0;
+            mtval    = 32'd0;
+        } else if soft_rst {
             mstatus  = 32'd0;
             mie      = 32'd0;
             mtvec    = 32'd0;

@@ -21,7 +21,10 @@ async def test_soc_hack_execution(dut):
     cocotb.start_soon(clock.start())
 
     # Assert Reset (active-low)
-    dut.rst.value = 0
+    dut.rst_n.value = 0
+    if hasattr(dut, "rst"):
+        dut.rst.value = 0
+    dut.btn.value = 1
     dut.uart_rx.value = 1
     dut.sd_miso.value = 1
 
@@ -37,9 +40,14 @@ async def test_soc_hack_execution(dut):
 
     await ClockCycles(dut.clk, 10)
     # Release Reset
-    dut.rst.value = 1
+    dut.rst_n.value = 1
+    if hasattr(dut, "rst"):
+        dut.rst.value = 1
+    await ClockCycles(dut.clk, 5)
+    if hasattr(dut, "por_counter"):
+        dut.por_counter.value = (1 << 15)
 
-    await ClockCycles(dut.clk, 10)
+    await ClockCycles(dut.clk, 20)
 
     # Check that SoC auto-detects Hack 16-bit mode (active_mode == 0)
     mode = int(dut.active_mode.value)

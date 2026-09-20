@@ -265,8 +265,8 @@ def reboot_soc(ser, timeout=8.0):
     return out
 
 
-def build_vux9_image(file_or_bytes, slot=1, name="", mode="hack", version=1, crc_override=None, magic_override=None):
-    """Pack binary payload into VUX9 v2 image with 64-byte boot header and 512-byte sector padding"""
+def build_vux9_image(file_or_bytes, slot=1, name="", mode="hack", version=1, load_addr=0x00000000, entry_point=0x00000000, crc_override=None, magic_override=None):
+    """Pack binary payload into VUX9 v3 image with 64-byte boot header and 512-byte sector padding"""
     if isinstance(file_or_bytes, (bytes, bytearray)):
         payload = bytes(file_or_bytes)
         default_name = f"slot{slot}"
@@ -278,7 +278,22 @@ def build_vux9_image(file_or_bytes, slot=1, name="", mode="hack", version=1, crc
         default_name = os.path.splitext(os.path.basename(file_or_bytes))[0]
 
     mode_val = 0 if mode == "hack" else 1
-    size_bytes = len(payload)
+    if mode_val == 0:
+        # Pre-pack Hack 16-bit big-endian binary into native 32-bit LE word order for I-RAM
+        packed_payload = bytearray()
+        for i in range(0, len(payload), 4):
+            chunk = payload[i:i+4]
+            if len(chunk) < 4:
+                chunk = chunk + b"\x00" * (4 - len(chunk))
+            instr0 = (chunk[0] << 8) | chunk[1]
+            instr1 = (chunk[2] << 8) | chunk[3]
+            word = (instr1 << 16) | instr0
+            packed_payload.extend(struct.pack("<I", word))
+        final_payload = bytes(packed_payload)
+    else:
+        final_payload = payload
+
+    size_bytes = len(final_payload)
     if not name:
         name = default_name
     name_bytes = name.encode("ascii", errors="replace")[:32].ljust(32, b"\x00")
@@ -287,9 +302,21 @@ def build_vux9_image(file_or_bytes, slot=1, name="", mode="hack", version=1, crc
         flags |= 4  # system slot
 
     magic_val = magic_override if magic_override is not None else VUX_MAGIC
-    crc_val = crc_override if crc_override is not None else (binascii.crc32(payload) & 0xFFFFFFFF)
-    header = struct.pack("<IIII32sII8s", magic_val, mode_val, size_bytes, flags, name_bytes, crc_val, version, b"\x00" * 8)
-    raw_data = header + payload
+    crc_val = crc_override if crc_override is not None else (binascii.crc32(final_payload) & 0xFFFFFFFF)
+    header_ver = 3
+    # VUX9 v3 Boot Header: 64 bytes total
+    # 0x00: magic (u32)
+    # 0x04: header_version (u16), flags (u16)
+    # 0x08: mode_val (u32)
+    # 0x0C: size_bytes (u32)
+    # 0x10: load_addr (u32)
+    # 0x14: entry_point (u32)
+    # 0x18: crc_val (u32)
+    # 0x1C: version (u32: app_version)
+    # 0x20: name_bytes (32 bytes)
+    header = struct.pack("<IHHIIIIII32s", magic_val, header_ver, flags, mode_val, size_bytes, load_addr, entry_point, crc_val, version, name_bytes)
+    assert len(header) == 64, f"Header must be 64 bytes, got {len(header)}"
+    raw_data = header + final_payload
 
     rem = len(raw_data) % 512
     if rem != 0:
@@ -305,7 +332,10 @@ def build_vux9_image(file_or_bytes, slot=1, name="", mode="hack", version=1, crc
         "name": name,
         "mode": mode,
         "mode_val": mode_val,
+        "header_ver": header_ver,
         "size_bytes": size_bytes,
+        "load_addr": load_addr,
+        "entry_point": entry_point,
         "crc32": crc_val,
         "version": version,
         "start_sector": start_sector,
@@ -524,12 +554,38 @@ def cmd_flash_sd(args):
         ser.close()
 
 
+def cmd_reset(args):
+    """Trigger FPGA hardware reset via openFPGALoader --reset"""
+    import subprocess
+    import shutil
+
+    loader_bin = shutil.which("openFPGALoader")
+    if not loader_bin:
+        home_cad = os.path.expanduser("~/.local/oss-cad-suite/bin/openFPGALoader")
+        if os.path.exists(home_cad):
+            loader_bin = home_cad
+        else:
+            print("Error: openFPGALoader not found in PATH or ~/.local/oss-cad-suite/bin")
+            sys.exit(1)
+
+    print(f"Triggering Tang Nano 9K hardware reset via {loader_bin} -b tangnano9k --reset...")
+    try:
+        subprocess.run([loader_bin, "-b", "tangnano9k", "--reset"], check=True)
+        print("Hardware reset completed successfully.")
+    except subprocess.CalledProcessError as e:
+        print(f"Failed to reset FPGA: {e}")
+        sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(description="VUX9K Host Tooling")
     parser.add_argument("--port", default="auto", help="Serial/FTDI port URL (default: auto)")
     parser.add_argument("--baud", type=int, default=115200, help="UART baud rate (default: 115200)")
 
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # reset
+    subparsers.add_parser("reset", help="Trigger FPGA hardware reset via openFPGALoader")
 
     # monitor
     subparsers.add_parser("monitor", help="Open serial terminal monitor")
@@ -561,7 +617,9 @@ def main():
 
     args = parser.parse_args()
 
-    if args.command == "monitor":
+    if args.command == "reset":
+        cmd_reset(args)
+    elif args.command == "monitor":
         cmd_monitor(args)
     elif args.command == "diag":
         cmd_diag(args)

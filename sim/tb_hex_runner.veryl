@@ -22,8 +22,7 @@ pub module tb_hex_runner () {
         unified_cpu uut (
             .clk(clk),
             .rst(rst),
-            .target_mode(1'b1),
-            .target_mode_en(1'b0),
+            .soft_rst(1'b0),
             .instr_in(instr_in),
             .data_in(data_in),
             .timer_irq_in(1'b0),

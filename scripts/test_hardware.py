@@ -250,7 +250,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
         ser.close()
         pack_fs = os.path.join(REPO_ROOT, "pack.fs")
         loader_bin = shutil.which("openFPGALoader") or os.path.expanduser("~/.local/oss-cad-suite/bin/openFPGALoader")
-        subprocess.run([loader_bin, "-b", "tangnano9k", "--reset", pack_fs], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run([loader_bin, "-b", "tangnano9k", pack_fs], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(0.5)
         ser = vux_tool.open_port(port, baudrate=baud, timeout=0.1)
         vux_tool.sync_prompt(ser, timeout=4.0)
@@ -264,7 +264,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
         ser.flush()
         start = time.time()
         out = ""
-        while time.time() - start < 8.0:
+        while time.time() - start < 20.0:
             c = ser.read(128)
             if c:
                 out += c.decode("utf-8", errors="replace")
@@ -275,8 +275,17 @@ def run_hardware_test_suite(port="auto", baud=115200):
         results.append((test_name_boot_s2, passed, msg))
         print_test_result(test_name_boot_s2, passed, msg)
 
-    finally:
+        # Reload bitstream via openFPGALoader to return cleanly to Boot Manager
         ser.close()
+        pack_fs = os.path.join(REPO_ROOT, "pack.fs")
+        loader_bin = shutil.which("openFPGALoader") or os.path.expanduser("~/.local/oss-cad-suite/bin/openFPGALoader")
+        subprocess.run([loader_bin, "-b", "tangnano9k", pack_fs], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(0.5)
+    finally:
+        try:
+            ser.close()
+        except Exception:
+            pass
 
     # -------------------------------------------------------------
     # Summary

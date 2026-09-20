@@ -15,10 +15,8 @@ async def test_unified_cpu_hack_and_riscv(dut):
     # TEST 1: Hack 16-bit Mode Execution
     # =========================================================================
     await FallingEdge(dut.clk)
+    dut.soft_rst.value = 0
     dut.rst.value = 0
-    if hasattr(dut, "target_mode"):
-        dut.target_mode.value = 0
-        dut.target_mode_en.value = 1
     dut.data_in.value = 0
     dut.timer_irq_in.value = 0
     dut.ext_irq_in.value = 0
@@ -62,9 +60,6 @@ async def test_unified_cpu_hack_and_riscv(dut):
     # TEST 2: RISC-V 32-bit Mode Execution
     # =========================================================================
     dut.rst.value = 0
-    if hasattr(dut, "target_mode"):
-        dut.target_mode.value = 1
-        dut.target_mode_en.value = 1
     dut.instr_in.value = 0x02a00513 # ADDI x10, x0, 42
     await ClockCycles(dut.clk, 2)
     await FallingEdge(dut.clk)

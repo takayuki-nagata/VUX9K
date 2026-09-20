@@ -137,13 +137,18 @@ const BOOT_MGR_VERSION: u32 = 10;
 const SLOT_UPDATE_MAGIC: u32 = 0xA55A_0000;
 const SLOT_UPDATED_BOOT_MAGIC: u32 = 0x5A5A_B002;
 
+#[allow(dead_code)]
+#[repr(C)]
 struct SlotInfo {
+    header_version: u16,
+    flags: u16,
     mode: u32,
     size: u32,
-    flags: u32,
-    name: [u8; 32],
+    load_addr: u32,
+    entry_point: u32,
     crc32: u32,
     version: u32,
+    name: [u8; 32],
 }
 
 fn crc32_update(data: &[u8], mut crc: u32) -> u32 {
@@ -263,20 +268,29 @@ fn read_slot_info(slot: u32, buf: &mut [u8; 512]) -> Option<SlotInfo> {
     if magic != VUX_MAGIC {
         return None;
     }
-    let mode = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]);
-    let size = u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]);
-    let flags = u32::from_le_bytes([buf[12], buf[13], buf[14], buf[15]]);
+    let header_version = u16::from_le_bytes([buf[4], buf[5]]);
+    let flags = u16::from_le_bytes([buf[6], buf[7]]);
+    if header_version != 3 || (flags & 1) == 0 {
+        return None;
+    }
+    let mode = u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]);
+    let size = u32::from_le_bytes([buf[12], buf[13], buf[14], buf[15]]);
+    let load_addr = u32::from_le_bytes([buf[16], buf[17], buf[18], buf[19]]);
+    let entry_point = u32::from_le_bytes([buf[20], buf[21], buf[22], buf[23]]);
+    let crc32 = u32::from_le_bytes([buf[24], buf[25], buf[26], buf[27]]);
+    let version = u32::from_le_bytes([buf[28], buf[29], buf[30], buf[31]]);
     let mut name = [0u8; 32];
-    name.copy_from_slice(&buf[16..48]);
-    let crc32 = u32::from_le_bytes([buf[48], buf[49], buf[50], buf[51]]);
-    let version = u32::from_le_bytes([buf[52], buf[53], buf[54], buf[55]]);
+    name.copy_from_slice(&buf[32..64]);
     Some(SlotInfo {
+        header_version,
+        flags,
         mode,
         size,
-        flags,
-        name,
+        load_addr,
+        entry_point,
         crc32,
         version,
+        name,
     })
 }
 
@@ -355,7 +369,7 @@ fn inspect_slot(slot: u32) {
         Uart::print_dec(info.size);
         Uart::print_str(" bytes\n");
         Uart::print_str("  Flags: 0x");
-        Uart::print_hex(info.flags);
+        Uart::print_hex(info.flags as u32);
         Uart::print_str("\n");
         Uart::print_str("  Version: ");
         Uart::print_dec(info.version);
@@ -373,6 +387,7 @@ fn boot_slot(slot: u32) -> ! {
     Uart::print_dec(slot);
     Uart::print_str(" via Resident Loader...\n\n");
     Timer::delay_ms(10);
+    SdCard::ensure_init();
     let sdhc_bit = if SdCard::is_sdhc() { 0x100 } else { 0 };
     unsafe {
         core::ptr::write_volatile(MAILBOX_REG, slot | sdhc_bit);
@@ -502,6 +517,7 @@ fn write_sectors_from_uart() {
 pub extern "C" fn main() -> ! {
     Gpio::set_leds(0x3F);
 
+    SdCard::ensure_init();
     check_boot_manager_update();
 
     print_banner();

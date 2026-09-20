@@ -48,17 +48,8 @@ async def send_str_and_wait(ser, clk, text: str, expect_token: bytes, timeout_cy
 
 
 async def flash_payload_sim(ser, clk, payload: bytes, mode: str = "hack"):
-    mode_val = 0 if mode == "hack" else 1
-    size_bytes = len(payload)
-
-    header = struct.pack("<IIII", vux_tool.VUX_MAGIC, mode_val, size_bytes, 0)
-    raw_data = header + payload
-
-    rem = len(raw_data) % 512
-    if rem != 0:
-        raw_data = raw_data + b"\x00" * (512 - rem)
-
-    num_sectors = len(raw_data) // 512
+    raw_data, meta = vux_tool.build_vux9_image(payload, slot=1, mode=mode)
+    num_sectors = meta["num_sectors"]
 
     # 1. Send 'w' and wait for [READY]
     await send_str_and_wait(ser, clk, "w", b"[READY]", timeout_cycles=4000000)

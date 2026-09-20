@@ -12,6 +12,7 @@ async def test_auto_mode_detection(dut):
     cocotb.start_soon(clock.start())
 
     # Case 1: RISC-V first instruction (ADDI x0, x0, 0 = 0x00000013)
+    dut.soft_rst.value = 0
     dut.rst.value = 0
     dut.first_instr.value = 0x00000013
     await ClockCycles(dut.clk, 2)
@@ -38,5 +39,13 @@ async def test_auto_mode_detection(dut):
     dut.first_instr.value = 0x00000013
     await ClockCycles(dut.clk, 2)
     assert int(dut.is_riscv_mode.value) == 0, "Mode must remain latched as Hack!"
+
+    # Case 3: Soft Reset unlatches mode back to RISC-V detection
+    dut.soft_rst.value = 1
+    await ClockCycles(dut.clk, 2)
+    dut.soft_rst.value = 0
+    dut.first_instr.value = 0x00000013
+    await ClockCycles(dut.clk, 2)
+    assert int(dut.is_riscv_mode.value) == 1, "Soft reset must allow re-detecting RISC-V mode!"
 
     dut._log.info("Auto mode detector verified successfully [PASS]")

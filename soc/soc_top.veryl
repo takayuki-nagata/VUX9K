@@ -51,7 +51,8 @@ pub module soc_top (
             }
         }
     }
-    let rst: reset = raw_rst as reset;
+    var cpu_soft_rst: logic;
+    let rst         : reset = raw_rst as reset;
 
     // Bus Interconnect Signals
     var instr_addr: logic<32>;
@@ -111,30 +112,26 @@ pub module soc_top (
     var last_uart_sel : logic   ;
     var last_addr_low : logic<4>;
 
-    var target_mode   : logic;
-    var target_mode_en: logic;
-
     // Instantiate Unified Dual-ISA CPU Core (Veryl)
     inst cpu_inst: unified_cpu #(
         RESET_VECTOR: 32'h0000_0000,
     ) (
-        clk           : clk           ,
-        rst           : rst           ,
-        target_mode   : target_mode   ,
-        target_mode_en: target_mode_en,
-        instr_in      : instr_data    ,
-        data_in       : cpu_data_in   ,
-        timer_irq_in  : timer_irq     ,
-        ext_irq_in    : 1'b0          ,
-        sw_irq_in     : 1'b0          ,
-        pc_out        : instr_addr    ,
-        data_addr     : data_addr     ,
-        data_waddr    : data_waddr    ,
-        data_out      : cpu_data_out  ,
-        mem_write     : mem_write     ,
-        mem_read_req  : mem_read_req  ,
-        mem_byte_we   : cpu_byte_we   ,
-        active_mode   : active_mode   ,
+        clk         : clk         ,
+        rst         : rst         ,
+        soft_rst    : cpu_soft_rst,
+        instr_in    : instr_data  ,
+        data_in     : cpu_data_in ,
+        timer_irq_in: timer_irq   ,
+        ext_irq_in  : 1'b0        ,
+        sw_irq_in   : 1'b0        ,
+        pc_out      : instr_addr  ,
+        data_addr   : data_addr   ,
+        data_waddr  : data_waddr  ,
+        data_out    : cpu_data_out,
+        mem_write   : mem_write   ,
+        mem_read_req: mem_read_req,
+        mem_byte_we : cpu_byte_we ,
+        active_mode : active_mode ,
     );
 
     // Instantiate UART Controller (Veryl) - 27MHz / 115200 baud -> CNT=234
@@ -159,19 +156,19 @@ pub module soc_top (
 
     // Instantiate Harvard Memory (16KB I-RAM + 8KB D-RAM BSRAMs)
     inst ram_inst: soc_ram (
-        clk        : clk             ,
-        rst        : rst             ,
-        active_mode: active_mode     ,
-        i_addr     : instr_addr      ,
-        i_data_out : instr_data      ,
-        i_we       : i_ram_we        ,
-        i_waddr    : data_waddr[13:2],
-        i_wdata    : cpu_data_out    ,
+        clk        : clk                                  ,
+        rst        : rst                                  ,
+        active_mode: active_mode                          ,
+        i_addr     : instr_addr                           ,
+        i_data_out : instr_data                           ,
+        i_we       : i_ram_we                             ,
+        i_waddr    : data_waddr[13:2]                     ,
+        i_wdata    : cpu_data_out                         ,
         d_addr     : if mem_write ? data_waddr : data_addr,
-        d_data_in  : cpu_data_out    ,
-        d_data_out : ram_data_out    ,
-        d_we       : ram_we          ,
-        d_we_byte  : ram_we_byte     ,
+        d_data_in  : cpu_data_out                         ,
+        d_data_out : ram_data_out                         ,
+        d_we       : ram_we                               ,
+        d_we_byte  : ram_we_byte                          ,
     );
 
     let periph_addr: logic<4> = if mem_write ? data_waddr[3:0] : data_addr[3:0];
@@ -190,32 +187,31 @@ pub module soc_top (
 
     // Instantiate SD Card SPI Master Controller (Veryl)
     inst sd_inst: sdcard_spi (
-        clk     : clk          ,
-        rst     : rst          ,
-        addr    : periph_addr  ,
-        data_in : cpu_data_out ,
-        data_out: sd_data_out  ,
-        we      : sd_we        ,
-        re      : sd_re        ,
-        spi_sclk: sd_sclk      ,
-        spi_mosi: sd_mosi      ,
-        spi_miso: sd_miso      ,
-        spi_cs_n: sd_cs_n      ,
+        clk     : clk         ,
+        rst     : rst         ,
+        addr    : periph_addr ,
+        data_in : cpu_data_out,
+        data_out: sd_data_out ,
+        we      : sd_we       ,
+        re      : sd_re       ,
+        spi_sclk: sd_sclk     ,
+        spi_mosi: sd_mosi     ,
+        spi_miso: sd_miso     ,
+        spi_cs_n: sd_cs_n     ,
     );
 
     // Instantiate GPIO Controller (Veryl)
     inst gpio_inst: gpio_controller (
-        clk           : clk          ,
-        rst           : rst          ,
-        addr          : periph_addr  ,
-        data_in       : cpu_data_out ,
-        data_out      : gpio_data_out,
-        we            : gpio_we      ,
-        re            : gpio_re      ,
-        target_mode   : target_mode  ,
-        target_mode_en: target_mode_en,
-        gpio_led      : raw_led      ,
-        gpio_btn      : btn          ,
+        clk         : clk          ,
+        rst         : rst          ,
+        addr        : periph_addr  ,
+        data_in     : cpu_data_out ,
+        data_out    : gpio_data_out,
+        we          : gpio_we      ,
+        re          : gpio_re      ,
+        cpu_soft_rst: cpu_soft_rst ,
+        gpio_led    : raw_led      ,
+        gpio_btn    : btn          ,
     );
 
     // Address Decoder Combinational Logic
@@ -229,11 +225,14 @@ pub module soc_top (
 
         if active_mode == 1'b0 {
             // Hack Mode
-            if data_addr[15:0] == 16'h6000 {
-                uart_sel = 1'b1;
-            } else if data_addr[15:0] == 16'h6004 {
-                gpio_sel = 1'b1;
-            } else if data_addr[15:0] <: 16'h6000 {
+            let is_hack_mmio: logic = data_addr[15:4] == 12'h600;
+            if is_hack_mmio {
+                if data_addr[3:2] == 2'b00 {
+                    uart_sel = 1'b1;
+                } else {
+                    gpio_sel = 1'b1;
+                }
+            } else if !data_addr[15] && (!data_addr[14] || !data_addr[13]) {
                 ram_sel = 1'b1;
             }
         } else {
@@ -260,11 +259,14 @@ pub module soc_top (
 
         if active_mode == 1'b0 {
             // Hack Mode
-            if data_waddr[15:0] == 16'h6000 {
-                uart_wsel = 1'b1;
-            } else if data_waddr[15:0] == 16'h6004 {
-                gpio_wsel = 1'b1;
-            } else if data_waddr[15:0] <: 16'h6000 {
+            let is_hack_w_mmio: logic = data_waddr[15:4] == 12'h600;
+            if is_hack_w_mmio {
+                if data_waddr[3:2] == 2'b00 {
+                    uart_wsel = 1'b1;
+                } else {
+                    gpio_wsel = 1'b1;
+                }
+            } else if !data_waddr[15] && (!data_waddr[14] || !data_waddr[13]) {
                 ram_wsel = 1'b1;
             }
         } else {
@@ -317,11 +319,7 @@ pub module soc_top (
         }
     }
 
-    let uart_data_bus: logic<32> = if (active_mode == 1'b0) || (last_addr_low == 4'h0) ?
-        {24'h0, uart_rdata}
-    :
-        {30'h0, uart_full, uart_empty}
-    ;
+    let uart_data_bus: logic<32> = if last_addr_low == 4'h0 ? {24'h0, uart_rdata} : {30'h0, uart_full, uart_empty};
 
     always_comb {
         cpu_data_in = (if last_ram_sel ? ram_data_out : 32'd0) | (if last_uart_sel ? uart_data_bus : 32'd0)

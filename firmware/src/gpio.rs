@@ -7,6 +7,10 @@ use core::ptr::{read_volatile, write_volatile};
 const GPIO_BASE: usize = 0x4000_3000;
 const GPIO_LED_REG: *mut u32 = GPIO_BASE as *mut u32;
 const GPIO_BTN_REG: *const u32 = (GPIO_BASE + 0x4) as *const u32;
+#[allow(dead_code)]
+const GPIO_RESET_REG: *mut u32 = (GPIO_BASE + 0xC) as *mut u32;
+#[allow(dead_code)]
+const RESET_MAGIC: u32 = 0x5A5A_A55A;
 
 pub struct Gpio;
 
@@ -33,6 +37,18 @@ impl Gpio {
         unsafe {
             let current = (read_volatile(GPIO_LED_REG) & 0x3F) as u8;
             write_volatile(GPIO_LED_REG, (current ^ (1 << bit)) as u32);
+        }
+    }
+
+    /// Trigger hardware CPU soft reset pulse (15 cycles)
+    #[allow(dead_code)]
+    #[inline(always)]
+    pub fn cpu_reset() -> ! {
+        unsafe {
+            write_volatile(GPIO_RESET_REG, RESET_MAGIC);
+            loop {
+                core::arch::asm!("nop");
+            }
         }
     }
 }

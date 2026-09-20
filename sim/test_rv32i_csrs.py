@@ -30,6 +30,7 @@ async def test_rv32i_csrs_basic(dut):
     cocotb.start_soon(clock.start())
 
     # 1. Reset (active-low)
+    dut.soft_rst.value = 0
     dut.rst.value = 0
     dut.csr_addr.value = 0
     dut.csr_wdata.value = 0

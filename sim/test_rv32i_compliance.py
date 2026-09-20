@@ -42,10 +42,8 @@ async def test_rv32i_full_compliance(dut):
 
     # Reset in RISC-V Mode
     await FallingEdge(dut.clk)
+    dut.soft_rst.value = 0
     dut.rst.value = 0
-    if hasattr(dut, "target_mode"):
-        dut.target_mode.value = 0
-        dut.target_mode_en.value = 0
     dut.data_in.value = 0
     dut.timer_irq_in.value = 0
     dut.ext_irq_in.value = 0

@@ -70,8 +70,8 @@ pub extern "C" fn vux9k_print_str(s: *const u8) {
 
 #[no_mangle]
 pub extern "C" fn vux9k_print_int(mut val: i32) {
-    if val == 0 {
-        uart_putc(b'0');
+    if val >= 0 && val <= 9 {
+        uart_putc(b'0' + val as u8);
         return;
     }
     if val < 0 {
@@ -82,7 +82,8 @@ pub extern "C" fn vux9k_print_int(mut val: i32) {
     let mut buf = [0u8; 10];
     let mut i = 0;
     while uval > 0 {
-        buf[i] = (uval % 10) as u8 + b'0';
+        let digit = (uval % 10) as u8;
+        buf[i] = digit + b'0';
         uval /= 10;
         i += 1;
     }
@@ -109,10 +110,8 @@ pub extern "C" fn main() -> ! {
 
     vux9k_print_str(b"\n[Rust App] Returning to Boot Manager...\n\0".as_ptr());
 
-    // Clear ISA mode override (GPIO_ISA_MODE_REG at 0x4000_3008)
+    // Clear mailbox to 0 (boot Slot 0 / Boot Manager)
     unsafe {
-        core::ptr::write_volatile(0x4000_3008 as *mut u32, 0);
-        // Clear mailbox to 0 (boot Slot 0 / Boot Manager)
         core::ptr::write_volatile(0x2000_1FFC as *mut u32, 0);
         // Jump to Resident Loader at 0x0000_3800
         core::arch::asm!("jr {0}", in(reg) 0x0000_3800usize, options(noreturn));
