@@ -97,4 +97,116 @@ async def test_hack_cpu_comprehensive(dut):
     assert int(dut.data_out.value) == 40, f"Expected store data=40, got {int(dut.data_out.value)}"
     await ClockCycles(dut.clk, 1) # HACK_WB -> FETCH
 
+    # 9. Test A-D: A=100, D=30, D=A-D -> D=70
+    dut.instr_in.value = make_hack_a(30)
+    await ClockCycles(dut.clk, 2)
+    dut.instr_in.value = make_hack_c(a=0, c=0x30, d=0b010, j=0) # D=A (D=30)
+    await ClockCycles(dut.clk, 2)
+    dut.instr_in.value = make_hack_a(100)
+    await ClockCycles(dut.clk, 2)
+    # D=A-D (a=0, c=0x07, d=010)
+    dut.instr_in.value = make_hack_c(a=0, c=0x07, d=0b010, j=0)
+    await ClockCycles(dut.clk, 1) # FETCH -> EXECUTE
+    await Timer(1, unit="ns")
+    assert (int(dut.data_out.value) & 0xFFFF) == 70, f"Expected A-D=70, got {int(dut.data_out.value)}"
+    await ClockCycles(dut.clk, 1) # EXECUTE -> FETCH
+    # Store D to verify register write
+    dut.instr_in.value = make_hack_a(20)
+    await ClockCycles(dut.clk, 2)
+    dut.instr_in.value = make_hack_c(a=0, c=0x0C, d=0b001, j=0) # M=D
+    await ClockCycles(dut.clk, 1)
+    await Timer(1, unit="ns")
+    assert (int(dut.data_out.value) & 0xFFFF) == 70, f"Expected stored D=70, got {int(dut.data_out.value)}"
+    await ClockCycles(dut.clk, 1)
+
+    # 10. Test M-D: with A=10, data_in=100, D=30 -> D=M-D -> D=70
+    dut.instr_in.value = make_hack_a(30)
+    await ClockCycles(dut.clk, 2)
+    dut.instr_in.value = make_hack_c(a=0, c=0x30, d=0b010, j=0) # D=30
+    await ClockCycles(dut.clk, 2)
+    dut.instr_in.value = make_hack_a(10)
+    await ClockCycles(dut.clk, 2)
+    # D=M-D (a=1, c=0x07, d=010)
+    dut.instr_in.value = make_hack_c(a=1, c=0x07, d=0b010, j=0)
+    await ClockCycles(dut.clk, 1) # FETCH -> EXECUTE
+    await Timer(1, unit="ns")
+    dut.data_in.value = 100
+    await ClockCycles(dut.clk, 1) # EXECUTE -> MEM_WAIT
+    await ClockCycles(dut.clk, 1) # MEM_WAIT -> HACK_WB (r_hack_data = 100, D = 30 -> ALU calculates M-D = 70)
+    await Timer(1, unit="ns")
+    assert (int(dut.data_out.value) & 0xFFFF) == 70, f"Expected M-D=70, got {int(dut.data_out.value)}"
+    await ClockCycles(dut.clk, 1) # HACK_WB -> FETCH (D written with 70)
+
+    # 11. Test -A: A=42, D=-A -> D = (-42 & 0xFFFF) = 0xFFD6
+    dut.instr_in.value = make_hack_a(42)
+    await ClockCycles(dut.clk, 2)
+    # D=-A (a=0, c=0x33, d=010)
+    dut.instr_in.value = make_hack_c(a=0, c=0x33, d=0b010, j=0)
+    await ClockCycles(dut.clk, 1)
+    await Timer(1, unit="ns")
+    assert (int(dut.data_out.value) & 0xFFFF) == 0xFFD6, f"Expected -A=0xFFD6, got {hex(int(dut.data_out.value))}"
+    await ClockCycles(dut.clk, 1)
+
+    # 12. Test -M: with A=10, data_in=42, D=-M -> D = 0xFFD6
+    dut.instr_in.value = make_hack_a(10)
+    await ClockCycles(dut.clk, 2)
+    # D=-M (a=1, c=0x33, d=010)
+    dut.instr_in.value = make_hack_c(a=1, c=0x33, d=0b010, j=0)
+    await ClockCycles(dut.clk, 1) # FETCH -> EXECUTE
+    await Timer(1, unit="ns")
+    dut.data_in.value = 42
+    await ClockCycles(dut.clk, 1) # EXECUTE -> MEM_WAIT
+    await ClockCycles(dut.clk, 1) # MEM_WAIT -> HACK_WB (r_hack_data = 42 -> ALU calculates 0-M = -42)
+    await Timer(1, unit="ns")
+    assert (int(dut.data_out.value) & 0xFFFF) == 0xFFD6, f"Expected -M=0xFFD6, got {hex(int(dut.data_out.value))}"
+    await ClockCycles(dut.clk, 1) # HACK_WB -> FETCH
+
+    # 13. Test -D: D=50, D=-D -> D = (-50 & 0xFFFF) = 0xFFCE
+    dut.instr_in.value = make_hack_a(50)
+    await ClockCycles(dut.clk, 2)
+    dut.instr_in.value = make_hack_c(a=0, c=0x30, d=0b010, j=0) # D=50
+    await ClockCycles(dut.clk, 2)
+    # D=-D (a=0, c=0x0F, d=010)
+    dut.instr_in.value = make_hack_c(a=0, c=0x0F, d=0b010, j=0)
+    await ClockCycles(dut.clk, 1)
+    await Timer(1, unit="ns")
+    assert (int(dut.data_out.value) & 0xFFFF) == 0xFFCE, f"Expected -D=0xFFCE, got {hex(int(dut.data_out.value))}"
+    await ClockCycles(dut.clk, 1)
+
+    # 14. Test !A: A=0x00FF, D=!A -> D = 0xFF00
+    dut.instr_in.value = make_hack_a(0x00FF)
+    await ClockCycles(dut.clk, 2)
+    # D=!A (a=0, c=0x31, d=010)
+    dut.instr_in.value = make_hack_c(a=0, c=0x31, d=0b010, j=0)
+    await ClockCycles(dut.clk, 1)
+    await Timer(1, unit="ns")
+    assert (int(dut.data_out.value) & 0xFFFF) == 0xFF00, f"Expected !A=0xFF00, got {hex(int(dut.data_out.value))}"
+    await ClockCycles(dut.clk, 1)
+
+    # 15. Test !M: with A=10, data_in=0x00FF, D=!M -> D = 0xFF00
+    dut.instr_in.value = make_hack_a(10)
+    await ClockCycles(dut.clk, 2)
+    # D=!M (a=1, c=0x31, d=010)
+    dut.instr_in.value = make_hack_c(a=1, c=0x31, d=0b010, j=0)
+    await ClockCycles(dut.clk, 1) # FETCH -> EXECUTE
+    await Timer(1, unit="ns")
+    dut.data_in.value = 0x00FF
+    await ClockCycles(dut.clk, 1) # EXECUTE -> MEM_WAIT
+    await ClockCycles(dut.clk, 1) # MEM_WAIT -> HACK_WB (r_hack_data = 0x00FF -> ALU calculates ~M)
+    await Timer(1, unit="ns")
+    assert (int(dut.data_out.value) & 0xFFFF) == 0xFF00, f"Expected !M=0xFF00, got {hex(int(dut.data_out.value))}"
+    await ClockCycles(dut.clk, 1) # HACK_WB -> FETCH
+
+    # 16. Test !D: D=0xAA55, D=!D -> D = 0x55AA
+    dut.instr_in.value = make_hack_a(0x2A55) # A-instr max 15-bit (0x2A55)
+    await ClockCycles(dut.clk, 2)
+    dut.instr_in.value = make_hack_c(a=0, c=0x30, d=0b010, j=0) # D=0x2A55
+    await ClockCycles(dut.clk, 2)
+    # D=!D (a=0, c=0x0D, d=010)
+    dut.instr_in.value = make_hack_c(a=0, c=0x0D, d=0b010, j=0)
+    await ClockCycles(dut.clk, 1)
+    await Timer(1, unit="ns")
+    assert (int(dut.data_out.value) & 0xFFFF) == (0xFFFF ^ 0x2A55), f"Expected !D={hex(0xFFFF ^ 0x2A55)}, got {hex(int(dut.data_out.value))}"
+    await ClockCycles(dut.clk, 1)
+
     dut._log.info("Comprehensive Hack CPU ops test passed [PASS]")

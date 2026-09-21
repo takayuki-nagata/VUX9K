@@ -53,6 +53,8 @@ pub module unified_cpu #(
     var h_we_mem    : logic               ;
     var h_jump_cond : logic           <3> ;
     var h_is_c_instr: logic               ;
+    var h_op_a_sel  : logic           <2> ;
+    var h_op_b_sel  : logic           <2> ;
 
     // RV32I Decoder signals
     var rv_opcode  : logic<7> ;
@@ -67,8 +69,12 @@ pub module unified_cpu #(
 
     var rf_rs1_addr: logic<5>;
     var rf_rs2_addr: logic<5>;
-    assign rf_rs1_addr = if is_riscv_mode ? rv_rs1 : h_rs1;
-    assign rf_rs2_addr = if is_riscv_mode ? rv_rs2 : h_rs2;
+    // Hack mode always reads D (x2) and A (x1) unconditionally: keeping these
+    // addresses constant (not instruction-dependent) keeps hack_translator's
+    // decode logic off the register-file-read -> ALU critical path. Operand
+    // selection among {D, A/M, ZERO, IMM} happens downstream via op_a_sel/op_b_sel.
+    assign rf_rs1_addr = if is_riscv_mode ? rv_rs1 : 5'd2;
+    assign rf_rs2_addr = if is_riscv_mode ? rv_rs2 : 5'd1;
     var rf_rd_addr : logic<5> ;
     var rf_we      : logic    ;
     var rf_wr_data : logic<32>;
@@ -160,6 +166,8 @@ pub module unified_cpu #(
         we_mem    : h_we_mem    ,
         jump_cond : h_jump_cond ,
         is_c_instr: h_is_c_instr,
+        op_a_sel  : h_op_a_sel  ,
+        op_b_sel  : h_op_b_sel  ,
     );
 
     // RV32I Instruction Decoder
@@ -491,21 +499,16 @@ pub module unified_cpu #(
             ;
             rf_wr2_data = alu_result;
 
-            if h_use_mem {
-                if h_use_imm {
-                    alu_operand_a = r_hack_data;
-                    alu_operand_b = h_imm;
-                } else {
-                    alu_operand_a = rf_rs1_data;
-                    alu_operand_b = r_hack_data;
-                }
-            } else {
-                alu_operand_a = rf_rs1_data;
-                if h_use_imm {
-                    alu_operand_b = h_imm;
-                } else {
-                    alu_operand_b = rf_rs2_data;
-                }
+            let y_val: logic<32> = if h_use_mem ? r_hack_data : rf_rs2_data;
+            case h_op_a_sel {
+                2'd0   : alu_operand_a = rf_rs1_data; // D
+                2'd1   : alu_operand_a = y_val; // A or M
+                default: alu_operand_a = 32'd0; // ZERO
+            }
+            case h_op_b_sel {
+                2'd0   : alu_operand_b = y_val; // A or M
+                2'd1   : alu_operand_b = rf_rs1_data; // D
+                default: alu_operand_b = h_imm; // IMM
             }
 
             alu_ctrl      = h_alu_op;
