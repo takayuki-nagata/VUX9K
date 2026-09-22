@@ -242,6 +242,26 @@ pub extern "C" fn loader_main() -> ! {
                     core::ptr::write_volatile(MAILBOX_REG, 0x5A5A_B002);
                 }
             }
+            // cpu_soft_rst only resets CPU-internal state (PC, pipeline
+            // registers) -- it never clears D-RAM (soc_ram.veryl's memory
+            // array has no reset path at all, only synthesis-time INIT
+            // values loaded by a full bitstream reconfiguration). RISC-V
+            // programs zero their own .bss in their own start.s regardless
+            // of what's left over, but the Hack 16-bit firmware toolchain
+            // has no equivalent step and implicitly assumes RAM starts
+            // zeroed. Clear D-RAM here so every newly-launched slot gets a
+            // clean start, regardless of ISA or how many soft-resets
+            // preceded it. Leave the reserved scratch/mailbox words
+            // (0x2000_1FF8-0x2000_1FFF) untouched -- they carry state
+            // across this very reset.
+            unsafe {
+                let mut p = 0x2000_0000 as *mut u32;
+                let end = 0x2000_1FF8 as *mut u32;
+                while p < end {
+                    core::ptr::write_volatile(p, 0);
+                    p = p.add(1);
+                }
+            }
             // Trigger CPU Soft Reset to launch newly loaded slot at 0x0000_0000
             unsafe {
                 core::ptr::write_volatile(GPIO_RESET_REG, RESET_MAGIC);

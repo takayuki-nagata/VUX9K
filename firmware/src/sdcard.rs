@@ -245,6 +245,45 @@ impl SdCard {
         }
 
         Self::deselect();
-        programmed
+
+        if !programmed {
+            return false;
+        }
+
+        // Verify: re-read the sector and compare byte-for-byte, streaming
+        // the comparison rather than buffering a second 512-byte block.
+        // D_RAM is only 8KB total and shared with the stack (no guard page,
+        // see firmware/bootstrap/link.x) -- an extra 512-byte local buffer
+        // here, on top of the caller's own 512-byte sector buffer already
+        // on the stack, is a real stack-overflow risk on this target.
+        let r1v = Self::send_cmd(17, addr, 0xFF);
+        if r1v != 0x00 {
+            Self::deselect();
+            return false;
+        }
+
+        let mut ready = false;
+        for _ in 0..50000 {
+            if Self::transfer(0xFF) == 0xFE {
+                ready = true;
+                break;
+            }
+        }
+        if !ready {
+            Self::deselect();
+            return false;
+        }
+
+        let mut matches = true;
+        for i in 0..512 {
+            if Self::transfer(0xFF) != buf[i] {
+                matches = false;
+            }
+        }
+        Self::transfer(0xFF);
+        Self::transfer(0xFF);
+
+        Self::deselect();
+        matches
     }
 }

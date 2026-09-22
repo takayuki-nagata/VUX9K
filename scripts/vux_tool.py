@@ -451,7 +451,15 @@ def flash_slot(ser, file_or_bytes, slot=1, name="", mode="hack", version=1, prog
             if b"vux>" in buf:
                 break
 
-    meta["completion_output"] = buf.decode("utf-8", errors="replace")
+    completion_output = buf.decode("utf-8", errors="replace")
+    meta["completion_output"] = completion_output
+
+    # main.rs always reprints "vux> " after write_sectors_from_uart() returns,
+    # whether it succeeded or hit an [SD-ERR] failure partway through -- so
+    # the prompt reappearing above is NOT proof of success on its own.
+    if "[SD-ERR]" in completion_output:
+        raise RuntimeError(f"SD card error during flash: {completion_output}")
+
     return meta
 
 

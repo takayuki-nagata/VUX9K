@@ -264,7 +264,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
         ser.flush()
         start = time.time()
         out = ""
-        while time.time() - start < 20.0:
+        while time.time() - start < 40.0:
             c = ser.read(128)
             if c:
                 out += c.decode("utf-8", errors="replace")
