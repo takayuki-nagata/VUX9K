@@ -60,13 +60,13 @@ The RTL modules in this repository were originally authored in VHDL-2008 and hav
 ### System Address Space
 | Address Range | Size | Component | Description |
 |:---|:---|:---|:---|
-| `0x0000_0000` - `0x0000_37FF` | 14 KB | **Instruction RAM (Lower)** | Preloaded with Rust Boot Manager (factory fallback); target region for SD slot application execution |
-| `0x0000_3800` - `0x0000_3FFF` | 2 KB | **Resident Loader (Upper I-RAM)** | Immutable resident bootloader at `RESET_VECTOR = 0x0000_3800`; checks Mailbox and loads SD slots |
+| `0x0000_0000` - `0x0000_37FF` | 14 KB | **Instruction RAM (Lower)** | Hardware `RESET_VECTOR` (`0x0000_0000`); preloaded with Rust Boot Manager (factory fallback), target region for SD slot application execution |
+| `0x0000_3800` - `0x0000_3FFF` | 2 KB | **Resident Loader (Upper I-RAM)** | Immutable resident bootloader, entered only via a software jump to `0x0000_3800` (never by hardware reset); checks Mailbox, loads SD slots into I-RAM, then triggers a CPU soft-reset (see GPIO `0x4000_300C` below) to resume execution at `RESET_VECTOR` |
 | `0x2000_0000` - `0x2000_1FFF` | 8 KB | **Data RAM** | `.data`, `.bss`, stack, and heap. Mailbox register located at `0x2000_1FFC` |
 | `0x4000_0000` - `0x4000_000F` | 16 B | **UART Controller** | Full-duplex 115200 bps TX/RX data registers & status flags |
 | `0x4000_1000` - `0x4000_101F` | 32 B | **System Timer (CLINT)** | 64-bit `mtime` and `mtimecmp` registers |
 | `0x4000_2000` - `0x4000_200F` | 16 B | **MicroSD SPI Master** | SPI TX/RX data, CS assertion, busy status, clock divider |
-| `0x4000_3000` - `0x4000_300F` | 16 B | **GPIO Controller** | 6 onboard active-low LEDs (`0x00`=ON, `0x3F`=OFF) & user buttons (Button S2 on pin 3) |
+| `0x4000_3000` - `0x4000_300F` | 16 B | **GPIO Controller** | 6 onboard active-low LEDs (`0x00`=ON, `0x3F`=OFF) & user buttons (Button S2 on pin 3); offset `0xC` is a soft-reset trigger — writing `0x5A5A_A55A` pulses `cpu_soft_rst`, resetting the CPU FSM/PC/CSRs to `RESET_VECTOR` without a full FPGA reload |
 
 ### MicroSD Card Sector Map (Multi-Slot MBR Gap Boot)
 The MBR gap (`LBA 64` - `LBA 2047`, ~1 MB) is partitioned into 10 fixed 32 KB program slots (64 sectors per slot), keeping FAT32/exFAT filesystems intact:
@@ -83,19 +83,21 @@ The MBR gap (`LBA 64` - `LBA 2047`, ~1 MB) is partitioned into 10 fixed 32 KB pr
 | - | `LBA 704` - `2047`| `0x0005_8000` | 672 KB | Unallocated MBR Gap | Free / Reserved |
 | - | `LBA 2048`+ | `0x0010_0000`+ | - | **FAT32 / exFAT Partition 1** | **Fully Protected & Coexistent** |
 
-#### VUX9 Boot Header (64 Bytes)
-Each slot begins at byte 0 of its starting sector with a 64-byte VUX9 v2 header (`struct.pack("<IIII32s16s", ...)`), followed immediately by executable binary code:
+#### VUX9 Boot Header (64 Bytes, v3)
+Each slot begins at byte 0 of its starting sector with a 64-byte VUX9 v3 header (`struct.pack("<IHHIIIIII32s", ...)`; `header_version` must equal `3` or the slot is rejected), followed immediately by executable binary code:
 
 | Offset | Field | Type | Value / Meaning |
 |:---|:---|:---|:---|
 | `0x00` - `0x03` | Magic Number | `u32` (LE) | `0x56555839` (`"VUX9"` ASCII) |
-| `0x04` - `0x07` | ISA Mode | `u32` (LE) | `0` = Nand2Tetris Hack 16-bit, `1` = RISC-V RV32I |
-| `0x08` - `0x0B` | Binary Byte Length | `u32` (LE) | Exact size of executable binary in bytes (max 14336 B) |
-| `0x0C` - `0x0F` | Slot Flags | `u32` (LE) | Bit 0 = valid (`0x1`), Bit 2 = system slot (`0x4`) |
-| `0x10` - `0x2F` | Program Name | `32 bytes` | Null-terminated ASCII/UTF-8 application name |
-| `0x30` - `0x33` | Payload CRC32 | `u32` (LE) | IEEE 802.3 CRC32 of payload for integrity verification |
-| `0x34` - `0x37` | Image Version | `u32` (LE) | Version number (e.g. `1`, `2` for Boot Manager self-update) |
-| `0x38` - `0x3F` | Reserved | `8 bytes` | Reserved padding (`0x0000_0000...`) |
+| `0x04` - `0x05` | Header Version | `u16` (LE) | Must be `3`; any other value is rejected by both the Resident Loader and Boot Manager |
+| `0x06` - `0x07` | Slot Flags | `u16` (LE) | Bit 0 = valid (`0x1`), Bit 2 = system slot (`0x4`) |
+| `0x08` - `0x0B` | ISA Mode | `u32` (LE) | `0` = Nand2Tetris Hack 16-bit, `1` = RISC-V RV32I |
+| `0x0C` - `0x0F` | Binary Byte Length | `u32` (LE) | Exact size of executable binary in bytes (max 14336 B) |
+| `0x10` - `0x13` | Load Address | `u32` (LE) | I-RAM destination for the payload (currently always `0x0000_0000` in tooling/tests) |
+| `0x14` - `0x17` | Entry Point | `u32` (LE) | Reserved for a future non-zero resume address; parsed but not yet consumed — the CPU always resumes at `RESET_VECTOR` via soft-reset |
+| `0x18` - `0x1B` | Payload CRC32 | `u32` (LE) | IEEE 802.3 CRC32 of payload; computed and verified on load/flash |
+| `0x1C` - `0x1F` | Image Version | `u32` (LE) | Application/image version number, used for Boot Manager self-update comparisons |
+| `0x20` - `0x3F` | Program Name | `32 bytes` | Null-terminated ASCII/UTF-8 application name |
 | `0x40` - `0x1FF` | Payload (Start Sector) | `bytes` | First chunk of binary machine code (up to 448 bytes) |
 
 Subsequent 512-byte sectors continue the payload until the full binary length is loaded into I-RAM at `0x0000_0000`.
@@ -119,6 +121,8 @@ python3 scripts/vux_tool.py dump-mbr
 python3 scripts/vux_tool.py list-slots
 
 # 4. Flash Dual-ISA binary to MicroSD Card Slots (MBR Gap)
+#    Each write is verified by reading the block back on-device; the host tool raises
+#    a RuntimeError if the Boot Manager reports an [SD-ERR] during the flash.
 #    - Flashes Hack 16-bit binary to Slot 2 with program name:
 python3 scripts/vux_tool.py flash-sd build_hack/firmware.bin --mode hack --slot 2 --name "HackDemo"
 #    - Flashes RISC-V 32-bit binary to Slot 1 (Default S2 launch slot):
@@ -134,6 +138,9 @@ python3 scripts/vux_tool.py boot --slot 1
 
 # 7. Interactive Serial Monitor (115200 bps)
 python3 scripts/vux_tool.py monitor
+
+# 8. Trigger a hardware FPGA reset (openFPGALoader --reset)
+python3 scripts/vux_tool.py reset
 ```
 
 ### 2. On-Chip Bare-Metal Boot Manager CLI
@@ -151,7 +158,7 @@ Connecting any terminal (115200 bps 8N1) presents the interactive `vux>` prompt:
 | SD Init | `i` | Forces full re-initialization of MicroSD card (`force_init`) |
 | Diag | `t` | Runs self-diagnostics (LED pattern, Button S2 state, CLINT 10ms timing, SD SPI) |
 | Knight Rider | `k` | Plays Knight Rider LED sweep animation on 6 onboard LEDs |
-| Reboot | `r` | Reboots the SoC back to Resident Loader (`0x0000_4800`) |
+| Reboot | `r` | Jumps back to the Resident Loader (`0x0000_3800`), which re-loads Slot 0 and soft-resets the CPU to `RESET_VECTOR` |
 
 > [!TIP]
 > **Physical Button S2 Boot:** Pressing physical Button S2 (active-low pin 3) on the Tang Nano 9K at the Boot Manager prompt immediately launches Slot 1 without requiring UART commands!
@@ -207,7 +214,7 @@ make test-ci
 # 2. Simulation-Only Verification Suite (RTL, Arch Compliance & GLS Netlists)
 make test-sim
 
-# 3. Static Timing Analysis (STA) & Physical Timing Closure (27.0 MHz, strict check)
+# 3. Static Timing Analysis (STA) & Physical Timing Closure (30.0 MHz target, 10% margin over the 27.0 MHz physical oscillator, strict check)
 make sta
 
 # 4. End-to-End Virtual Hardware Simulation Flow (RTL & GLS on-demand)
@@ -242,11 +249,14 @@ make test-hw
 8. **Flash Slot 2: Hack 16-bit Firmware** (`w` / `vux_tool.flash_slot`: 6 sectors to LBA 192)
 9. **Header Verification: Slot 2** (`s2` / `vux_tool.inspect_slot`: Magic `VUX9`, Mode 0/Hack)
 10. **Program Slots Catalog Listing** (`l` / `vux_tool.list_slots`: Multi-slot catalog listing)
-11. **Boot Slot 1: Rust App Execution & Return** (`1` / `vux_tool.boot_slot`: Standalone Rust app execution and clean return to Boot Manager)
-12. **Boot Slot 2: Hack 16-bit Firmware Execution** (`2` / `vux_tool.boot_slot`: Hack C firmware execution and test pass)
-13. **Negative Test: CRC32 Corrupted Payload Rejection** (Rejects corrupted image before flashing)
-14. **Negative Test: Invalid Magic Header Rejection** (Rejects header without `VUX9` magic)
-15. **Boot Manager v2 Self-Update & Rollback** (Verifies in-place I-RAM bootloader update and factory rollback)
+11. **Negative Test: CRC32 Corrupted Payload Rejection** (Slot 0, `crc_override`: rejects a corrupted image before it's accepted)
+12. **Negative Test: Invalid Magic Header Rejection** (Slot 3, `magic_override`: rejects a header without `VUX9` magic)
+13. **Boot Manager Self-Update & Version Rollback** (Flashes Slot 0 with a newer `version`, verifies in-place I-RAM update, then rolls back to the original version)
+14. **Boot Slot 1: Rust App Execution & Return** (`1` / `vux_tool.boot_slot`: Standalone Rust app execution and clean return to Boot Manager)
+15. **Boot Slot 2: Hack 16-bit Firmware Execution** (`2` / `vux_tool.boot_slot`: Hack C firmware execution and test pass)
+
+> [!NOTE]
+> Between steps 13→14 and 14→15, `test_hardware.py` reloads the SRAM bitstream via `openFPGALoader` as a recovery workaround for a known app-return SDHC re-init issue.
 
 ---
 
@@ -274,11 +284,12 @@ VUX9K/
 │   ├── uart_rx.veryl               # 8N1 serial receiver
 │   └── uart_controller.veryl       # Integrated UART subsystem
 ├── soc/                            # Veryl SoC Top Level & Interconnect
-│   ├── gpio_controller.veryl       # LED & button GPIO controller
+│   ├── gpio_controller.veryl       # LED & button GPIO controller, incl. CPU soft-reset trigger
 │   ├── sdcard_spi.veryl            # MicroSD SPI Master controller
 │   ├── timer_core.veryl            # 64-bit mtime/mtimecmp timer core
-│   ├── soc_ram.veryl               # Harvard 16KB I-RAM + 4KB D-RAM memory
-│   └── soc_top.veryl               # Tang Nano 9K SoC top-level wrapper
+│   ├── soc_ram.veryl               # Harvard 16KB I-RAM + 8KB D-RAM memory
+│   ├── soc_top.veryl               # Tang Nano 9K SoC top-level wrapper
+│   └── hw_boot_mgr.veryl           # Standalone legacy boot-manager prototype; not instantiated in soc_top, built only for its own GLS unit test
 ├── resident_loader/                # Bare-metal Rust Resident Loader (2KB at 0x0000_3800)
 ├── firmware/                       # Bare-metal Rust Boot Manager & drivers (14KB at 0x0000_0000)
 │   ├── Cargo.toml
@@ -287,14 +298,14 @@ VUX9K/
 ├── firmware_hack/                  # Hack 16-bit C and Assembly test suite
 ├── zephyr_workspace/               # Zephyr RTOS out-of-tree application & bc_clone_rs integration
 ├── sim/                            # Cocotb & Pytest RTL simulation testbenches
-├── scripts/                        # Host tooling & flasher (vux_tool.py, run_arch_test.py, test_hardware.py)
-└── vendor/                         # Submodules (bc_clone_rs, riscv-arch-test)
+├── scripts/                        # Host tooling & flasher (vux_tool.py, run_arch_test.py, test_hardware.py, run_pnr.py, report_sta.py)
+└── vendor/                         # bc_clone_rs (git submodule); riscv-arch-test (fetched on demand by run_arch_test.py, gitignored)
 ```
 
 ---
 
 ## License
 
-This project is licensed under the **[MIT License](LICENSE)** (see [`LICENSES/MIT.txt`](LICENSES/MIT.txt)).
-Zephyr RTOS Out-of-Tree components are licensed under the **[Apache License 2.0](LICENSES/Apache-2.0.txt)**.
-All files include SPDX headers conforming to the [REUSE](https://reuse.software/) specification.
+This project is licensed under the **[MIT License](LICENSE)**.
+Zephyr RTOS Out-of-Tree components (`zephyr_workspace/`) are licensed under the **Apache License 2.0**.
+Most files include SPDX license headers.
