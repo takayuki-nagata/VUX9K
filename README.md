@@ -50,7 +50,7 @@ The RTL modules in this repository were originally authored in VHDL-2008 and hav
   - Parameterized baud rate clock timer (27.0 MHz -> 115200 bps), 8N1 serial framing, and dual 32-entry synchronous TX/RX FIFOs.
 - **Arbitrary-Precision Math Engine & REPL (`vendor/bc_clone_rs`)**: Submodule from [`takayuki-nagata/bc_clone_rs`](https://github.com/takayuki-nagata/bc_clone_rs)
   - Embedded `bc_core` arbitrary-precision arithmetic engine with 10/10 math test suite running atop Zephyr RTOS.
-- **Hack Toolchain & C Firmware (`firmware_hack`)**: Powered by [`takayuki-nagata/hack_tools`](https://github.com/takayuki-nagata/hack_tools) (`has` assembler & `m2h` transpiler)
+- **Hack Toolchain & C Firmware (`hack_demo`)**: Powered by [`takayuki-nagata/hack_tools`](https://github.com/takayuki-nagata/hack_tools) (`has` assembler & `m2h` transpiler)
   - 16-bit C and Hack assembly firmware testing recursive arithmetic, Fibonacci, array manipulations, and MMIO UART output.
 
 ---
@@ -108,39 +108,39 @@ Subsequent 512-byte sectors continue the payload until the full binary length is
 
 ### 1. Host Utility: `vux_tool.py`
 
-[`scripts/vux_tool.py`](scripts/vux_tool.py) provides host-side management over UART (supports `--port` e.g. `/dev/ttyUSB3` or `auto`):
+[`tools/vux_tool.py`](tools/vux_tool.py) provides host-side management over UART (supports `--port` e.g. `/dev/ttyUSB3` or `auto`):
 
 ```bash
 # 1. Hardware Self-Diagnostics (Tests onboard LEDs, User Button S2, 64-bit CLINT timer, MicroSD SPI init)
-python3 scripts/vux_tool.py diag
+python3 tools/vux_tool.py diag
 
 # 2. Dump Sector 0 (MBR) in Hex/ASCII & check 0x55AA signature
-python3 scripts/vux_tool.py dump-mbr
+python3 tools/vux_tool.py dump-mbr
 
 # 3. List All Program Slots Catalog (Inspects Slots 0-9 headers)
-python3 scripts/vux_tool.py list-slots
+python3 tools/vux_tool.py list-slots
 
 # 4. Flash Dual-ISA binary to MicroSD Card Slots (MBR Gap)
 #    Each write is verified by reading the block back on-device; the host tool raises
 #    a RuntimeError if the Boot Manager reports an [SD-ERR] during the flash.
 #    - Flashes Hack 16-bit binary to Slot 2 with program name:
-python3 scripts/vux_tool.py flash-sd build/hack/firmware.bin --mode hack --slot 2 --name "HackDemo"
+python3 tools/vux_tool.py flash-sd build/hack/firmware.bin --mode hack --slot 2 --name "HackDemo"
 #    - Flashes RISC-V 32-bit binary to Slot 1 (Default S2 launch slot):
-python3 scripts/vux_tool.py flash-sd build/firmware/firmware.bin --mode riscv --slot 1 --name "RiscvDemo"
+python3 tools/vux_tool.py flash-sd build/firmware/firmware.bin --mode riscv --slot 1 --name "RiscvDemo"
 #    - Flashes Custom Boot Manager to Slot 0 (SD Override):
-python3 scripts/vux_tool.py flash-sd build/firmware/firmware.bin --mode riscv --slot 0 --name "BootManager"
+python3 tools/vux_tool.py flash-sd build/firmware/firmware.bin --mode riscv --slot 0 --name "BootManager"
 
 # 5. Inspect specific Slot Header & verify Magic/Version/Mode/Size/Name
-python3 scripts/vux_tool.py inspect-sd --slot 1
+python3 tools/vux_tool.py inspect-sd --slot 1
 
 # 6. Trigger MicroSD image loading & execution via Resident Loader
-python3 scripts/vux_tool.py boot --slot 1
+python3 tools/vux_tool.py boot --slot 1
 
 # 7. Interactive Serial Monitor (115200 bps)
-python3 scripts/vux_tool.py monitor
+python3 tools/vux_tool.py monitor
 
 # 8. Trigger a hardware FPGA reset (openFPGALoader --reset)
-python3 scripts/vux_tool.py reset
+python3 tools/vux_tool.py reset
 ```
 
 ### 2. On-Chip Bare-Metal Boot Manager CLI
@@ -267,40 +267,44 @@ VUX9K/
 ├── Makefile                        # Unified build, test, synthesis, and flash automation
 ├── Veryl.toml                      # Veryl project configuration & dependencies
 ├── tangnano9k.cst                  # Physical pin constraints for Tang Nano 9K (GW1NR-9)
-├── cpu/                            # Veryl Unified CPU & Dual-ISA modules
-│   ├── auto_mode_detector.veryl    # First-instruction ISA auto-detector
-│   ├── hack_translator.veryl       # Hack 16-bit instruction to uOp translator
-│   ├── rv32i_alu.veryl             # Shared 32-bit ALU
-│   ├── rv32i_csrs.veryl            # Machine-Mode CSRs (mstatus, mie, mtvec, mepc, mcause)
-│   ├── rv32i_decode.veryl          # RV32I instruction decoder & immediate generator
-│   ├── rv32i_pkg.veryl             # Common type definitions and opcodes
-│   ├── rv32i_regfile.veryl         # Dual-port 32 x 32-bit register file (Distributed RAM)
-│   └── unified_cpu.veryl           # Multi-cycle Dual-ISA CPU Top Module (FETCH, EXECUTE, MEM_WAIT)
-├── uart/                           # Veryl UART Controller & FIFOs
-│   ├── clk_timer.veryl             # Parameterized baud rate clock timer
-│   ├── fifo_sync.veryl             # 32-entry synchronous FIFO buffer
-│   ├── shift_registers.veryl       # Parallel load shift register
-│   ├── uart_tx.veryl               # 8N1 serial transmitter
-│   ├── uart_rx.veryl               # 8N1 serial receiver
-│   └── uart_controller.veryl       # Integrated UART subsystem
 ├── soc/                            # Veryl SoC Top Level & Interconnect
+│   ├── cpu/                        # Unified CPU & Dual-ISA modules
+│   │   ├── auto_mode_detector.veryl    # First-instruction ISA auto-detector
+│   │   ├── hack_translator.veryl       # Hack 16-bit instruction to uOp translator
+│   │   ├── rv32i_alu.veryl             # Shared 32-bit ALU
+│   │   ├── rv32i_csrs.veryl            # Machine-Mode CSRs (mstatus, mie, mtvec, mepc, mcause)
+│   │   ├── rv32i_decode.veryl          # RV32I instruction decoder & immediate generator
+│   │   ├── rv32i_pkg.veryl             # Common type definitions and opcodes
+│   │   ├── rv32i_regfile.veryl         # Dual-port 32 x 32-bit register file (Distributed RAM)
+│   │   └── unified_cpu.veryl           # Multi-cycle Dual-ISA CPU Top Module (FETCH, EXECUTE, MEM_WAIT)
+│   ├── uart/                       # UART Controller & FIFOs
+│   │   ├── clk_timer.veryl             # Parameterized baud rate clock timer
+│   │   ├── fifo_sync.veryl             # 32-entry synchronous FIFO buffer
+│   │   ├── shift_registers.veryl       # Parallel load shift register
+│   │   ├── uart_tx.veryl               # 8N1 serial transmitter
+│   │   ├── uart_rx.veryl               # 8N1 serial receiver
+│   │   └── uart_controller.veryl       # Integrated UART subsystem
 │   ├── gpio_controller.veryl       # LED & button GPIO controller, incl. CPU soft-reset trigger
 │   ├── sdcard_spi.veryl            # MicroSD SPI Master controller
 │   ├── timer_core.veryl            # 64-bit mtime/mtimecmp timer core
 │   ├── soc_ram.veryl               # Harvard 16KB I-RAM + 8KB D-RAM memory
 │   └── soc_top.veryl               # Tang Nano 9K SoC top-level wrapper
-├── resident_loader/                # Bare-metal Rust Resident Loader (2KB at 0x0000_3800)
-├── firmware/                       # Bare-metal Rust Boot Manager & drivers (14KB at 0x0000_0000)
-│   ├── Cargo.toml
-│   ├── bootstrap/                  # Assembly start.s & linker script link.x
-│   └── src/                        # MicroSD SPI driver, UART CLI, catalog manager, flasher
-├── firmware_hack/                  # Hack 16-bit C and Assembly test suite
+├── firmware/                       # Cargo workspace: bare-metal Rust boot firmware
+│   ├── Cargo.toml                  # Workspace manifest (members: boot_manager, resident_loader)
+│   ├── boot_manager/                   # Boot Manager & drivers (14KB at 0x0000_0000)
+│   │   ├── Cargo.toml
+│   │   ├── bootstrap/                  # Assembly start.s & linker script link.x
+│   │   └── src/                        # MicroSD SPI driver, UART CLI, catalog manager, flasher
+│   └── resident_loader/                # Resident Loader (2KB at 0x0000_3800)
+├── hack_demo/                      # Hack 16-bit C/Assembly demo app (toolchain self-test)
 ├── zephyr_workspace/               # Zephyr RTOS out-of-tree application & bc_clone_rs integration
+│   └── app/rust_demo/              # Standalone/Zephyr Rust demo app (vux9k_rust_demo)
 ├── sim/                            # Cocotb & Pytest RTL simulation testbenches
-├── scripts/                        # Host tooling & flasher (vux_tool.py, run_arch_test.py, test_hardware.py, run_pnr.py, report_sta.py)
+├── scripts/                        # Build/CI plumbing (elf2bin.py, run_arch_test.py, test_hardware.py, run_pnr.py, report_sta.py, ...)
+├── tools/                          # End-user CLI: vux_tool.py (UART flashing, diagnostics, monitor)
 ├── vendor/                         # bc_clone_rs (git submodule); riscv-arch-test (fetched on demand by run_arch_test.py, gitignored)
 └── build/                          # Unified build output (gitignored) - every generated artifact lands here
-    ├── veryl/                      # veryl build --out-dir output: generated .sv/.map for cpu/, soc/, uart/, sim/
+    ├── veryl/                      # veryl build --out-dir output: generated .sv/.map for soc/, soc/cpu/, soc/uart/, sim/
     ├── firmware/                   # firmware.bin/.hex, firmware_d0-3.hex, resident_loader.bin
     ├── hack/                       # Hack 16-bit firmware.bin/.hex
     ├── arch_test/                  # RISC-V architectural compliance test artifacts

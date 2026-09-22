@@ -22,7 +22,7 @@ CARGO_BIN ?= $(HOME)/.cargo/bin
 export PATH := $(CURDIR)/$(VENV_PATH)/bin:$(OSS_CAD_SUITE_BIN):$(CARGO_BIN):$(ZEPHYR_SDK_INSTALL_DIR)/riscv64-zephyr-elf/bin:$(PATH)
 
 # Unified build output tree: every generated/build artifact lives under $(BUILD_DIR),
-# keeping source directories (cpu/, soc/, uart/, firmware/, ...) generated-file-free.
+# keeping source directories (soc/cpu/, soc/, soc/uart/, firmware/, ...) generated-file-free.
 BUILD_DIR := build
 VERYL_OUT_DIR := $(BUILD_DIR)/veryl
 FIRMWARE_BUILD_DIR := $(BUILD_DIR)/firmware
@@ -60,7 +60,7 @@ fmt:
 
 # ===== Veryl Build =====
 
-VERYL_SRCS = $(wildcard cpu/*.veryl) $(wildcard soc/*.veryl) $(wildcard uart/*.veryl) Veryl.toml
+VERYL_SRCS = $(wildcard soc/*.veryl) $(wildcard soc/cpu/*.veryl) $(wildcard soc/uart/*.veryl) Veryl.toml
 
 $(VERYL_OUT_DIR)/.stamp: $(VERYL_SRCS)
 	@mkdir -p $(VERYL_OUT_DIR)
@@ -71,15 +71,15 @@ veryl: $(VERYL_OUT_DIR)/.stamp
 
 # ===== Firmware (Rust Boot Manager & Resident Loader) =====
 
-FIRMWARE_SRCS = $(wildcard firmware/src/*.rs) $(wildcard firmware/bootstrap/*) firmware/Cargo.toml firmware/Cargo.lock
-LOADER_SRCS = $(wildcard resident_loader/src/*.rs) resident_loader/link.x resident_loader/Cargo.toml
+FIRMWARE_SRCS = $(wildcard firmware/boot_manager/src/*.rs) $(wildcard firmware/boot_manager/bootstrap/*) firmware/boot_manager/Cargo.toml firmware/Cargo.toml
+LOADER_SRCS = $(wildcard firmware/resident_loader/src/*.rs) firmware/resident_loader/link.x firmware/resident_loader/Cargo.toml
 
 $(FIRMWARE_BUILD_DIR)/firmware.hex: $(FIRMWARE_SRCS) $(LOADER_SRCS)
 	@mkdir -p $(FIRMWARE_BUILD_DIR)
-	cd resident_loader && $(CARGO) build --release
-	$(PYTHON) scripts/elf2bin.py resident_loader/target/riscv32i-unknown-none-elf/release/resident_loader $(FIRMWARE_BUILD_DIR)/resident_loader.bin
-	cd firmware && $(CARGO) build --release
-	$(PYTHON) scripts/elf2bin.py firmware/target/riscv32i-unknown-none-elf/release/firmware $(FIRMWARE_BUILD_DIR)/firmware.bin $(FIRMWARE_BUILD_DIR)
+	cd firmware/resident_loader && $(CARGO) build --release
+	$(PYTHON) scripts/elf2bin.py firmware/target/riscv32i-unknown-none-elf/release/resident_loader $(FIRMWARE_BUILD_DIR)/resident_loader.bin
+	cd firmware/boot_manager && $(CARGO) build --release
+	$(PYTHON) scripts/elf2bin.py firmware/target/riscv32i-unknown-none-elf/release/boot_manager $(FIRMWARE_BUILD_DIR)/firmware.bin $(FIRMWARE_BUILD_DIR)
 	$(PYTHON) scripts/merge_firmware_hex.py $(FIRMWARE_BUILD_DIR)/firmware.bin $(FIRMWARE_BUILD_DIR)/resident_loader.bin $(FIRMWARE_BUILD_DIR)/firmware.hex
 	@# soc_ram.veryl's $$readmemh() resolves these bare filenames relative to each tool's own
 	@# process cwd (yosys/nextpnr: repo root, cocotb/icarus: sim/), so a copy must exist in each
@@ -99,8 +99,8 @@ submodule-sync:
 	git submodule update --init --recursive
 
 zephyr-rust-lib:
-	cd zephyr_workspace/app/rust_app && $(CARGO) build --release --target riscv32i-unknown-none-elf
-	$(PYTHON) scripts/elf2bin.py zephyr_workspace/app/rust_app/target/riscv32i-unknown-none-elf/release/standalone zephyr_workspace/app/rust_app/app.bin
+	cd zephyr_workspace/app/rust_demo && $(CARGO) build --release --target riscv32i-unknown-none-elf
+	$(PYTHON) scripts/elf2bin.py zephyr_workspace/app/rust_demo/target/riscv32i-unknown-none-elf/release/standalone zephyr_workspace/app/rust_demo/app.bin
 
 zephyr-bc-lib:
 	cd vendor/bc_clone_rs/crates/bc_zephyr && $(CARGO) build --release --target riscv32i-unknown-none-elf --no-default-features
@@ -148,7 +148,7 @@ install-hack-tools:
 
 build-hack:
 	@echo "=== Building Hack 16-bit C/Asm Firmware ==="
-	$(MAKE) -C firmware_hack
+	$(MAKE) -C hack_demo
 
 # ===== Simulation - Unit Tests =====
 
@@ -253,9 +253,9 @@ sim: sim-unit test-arch-compliance sim-gls-unit sim-soc-fast
 synth-units: veryl
 	@echo "=== Synthesizing Submodules to Gowin Netlists for GLS Unit Tests ==="
 	@mkdir -p $(SYNTH_DIR)
-	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/cpu/rv32i_pkg.sv $(VERYL_OUT_DIR)/cpu/auto_mode_detector.sv $(VERYL_OUT_DIR)/cpu/hack_translator.sv $(VERYL_OUT_DIR)/cpu/rv32i_alu.sv $(VERYL_OUT_DIR)/cpu/rv32i_decode.sv $(VERYL_OUT_DIR)/cpu/rv32i_regfile.sv $(VERYL_OUT_DIR)/cpu/rv32i_csrs.sv $(VERYL_OUT_DIR)/cpu/unified_cpu.sv; synth_gowin -top unified_cpu; write_verilog -noattr $(SYNTH_DIR)/unified_cpu_syn.v"
-	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/uart/clk_timer.sv $(VERYL_OUT_DIR)/uart/shift_registers.sv $(VERYL_OUT_DIR)/uart/fifo_sync.sv $(VERYL_OUT_DIR)/uart/uart_tx.sv $(VERYL_OUT_DIR)/uart/uart_rx.sv $(VERYL_OUT_DIR)/uart/uart_controller.sv; synth_gowin -top uart_controller; write_verilog -noattr $(SYNTH_DIR)/uart_controller_syn.v"
-	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/cpu/rv32i_pkg.sv $(VERYL_OUT_DIR)/cpu/auto_mode_detector.sv; synth_gowin -top auto_mode_detector; write_verilog -noattr $(SYNTH_DIR)/auto_mode_detector_syn.v"
+	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_pkg.sv $(VERYL_OUT_DIR)/soc/cpu/auto_mode_detector.sv $(VERYL_OUT_DIR)/soc/cpu/hack_translator.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_alu.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_decode.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_regfile.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_csrs.sv $(VERYL_OUT_DIR)/soc/cpu/unified_cpu.sv; synth_gowin -top unified_cpu; write_verilog -noattr $(SYNTH_DIR)/unified_cpu_syn.v"
+	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/uart/clk_timer.sv $(VERYL_OUT_DIR)/soc/uart/shift_registers.sv $(VERYL_OUT_DIR)/soc/uart/fifo_sync.sv $(VERYL_OUT_DIR)/soc/uart/uart_tx.sv $(VERYL_OUT_DIR)/soc/uart/uart_rx.sv $(VERYL_OUT_DIR)/soc/uart/uart_controller.sv; synth_gowin -top uart_controller; write_verilog -noattr $(SYNTH_DIR)/uart_controller_syn.v"
+	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_pkg.sv $(VERYL_OUT_DIR)/soc/cpu/auto_mode_detector.sv; synth_gowin -top auto_mode_detector; write_verilog -noattr $(SYNTH_DIR)/auto_mode_detector_syn.v"
 
 sim-gls-unit: synth-units
 	@echo "=== Running Gowin Primitive GLS: Unified CPU Tests ==="
@@ -277,10 +277,10 @@ sim-soc-gls-fast: synth-top firmware
 	@echo "=== Running Fast SoC Top Boot & Execution Verification (GLS Netlist) ==="
 	$(MAKE) -C sim TOPLEVEL=soc_top MODULE=test_soc_gls_fast SIM_GLS=1
 
-SOC_RTL_SRCS = $(VERYL_OUT_DIR)/cpu/rv32i_pkg.sv $(VERYL_OUT_DIR)/cpu/auto_mode_detector.sv $(VERYL_OUT_DIR)/cpu/hack_translator.sv \
-               $(VERYL_OUT_DIR)/cpu/rv32i_alu.sv $(VERYL_OUT_DIR)/cpu/rv32i_decode.sv $(VERYL_OUT_DIR)/cpu/rv32i_regfile.sv $(VERYL_OUT_DIR)/cpu/rv32i_csrs.sv \
-               $(VERYL_OUT_DIR)/cpu/unified_cpu.sv $(VERYL_OUT_DIR)/uart/clk_timer.sv $(VERYL_OUT_DIR)/uart/fifo_sync.sv $(VERYL_OUT_DIR)/uart/shift_registers.sv \
-               $(VERYL_OUT_DIR)/uart/uart_tx.sv $(VERYL_OUT_DIR)/uart/uart_rx.sv $(VERYL_OUT_DIR)/uart/uart_controller.sv $(VERYL_OUT_DIR)/soc/timer_core.sv \
+SOC_RTL_SRCS = $(VERYL_OUT_DIR)/soc/cpu/rv32i_pkg.sv $(VERYL_OUT_DIR)/soc/cpu/auto_mode_detector.sv $(VERYL_OUT_DIR)/soc/cpu/hack_translator.sv \
+               $(VERYL_OUT_DIR)/soc/cpu/rv32i_alu.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_decode.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_regfile.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_csrs.sv \
+               $(VERYL_OUT_DIR)/soc/cpu/unified_cpu.sv $(VERYL_OUT_DIR)/soc/uart/clk_timer.sv $(VERYL_OUT_DIR)/soc/uart/fifo_sync.sv $(VERYL_OUT_DIR)/soc/uart/shift_registers.sv \
+               $(VERYL_OUT_DIR)/soc/uart/uart_tx.sv $(VERYL_OUT_DIR)/soc/uart/uart_rx.sv $(VERYL_OUT_DIR)/soc/uart/uart_controller.sv $(VERYL_OUT_DIR)/soc/timer_core.sv \
                $(VERYL_OUT_DIR)/soc/sdcard_spi.sv $(VERYL_OUT_DIR)/soc/gpio_controller.sv $(VERYL_OUT_DIR)/soc/soc_ram.sv $(VERYL_OUT_DIR)/soc/soc_top.sv
 
 $(SYNTH_DIR)/soc.json $(SYNTH_DIR)/soc_syn.v: $(VERYL_OUT_DIR)/.stamp $(FIRMWARE_BUILD_DIR)/firmware.hex $(SOC_RTL_SRCS)
@@ -348,7 +348,7 @@ test-hw: zephyr-rust-lib firmware build-hack build-hw prog-sram
 clean:
 	$(VERYL) clean
 	cd firmware && $(CARGO) clean
-	cd zephyr_workspace/app/rust_app && $(CARGO) clean
+	cd zephyr_workspace/app/rust_demo && $(CARGO) clean
 	cd vendor/bc_clone_rs/crates/bc_zephyr 2>/dev/null && $(CARGO) clean || true
-	$(MAKE) -C firmware_hack clean
+	$(MAKE) -C hack_demo clean
 	rm -rf $(BUILD_DIR) ./firmware.hex ./firmware_d*.hex ./sim/firmware.hex ./sim/firmware_d*.hex zephyr_workspace/app/build

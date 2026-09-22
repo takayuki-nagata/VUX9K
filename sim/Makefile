@@ -26,21 +26,21 @@ MODULE ?= test_soc_fast
 SIM_BUILD = $(SIM_BUILD_DIR)/sim_build_gls_$(TOPLEVEL)
 else
 # RTL Behavioral Simulation
-VERILOG_SOURCES += $(VERYL_OUT_DIR)/cpu/rv32i_pkg.sv
-VERILOG_SOURCES += $(VERYL_OUT_DIR)/cpu/rv32i_alu.sv
-VERILOG_SOURCES += $(VERYL_OUT_DIR)/cpu/rv32i_decode.sv
-VERILOG_SOURCES += $(VERYL_OUT_DIR)/cpu/rv32i_regfile.sv
-VERILOG_SOURCES += $(VERYL_OUT_DIR)/cpu/rv32i_csrs.sv
-VERILOG_SOURCES += $(VERYL_OUT_DIR)/cpu/hack_translator.sv
-VERILOG_SOURCES += $(VERYL_OUT_DIR)/cpu/auto_mode_detector.sv
-VERILOG_SOURCES += $(VERYL_OUT_DIR)/cpu/unified_cpu.sv
+VERILOG_SOURCES += $(VERYL_OUT_DIR)/soc/cpu/rv32i_pkg.sv
+VERILOG_SOURCES += $(VERYL_OUT_DIR)/soc/cpu/rv32i_alu.sv
+VERILOG_SOURCES += $(VERYL_OUT_DIR)/soc/cpu/rv32i_decode.sv
+VERILOG_SOURCES += $(VERYL_OUT_DIR)/soc/cpu/rv32i_regfile.sv
+VERILOG_SOURCES += $(VERYL_OUT_DIR)/soc/cpu/rv32i_csrs.sv
+VERILOG_SOURCES += $(VERYL_OUT_DIR)/soc/cpu/hack_translator.sv
+VERILOG_SOURCES += $(VERYL_OUT_DIR)/soc/cpu/auto_mode_detector.sv
+VERILOG_SOURCES += $(VERYL_OUT_DIR)/soc/cpu/unified_cpu.sv
 
-VERILOG_SOURCES += $(VERYL_OUT_DIR)/uart/clk_timer.sv
-VERILOG_SOURCES += $(VERYL_OUT_DIR)/uart/shift_registers.sv
-VERILOG_SOURCES += $(VERYL_OUT_DIR)/uart/fifo_sync.sv
-VERILOG_SOURCES += $(VERYL_OUT_DIR)/uart/uart_tx.sv
-VERILOG_SOURCES += $(VERYL_OUT_DIR)/uart/uart_rx.sv
-VERILOG_SOURCES += $(VERYL_OUT_DIR)/uart/uart_controller.sv
+VERILOG_SOURCES += $(VERYL_OUT_DIR)/soc/uart/clk_timer.sv
+VERILOG_SOURCES += $(VERYL_OUT_DIR)/soc/uart/shift_registers.sv
+VERILOG_SOURCES += $(VERYL_OUT_DIR)/soc/uart/fifo_sync.sv
+VERILOG_SOURCES += $(VERYL_OUT_DIR)/soc/uart/uart_tx.sv
+VERILOG_SOURCES += $(VERYL_OUT_DIR)/soc/uart/uart_rx.sv
+VERILOG_SOURCES += $(VERYL_OUT_DIR)/soc/uart/uart_controller.sv
 
 VERILOG_SOURCES += $(VERYL_OUT_DIR)/soc/timer_core.sv
 VERILOG_SOURCES += $(VERYL_OUT_DIR)/soc/sdcard_spi.sv

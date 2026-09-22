@@ -73,14 +73,14 @@ def compile_verilog():
     run_cmd(["veryl", "build", "--out-dir", VERYL_OUT_DIR], cwd=REPO_DIR)
     print("[INFO] Compiling SystemVerilog entities with Icarus Verilog...")
     sv_files = [
-        os.path.join(VERYL_OUT_DIR, "cpu", "rv32i_pkg.sv"),
-        os.path.join(VERYL_OUT_DIR, "cpu", "rv32i_alu.sv"),
-        os.path.join(VERYL_OUT_DIR, "cpu", "rv32i_decode.sv"),
-        os.path.join(VERYL_OUT_DIR, "cpu", "rv32i_regfile.sv"),
-        os.path.join(VERYL_OUT_DIR, "cpu", "rv32i_csrs.sv"),
-        os.path.join(VERYL_OUT_DIR, "cpu", "hack_translator.sv"),
-        os.path.join(VERYL_OUT_DIR, "cpu", "auto_mode_detector.sv"),
-        os.path.join(VERYL_OUT_DIR, "cpu", "unified_cpu.sv"),
+        os.path.join(VERYL_OUT_DIR, "soc", "cpu", "rv32i_pkg.sv"),
+        os.path.join(VERYL_OUT_DIR, "soc", "cpu", "rv32i_alu.sv"),
+        os.path.join(VERYL_OUT_DIR, "soc", "cpu", "rv32i_decode.sv"),
+        os.path.join(VERYL_OUT_DIR, "soc", "cpu", "rv32i_regfile.sv"),
+        os.path.join(VERYL_OUT_DIR, "soc", "cpu", "rv32i_csrs.sv"),
+        os.path.join(VERYL_OUT_DIR, "soc", "cpu", "hack_translator.sv"),
+        os.path.join(VERYL_OUT_DIR, "soc", "cpu", "auto_mode_detector.sv"),
+        os.path.join(VERYL_OUT_DIR, "soc", "cpu", "unified_cpu.sv"),
         os.path.join(VERYL_OUT_DIR, "sim", "tb_hex_runner.sv"),
     ]
     out_vvp = os.path.join(BUILD_DIR, "sim.vvp")

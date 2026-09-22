@@ -106,7 +106,7 @@ pub extern "C" fn vux9k_k_uptime_get_32() -> u32 {
 #[no_mangle]
 pub extern "C" fn main() -> ! {
     vux9k_print_str(b"\n[Rust App] Started\n\0".as_ptr());
-    vux9k_rust_app::rust_main();
+    vux9k_rust_demo::rust_main();
 
     vux9k_print_str(b"\n[Rust App] Returning to Boot Manager...\n\0".as_ptr());
 

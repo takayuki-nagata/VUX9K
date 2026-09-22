@@ -3,5 +3,5 @@
 version = 4
 
 [[package]]
-name = "resident_loader"
+name = "vux9k_rust_demo"
 version = "0.1.0"

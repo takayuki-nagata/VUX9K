@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [package]
-name = "vux9k_rust_app"
+name = "vux9k_rust_demo"
 version = "0.1.0"
 edition = "2021"
 authors = ["Takayuki Nagata"]

@@ -7,19 +7,19 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(vux9k_zephyr_rust)
 
 set(RUST_TARGET riscv32i-unknown-none-elf)
-set(RUST_LIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/rust_app/target/${RUST_TARGET}/release)
-set(RUST_LIB ${RUST_LIB_DIR}/libvux9k_rust_app.a)
+set(RUST_LIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/rust_demo/target/${RUST_TARGET}/release)
+set(RUST_LIB ${RUST_LIB_DIR}/libvux9k_rust_demo.a)
 
 # Custom command to automatically build Rust staticlib during Zephyr build
 add_custom_command(
     OUTPUT ${RUST_LIB}
     COMMAND cargo build --release --target ${RUST_TARGET}
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/rust_app
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/rust_demo
     COMMENT "Building Rust staticlib for Zephyr RV32I..."
 )
 
-add_custom_target(rust_app_staticlib DEPENDS ${RUST_LIB})
+add_custom_target(rust_demo_staticlib DEPENDS ${RUST_LIB})
 
 target_sources(app PRIVATE src/main.c)
-add_dependencies(app rust_app_staticlib)
+add_dependencies(app rust_demo_staticlib)
 target_link_libraries(app PRIVATE ${RUST_LIB})

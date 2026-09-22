@@ -18,7 +18,7 @@ from sdcard_model import SpiSdCardModel
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
-import scripts.vux_tool as vux_tool
+import tools.vux_tool as vux_tool
 
 UART_BAUD_CYCLES = 234  # 27.0 MHz / 115200 baud
 

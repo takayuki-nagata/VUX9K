@@ -25,7 +25,7 @@ import shutil
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 
-import scripts.vux_tool as vux_tool
+import tools.vux_tool as vux_tool
 
 
 def print_banner(title):
@@ -110,7 +110,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
         # -------------------------------------------------------------
         # Test 6: Flash Slot 1: Default RISC-V App (vux_tool.flash_slot)
         # -------------------------------------------------------------
-        app_bin = os.path.join(REPO_ROOT, "zephyr_workspace", "app", "rust_app", "app.bin")
+        app_bin = os.path.join(REPO_ROOT, "zephyr_workspace", "app", "rust_demo", "app.bin")
         if not os.path.exists(app_bin):
             app_bin = os.path.join(REPO_ROOT, "build", "firmware", "test_payload.bin")
             os.makedirs(os.path.dirname(app_bin), exist_ok=True)

@@ -253,7 +253,7 @@ impl SdCard {
         // Verify: re-read the sector and compare byte-for-byte, streaming
         // the comparison rather than buffering a second 512-byte block.
         // D_RAM is only 8KB total and shared with the stack (no guard page,
-        // see firmware/bootstrap/link.x) -- an extra 512-byte local buffer
+        // see firmware/boot_manager/bootstrap/link.x) -- an extra 512-byte local buffer
         // here, on top of the caller's own 512-byte sector buffer already
         // on the stack, is a real stack-overflow risk on this target.
         let r1v = Self::send_cmd(17, addr, 0xFF);

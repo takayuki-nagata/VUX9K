@@ -3,5 +3,9 @@
 version = 4
 
 [[package]]
-name = "firmware"
+name = "boot_manager"
+version = "0.1.0"
+
+[[package]]
+name = "resident_loader"
 version = "0.1.0"

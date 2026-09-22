@@ -6,5 +6,5 @@ target = "riscv32i-unknown-none-elf"
 
 [target.riscv32i-unknown-none-elf]
 rustflags = [
-    "-C", "link-arg=-Tbootstrap/link.x",
+    "-C", "link-arg=-Tboot_manager/bootstrap/link.x",
 ]
