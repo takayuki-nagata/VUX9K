@@ -10,7 +10,7 @@ Extracts instruction ROM image (p_paddr < 0x20000000) from RISC-V ELF.
 import sys
 import struct
 
-def elf2bin(elf_path, bin_path):
+def elf2bin(elf_path, bin_path, dram_outdir=None):
     with open(elf_path, 'rb') as f:
         data = f.read()
 
@@ -44,6 +44,9 @@ def elf2bin(elf_path, bin_path):
         f.write(rom_data)
     print(f"Successfully extracted {len(rom_data)} bytes ROM image -> {bin_path}")
 
+    if dram_outdir is None:
+        return
+
     # Write D-RAM byte-lane hex files (d_mem0..3)
     d0_lines = []
     d1_lines = []
@@ -60,23 +63,15 @@ def elf2bin(elf_path, bin_path):
         d3_lines.append(f"{b3:02x}\n")
 
     import os
+    os.makedirs(dram_outdir, exist_ok=True)
     for idx, lines in enumerate([d0_lines, d1_lines, d2_lines, d3_lines]):
-        out_name = f"firmware_d{idx}.hex"
-        try:
-            with open(out_name, 'w') as df:
-                df.writelines(lines)
-        except Exception:
-            pass
-        if os.path.isdir("firmware"):
-            try:
-                with open(f"firmware/{out_name}", 'w') as df:
-                    df.writelines(lines)
-            except Exception:
-                pass
-    print("Successfully generated D-RAM preloads: firmware_d0..3.hex")
+        out_path = os.path.join(dram_outdir, f"firmware_d{idx}.hex")
+        with open(out_path, 'w') as df:
+            df.writelines(lines)
+    print(f"Successfully generated D-RAM preloads: {dram_outdir}/firmware_d0..3.hex")
 
 if __name__ == '__main__':
     if len(sys.argv) < 3:
-        print("Usage: python3 elf2bin.py <elf_file> <bin_file>")
+        print("Usage: python3 elf2bin.py <elf_file> <bin_file> [dram_outdir]")
         sys.exit(1)
-    elf2bin(sys.argv[1], sys.argv[2])
+    elf2bin(sys.argv[1], sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None)

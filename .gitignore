@@ -3,56 +3,37 @@
 __pycache__/
 *.pyc
 
-# Firmware & Zephyr build artifacts
-firmware/target/
-firmware/firmware.bin
-firmware/firmware.hex
-firmware/test_payload.bin
-resident_loader/target/
-resident_loader/*.bin
+# Unified build output (all generated/build artifacts live here)
+build/
+
+# Staged firmware.hex/firmware_d*.hex copies at repo root and sim/, required because
+# soc_ram.veryl's $readmemh() resolves these relative to each tool's process cwd
 firmware*.hex
-firmware*.bin
-firmware*_d*.hex
-firmware/firmware*_d*.hex
-build_hack/
-zephyr_workspace/**/target/
+
+# Veryl toolchain internal cache & fetched dependency sources (not build output)
+.build/
+dependencies/
+Veryl.lock
+
+# Cargo build output (Rust crates keep their own target/ dirs, not consolidated into build/)
+target/
+
+# Zephyr out-of-tree app's own nested build outputs (west/CMake convention, not consolidated into build/)
 zephyr_workspace/**/build/
 zephyr_workspace/**/*.bin
-build_zephyr/
 
-# Architectural compliance test artifacts
-build_arch_test/
+# Fetched riscv-arch-test submodule content (pulled on demand by run_arch_test.py)
 vendor/riscv-arch-test/
 
-# Simulation build artifacts
-sim/sim_build*/
-sim/results.xml
+# Simulation stray artifacts (non-standard names cocotb/Icarus occasionally leave behind)
 sim/soc_top
 sim/e~*
 sim_soc_real
 tb_runner
 
-# Veryl build artifacts
-.veryl_build
-.build/
-dependencies/
-Veryl.lock
-VUX9K.f
-cpu/*.sv
-cpu/*.map
-uart/*.sv
-uart/*.map
-soc/*.sv
-soc/*.map
-sim/*.sv
-sim/*.map
-
-# Synthesis outputs
-*.json
-pack.fs
+# Stray logs from manual yosys/nextpnr invocations outside the Makefile flow
 *.log
 *.pretty
-*_syn.v
 
 # System & temporary files
 /tmp/

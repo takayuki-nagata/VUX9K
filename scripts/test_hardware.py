@@ -87,7 +87,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
         # -------------------------------------------------------------
         # Test 4: Flash Slot 0: Boot Manager (vux_tool.flash_slot)
         # -------------------------------------------------------------
-        boot_mgr_bin = os.path.join(REPO_ROOT, "firmware", "firmware.bin")
+        boot_mgr_bin = os.path.join(REPO_ROOT, "build", "firmware", "firmware.bin")
         test_name_flash_s0 = "4. Flash Slot 0: Boot Manager ('w' / vux_tool.flash_slot)"
         try:
             meta = vux_tool.flash_slot(ser, boot_mgr_bin, slot=0, name="Boot Manager", mode="riscv", version=10)
@@ -112,7 +112,8 @@ def run_hardware_test_suite(port="auto", baud=115200):
         # -------------------------------------------------------------
         app_bin = os.path.join(REPO_ROOT, "zephyr_workspace", "app", "rust_app", "app.bin")
         if not os.path.exists(app_bin):
-            app_bin = os.path.join(REPO_ROOT, "firmware", "test_payload.bin")
+            app_bin = os.path.join(REPO_ROOT, "build", "firmware", "test_payload.bin")
+            os.makedirs(os.path.dirname(app_bin), exist_ok=True)
             with open(app_bin, "wb") as f:
                 f.write(bytes([0x93, 0x02, 0x00, 0x00, 0x93, 0x82, 0x12, 0x00]))
 
@@ -137,9 +138,9 @@ def run_hardware_test_suite(port="auto", baud=115200):
         # -------------------------------------------------------------
         # Test 8: Flash Slot 2: Hack 16-bit Firmware (vux_tool.flash_slot)
         # -------------------------------------------------------------
-        hack_bin = os.path.join(REPO_ROOT, "build_hack", "firmware.bin")
+        hack_bin = os.path.join(REPO_ROOT, "build", "hack", "firmware.bin")
         if not os.path.exists(hack_bin):
-            os.makedirs(os.path.join(REPO_ROOT, "build_hack"), exist_ok=True)
+            os.makedirs(os.path.join(REPO_ROOT, "build", "hack"), exist_ok=True)
             with open(hack_bin, "wb") as f:
                 f.write(bytes([0x00, 0x00, 0x01, 0x00, 0x02, 0x00]))
 
@@ -248,7 +249,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
 
         # Reset board via openFPGALoader to return cleanly to Boot Manager (known issue: app return SDHC reload)
         ser.close()
-        pack_fs = os.path.join(REPO_ROOT, "pack.fs")
+        pack_fs = os.path.join(REPO_ROOT, "build", "synth", "pack.fs")
         loader_bin = shutil.which("openFPGALoader") or os.path.expanduser("~/.local/oss-cad-suite/bin/openFPGALoader")
         subprocess.run([loader_bin, "-b", "tangnano9k", pack_fs], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(0.5)
@@ -277,7 +278,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
 
         # Reload bitstream via openFPGALoader to return cleanly to Boot Manager
         ser.close()
-        pack_fs = os.path.join(REPO_ROOT, "pack.fs")
+        pack_fs = os.path.join(REPO_ROOT, "build", "synth", "pack.fs")
         loader_bin = shutil.which("openFPGALoader") or os.path.expanduser("~/.local/oss-cad-suite/bin/openFPGALoader")
         subprocess.run([loader_bin, "-b", "tangnano9k", pack_fs], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(0.5)

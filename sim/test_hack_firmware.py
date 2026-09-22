@@ -11,7 +11,7 @@ import pytest
 from emulator import SocEmulator
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-HACK_BIN = os.path.join(REPO_ROOT, "build_hack", "firmware.bin")
+HACK_BIN = os.path.join(REPO_ROOT, "build", "hack", "firmware.bin")
 
 @pytest.fixture(scope="module")
 def hack_emulator():

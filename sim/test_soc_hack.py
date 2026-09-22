@@ -12,7 +12,7 @@ from cocotb.triggers import ClockCycles
 from cocotb.clock import Clock
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-HACK_HEX = os.path.join(REPO_ROOT, "build_hack", "firmware.hex")
+HACK_HEX = os.path.join(REPO_ROOT, "build", "hack", "firmware.hex")
 
 @cocotb.test()
 async def test_soc_hack_execution(dut):

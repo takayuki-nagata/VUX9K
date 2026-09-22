@@ -1,7 +1,7 @@
 # Copyright (c) 2026 Takayuki Nagata
 # SPDX-License-Identifier: MIT
 
-BUILD_DIR ?= ../build_hack
+BUILD_DIR ?= ../build/hack
 HAS ?= $(HOME)/.local/bin/has
 HCC ?= $(CURDIR)/../.venv/bin/hcc
 BIN2HEX ?= python3 ../scripts/bin2hex.py

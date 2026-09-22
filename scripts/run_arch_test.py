@@ -35,7 +35,8 @@ VVP_BIN = shutil.which("vvp")
 REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VENDOR_DIR = os.path.join(REPO_DIR, "vendor")
 ARCH_TEST_DIR = os.path.join(VENDOR_DIR, "riscv-arch-test")
-BUILD_DIR = os.path.join(REPO_DIR, "build_arch_test")
+BUILD_DIR = os.path.join(REPO_DIR, "build", "arch_test")
+VERYL_OUT_DIR = os.path.join(REPO_DIR, "build", "veryl")
 TARGET_ENV_DIR = os.path.join(REPO_DIR, "scripts", "target_env")
 
 ARCH_TEST_REPO = "https://github.com/riscv-non-isa/riscv-arch-test.git"
@@ -69,18 +70,18 @@ def setup_repo():
 
 def compile_verilog():
     print("[INFO] Building Veryl sources...")
-    run_cmd(["veryl", "build"], cwd=REPO_DIR)
+    run_cmd(["veryl", "build", "--out-dir", VERYL_OUT_DIR], cwd=REPO_DIR)
     print("[INFO] Compiling SystemVerilog entities with Icarus Verilog...")
     sv_files = [
-        os.path.join(REPO_DIR, "cpu", "rv32i_pkg.sv"),
-        os.path.join(REPO_DIR, "cpu", "rv32i_alu.sv"),
-        os.path.join(REPO_DIR, "cpu", "rv32i_decode.sv"),
-        os.path.join(REPO_DIR, "cpu", "rv32i_regfile.sv"),
-        os.path.join(REPO_DIR, "cpu", "rv32i_csrs.sv"),
-        os.path.join(REPO_DIR, "cpu", "hack_translator.sv"),
-        os.path.join(REPO_DIR, "cpu", "auto_mode_detector.sv"),
-        os.path.join(REPO_DIR, "cpu", "unified_cpu.sv"),
-        os.path.join(REPO_DIR, "sim", "tb_hex_runner.sv"),
+        os.path.join(VERYL_OUT_DIR, "cpu", "rv32i_pkg.sv"),
+        os.path.join(VERYL_OUT_DIR, "cpu", "rv32i_alu.sv"),
+        os.path.join(VERYL_OUT_DIR, "cpu", "rv32i_decode.sv"),
+        os.path.join(VERYL_OUT_DIR, "cpu", "rv32i_regfile.sv"),
+        os.path.join(VERYL_OUT_DIR, "cpu", "rv32i_csrs.sv"),
+        os.path.join(VERYL_OUT_DIR, "cpu", "hack_translator.sv"),
+        os.path.join(VERYL_OUT_DIR, "cpu", "auto_mode_detector.sv"),
+        os.path.join(VERYL_OUT_DIR, "cpu", "unified_cpu.sv"),
+        os.path.join(VERYL_OUT_DIR, "sim", "tb_hex_runner.sv"),
     ]
     out_vvp = os.path.join(BUILD_DIR, "sim.vvp")
     cmd = [IVERILOG_BIN, "-g2012", "-o", out_vvp] + sv_files

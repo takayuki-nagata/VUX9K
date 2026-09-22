@@ -11,7 +11,7 @@ import pytest
 from emulator import SocEmulator
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ZEPHYR_BIN = os.path.join(REPO_ROOT, "build_zephyr", "zephyr", "zephyr.bin")
+ZEPHYR_BIN = os.path.join(REPO_ROOT, "build", "zephyr", "zephyr", "zephyr.bin")
 
 @pytest.fixture(scope="module")
 def booted_bc_emulator():

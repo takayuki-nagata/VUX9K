@@ -121,7 +121,7 @@ def analyze_sta(report_path, target_freq_mhz=27.0):
 
 def main():
     parser = argparse.ArgumentParser(description="Format nextpnr STA JSON report.")
-    parser.add_argument("report", nargs="?", default="soc_sta.json", help="Path to nextpnr JSON report")
+    parser.add_argument("report", nargs="?", default="build/synth/soc_sta.json", help="Path to nextpnr JSON report")
     parser.add_argument("--freq", type=float, default=27.0, help="Target clock frequency in MHz (default: 27.0)")
     parser.add_argument("--strict", action="store_true", help="Exit with non-zero code on timing violation")
 

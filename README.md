@@ -124,11 +124,11 @@ python3 scripts/vux_tool.py list-slots
 #    Each write is verified by reading the block back on-device; the host tool raises
 #    a RuntimeError if the Boot Manager reports an [SD-ERR] during the flash.
 #    - Flashes Hack 16-bit binary to Slot 2 with program name:
-python3 scripts/vux_tool.py flash-sd build_hack/firmware.bin --mode hack --slot 2 --name "HackDemo"
+python3 scripts/vux_tool.py flash-sd build/hack/firmware.bin --mode hack --slot 2 --name "HackDemo"
 #    - Flashes RISC-V 32-bit binary to Slot 1 (Default S2 launch slot):
-python3 scripts/vux_tool.py flash-sd firmware/firmware.bin --mode riscv --slot 1 --name "RiscvDemo"
+python3 scripts/vux_tool.py flash-sd build/firmware/firmware.bin --mode riscv --slot 1 --name "RiscvDemo"
 #    - Flashes Custom Boot Manager to Slot 0 (SD Override):
-python3 scripts/vux_tool.py flash-sd firmware/firmware.bin --mode riscv --slot 0 --name "BootManager"
+python3 scripts/vux_tool.py flash-sd build/firmware/firmware.bin --mode riscv --slot 0 --name "BootManager"
 
 # 5. Inspect specific Slot Header & verify Magic/Version/Mode/Size/Name
 python3 scripts/vux_tool.py inspect-sd --slot 1
@@ -190,7 +190,7 @@ Connecting any terminal (115200 bps 8N1) presents the interactive `vux>` prompt:
 # 1. Build Rust Boot Manager firmware
 make firmware
 
-# 2. Synthesize Veryl SoC RTL -> GW1NR-9 Bitstream (pack.fs)
+# 2. Synthesize Veryl SoC RTL -> GW1NR-9 Bitstream (build/synth/pack.fs)
 make build-hw
 
 # 3. Flash Bitstream to Tang Nano 9K SRAM (fast volatile load)
@@ -234,7 +234,7 @@ make test-hw
 | **GLS Unit Tests** | `make sim-gls-unit` | ~40 sec | Gowin primitive netlists (`gowin_cells_sim.v`) with LUTRAMs (`RAM16SDP4`), ALUs, and DFFs |
 | **Fast SoC Boot** | `make sim-soc-fast` / `make sim-soc-gls-fast` | < 1 sec | Fast power-on reset, CPU boot, and instruction execution verification on RTL & full Gowin netlist |
 | **End-to-End Flow** | `make sim-hw-flow` / `make sim-gls-hw-flow` | ~3-4 min | Full 8-step hardware test suite in simulation using `VirtualSerialBridge` (UART) and `SpiSdCardModel` (SD SPI) |
-| **Static Timing (STA)**| `make sta` | ~15 sec | Exhaustive post-PnR timing analysis, Fmax verification, and critical path breakdown (`soc_sta.json`) |
+| **Static Timing (STA)**| `make sta` | ~15 sec | Exhaustive post-PnR timing analysis, Fmax verification, and critical path breakdown (`build/synth/soc_sta.json`) |
 | **Real Hardware** | `make test-hw` | ~60 sec | Automated physical hardware execution on Tang Nano 9K via `scripts/test_hardware.py` (15 tests) |
 
 ### Real Hardware Test Suite (15 Automated Checks)
@@ -288,8 +288,7 @@ VUX9K/
 │   ├── sdcard_spi.veryl            # MicroSD SPI Master controller
 │   ├── timer_core.veryl            # 64-bit mtime/mtimecmp timer core
 │   ├── soc_ram.veryl               # Harvard 16KB I-RAM + 8KB D-RAM memory
-│   ├── soc_top.veryl               # Tang Nano 9K SoC top-level wrapper
-│   └── hw_boot_mgr.veryl           # Standalone legacy boot-manager prototype; not instantiated in soc_top, built only for its own GLS unit test
+│   └── soc_top.veryl               # Tang Nano 9K SoC top-level wrapper
 ├── resident_loader/                # Bare-metal Rust Resident Loader (2KB at 0x0000_3800)
 ├── firmware/                       # Bare-metal Rust Boot Manager & drivers (14KB at 0x0000_0000)
 │   ├── Cargo.toml
@@ -299,7 +298,15 @@ VUX9K/
 ├── zephyr_workspace/               # Zephyr RTOS out-of-tree application & bc_clone_rs integration
 ├── sim/                            # Cocotb & Pytest RTL simulation testbenches
 ├── scripts/                        # Host tooling & flasher (vux_tool.py, run_arch_test.py, test_hardware.py, run_pnr.py, report_sta.py)
-└── vendor/                         # bc_clone_rs (git submodule); riscv-arch-test (fetched on demand by run_arch_test.py, gitignored)
+├── vendor/                         # bc_clone_rs (git submodule); riscv-arch-test (fetched on demand by run_arch_test.py, gitignored)
+└── build/                          # Unified build output (gitignored) - every generated artifact lands here
+    ├── veryl/                      # veryl build --out-dir output: generated .sv/.map for cpu/, soc/, uart/, sim/
+    ├── firmware/                   # firmware.bin/.hex, firmware_d0-3.hex, resident_loader.bin
+    ├── hack/                       # Hack 16-bit firmware.bin/.hex
+    ├── arch_test/                  # RISC-V architectural compliance test artifacts
+    ├── zephyr/                     # Zephyr `west build` output
+    ├── synth/                      # soc.json, soc_syn.v, soc_pnr.json, soc_sta.json, pack.fs, unit netlists
+    └── sim/                        # cocotb sim_build_*/ directories and results.xml
 ```
 
 ---

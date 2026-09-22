@@ -16,8 +16,8 @@ FORBIDDEN_PATTERNS = [
 ]
 
 IGNORED_DIRS = {
-    '.git', '.venv', '.build', 'target', 'vendor', 'build_arch_test', 
-    '__pycache__', '.pytest_cache', 'dependencies', 'build_zephyr', 'build'
+    '.git', '.venv', '.build', 'target', 'vendor',
+    '__pycache__', '.pytest_cache', 'dependencies', 'build'
 }
 
 IGNORED_EXTENSIONS = {
