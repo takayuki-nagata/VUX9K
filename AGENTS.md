@@ -190,6 +190,12 @@ are easy to break without noticing:
   deliberately fails test case 2, and the run aborts unless it's reported as
   exactly `FAIL (TESTNUM=2)`. This is what proves the verdict plumbing works;
   don't remove it to "speed things up".
+- **When the trap path is restored, update every place that encodes the
+  regression, together:** the trap entries in `EXPECTED_FAILURES`, the
+  `RVTEST_PASS/FAIL` override in `scripts/riscv_tests/env/riscv_test.h`, and the
+  `expect_fail=True` markers on `sim/unit/test_unified_cpu_traps.py` (3 tests) and
+  `sim/integration/test_soc_rv32i.py::test_soc_timer_interrupt`. All of them turn
+  red on their own once the CPU traps correctly (XPASS / "passed unexpectedly").
 - The tb accepts `+TRACE` (per-cycle PC/instruction log) and `+MAX_CYCLES=N`,
   e.g. `vvp -n build/riscv_tests/tb_hex_runner.vvp +HEX_FILE=build/riscv_tests/<test>.hex +TRACE`.
 
