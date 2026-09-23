@@ -13,9 +13,7 @@ import sys
 import cocotb
 
 sys.path.append(os.path.dirname(__file__))
-from soc_env import start_soc, wait_cycles
-
-VUX_MAGIC = 0x56555839
+from soc_env import slot_image, start_soc, wait_cycles
 
 
 @cocotb.test()
@@ -27,11 +25,11 @@ async def test_soc_fast_boot(dut):
     # sb a0, 0(a1)        -> 0x00a58023
     # j .                 -> 0x0000006f
     payload = struct.pack("<IIII", 0x400005B7, 0x02300513, 0x00A58023, 0x0000006F)
-    header = struct.pack(
-        "<IHHIIIIII32s", VUX_MAGIC, 3, 1, 1, len(payload), 0, 0, 0, 1, b"TestApp\x00".ljust(32, b"\x00")
-    )
+    # VUX9 v3 image exactly as tools/vux_tool.py flashes it (the hand-packed header
+    # this replaced had CRC32 = 0, which only worked because the RL doesn't check it)
+    slot1, _ = slot_image(payload, slot=1, mode="riscv", name="TestApp")
     # Sector 0 gets the 0x55AA MBR signature from start_soc()
-    ser, _ = await start_soc(dut, sd_sectors={128: header + payload})
+    ser, _ = await start_soc(dut, sd_sectors=slot1)
     dut._log.info("SoC Reset released.")
 
     # Wait for UART boot banner and prompt 'vux> ' (raises TimeoutError with the output so far)
