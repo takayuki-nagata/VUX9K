@@ -89,8 +89,9 @@ top level — **do not move them into a subdirectory**:
 Every cocotb test module is one parametrized case in `sim/runners/test_sim.py`
 (`test_unit`, `test_unit_gls`, `test_soc`, `test_soc_gls`, keyed by module
 name); the root `Makefile`'s `sim-*` targets just select node IDs, e.g.
-`pytest -s "sim/runners/test_sim.py::test_soc[test_soc_fast]"`. `SIM=verilator`
-selects the simulator. `sim/runners/sim_runner.py` owns the source lists and
+`pytest -s "sim/runners/test_sim.py::test_soc[test_soc_fast]"`. `SIM=icarus|verilator`
+selects the simulator (the Makefile sets it per target from `SIM_UNIT`/`SIM_SOC`, see
+the Verilator section below). `sim/runners/sim_runner.py` owns the source lists and
 layout: one compiled build per `build/sim/<sim>[-gls]/<toplevel>/` (compile is
 `flock`-serialized), and a separate run directory + results file per test
 module under it, so any tests can run concurrently. Non-obvious bits:
@@ -213,6 +214,31 @@ RTL, `sim-soc-fast`: 491 s -> 194 s):
 Tests not yet on `soc_env` (`test_soc_boot`/`_hack`/`_rv32i`/`_zephyr`) still drive
 their own clock on bare `soc_top`.
 
+## Verilator: which tests use it, and the `--public-flat-rw` trap
+
+`make` runs short tests on Icarus (`SIM_UNIT`, compile time dominates) and the
+long SoC/GLS runs on Verilator (`SIM_SOC`): `sim-soc-fast`, `sim-hw-flow`,
+`sim-soc-gls-fast`, `sim-gls-hw-flow`. Measured 2026-09 (wall time incl. compile):
+hw-flow RTL 860 s (Icarus) -> ~30 s; gls-fast ~1,050 s -> ~33 s. Verilator needs
+`perl` (not on the Silverblue host — run it inside the `fedora-toolbox-43` toolbox).
+- **Don't let cocotb's `--public-flat-rw` back in.** cocotb's Verilator runner
+  adds it unconditionally; it makes every signal VPI-visible and blocks most of
+  Verilator's optimization — on the gate-level netlist it was ~18x slower to
+  simulate and ~5x slower to compile. `sim_runner.py` strips it and generates a
+  `public.vlt` exposing only the toplevel's own signals, plus `SOC_RTL_PUBLIC`
+  (`soc_top.*`, `unified_cpu.pc_out`, `soc_ram.i_mem`) for RTL SoC builds. **A test
+  that starts touching another internal signal fails on Verilator with "no such
+  attribute" until you add it to `SOC_RTL_PUBLIC`** (Icarus sees everything, so
+  it won't catch this).
+- **2-state vs 4-state.** Verilator has no X: an undriven input reads 0. This
+  already exposed `test_shift_registers` never driving `rst` (it passed on Icarus
+  only because X skipped the reset branch). The reverse also holds — Verilator
+  can hide a missing reset that Icarus would show as X — which is why
+  `test-sim` also runs `sim-soc-fast-icarus`.
+- `tb_soc_top.sv`'s `#`-delay clock needs `--timing` (in `BUILD_ARGS`).
+- The runner infers the HDL language from the *last* source, so the `.vlt` is
+  prepended, not appended.
+
 ## Known pre-existing (structure-independent) failures
 
 Confirmed present on `main` too (reproduced in a clean `git worktree`), not
@@ -239,11 +265,12 @@ the full multi-step UART flashing/boot protocol end-to-end through
 `tools/vux_tool.py`'s `build_vux9_image()`: prompt sync, hardware
 self-diagnostics, SD sector dump, `'w'`-command flash of both a Hack and a
 RISC-V payload (slot-ID handshake → sector-count handshake → per-sector
-streaming), boot-header verification, and SD-boot execution. Each run takes
-roughly 25–35 minutes for RTL and longer for GLS, which is why `test-sim`/
+streaming), boot-header verification, and SD-boot execution. On Icarus these
+took 25–35 minutes (RTL) and many hours (GLS), which is why `test-sim`/
 `test`/`test-ci` use the much lighter `sim-soc-fast`/`sim-soc-gls-fast`
 instead (boot + execution only, no flashing protocol, no SD dump/verify
-round trip) and never run these two. A green CI (`test-sim`) therefore does
+round trip) and never run these two. Since they moved to Verilator (2026-09)
+they take ~30 s (RTL) and ~6 min (GLS), so this exclusion is up for revision. A green CI (`test-sim`) therefore does
 **not** confirm the flashing protocol still works.
 
 Run `sim-hw-flow`/`sim-gls-hw-flow` explicitly whenever you touch:

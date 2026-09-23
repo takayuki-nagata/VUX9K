@@ -12,9 +12,11 @@ OPENFPGALOADER ?= openFPGALoader
 CST_FILE ?= tangnano9k.cst
 CARGO = cargo
 PYTHON = python3
-# cocotb testbenches run through pytest + cocotb_tools.runner (sim/runners/); SIM=icarus|verilator
-SIM ?= icarus
-export SIM
+# cocotb testbenches run through pytest + cocotb_tools.runner (sim/runners/).
+# Short tests are dominated by compile time -> Icarus; long SoC/GLS runs by simulation
+# speed -> Verilator (~25-140x faster there). Override with SIM_UNIT= / SIM_SOC=.
+SIM_UNIT ?= icarus
+SIM_SOC ?= verilator
 SIM_TESTS = sim/runners/test_sim.py
 PYTEST_SIM = $(PYTHON) -m pytest -s -q
 UV = uv
@@ -36,7 +38,7 @@ HACK_BUILD_DIR := $(BUILD_DIR)/hack
 ZEPHYR_BUILD_DIR ?= $(BUILD_DIR)/zephyr
 SYNTH_DIR := $(BUILD_DIR)/synth
 
-.PHONY: all veryl check check-paths fmt test test-ci test-hw test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware sim-unit sim-boot sim-soc sim test-isa zephyr-rust-lib zephyr-bc-lib build-zephyr sim-zephyr-emu sim-zephyr-repl sim-zephyr-rtl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls sta
+.PHONY: all veryl check check-paths fmt test test-ci test-hw test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware sim-unit sim-boot sim-soc sim test-isa zephyr-rust-lib zephyr-bc-lib build-zephyr sim-zephyr-emu sim-zephyr-repl sim-zephyr-rtl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sta
 
 all: test-ci
 
@@ -162,7 +164,7 @@ build-hack:
 
 sim-unit: veryl
 	@echo "=== Running RTL Unit Tests (cocotb) ==="
-	$(PYTEST_SIM) "$(SIM_TESTS)::test_unit"
+	SIM=$(SIM_UNIT) $(PYTEST_SIM) "$(SIM_TESTS)::test_unit"
 
 # ===== Simulation - RV32I ISA Tests (riscv-tests) =====
 
@@ -174,7 +176,7 @@ test-isa: veryl
 
 sim-boot: veryl
 	@echo "=== Running Hardware Boot Manager & Bridge Cocotb Tests ==="
-	$(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_boot]"
+	SIM=$(SIM_UNIT) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_boot]"
 
 sim-soc: veryl firmware sim-boot
 	@echo "=== Running Python Software Emulator Unit Tests ==="
@@ -182,9 +184,9 @@ sim-soc: veryl firmware sim-boot
 	@echo "=== Running Python Software Emulator ==="
 	$(PYTHON) sim/emulator/emulator.py $(FIRMWARE_BUILD_DIR)/firmware.bin
 	@echo "=== Running SoC Top RISC-V Integration Tests ==="
-	$(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_rv32i]"
+	SIM=$(SIM_UNIT) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_rv32i]"
 	@echo "=== Running SoC Top Hack Integration Tests ==="
-	$(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_hack]"
+	SIM=$(SIM_UNIT) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_hack]"
 
 sim-zephyr-emu: build-zephyr
 	@echo "=== Running Zephyr bc_clone_rs Python Emulator ==="
@@ -200,7 +202,7 @@ sim-zephyr-repl: build-zephyr
 
 sim-zephyr-rtl: veryl zephyr-bc-lib
 	@echo "=== Running Zephyr/Rust SoC RTL Simulation ==="
-	$(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_zephyr]"
+	SIM=$(SIM_UNIT) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_zephyr]"
 
 sim-zephyr: sim-zephyr-emu sim-zephyr-repl sim-zephyr-rtl
 
@@ -214,17 +216,17 @@ sim-hack-pytest: build-hack
 
 sim-hack-rtl: veryl build-hack
 	@echo "=== Running Hack 16-bit SoC RTL Simulation ==="
-	$(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_hack]"
+	SIM=$(SIM_UNIT) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_hack]"
 
 sim-hack: sim-hack-emu sim-hack-pytest sim-hack-rtl
 
 sim-hw-flow: veryl firmware build-hack
 	@echo "=== Running SoC Top End-to-End Hardware Verification Flow (RTL Simulation) ==="
-	$(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_hardware_flow]"
+	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_hardware_flow]"
 
 sim-gls-hw-flow: synth-top firmware build-hack
 	@echo "=== Running SoC Top End-to-End Hardware Verification Flow (GLS Simulation) ==="
-	$(PYTEST_SIM) "$(SIM_TESTS)::test_soc_gls[test_soc_hardware_flow]"
+	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc_gls[test_soc_hardware_flow]"
 
 sim: sim-unit test-isa sim-gls-unit sim-soc-fast
 
@@ -239,15 +241,21 @@ synth-units: veryl
 
 sim-gls-unit: synth-units
 	@echo "=== Running Gowin Primitive GLS Unit Tests (cocotb) ==="
-	$(PYTEST_SIM) "$(SIM_TESTS)::test_unit_gls"
+	SIM=$(SIM_UNIT) $(PYTEST_SIM) "$(SIM_TESTS)::test_unit_gls"
 
 sim-soc-fast: veryl firmware
 	@echo "=== Running Fast SoC Top Boot & Execution Verification (RTL) ==="
-	$(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_fast]"
+	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_fast]"
+
+# Same test on Icarus: 4-state simulation keeps X-propagation (e.g. a missing reset)
+# visible on the boot path, which 2-state Verilator would hide
+sim-soc-fast-icarus: veryl firmware
+	@echo "=== Running Fast SoC Top Boot & Execution Verification (RTL, Icarus 4-state) ==="
+	SIM=icarus $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_fast]"
 
 sim-soc-gls-fast: synth-top firmware
 	@echo "=== Running Fast SoC Top Boot & Execution Verification (GLS Netlist) ==="
-	$(PYTEST_SIM) "$(SIM_TESTS)::test_soc_gls[test_soc_gls_fast]"
+	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc_gls[test_soc_gls_fast]"
 
 SOC_RTL_SRCS = $(VERYL_OUT_DIR)/soc/cpu/rv32i_pkg.sv $(VERYL_OUT_DIR)/soc/cpu/auto_mode_detector.sv $(VERYL_OUT_DIR)/soc/cpu/hack_translator.sv \
                $(VERYL_OUT_DIR)/soc/cpu/rv32i_alu.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_decode.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_regfile.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_csrs.sv \
@@ -294,7 +302,7 @@ prog-flash: $(SYNTH_DIR)/pack.fs
 
 # ===== Aggregate Test Targets =====
 
-test-sim: check firmware zephyr-rust-lib zephyr-bc-lib build-hack build-zephyr sim-unit test-isa sim-gls-unit sim-soc-fast synth-top sim-soc-gls-fast
+test-sim: check firmware zephyr-rust-lib zephyr-bc-lib build-hack build-zephyr sim-unit test-isa sim-gls-unit sim-soc-fast sim-soc-fast-icarus synth-top sim-soc-gls-fast
 	@echo "========================================================================"
 	@echo "  [SIM] ALL RTL, GLS NETLIST, COMPLIANCE & SOC SIMULATION TESTS PASSED! "
 	@echo "========================================================================"
