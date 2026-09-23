@@ -38,7 +38,7 @@ HACK_BUILD_DIR := $(BUILD_DIR)/hack
 ZEPHYR_BUILD_DIR ?= $(BUILD_DIR)/zephyr
 SYNTH_DIR := $(BUILD_DIR)/synth
 
-.PHONY: all veryl check check-paths fmt test test-ci test-hw test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware sim-unit sim-boot sim-soc sim test-isa zephyr-rust-lib zephyr-bc-lib build-zephyr sim-zephyr-emu sim-zephyr-repl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sta
+.PHONY: all veryl check check-paths fmt test test-ci test-hw test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware sim-unit sim-boot sim-soc sim test-isa zephyr-rust-lib zephyr-bc-lib build-zephyr sim-zephyr-emu sim-zephyr-repl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta
 
 all: test-ci
 
@@ -174,7 +174,7 @@ test-isa: veryl
 
 # ===== Simulation - SoC Integration =====
 
-sim-boot: veryl
+sim-boot: veryl firmware
 	@echo "=== Running Hardware Boot Manager & Bridge Cocotb Tests ==="
 	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_boot]"
 
@@ -224,7 +224,7 @@ sim-gls-hw-flow: synth-top firmware build-hack
 	@echo "=== Running SoC Top End-to-End Hardware Verification Flow (GLS Simulation) ==="
 	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc_gls[test_soc_hardware_flow]"
 
-sim: sim-unit test-isa sim-gls-unit sim-soc-fast
+sim: sim-unit test-isa sim-gls-unit sim-soc-fast sim-soc-mmio sim-boot sim-hack-rtl sim-sd-quirks sim-hw-flow
 
 # ===== Synthesis / PnR / STA / Bitstream / Programming =====
 
@@ -248,6 +248,19 @@ sim-soc-fast: veryl firmware
 sim-soc-fast-icarus: veryl firmware
 	@echo "=== Running Fast SoC Top Boot & Execution Verification (RTL, Icarus 4-state) ==="
 	SIM=icarus $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_fast]"
+
+sim-soc-mmio: veryl
+	@echo "=== Running SoC Memory Map / MMIO Peripheral Tests (RTL) ==="
+	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_rv32i]"
+
+sim-sd-quirks: veryl firmware
+	@echo "=== Running SD Card Edge-Case Tests (strict / SDSC SD model, RTL) ==="
+	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_sd_quirks]"
+
+# Full flashing flow on Icarus: 4-state coverage of the longest RTL run (~15 min; test-slow only)
+sim-hw-flow-icarus: veryl firmware build-hack
+	@echo "=== Running SoC Top End-to-End Hardware Verification Flow (RTL, Icarus 4-state) ==="
+	SIM=icarus $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_hardware_flow]"
 
 sim-soc-gls-fast: synth-top firmware
 	@echo "=== Running Fast SoC Top Boot & Execution Verification (GLS Netlist) ==="
@@ -298,9 +311,17 @@ prog-flash: $(SYNTH_DIR)/pack.fs
 
 # ===== Aggregate Test Targets =====
 
-test-sim: check firmware zephyr-rust-lib zephyr-bc-lib build-hack build-zephyr sim-unit test-isa sim-gls-unit sim-soc-fast sim-soc-fast-icarus synth-top sim-soc-gls-fast
+# Every push/PR (CI). Long SoC runs are on Verilator (SIM_SOC); see AGENTS.md for timings.
+test-sim: check firmware zephyr-rust-lib zephyr-bc-lib build-hack build-zephyr sim-unit test-isa sim-gls-unit sim-soc-fast sim-soc-fast-icarus sim-soc-mmio sim-boot sim-hack-rtl sim-sd-quirks sim-hw-flow synth-top sim-soc-gls-fast
 	@echo "========================================================================"
-	@echo "  [SIM] ALL RTL, GLS NETLIST, COMPLIANCE & SOC SIMULATION TESTS PASSED! "
+	@echo "  [SIM] ALL RTL, GLS NETLIST, ISA & SOC SIMULATION TESTS PASSED!        "
+	@echo "========================================================================"
+
+# Nightly / on demand (CI schedule + workflow_dispatch): the gate-level flashing flow and
+# the full flow on 4-state Icarus
+test-slow: sim-gls-hw-flow sim-hw-flow-icarus
+	@echo "========================================================================"
+	@echo "  [SLOW] GLS FLASHING FLOW & ICARUS FULL-FLOW TESTS PASSED!             "
 	@echo "========================================================================"
 
 test: test-sim sta

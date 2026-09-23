@@ -227,15 +227,26 @@ make test-hw
 
 ### Test Suite Architecture
 
+Short tests run on Icarus, long SoC/GLS runs on Verilator (`SIM_UNIT` / `SIM_SOC` in the `Makefile`; Verilator needs `perl`). `make test-sim` (CI on every push/PR) runs everything below except the rows marked *slow*, which `make test-slow` (CI nightly / manual) adds.
+
 | Level | Command | Typical Time | Verification Scope |
 |:---|:---|:---|:---|
-| **RTL Unit Tests** | `make sim-unit` | ~25 sec | 15 testbenches verifying CPU, ALU, Decoder, Register File, CSRs, UART, FIFO, and Auto-Mode detector |
-| **ISA Tests** | `make test-isa` | ~15 sec | riscv-tests `rv32ui`/`rv32mi` on `tb_hex_runner` (48 pass; 10 known gaps tracked as expected failures in `scripts/run_riscv_tests.py`, mostly the missing trap path) |
-| **GLS Unit Tests** | `make sim-gls-unit` | ~40 sec | Gowin primitive netlists (`gowin_cells_sim.v`) with LUTRAMs (`RAM16SDP4`), ALUs, and DFFs |
-| **Fast SoC Boot** | `make sim-soc-fast` / `make sim-soc-gls-fast` | < 1 sec | Fast power-on reset, CPU boot, and instruction execution verification on RTL & full Gowin netlist |
-| **End-to-End Flow** | `make sim-hw-flow` / `make sim-gls-hw-flow` | ~3-4 min | Full 8-step hardware test suite in simulation using `VirtualSerialBridge` (UART) and `SpiSdCardModel` (SD SPI) |
+| **RTL Unit Tests** | `make sim-unit` | ~10 sec | 20 cocotb modules: CPU (ALU, decoder, regfile, CSRs, mode detector, Hack ops, RV32I smoke, trap path*), UART, timer, GPIO, SD SPI master, RAM |
+| **ISA Tests** | `make test-isa` | ~15 sec | riscv-tests `rv32ui`/`rv32mi` on `tb_hex_runner` (48 pass; 10 known gaps tracked as expected failures in `scripts/run_riscv_tests.py`, mostly the missing trap path*) |
+| **GLS Unit Tests** | `make sim-gls-unit` | ~20 sec | Gowin primitive netlists (`gowin_cells_sim.v`) of the CPU, UART controller and mode detector |
+| **SoC Boot** | `make sim-soc-fast` / `sim-soc-fast-icarus` | ~10 sec / ~3 min | Power-on reset, Boot Manager prompt, S2-button launch of an SD slot via the Resident Loader (Verilator / 4-state Icarus) |
+| **SoC MMIO** | `make sim-soc-mmio` | ~5 sec | RV32I program from I-RAM checking the memory map, D-RAM lanes, timer, GPIO, UART RX, soft reset; timer interrupt* |
+| **Boot Manager CLI** | `make sim-boot` | ~40 sec | Every CLI command's exact output, incl. reboot via the Resident Loader |
+| **Hack Mode** | `make sim-hack-rtl` | ~2 sec | Hack C firmware's self-test report over the UART |
+| **SD Edge Cases** | `make sim-sd-quirks` | ~20 sec | Strict SD model: power-up preamble, SDSC byte addressing across a reboot |
+| **End-to-End Flow** | `make sim-hw-flow` | ~20 sec | UART `w` flashing of Hack + RISC-V images, byte-exact SD check, header verify, boot of the flashed slot |
+| **GLS SoC Boot** | `make sim-soc-gls-fast` | ~1.5 min | Full Gowin netlist boots to the Boot Manager prompt (Safe Mode) |
+| *slow* **GLS End-to-End** | `make sim-gls-hw-flow` | ~3-6 min | The end-to-end flow on the full Gowin netlist |
+| *slow* **Icarus End-to-End** | `make sim-hw-flow-icarus` | ~15 min | The end-to-end flow on 4-state Icarus |
 | **Static Timing (STA)**| `make sta` | ~15 sec | Exhaustive post-PnR timing analysis, Fmax verification, and critical path breakdown (`build/synth/soc_sta.json`) |
 | **Real Hardware** | `make test-hw` | ~60 sec | Automated physical hardware execution on Tang Nano 9K via `scripts/test_hardware.py` (15 tests) |
+
+\* The CPU currently takes no traps (ECALL/MRET/interrupts; regression from commit `02a105a`). The tests covering it are expected failures until that is fixed — see `AGENTS.md`.
 
 ### Real Hardware Test Suite (15 Automated Checks)
 `scripts/test_hardware.py` automatically executes an exhaustive 15-step hardware validation workflow:

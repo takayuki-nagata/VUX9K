@@ -264,23 +264,25 @@ caused by any restructuring:
 - `make sta` — nextpnr timing closure fails (~-2ns slack) across all
   `PNR_SEEDS`; a physical-design marginality issue, not a build-system bug.
 
-## `sim-hw-flow` / `sim-gls-hw-flow`: slow, deliberately excluded from `test-sim`
+## Test tiers: what `test-sim` does and doesn't cover
 
-`make sim-hw-flow` (`sim/integration/test_soc_hardware_flow.py`, RTL) and
-`make sim-gls-hw-flow` (same test, gate-level) are the only tests that drive
-the full multi-step UART flashing/boot protocol end-to-end through
-`tools/vux_tool.py`'s `build_vux9_image()`: prompt sync, hardware
-self-diagnostics, SD sector dump, `'w'`-command flash of both a Hack and a
-RISC-V payload (slot-ID handshake → sector-count handshake → per-sector
-streaming), boot-header verification, and SD-boot execution. On Icarus these
-took 25–35 minutes (RTL) and many hours (GLS), which is why `test-sim`/
-`test`/`test-ci` use the much lighter `sim-soc-fast`/`sim-soc-gls-fast`
-instead (boot + execution only, no flashing protocol, no SD dump/verify
-round trip) and never run these two. Since they moved to Verilator (2026-09)
-they take ~30 s (RTL) and ~6 min (GLS), so this exclusion is up for revision. A green CI (`test-sim`) therefore does
-**not** confirm the flashing protocol still works.
+`make test-sim` (every push/PR in CI) runs the unit suites (RTL + GLS), `test-isa`,
+and the SoC tests: `sim-soc-fast` (+ `-icarus`), `sim-soc-mmio`, `sim-boot` (CLI),
+`sim-hack-rtl`, `sim-sd-quirks`, `sim-hw-flow` (RTL flashing flow) and
+`sim-soc-gls-fast`. `make test-slow` (CI nightly + manual `workflow_dispatch`) adds
+`sim-gls-hw-flow` and `sim-hw-flow-icarus`. Until 2026-09 the flashing flow ran in
+no tier at all (25–35 min RTL / many hours GLS on Icarus); on Verilator it's ~16 s
+RTL / ~3–6 min GLS, which is what made it affordable per PR.
 
-Run `sim-hw-flow`/`sim-gls-hw-flow` explicitly whenever you touch:
+`test_soc_hardware_flow.py` is the only test that drives the full multi-step UART
+flashing protocol end-to-end through `tools/vux_tool.py`'s `build_vux9_image()`:
+`'w'`-command flash of a Hack and a RISC-V payload (slot-ID handshake →
+sector-count handshake → per-sector streaming), a byte-exact check of what
+reached the SD model, boot-header verification via `s1`, and booting the flashed
+payload through the Resident Loader. The other CLI commands are
+`test_soc_boot.py`'s job.
+
+Also run `sim-gls-hw-flow` (not in `test-sim`) explicitly whenever you touch:
 - the UART flashing handshake (`firmware/boot_manager/src/main.rs`'s
   `write_sectors_from_uart()` and its `[READY]`/`[READY-SLOT:N]`/
   `[READY-COUNT:N]`/`[READY-SEC:i]` protocol),
@@ -307,10 +309,11 @@ path- or timing-related regression the fast tests can't reach.
 Run in this order (each depends on the previous succeeding):
 ```
 make firmware        # Cargo workspace build -> build/firmware/
-make sim-unit         # broadest RTL path coverage (15 unit tests)
+make sim-unit         # broadest RTL path coverage (20 unit test modules)
 make test-isa
 make build-hack        # hack_demo/
 make sim-hack-rtl
+make sim-hw-flow         # full UART/SD chain; longest real interaction (Verilator, ~16 s)
 make synth-top          # yosys must resolve build/veryl/soc/{cpu,uart}/*.sv
 make zephyr-rust-lib     # rust_demo standalone binary
 python3 scripts/check_no_absolute_paths.py
