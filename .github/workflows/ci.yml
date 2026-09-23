@@ -104,7 +104,7 @@ jobs:
         run: |
           uv python install 3.13
           uv venv --python 3.13 .venv
-          uv pip install --python .venv/bin/python cocotb==2.0.1 pytest==9.1.1 https://github.com/takayuki-nagata/hack_tools/releases/download/v0.2.0/m2h-0.2.0.tar.gz -r $HOME/zephyrproject/zephyr/scripts/requirements-base.txt
+          uv pip install --python .venv/bin/python cocotb==2.0.1 pytest==9.1.1 ruff==0.16.8 https://github.com/takayuki-nagata/hack_tools/releases/download/v0.2.0/m2h-0.2.0.tar.gz -r $HOME/zephyrproject/zephyr/scripts/requirements-base.txt
 
       - name: Run Full SoC Simulation Suite (RTL, Compliance & GLS)
         run: |

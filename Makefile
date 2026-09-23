@@ -4,6 +4,7 @@
 # ===== Toolchain Variables & Setup =====
 
 VERYL = veryl
+RUFF = ruff
 YOSYS = yosys
 GOWIN_PACK = gowin_pack
 NEXTPNR ?= nextpnr-himbaechel
@@ -43,7 +44,7 @@ $(VENV_PATH)/bin/activate:
 	fi
 
 setup: venv
-	$(UV) pip install --python $(VENV_PATH)/bin/python cocotb pytest pyserial
+	$(UV) pip install --python $(VENV_PATH)/bin/python cocotb pytest pyserial ruff
 	@if [ -d ".git" ]; then \
 		echo "Configuring Git core.hooksPath to .githooks..."; \
 		git config core.hooksPath .githooks; \
@@ -55,9 +56,12 @@ check-paths:
 check: check-paths
 	$(VERYL) fmt --check
 	$(VERYL) check
+	$(RUFF) format --check
+	$(RUFF) check
 
 fmt:
 	$(VERYL) fmt
+	$(RUFF) format
 
 # ===== Veryl Build =====
 
