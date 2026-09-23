@@ -2,8 +2,10 @@
 # SPDX-License-Identifier: MIT
 
 import cocotb
-from cocotb.triggers import FallingEdge, Timer, RisingEdge
 from cocotb.clock import Clock
+from cocotb.triggers import FallingEdge, Timer
+
+BIT_CYCLES = 434  # uart_tx default CNT: clock cycles per bit
 
 
 @cocotb.test()
@@ -28,39 +30,37 @@ async def test_uart_tx(dut):
 
     assert int(dut.txd.value) == 1, "TX line should be idle high (1)"
 
-    # 2. Transmit byte 0x55 (0b01010101)
-    # Default CNT in uart_tx is 434
-    tx_byte = 0x55
-    dut.data.value = tx_byte
-    dut.we.value = 1
-    await FallingEdge(dut.clk)
-    dut.we.value = 0
-
-    # Wait for busy to assert
-    await Timer(1, unit="ns")
-    assert int(dut.busy.value) == 1, "busy should assert after we=1"
-
-    # Wait for start bit: txd goes 0
-    while int(dut.txd.value) == 1:
+    # 2. Transmit bytes and check every frame bit: Start(0), D0..D7 (LSB first), Stop(1).
+    # Neither byte is a palindrome or an alternating pattern, so bit-order and
+    # off-by-one-bit errors change the sampled frame.
+    for tx_byte in (0x4B, 0xD2):
+        dut.data.value = tx_byte
+        dut.we.value = 1
         await FallingEdge(dut.clk)
+        dut.we.value = 0
 
-    # Now verify the 10 UART frame bits: Start(0), D0..D7, Stop(1)
-    # Default baud clock timer counts 434 cycles per bit
-    # Sample at middle of each bit period (~217 cycles)
-    expected_bits = [0] + [(tx_byte >> i) & 1 for i in range(8)] + [1]
-    sampled_bits = []
+        await Timer(1, unit="ns")
+        assert int(dut.busy.value) == 1, "busy should assert after we=1"
 
-    # First bit (start bit) is already active
-    # For each bit in the frame:
-    for bit_idx in range(10):
-        # Wait 434 cycles per bit
-        for _ in range(434):
+        # Wait for the start bit's falling edge, then move to the middle of it
+        while int(dut.txd.value) == 1:
             await FallingEdge(dut.clk)
-        sampled_bits.append(int(dut.txd.value))
+        for _ in range(BIT_CYCLES // 2):
+            await FallingEdge(dut.clk)
 
-    # Check that transmission finished and returned to IDLE (busy=0, txd=1)
-    while int(dut.busy.value) == 1:
-        await FallingEdge(dut.clk)
+        expected_bits = [0] + [(tx_byte >> i) & 1 for i in range(8)] + [1]
+        sampled_bits = []
+        for _ in range(len(expected_bits)):
+            sampled_bits.append(int(dut.txd.value))
+            for _ in range(BIT_CYCLES):
+                await FallingEdge(dut.clk)
 
-    assert int(dut.txd.value) == 1, "TX line should return to idle high"
-    dut._log.info(f"UART TX Frame transmitted successfully: byte=0x{tx_byte:02X} [PASS]")
+        assert sampled_bits == expected_bits, (
+            f"byte 0x{tx_byte:02X}: sampled frame {sampled_bits}, expected {expected_bits}"
+        )
+
+        # Transmission finishes and returns to IDLE (busy=0, txd=1)
+        while int(dut.busy.value) == 1:
+            await FallingEdge(dut.clk)
+        assert int(dut.txd.value) == 1, "TX line should return to idle high"
+        dut._log.info(f"UART TX frame verified: byte=0x{tx_byte:02X}")
