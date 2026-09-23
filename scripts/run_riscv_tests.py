@@ -106,8 +106,16 @@ def setup_sources():
 
 
 def check_tools():
-    missing = [n for n, p in (("RISC-V gcc", GCC_BIN), ("RISC-V objcopy", OBJCOPY_BIN),
-                              ("iverilog", IVERILOG_BIN), ("vvp", VVP_BIN)) if not p]
+    missing = [
+        n
+        for n, p in (
+            ("RISC-V gcc", GCC_BIN),
+            ("RISC-V objcopy", OBJCOPY_BIN),
+            ("iverilog", IVERILOG_BIN),
+            ("vvp", VVP_BIN),
+        )
+        if not p
+    ]
     if missing:
         sys.exit(f"[ERROR] Missing tools: {', '.join(missing)}")
 
@@ -117,10 +125,19 @@ def compile_testbench():
     if code != 0:
         sys.exit(f"[ERROR] veryl build failed: {err}")
     cpu_dir = os.path.join(VERYL_OUT_DIR, "soc", "cpu")
-    sv_files = [os.path.join(cpu_dir, f"{m}.sv") for m in (
-        "rv32i_pkg", "rv32i_alu", "rv32i_decode", "rv32i_regfile", "rv32i_csrs",
-        "hack_translator", "auto_mode_detector", "unified_cpu",
-    )]
+    sv_files = [
+        os.path.join(cpu_dir, f"{m}.sv")
+        for m in (
+            "rv32i_pkg",
+            "rv32i_alu",
+            "rv32i_decode",
+            "rv32i_regfile",
+            "rv32i_csrs",
+            "hack_translator",
+            "auto_mode_detector",
+            "unified_cpu",
+        )
+    ]
     sv_files.append(os.path.join(VERYL_OUT_DIR, "sim", "tb_hex_runner.sv"))
     vvp = os.path.join(BUILD_DIR, "tb_hex_runner.vvp")
     code, _, err = run_cmd([IVERILOG_BIN, "-g2012", "-o", vvp] + sv_files)
@@ -144,13 +161,25 @@ def build_hex(src, name):
     binf = os.path.join(BUILD_DIR, f"{name}.bin")
     hexf = os.path.join(BUILD_DIR, f"{name}.hex")
     cmd = [
-        GCC_BIN, "-march=rv32i_zicsr_zifencei", "-mabi=ilp32", "-static", "-mcmodel=medany",
-        "-fvisibility=hidden", "-nostdlib", "-nostartfiles",
-        "-I", os.path.join(HARNESS_DIR, "env"),  # wraps env/p's riscv_test.h via #include_next
-        "-I", os.path.join(RISCV_TESTS_DIR, "env", "p"),
-        "-I", os.path.join(RISCV_TESTS_DIR, "isa", "macros", "scalar"),
-        "-T", os.path.join(HARNESS_DIR, "link.ld"),
-        src, "-o", elf,
+        GCC_BIN,
+        "-march=rv32i_zicsr_zifencei",
+        "-mabi=ilp32",
+        "-static",
+        "-mcmodel=medany",
+        "-fvisibility=hidden",
+        "-nostdlib",
+        "-nostartfiles",
+        "-I",
+        os.path.join(HARNESS_DIR, "env"),  # wraps env/p's riscv_test.h via #include_next
+        "-I",
+        os.path.join(RISCV_TESTS_DIR, "env", "p"),
+        "-I",
+        os.path.join(RISCV_TESTS_DIR, "isa", "macros", "scalar"),
+        "-T",
+        os.path.join(HARNESS_DIR, "link.ld"),
+        src,
+        "-o",
+        elf,
     ]
     code, _, err = run_cmd(cmd)
     if code != 0:
@@ -163,7 +192,7 @@ def build_hex(src, name):
     data += b"\x00" * (-len(data) % 4)
     with open(hexf, "w") as f:
         for i in range(0, len(data), 4):
-            f.write(f"{int.from_bytes(data[i:i + 4], 'little'):08X}\n")
+            f.write(f"{int.from_bytes(data[i : i + 4], 'little'):08X}\n")
     return hexf, None
 
 
@@ -210,8 +239,11 @@ def run_suite(vvp, only=None):
             counts[status] += 1
             print(f"[{status}] {name}" + ("" if status == "PASS" else f": {detail}"))
 
-    stale = [n for n in EXPECTED_FAILURES if only is None and not any(
-        n == f"{s}-p-{t}" for s in SUITES for t in list_tests(s))]
+    stale = [
+        n
+        for n in EXPECTED_FAILURES
+        if only is None and not any(n == f"{s}-p-{t}" for s in SUITES for t in list_tests(s))
+    ]
     for name in stale:
         print(f"[ERROR] EXPECTED_FAILURES entry {name} does not match any test")
 

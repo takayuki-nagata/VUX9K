@@ -5,6 +5,7 @@ import cocotb
 from cocotb.triggers import ClockCycles, Timer
 from cocotb.clock import Clock
 
+
 @cocotb.test()
 async def test_rv32i_regfile(dut):
     """Test 32x32-bit register file with prioritized write ports and x0 wired to 0"""

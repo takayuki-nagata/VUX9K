@@ -30,7 +30,7 @@ def get_timing_info(report_path, target_freq_mhz=27.0):
             slack = target_period_ns - total_delay
             if slack < worst_slack:
                 worst_slack = slack
-        is_closure = (worst_slack >= 0.0)
+        is_closure = worst_slack >= 0.0
         return is_closure, worst_slack
     except Exception:
         return False, None
@@ -52,14 +52,20 @@ def main():
     base_cmd = [nextpnr_bin, "--device", args.device]
     for v in args.vopt:
         base_cmd.extend(["--vopt", v])
-    base_cmd.extend([
-        "--json", args.json,
-        "--write", args.write,
-        "--report", args.report,
-        "--detailed-timing-report",
-        "--freq", str(args.freq),
-        "--timing-allow-fail",
-    ])
+    base_cmd.extend(
+        [
+            "--json",
+            args.json,
+            "--write",
+            args.write,
+            "--report",
+            args.report,
+            "--detailed-timing-report",
+            "--freq",
+            str(args.freq),
+            "--timing-allow-fail",
+        ]
+    )
     base_cmd.extend(unknown)
 
     for i, seed in enumerate(args.seeds, 1):

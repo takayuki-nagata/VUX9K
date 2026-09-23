@@ -5,6 +5,7 @@ import cocotb
 from cocotb.triggers import FallingEdge, Timer, ClockCycles
 from cocotb.clock import Clock
 
+
 async def send_uart_byte(dut, byte_val: int, cnt: int = 234):
     """Helper to drive serial UART frame on rxd at 27MHz / 115200bps (CNT=234)"""
     # 1. Start bit (0)
@@ -23,10 +24,11 @@ async def send_uart_byte(dut, byte_val: int, cnt: int = 234):
     for _ in range(cnt):
         await FallingEdge(dut.clk)
 
+
 @cocotb.test()
 async def test_uart_rx(dut):
     """Test UART RX serial frame reception and ready pulse generation"""
-    clock = Clock(dut.clk, 37038, unit="ps") # 27.0 MHz integer period in ps
+    clock = Clock(dut.clk, 37038, unit="ps")  # 27.0 MHz integer period in ps
     cocotb.start_soon(clock.start())
 
     # 1. Reset (active-low)

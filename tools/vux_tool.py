@@ -42,7 +42,12 @@ def find_tangnano_uart_port():
             # Priority 1: SIPEED / Debugger interface 01 (UART port)
             for entry in entries:
                 entry_lower = entry.lower()
-                if ("sipeed" in entry_lower or "debugger" in entry_lower or "tang" in entry_lower or "gowin" in entry_lower) and ("if01" in entry_lower or "if1" in entry_lower):
+                if (
+                    "sipeed" in entry_lower
+                    or "debugger" in entry_lower
+                    or "tang" in entry_lower
+                    or "gowin" in entry_lower
+                ) and ("if01" in entry_lower or "if1" in entry_lower):
                     return os.path.join(by_id_dir, entry)
             # Priority 2: Any interface 01 device that is NOT FT232R (excluding other host FT232R UARTs)
             for entry in entries:
@@ -115,7 +120,7 @@ def send_cmd_and_wait(ser, cmd_char, timeout=5.0):
             text = c.decode("utf-8", errors="replace")
             buf += text
             # Ensure prompt is checked only after command echo
-            if (cmd_char in buf) and ("vux>" in buf[buf.find(cmd_char) + len(cmd_char):]):
+            if (cmd_char in buf) and ("vux>" in buf[buf.find(cmd_char) + len(cmd_char) :]):
                 break
     return buf
 
@@ -145,7 +150,7 @@ def cmd_monitor(args):
         # Re-enable output post-processing on the terminal so bare \n triggers CR+LF
         try:
             mode = termios.tcgetattr(sys.stdin)
-            mode[1] |= (termios.OPOST | termios.ONLCR)
+            mode[1] |= termios.OPOST | termios.ONLCR
             termios.tcsetattr(sys.stdin, termios.TCSADRAIN, mode)
         except Exception:
             pass
@@ -193,6 +198,7 @@ def cmd_monitor(args):
 # =====================================================================
 # Core Reusable API Functions (Shared with test_hardware.py & tests)
 # =====================================================================
+
 
 def sync_prompt(ser, timeout=4.0):
     """Send return and wait for prompt synchronization ('vux>')"""
@@ -265,7 +271,17 @@ def reboot_soc(ser, timeout=8.0):
     return out
 
 
-def build_vux9_image(file_or_bytes, slot=1, name="", mode="hack", version=1, load_addr=0x00000000, entry_point=0x00000000, crc_override=None, magic_override=None):
+def build_vux9_image(
+    file_or_bytes,
+    slot=1,
+    name="",
+    mode="hack",
+    version=1,
+    load_addr=0x00000000,
+    entry_point=0x00000000,
+    crc_override=None,
+    magic_override=None,
+):
     """Pack binary payload into VUX9 v3 image with 64-byte boot header and 512-byte sector padding"""
     if isinstance(file_or_bytes, (bytes, bytearray)):
         payload = bytes(file_or_bytes)
@@ -282,7 +298,7 @@ def build_vux9_image(file_or_bytes, slot=1, name="", mode="hack", version=1, loa
         # Pre-pack Hack 16-bit big-endian binary into native 32-bit LE word order for I-RAM
         packed_payload = bytearray()
         for i in range(0, len(payload), 4):
-            chunk = payload[i:i+4]
+            chunk = payload[i : i + 4]
             if len(chunk) < 4:
                 chunk = chunk + b"\x00" * (4 - len(chunk))
             instr0 = (chunk[0] << 8) | chunk[1]
@@ -314,7 +330,19 @@ def build_vux9_image(file_or_bytes, slot=1, name="", mode="hack", version=1, loa
     # 0x18: crc_val (u32)
     # 0x1C: version (u32: app_version)
     # 0x20: name_bytes (32 bytes)
-    header = struct.pack("<IHHIIIIII32s", magic_val, header_ver, flags, mode_val, size_bytes, load_addr, entry_point, crc_val, version, name_bytes)
+    header = struct.pack(
+        "<IHHIIIIII32s",
+        magic_val,
+        header_ver,
+        flags,
+        mode_val,
+        size_bytes,
+        load_addr,
+        entry_point,
+        crc_val,
+        version,
+        name_bytes,
+    )
     assert len(header) == 64, f"Header must be 64 bytes, got {len(header)}"
     raw_data = header + final_payload
 
@@ -345,9 +373,27 @@ def build_vux9_image(file_or_bytes, slot=1, name="", mode="hack", version=1, loa
     return raw_data, meta
 
 
-def flash_slot(ser, file_or_bytes, slot=1, name="", mode="hack", version=1, progress_cb=None, crc_override=None, magic_override=None):
+def flash_slot(
+    ser,
+    file_or_bytes,
+    slot=1,
+    name="",
+    mode="hack",
+    version=1,
+    progress_cb=None,
+    crc_override=None,
+    magic_override=None,
+):
     """Flash a binary image or byte payload to SD Card Slot 0-9 using an open serial port"""
-    raw_data, meta = build_vux9_image(file_or_bytes, slot=slot, name=name, mode=mode, version=version, crc_override=crc_override, magic_override=magic_override)
+    raw_data, meta = build_vux9_image(
+        file_or_bytes,
+        slot=slot,
+        name=name,
+        mode=mode,
+        version=version,
+        crc_override=crc_override,
+        magic_override=magic_override,
+    )
     num_sectors = meta["num_sectors"]
     start_sector = meta["start_sector"]
 
@@ -390,7 +436,9 @@ def flash_slot(ser, file_or_bytes, slot=1, name="", mode="hack", version=1, prog
                 ready_slot = True
                 break
     if not ready_slot:
-        raise RuntimeError(f"Timeout waiting for token {slot_token.decode()}. Output: {buf.decode('utf-8', errors='replace')}")
+        raise RuntimeError(
+            f"Timeout waiting for token {slot_token.decode()}. Output: {buf.decode('utf-8', errors='replace')}"
+        )
 
     buf = b""
     # 3. Send sector count (1 byte)
@@ -408,7 +456,9 @@ def flash_slot(ser, file_or_bytes, slot=1, name="", mode="hack", version=1, prog
                 ready_count = True
                 break
     if not ready_count:
-        raise RuntimeError(f"Timeout waiting for token {count_token.decode()}. Output: {buf.decode('utf-8', errors='replace')}")
+        raise RuntimeError(
+            f"Timeout waiting for token {count_token.decode()}. Output: {buf.decode('utf-8', errors='replace')}"
+        )
 
     # 4. Stream sectors with per-sector handshake
     for sec_idx in range(num_sectors):
@@ -417,19 +467,21 @@ def flash_slot(ser, file_or_bytes, slot=1, name="", mode="hack", version=1, prog
         ready_sec = False
         while time.time() - start < 10.0:
             if sec_token in buf:
-                buf = buf[buf.find(sec_token) + len(sec_token):]
+                buf = buf[buf.find(sec_token) + len(sec_token) :]
                 ready_sec = True
                 break
             c = ser.read(64)
             if c:
                 buf += c
                 if sec_token in buf:
-                    buf = buf[buf.find(sec_token) + len(sec_token):]
+                    buf = buf[buf.find(sec_token) + len(sec_token) :]
                     ready_sec = True
                     break
 
         if not ready_sec:
-            raise RuntimeError(f"Timeout waiting for token {sec_token.decode()}. Output: {buf.decode('utf-8', errors='replace')}")
+            raise RuntimeError(
+                f"Timeout waiting for token {sec_token.decode()}. Output: {buf.decode('utf-8', errors='replace')}"
+            )
 
         if progress_cb:
             progress_cb(sec_idx, num_sectors, start_sector + sec_idx)
@@ -466,6 +518,7 @@ def flash_slot(ser, file_or_bytes, slot=1, name="", mode="hack", version=1, prog
 # =====================================================================
 # CLI Command Wrappers
 # =====================================================================
+
 
 def cmd_diag(args):
     """Run hardware diagnostic tests"""

@@ -1,0 +1,16 @@
+# Copyright (c) 2026 Takayuki Nagata
+# SPDX-License-Identifier: MIT
+
+# Tool configuration only: this repo's Python (testbenches, host tools, build
+# scripts) is not an installable package. Dependencies are installed by
+# `make setup` / CI.
+
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+include = ["sim/**/*.py", "tools/**/*.py", "scripts/**/*.py"]
+
+[tool.ruff.lint]
+# E/F: pycodestyle/pyflakes, I: import order, B: bugbear,
+# ASYNC: blocking calls inside coroutines, RUF006: dangling asyncio tasks.
+select = ["E", "F", "I", "B", "ASYNC", "RUF006"]

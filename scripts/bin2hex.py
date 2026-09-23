@@ -11,8 +11,9 @@ import sys
 import struct
 import argparse
 
+
 def bin2hex(bin_path, hex_path, is_hack=None):
-    with open(bin_path, 'rb') as f:
+    with open(bin_path, "rb") as f:
         data = f.read()
 
     # Auto-detect Hack mode if not specified: Hack starts with A-instruction where bits [15] == 0,
@@ -26,9 +27,9 @@ def bin2hex(bin_path, hex_path, is_hack=None):
     if is_hack:
         # Hack big-endian 16-bit instructions packed into 32-bit words (instr0 in lower 16 bits, instr1 in upper 16 bits)
         for i in range(0, len(data), 4):
-            chunk = data[i:i+4]
+            chunk = data[i : i + 4]
             if len(chunk) < 4:
-                chunk = chunk + b'\x00' * (4 - len(chunk))
+                chunk = chunk + b"\x00" * (4 - len(chunk))
             instr0 = (chunk[0] << 8) | chunk[1]
             instr1 = (chunk[2] << 8) | chunk[3]
             word = (instr1 << 16) | instr0
@@ -36,17 +37,18 @@ def bin2hex(bin_path, hex_path, is_hack=None):
     else:
         # RISC-V 32-bit little-endian words
         for i in range(0, len(data), 4):
-            chunk = data[i:i+4]
+            chunk = data[i : i + 4]
             if len(chunk) < 4:
-                chunk = chunk + b'\x00' * (4 - len(chunk))
-            word = struct.unpack('<I', chunk)[0]
+                chunk = chunk + b"\x00" * (4 - len(chunk))
+            word = struct.unpack("<I", chunk)[0]
             lines.append(f"{word:08x}\n")
 
-    with open(hex_path, 'w') as f:
+    with open(hex_path, "w") as f:
         f.writelines(lines)
     print(f"Converted {bin_path} -> {hex_path} ({len(lines)} words, {'Hack 16-bit' if is_hack else 'RISC-V 32-bit'})")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Convert .bin to .hex for SoC memory preloading")
     parser.add_argument("bin_file", help="Input binary file")
     parser.add_argument("hex_file", help="Output hex file")

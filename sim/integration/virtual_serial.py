@@ -25,15 +25,15 @@ class VirtualSerialBridge:
         self.rx_pin = getattr(dut, rx_pin)
         self.tx_pin = getattr(dut, tx_pin)
         self.clk_pin = getattr(dut, clk_pin)
-        
+
         self.rx_buffer = collections.deque()
         self.tx_buffer = collections.deque()
         self.tx_idle = True
         self._tx_event = Event()
-        
+
         # Default pin state
         self.tx_pin.value = 1
-        
+
         # Start background workers
         self._rx_task = cocotb.start_soon(self._rx_worker())
         self._tx_task = cocotb.start_soon(self._tx_worker())
@@ -45,24 +45,24 @@ class VirtualSerialBridge:
             if _get_bit(self.rx_pin.value) == 0:
                 while _get_bit(self.rx_pin.value) == 0:
                     await ClockCycles(self.clk_pin, self.baud_cycles // 4)
-            
+
             # Wait for start bit (falling edge on rx_pin: 1 -> 0)
             await FallingEdge(self.rx_pin)
-            
+
             # Center of start bit (0.5 baud period)
             await ClockCycles(self.clk_pin, self.baud_cycles // 2)
             if _get_bit(self.rx_pin.value) != 0:
                 continue
-            
+
             # Sample 8 data bits (LSB first)
             byte_val = 0
             for i in range(8):
                 await ClockCycles(self.clk_pin, self.baud_cycles)
-                byte_val |= (_get_bit(self.rx_pin.value) << i)
-            
+                byte_val |= _get_bit(self.rx_pin.value) << i
+
             # Append decoded byte immediately
             self.rx_buffer.append(byte_val)
-            
+
             # Wait to middle of stop bit (0.5 baud) so FallingEdge is armed before next byte
             await ClockCycles(self.clk_pin, self.baud_cycles // 2)
 
@@ -73,19 +73,19 @@ class VirtualSerialBridge:
                 self.tx_idle = True
                 self._tx_event.clear()
                 await self._tx_event.wait()
-            
+
             self.tx_idle = False
             b = self.tx_buffer.popleft()
-            
+
             # Start bit (0)
             self.tx_pin.value = 0
             await ClockCycles(self.clk_pin, self.baud_cycles)
-            
+
             # 8 Data bits (LSB first)
             for i in range(8):
                 self.tx_pin.value = (b >> i) & 1
                 await ClockCycles(self.clk_pin, self.baud_cycles)
-            
+
             # Stop bit (1)
             self.tx_pin.value = 1
             await ClockCycles(self.clk_pin, self.baud_cycles)

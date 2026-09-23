@@ -5,23 +5,24 @@ import cocotb
 from cocotb.triggers import ClockCycles, Timer
 from cocotb.clock import Clock
 
-CSR_MSTATUS  = 0x300
-CSR_MISA     = 0x301
-CSR_MIE      = 0x304
-CSR_MTVEC    = 0x305
+CSR_MSTATUS = 0x300
+CSR_MISA = 0x301
+CSR_MIE = 0x304
+CSR_MTVEC = 0x305
 CSR_MSCRATCH = 0x340
-CSR_MEPC     = 0x341
-CSR_MCAUSE   = 0x342
-CSR_MTVAL    = 0x343
-CSR_MIP      = 0x344
+CSR_MEPC = 0x341
+CSR_MCAUSE = 0x342
+CSR_MTVAL = 0x343
+CSR_MIP = 0x344
 
-FUNCT3_PRIV   = 0b000
-FUNCT3_CSRRW  = 0b001
-FUNCT3_CSRRS  = 0b010
-FUNCT3_CSRRC  = 0b011
+FUNCT3_PRIV = 0b000
+FUNCT3_CSRRW = 0b001
+FUNCT3_CSRRS = 0b010
+FUNCT3_CSRRC = 0b011
 FUNCT3_CSRRWI = 0b101
 FUNCT3_CSRRSI = 0b110
 FUNCT3_CSRRCI = 0b111
+
 
 @cocotb.test()
 async def test_rv32i_csrs_basic(dut):
@@ -74,7 +75,7 @@ async def test_rv32i_csrs_basic(dut):
 
     # 5. Test CSRRS (Bit Set: mstatus MIE bit 3)
     dut.csr_addr.value = CSR_MSTATUS
-    dut.csr_wdata.value = 0x0000_0008 # MIE = 1
+    dut.csr_wdata.value = 0x0000_0008  # MIE = 1
     dut.csr_op.value = FUNCT3_CSRRS
     await ClockCycles(dut.clk, 1)
     dut.csr_op.value = 0

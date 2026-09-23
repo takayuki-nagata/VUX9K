@@ -5,6 +5,7 @@ import cocotb
 from cocotb.triggers import FallingEdge, Timer, ClockCycles
 from cocotb.clock import Clock
 
+
 @cocotb.test()
 async def test_unified_cpu_hack_and_riscv(dut):
     """Test standalone unified_cpu dual-ISA execution (Hack 16-bit + RISC-V 32-bit) in Multi-cycle FSM"""
@@ -21,7 +22,7 @@ async def test_unified_cpu_hack_and_riscv(dut):
     dut.timer_irq_in.value = 0
     dut.ext_irq_in.value = 0
     dut.sw_irq_in.value = 0
-    dut.instr_in.value = (0x000F << 16) | 0x000F # Hack @15 (Load 15 into A/x1)
+    dut.instr_in.value = (0x000F << 16) | 0x000F  # Hack @15 (Load 15 into A/x1)
 
     await ClockCycles(dut.clk, 2)
     await FallingEdge(dut.clk)
@@ -47,7 +48,7 @@ async def test_unified_cpu_hack_and_riscv(dut):
 
     # PC=6: Hack C-instruction M=D (0xE308 -> "1110001100001000")
     dut.instr_in.value = (0xE308 << 16) | 0xE308
-    await ClockCycles(dut.clk, 1) # FETCH -> EXECUTE
+    await ClockCycles(dut.clk, 1)  # FETCH -> EXECUTE
     await Timer(1, unit="ns")
     assert int(dut.mem_write.value) == 1, "Hack memory write assertion failed"
     assert int(dut.data_addr.value) == 15, f"Expected addr=15, got {int(dut.data_addr.value)}"
@@ -60,7 +61,7 @@ async def test_unified_cpu_hack_and_riscv(dut):
     # TEST 2: RISC-V 32-bit Mode Execution
     # =========================================================================
     dut.rst.value = 0
-    dut.instr_in.value = 0x02a00513 # ADDI x10, x0, 42
+    dut.instr_in.value = 0x02A00513  # ADDI x10, x0, 42
     await ClockCycles(dut.clk, 2)
     await FallingEdge(dut.clk)
     dut.rst.value = 1
@@ -78,39 +79,39 @@ async def test_unified_cpu_hack_and_riscv(dut):
     assert int(dut.pc_out.value) == 8, f"Expected PC=8, got {int(dut.pc_out.value)}"
 
     # PC=8: SW x11, 100(x0) (Store 50 to address 100)
-    dut.instr_in.value = 0x06b02223
-    await ClockCycles(dut.clk, 2) # FETCH -> EXECUTE -> MEM_WAIT
+    dut.instr_in.value = 0x06B02223
+    await ClockCycles(dut.clk, 2)  # FETCH -> EXECUTE -> MEM_WAIT
     await Timer(1, unit="ns")
     assert int(dut.mem_write.value) == 1, "SW memory write assertion failed"
     assert int(dut.data_addr.value) == 100, f"Expected addr=100, got {int(dut.data_addr.value)}"
     assert int(dut.data_out.value) == 50, f"Expected data=50, got {int(dut.data_out.value)}"
-    await ClockCycles(dut.clk, 1) # MEM_WAIT -> FETCH
+    await ClockCycles(dut.clk, 1)  # MEM_WAIT -> FETCH
 
     # PC=12: LW x12, 208(x0) (Load from address 208)
     # Binary: imm[11:0]=0x0D0, rs1=0, funct3=010, rd=12, opcode=0x03 -> 0x0D002603
     dut.instr_in.value = 0x0D002603
-    await ClockCycles(dut.clk, 1) # FETCH -> EXECUTE
+    await ClockCycles(dut.clk, 1)  # FETCH -> EXECUTE
     await Timer(1, unit="ns")
     assert int(dut.pc_out.value) == 16, f"Expected next PC=16, got {int(dut.pc_out.value)}"
     assert int(dut.data_addr.value) == 208, f"Expected load addr=208 during EXECUTE, got {int(dut.data_addr.value)}"
 
     # Provide data_in for the memory read
     dut.data_in.value = 0xCAFEBABE
-    await ClockCycles(dut.clk, 1) # EXECUTE -> MEM_WAIT
+    await ClockCycles(dut.clk, 1)  # EXECUTE -> MEM_WAIT
     await Timer(1, unit="ns")
 
     # In MEM_WAIT during a LOAD, mem_write must be 0 (read phase)
     assert int(dut.mem_write.value) == 0, f"Expected mem_write=0 on LOAD, got {int(dut.mem_write.value)}"
-    await ClockCycles(dut.clk, 1) # MEM_WAIT -> FETCH
+    await ClockCycles(dut.clk, 1)  # MEM_WAIT -> FETCH
 
     # PC=16: SW x12, 300(x0) (Store loaded value to verify x12 was written with data_in)
     # imm=300: imm[11:5]=0001001, rs2=12, rs1=0, funct3=010, imm[4:0]=01100, opcode=0100011 -> 0x12c02623
-    dut.instr_in.value = 0x12c02623
-    await ClockCycles(dut.clk, 2) # FETCH -> EXECUTE -> MEM_WAIT
+    dut.instr_in.value = 0x12C02623
+    await ClockCycles(dut.clk, 2)  # FETCH -> EXECUTE -> MEM_WAIT
     await Timer(1, unit="ns")
     assert int(dut.mem_write.value) == 1, "SW memory write assertion failed"
     assert int(dut.data_addr.value) == 300, f"Expected addr=300, got {int(dut.data_addr.value)}"
     assert int(dut.data_out.value) == 0xCAFEBABE, f"Expected loaded data=0xCAFEBABE, got {hex(int(dut.data_out.value))}"
-    await ClockCycles(dut.clk, 1) # MEM_WAIT -> FETCH
+    await ClockCycles(dut.clk, 1)  # MEM_WAIT -> FETCH
 
     dut._log.info("[PASS] Unified CPU: RISC-V 32-bit program execution verified!")

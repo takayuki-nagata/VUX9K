@@ -13,6 +13,7 @@ from emulator import SocEmulator
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ZEPHYR_BIN = os.path.join(REPO_ROOT, "build", "zephyr", "zephyr", "zephyr.bin")
 
+
 @pytest.fixture(scope="module")
 def booted_bc_emulator():
     """Boot Zephyr bc_clone_rs application on SocEmulator and wait for self-tests to complete."""
@@ -30,6 +31,7 @@ def booted_bc_emulator():
     assert "bc> " in output, f"REPL prompt 'bc> ' not reached. Got:\n{output}"
     return emu
 
+
 def test_soc_bc_self_tests(booted_bc_emulator):
     """Verify that all 10 mathematical test cases passed successfully."""
     output = booted_bc_emulator.get_tx_output()
@@ -45,6 +47,7 @@ def test_soc_bc_self_tests(booted_bc_emulator):
     assert "Streaming Callback Test: 2^16 = 65536" in output
     assert "ALL ZEPHYR BC_CORE TESTS PASSED (100%)!" in output
 
+
 def test_soc_bc_repl_arithmetic(booted_bc_emulator):
     """Verify evaluating 2^32 in interactive REPL."""
     emu = booted_bc_emulator
@@ -52,6 +55,7 @@ def test_soc_bc_repl_arithmetic(booted_bc_emulator):
     emu.feed_input("2^32\r\n")
     out = emu.run(max_steps=5000000, target_str="bc> ")
     assert "4294967296" in out, f"Expected 4294967296 in REPL output, got:\n{out}"
+
 
 def test_soc_bc_repl_custom_function(booted_bc_emulator):
     """Verify defining and invoking a custom user function in interactive REPL."""
@@ -64,6 +68,7 @@ def test_soc_bc_repl_custom_function(booted_bc_emulator):
     emu.feed_input("cube(5)\r\n")
     out = emu.run(max_steps=5000000, target_str="bc> ")
     assert "125" in out, f"Expected 125 in REPL output, got:\n{out}"
+
 
 def test_soc_bc_repl_scale_division(booted_bc_emulator):
     """Verify precision division with scale in interactive REPL."""

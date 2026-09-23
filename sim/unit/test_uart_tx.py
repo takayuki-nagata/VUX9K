@@ -5,10 +5,11 @@ import cocotb
 from cocotb.triggers import FallingEdge, Timer, RisingEdge
 from cocotb.clock import Clock
 
+
 @cocotb.test()
 async def test_uart_tx(dut):
     """Test UART TX serial frame transmission (Start bit, 8 data bits LSB-first, Stop bit)"""
-    clock = Clock(dut.clk, 20, unit="ns") # 50MHz
+    clock = Clock(dut.clk, 20, unit="ns")  # 50MHz
     cocotb.start_soon(clock.start())
 
     # 1. Reset (active-low)
@@ -20,7 +21,7 @@ async def test_uart_tx(dut):
     await FallingEdge(dut.clk)
     await FallingEdge(dut.clk)
     dut.rst.value = 1
-    
+
     # Wait until reset state machine settles to IDLE (busy = 0)
     while int(dut.busy.value) == 1:
         await FallingEdge(dut.clk)

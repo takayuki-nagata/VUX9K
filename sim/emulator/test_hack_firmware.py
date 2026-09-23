@@ -13,6 +13,7 @@ from emulator import SocEmulator
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 HACK_BIN = os.path.join(REPO_ROOT, "build", "hack", "firmware.bin")
 
+
 @pytest.fixture(scope="module")
 def hack_emulator():
     """Load Hack firmware binary on SocEmulator and execute until completion."""
@@ -27,25 +28,30 @@ def hack_emulator():
     output = emu.get_tx_output()
     return emu, output
 
+
 def test_hack_banner_output(hack_emulator):
     """Verify that firmware banner is emitted."""
     _, output = hack_emulator
     assert "VUX9K SoC Hack 16-bit C Firmware Test" in output
+
 
 def test_hack_factorial(hack_emulator):
     """Verify Factorial(6) = 720 computation."""
     _, output = hack_emulator
     assert "Factorial(6) = 720 ... [PASS]" in output
 
+
 def test_hack_fibonacci(hack_emulator):
     """Verify Fibonacci(10) = 55 computation."""
     _, output = hack_emulator
     assert "Fibonacci(10) = 55 ... [PASS]" in output
 
+
 def test_hack_array_sum(hack_emulator):
     """Verify Array Sum = 150 computation."""
     _, output = hack_emulator
     assert "Array Sum = 150 ... [PASS]" in output
+
 
 def test_hack_all_passed(hack_emulator):
     """Verify overall test completion summary."""

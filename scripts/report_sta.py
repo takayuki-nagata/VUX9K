@@ -52,15 +52,9 @@ def analyze_sta(report_path, target_freq_mhz=27.0):
 
         total_delay = sum(elem.get("delay", 0.0) for elem in path_elements)
         logic_delay = sum(
-            elem.get("delay", 0.0)
-            for elem in path_elements
-            if elem.get("type") in ("logic", "clk-to-q", "setup")
+            elem.get("delay", 0.0) for elem in path_elements if elem.get("type") in ("logic", "clk-to-q", "setup")
         )
-        routing_delay = sum(
-            elem.get("delay", 0.0)
-            for elem in path_elements
-            if elem.get("type") == "routing"
-        )
+        routing_delay = sum(elem.get("delay", 0.0) for elem in path_elements if elem.get("type") == "routing")
 
         fmax_mhz = 1000.0 / total_delay if total_delay > 0 else 0.0
         slack_ns = target_period_ns - total_delay
@@ -87,7 +81,7 @@ def analyze_sta(report_path, target_freq_mhz=27.0):
 
         print("\n  Top Critical Path Delay Segments:")
         print(f"  {'Type':<10} {'Delay':<10} {'Location':<12} {'Cell / Net Name'}")
-        print(f"  {'-'*8}   {'-'*8}   {'-'*10}   {'-'*45}")
+        print(f"  {'-' * 8}   {'-' * 8}   {'-' * 10}   {'-' * 45}")
 
         for elem in sorted_elements[:10]:
             elem_type = elem.get("type", "unknown")

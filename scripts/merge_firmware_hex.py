@@ -12,7 +12,8 @@ import sys
 import struct
 import os
 
-NOP = 0x00000013 # RISC-V addi x0, x0, 0
+NOP = 0x00000013  # RISC-V addi x0, x0, 0
+
 
 def merge_hex(bm_path, rl_path, out_hex_path):
     bm_data = b""
@@ -33,23 +34,24 @@ def merge_hex(bm_path, rl_path, out_hex_path):
 
     # 1. Boot Manager (up to 14 KB / 3584 words)
     for i in range(0, min(len(bm_data), 3584 * 4), 4):
-        chunk = bm_data[i:i+4]
+        chunk = bm_data[i : i + 4]
         if len(chunk) < 4:
-            chunk = chunk + b'\x00' * (4 - len(chunk))
-        words[i // 4] = struct.unpack('<I', chunk)[0]
+            chunk = chunk + b"\x00" * (4 - len(chunk))
+        words[i // 4] = struct.unpack("<I", chunk)[0]
 
     # 2. Resident Loader (up to 2 KB / 512 words) at word offset 3584 (0x3800)
     for i in range(0, min(len(rl_data), 512 * 4), 4):
-        chunk = rl_data[i:i+4]
+        chunk = rl_data[i : i + 4]
         if len(chunk) < 4:
-            chunk = chunk + b'\x00' * (4 - len(chunk))
-        words[3584 + (i // 4)] = struct.unpack('<I', chunk)[0]
+            chunk = chunk + b"\x00" * (4 - len(chunk))
+        words[3584 + (i // 4)] = struct.unpack("<I", chunk)[0]
 
     with open(out_hex_path, "w") as f:
         for w in words:
             f.write(f"{w:08x}\n")
 
     print(f"Generated {out_hex_path} (4096 words / 16 KB: 14KB BM + 2KB RL)")
+
 
 if __name__ == "__main__":
     if len(sys.argv) < 4:

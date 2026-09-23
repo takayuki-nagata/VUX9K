@@ -18,17 +18,19 @@ import sys
 sys.path.append(os.path.dirname(__file__))
 from sdcard_model import SpiSdCardModel
 
-UART_BAUD_CYCLES = 234 # 27.0 MHz / 115200 baud
+UART_BAUD_CYCLES = 234  # 27.0 MHz / 115200 baud
+
 
 async def uart_send_byte(dut, byte_val: int):
     """Send 1 byte over UART (8N1) to dut.uart_rx"""
-    dut.uart_rx.value = 0 # Start bit
+    dut.uart_rx.value = 0  # Start bit
     await ClockCycles(dut.clk, UART_BAUD_CYCLES)
     for i in range(8):
         dut.uart_rx.value = (byte_val >> i) & 1
         await ClockCycles(dut.clk, UART_BAUD_CYCLES)
-    dut.uart_rx.value = 1 # Stop bit
+    dut.uart_rx.value = 1  # Stop bit
     await ClockCycles(dut.clk, UART_BAUD_CYCLES)
+
 
 async def uart_recv_byte(dut, timeout_cycles=200000) -> int:
     """Receive 1 byte over UART from dut.uart_tx"""
@@ -46,16 +48,17 @@ async def uart_recv_byte(dut, timeout_cycles=200000) -> int:
     val = 0
     for i in range(8):
         await ClockCycles(dut.clk, UART_BAUD_CYCLES)
-        val |= (int(dut.uart_tx.value) << i)
+        val |= int(dut.uart_tx.value) << i
 
     # Wait through stop bit
     await ClockCycles(dut.clk, UART_BAUD_CYCLES)
     return val
 
+
 @cocotb.test()
 async def test_boot_auto_load_standalone(dut):
     """Test 1: Stand-alone SD Card Auto-Loader on boot timeout"""
-    clock = Clock(dut.clk, 37038, unit="ps") # 27.0 MHz
+    clock = Clock(dut.clk, 37038, unit="ps")  # 27.0 MHz
     cocotb.start_soon(clock.start())
 
     # Attach SD Card Model to SD SPI pins
@@ -63,11 +66,22 @@ async def test_boot_auto_load_standalone(dut):
     cocotb.start_soon(sd_model.run())
 
     # Preload simple RISC-V program into Sector 64 (MBR gap @ 32KB offset) of SD Card:
-    test_prog = bytes([
-        0x93, 0x02, 0x00, 0x00, # addi t0, zero, 0
-        0x93, 0x82, 0x12, 0x00, # addi t0, t0, 1
-        0x6F, 0xF0, 0xDF, 0xFF, # j -4
-    ])
+    test_prog = bytes(
+        [
+            0x93,
+            0x02,
+            0x00,
+            0x00,  # addi t0, zero, 0
+            0x93,
+            0x82,
+            0x12,
+            0x00,  # addi t0, t0, 1
+            0x6F,
+            0xF0,
+            0xDF,
+            0xFF,  # j -4
+        ]
+    )
     sd_model.preload_sector(64, test_prog)
 
     # Assert Reset (active-low)

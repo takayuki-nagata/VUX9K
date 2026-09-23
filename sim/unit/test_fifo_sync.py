@@ -5,6 +5,7 @@ import cocotb
 from cocotb.triggers import FallingEdge, Timer
 from cocotb.clock import Clock
 
+
 @cocotb.test()
 async def test_fifo_sync(dut):
     """Test synchronous FIFO buffer push, pop, full, empty flags and ordering"""
@@ -32,7 +33,7 @@ async def test_fifo_sync(dut):
         dut.we.value = 1
         dut.wdata.value = val
         await FallingEdge(dut.clk)
-    
+
     dut.we.value = 0
     await Timer(1, unit="ns")
     assert int(dut.empty.value) == 0, "FIFO should not be empty after writes"
@@ -53,9 +54,9 @@ async def test_fifo_sync(dut):
     # 4. Simultaneous Write & Read
     dut.we.value = 1
     dut.wdata.value = 0x55
-    await FallingEdge(dut.clk) # 0x55 in FIFO
+    await FallingEdge(dut.clk)  # 0x55 in FIFO
     dut.wdata.value = 0xAA
-    dut.re.value = 1 # Pop 0x55 while pushing 0xAA
+    dut.re.value = 1  # Pop 0x55 while pushing 0xAA
     await FallingEdge(dut.clk)
     dut.we.value = 0
     dut.re.value = 0

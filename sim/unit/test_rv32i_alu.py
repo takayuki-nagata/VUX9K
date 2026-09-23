@@ -17,6 +17,7 @@ OP_AND = 9
 OP_COPY_B = 10
 OP_COPY_A = 11
 
+
 @cocotb.test()
 async def test_alu_operations(dut):
     """Test all ALU arithmetic, logic, and comparison operations"""
@@ -53,7 +54,7 @@ async def test_alu_operations(dut):
     assert int(dut.result.value) == 16
 
     # 5. SLT: signed (-5 < 5) -> 1
-    dut.a.value = 0xFFFF_FFFB # -5 in two's complement
+    dut.a.value = 0xFFFF_FFFB  # -5 in two's complement
     dut.b.value = 5
     dut.alu_op.value = OP_SLT
     await Timer(1, unit="ns")

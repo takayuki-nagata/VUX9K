@@ -4,6 +4,7 @@
 import cocotb
 from cocotb.triggers import Timer
 
+
 @cocotb.test()
 async def test_rv32i_decoder(dut):
     """Test RISC-V RV32I instruction decoder and immediate generation"""
@@ -25,7 +26,7 @@ async def test_rv32i_decoder(dut):
     assert int(dut.rd.value) == 1
     assert int(dut.funct3.value) == 0
     assert int(dut.rs1.value) == 2
-    assert int(dut.imm.value) == 0xFFFF_FFFB # -5 sign-extended
+    assert int(dut.imm.value) == 0xFFFF_FFFB  # -5 sign-extended
 
     # 3. S-type: SW x3, 8(x2) (0x00312423)
     dut.instruction.value = 0x00312423

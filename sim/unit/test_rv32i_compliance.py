@@ -5,27 +5,56 @@ import cocotb
 from cocotb.triggers import FallingEdge, Timer, ClockCycles
 from cocotb.clock import Clock
 
+
 # RV32I Instruction Encoders
 def encode_r(funct7: int, rs2: int, rs1: int, funct3: int, rd: int, opcode: int = 0x33) -> int:
-    return ((funct7 & 0x7F) << 25) | ((rs2 & 0x1F) << 20) | ((rs1 & 0x1F) << 15) | ((funct3 & 0x7) << 12) | ((rd & 0x1F) << 7) | (opcode & 0x7F)
+    return (
+        ((funct7 & 0x7F) << 25)
+        | ((rs2 & 0x1F) << 20)
+        | ((rs1 & 0x1F) << 15)
+        | ((funct3 & 0x7) << 12)
+        | ((rd & 0x1F) << 7)
+        | (opcode & 0x7F)
+    )
+
 
 def encode_i(imm: int, rs1: int, funct3: int, rd: int, opcode: int = 0x13) -> int:
     return ((imm & 0xFFF) << 20) | ((rs1 & 0x1F) << 15) | ((funct3 & 0x7) << 12) | ((rd & 0x1F) << 7) | (opcode & 0x7F)
 
+
 def encode_s(imm: int, rs2: int, rs1: int, funct3: int, opcode: int = 0x23) -> int:
     imm11_5 = (imm >> 5) & 0x7F
     imm4_0 = imm & 0x1F
-    return (imm11_5 << 25) | ((rs2 & 0x1F) << 20) | ((rs1 & 0x1F) << 15) | ((funct3 & 0x7) << 12) | (imm4_0 << 7) | (opcode & 0x7F)
+    return (
+        (imm11_5 << 25)
+        | ((rs2 & 0x1F) << 20)
+        | ((rs1 & 0x1F) << 15)
+        | ((funct3 & 0x7) << 12)
+        | (imm4_0 << 7)
+        | (opcode & 0x7F)
+    )
+
 
 def encode_b(imm: int, rs2: int, rs1: int, funct3: int, opcode: int = 0x63) -> int:
     imm12 = (imm >> 12) & 1
     imm10_5 = (imm >> 5) & 0x3F
     imm4_1 = (imm >> 1) & 0xF
     imm11 = (imm >> 11) & 1
-    return (imm12 << 31) | (imm10_5 << 25) | ((rs2 & 0x1F) << 20) | ((rs1 & 0x1F) << 15) | ((funct3 & 0x7) << 12) | (imm4_1 << 8) | (imm11 << 7) | (opcode & 0x7F)
+    return (
+        (imm12 << 31)
+        | (imm10_5 << 25)
+        | ((rs2 & 0x1F) << 20)
+        | ((rs1 & 0x1F) << 15)
+        | ((funct3 & 0x7) << 12)
+        | (imm4_1 << 8)
+        | (imm11 << 7)
+        | (opcode & 0x7F)
+    )
+
 
 def encode_u(imm: int, rd: int, opcode: int = 0x37) -> int:
-    return ((imm & 0xFFFFF000)) | ((rd & 0x1F) << 7) | (opcode & 0x7F)
+    return (imm & 0xFFFFF000) | ((rd & 0x1F) << 7) | (opcode & 0x7F)
+
 
 def encode_j(imm: int, rd: int, opcode: int = 0x6F) -> int:
     imm20 = (imm >> 20) & 1
@@ -33,6 +62,7 @@ def encode_j(imm: int, rd: int, opcode: int = 0x6F) -> int:
     imm11 = (imm >> 11) & 1
     imm19_12 = (imm >> 12) & 0xFF
     return (imm20 << 31) | (imm10_1 << 21) | (imm11 << 20) | (imm19_12 << 12) | ((rd & 0x1F) << 7) | (opcode & 0x7F)
+
 
 @cocotb.test()
 async def test_rv32i_full_compliance(dut):
@@ -48,7 +78,7 @@ async def test_rv32i_full_compliance(dut):
     dut.timer_irq_in.value = 0
     dut.ext_irq_in.value = 0
     dut.sw_irq_in.value = 0
-    dut.instr_in.value = encode_i(0, 0, 0, 0, 0x13) # ADDI x0, x0, 0
+    dut.instr_in.value = encode_i(0, 0, 0, 0, 0x13)  # ADDI x0, x0, 0
 
     await ClockCycles(dut.clk, 2)
     await FallingEdge(dut.clk)
@@ -98,38 +128,38 @@ async def test_rv32i_full_compliance(dut):
 
     # 11. SW x8, 16(x0) (Store 0xAA to address 16)
     dut.instr_in.value = encode_s(16, rs2=8, rs1=0, funct3=2)
-    await ClockCycles(dut.clk, 2) # FETCH -> EXECUTE -> MEM_WAIT
+    await ClockCycles(dut.clk, 2)  # FETCH -> EXECUTE -> MEM_WAIT
     await Timer(1, unit="ns")
     assert int(dut.mem_write.value) == 1, "SW mem_write failed"
     assert int(dut.data_addr.value) == 16, f"Expected store addr 16, got {int(dut.data_addr.value)}"
     assert int(dut.data_out.value) == 0xAA, f"Expected store data 0xAA, got {hex(int(dut.data_out.value))}"
-    await ClockCycles(dut.clk, 1) # MEM_WAIT -> FETCH
+    await ClockCycles(dut.clk, 1)  # MEM_WAIT -> FETCH
 
     # 12. LW x12, 16(x0) with data_in = 0xAA
     dut.data_in.value = 0xAA
     dut.instr_in.value = encode_i(16, rs1=0, funct3=2, rd=12, opcode=0x03)
-    await ClockCycles(dut.clk, 2) # FETCH -> EXECUTE -> MEM_WAIT
+    await ClockCycles(dut.clk, 2)  # FETCH -> EXECUTE -> MEM_WAIT
     await ClockCycles(dut.clk, 1)
     await Timer(1, unit="ns")
 
     # 13. BEQ x7, x7, +16 (Should take branch)
     pc_before_beq = int(dut.pc_out.value)
     dut.instr_in.value = encode_b(16, rs2=7, rs1=7, funct3=0)
-    await ClockCycles(dut.clk, 2) # FETCH -> EXECUTE -> Update PC
+    await ClockCycles(dut.clk, 2)  # FETCH -> EXECUTE -> Update PC
     await Timer(1, unit="ns")
     assert int(dut.pc_out.value) == pc_before_beq + 16, f"Expected PC={pc_before_beq + 16}, got {int(dut.pc_out.value)}"
 
     # 14. BNE x7, x8, +12 (Should take branch)
     pc_before_bne = int(dut.pc_out.value)
     dut.instr_in.value = encode_b(12, rs2=8, rs1=7, funct3=1)
-    await ClockCycles(dut.clk, 2) # FETCH -> EXECUTE -> Update PC
+    await ClockCycles(dut.clk, 2)  # FETCH -> EXECUTE -> Update PC
     await Timer(1, unit="ns")
     assert int(dut.pc_out.value) == pc_before_bne + 12, f"Expected PC={pc_before_bne + 12}, got {int(dut.pc_out.value)}"
 
     # 15. JAL x1, +28 (Should jump)
     pc_before_jal = int(dut.pc_out.value)
     dut.instr_in.value = encode_j(28, rd=1)
-    await ClockCycles(dut.clk, 2) # FETCH -> EXECUTE -> Update PC
+    await ClockCycles(dut.clk, 2)  # FETCH -> EXECUTE -> Update PC
     await Timer(1, unit="ns")
     assert int(dut.pc_out.value) == pc_before_jal + 28, f"Expected PC={pc_before_jal + 28}, got {int(dut.pc_out.value)}"
     await ClockCycles(dut.clk, 1)

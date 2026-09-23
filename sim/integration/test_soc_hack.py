@@ -14,10 +14,11 @@ from cocotb.clock import Clock
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 HACK_HEX = os.path.join(REPO_ROOT, "build", "hack", "firmware.hex")
 
+
 @cocotb.test()
 async def test_soc_hack_execution(dut):
     """Test Hack 16-bit firmware execution on VUX9K SoC RTL"""
-    clock = Clock(dut.clk, 20, unit="ns") # 50 MHz clock
+    clock = Clock(dut.clk, 20, unit="ns")  # 50 MHz clock
     cocotb.start_soon(clock.start())
 
     # Assert Reset (active-low)
@@ -45,7 +46,7 @@ async def test_soc_hack_execution(dut):
         dut.rst.value = 1
     await ClockCycles(dut.clk, 5)
     if hasattr(dut, "por_counter"):
-        dut.por_counter.value = (1 << 15)
+        dut.por_counter.value = 1 << 15
 
     await ClockCycles(dut.clk, 20)
 

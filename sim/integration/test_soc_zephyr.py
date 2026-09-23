@@ -5,10 +5,11 @@ import cocotb
 from cocotb.triggers import ClockCycles
 from cocotb.clock import Clock
 
+
 @cocotb.test()
 async def test_soc_zephyr_execution(dut):
     """Test Zephyr RTOS & Rust SoC execution in cocotb simulation"""
-    clock = Clock(dut.clk, 20, unit="ns") # 50 MHz
+    clock = Clock(dut.clk, 20, unit="ns")  # 50 MHz
     cocotb.start_soon(clock.start())
 
     # Assert Reset (active-low)

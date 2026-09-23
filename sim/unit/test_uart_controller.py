@@ -5,6 +5,7 @@ import cocotb
 from cocotb.triggers import FallingEdge, Timer
 from cocotb.clock import Clock
 
+
 async def loopback_wire(dut):
     """Continuously loop back txd to rxd (X/Z-safe for GLS)"""
     while True:
@@ -13,6 +14,7 @@ async def loopback_wire(dut):
         except ValueError:
             dut.rxd.value = 1  # Treat X/Z as idle (high) like real hardware pull-up
         await FallingEdge(dut.clk)
+
 
 @cocotb.test()
 async def test_uart_controller(dut):
@@ -32,7 +34,7 @@ async def test_uart_controller(dut):
     await FallingEdge(dut.clk)
     await FallingEdge(dut.clk)
     dut.rst.value = 1
-    
+
     # Wait until reset state machine settles to IDLE
     for _ in range(500):
         await FallingEdge(dut.clk)

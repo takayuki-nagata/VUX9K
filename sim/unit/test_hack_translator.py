@@ -4,6 +4,7 @@
 import cocotb
 from cocotb.triggers import Timer
 
+
 @cocotb.test()
 async def test_hack_translator(dut):
     """Test Hack-to-RV32I micro-op instruction translator"""

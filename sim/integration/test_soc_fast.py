@@ -47,8 +47,10 @@ async def test_soc_fast_boot(dut):
     # addi a0, zero, 0x23 -> 0x02300513
     # sb a0, 0(a1)        -> 0x00a58023
     # j .                 -> 0x0000006f
-    payload = struct.pack("<IIII", 0x400005b7, 0x02300513, 0x00a58023, 0x0000006f)
-    header = struct.pack("<IHHIIIIII32s", VUX_MAGIC, 3, 1, 1, len(payload), 0, 0, 0, 1, b"TestApp\x00".ljust(32, b"\x00"))
+    payload = struct.pack("<IIII", 0x400005B7, 0x02300513, 0x00A58023, 0x0000006F)
+    header = struct.pack(
+        "<IHHIIIIII32s", VUX_MAGIC, 3, 1, 1, len(payload), 0, 0, 0, 1, b"TestApp\x00".ljust(32, b"\x00")
+    )
     sd_model.preload_sector(128, header + payload)
 
     ser = VirtualSerialBridge(dut, baud_cycles=234)
@@ -60,7 +62,7 @@ async def test_soc_fast_boot(dut):
 
     # Accelerate POR in simulation
     if hasattr(dut, "por_counter"):
-        dut.por_counter.value = (1 << 15)
+        dut.por_counter.value = 1 << 15
     await ClockCycles(dut.clk, 10)
     dut._log.info("SoC Reset released.")
 
@@ -81,7 +83,9 @@ async def test_soc_fast_boot(dut):
             pc = int(dut.cpu_inst.pc_out.value) if hasattr(dut, "cpu_inst") else 0
             dut._log.info(f"Cycles: {cycles}, PC: 0x{pc:08X}, buf: {buf[-40:]!r}")
 
-    assert b"vux> " in buf, f"Failed to receive boot prompt from UART. Output: {buf.decode('utf-8', errors='replace')!r}"
+    assert b"vux> " in buf, (
+        f"Failed to receive boot prompt from UART. Output: {buf.decode('utf-8', errors='replace')!r}"
+    )
     dut._log.info("SoC Fast Boot & UART Prompt verified successfully!")
 
     # -------------------------------------------------------------------------

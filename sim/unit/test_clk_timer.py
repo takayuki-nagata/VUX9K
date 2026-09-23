@@ -5,6 +5,7 @@ import cocotb
 from cocotb.triggers import FallingEdge, Timer
 from cocotb.clock import Clock
 
+
 @cocotb.test()
 async def test_clk_timer(dut):
     """Test clk_timer periodic alarm pulse generation"""

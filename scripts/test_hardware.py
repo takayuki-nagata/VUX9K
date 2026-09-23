@@ -57,7 +57,11 @@ def run_hardware_test_suite(port="auto", baud=115200):
         # -------------------------------------------------------------
         test_name = "1. UART Connection & Prompt Synchronization"
         passed, resp = vux_tool.sync_prompt(ser, timeout=4.0)
-        msg = "Connected and synchronized with Boot Manager" if passed else f"Failed to synchronize prompt. Output: {resp!r}"
+        msg = (
+            "Connected and synchronized with Boot Manager"
+            if passed
+            else f"Failed to synchronize prompt. Output: {resp!r}"
+        )
         results.append((test_name, passed, msg))
         print_test_result(test_name, passed, msg)
         if not passed:
@@ -91,8 +95,18 @@ def run_hardware_test_suite(port="auto", baud=115200):
         test_name_flash_s0 = "4. Flash Slot 0: Boot Manager ('w' / vux_tool.flash_slot)"
         try:
             meta = vux_tool.flash_slot(ser, boot_mgr_bin, slot=0, name="Boot Manager", mode="riscv", version=10)
-            results.append((test_name_flash_s0, True, f"Flashed {boot_mgr_bin} to Slot 0 (LBA 64, {meta['num_sectors']} sectors, CRC=0x{meta['crc32']:08X})"))
-            print_test_result(test_name_flash_s0, True, f"Flashed {boot_mgr_bin} to Slot 0 (LBA 64, {meta['num_sectors']} sectors, CRC=0x{meta['crc32']:08X})")
+            results.append(
+                (
+                    test_name_flash_s0,
+                    True,
+                    f"Flashed {boot_mgr_bin} to Slot 0 (LBA 64, {meta['num_sectors']} sectors, CRC=0x{meta['crc32']:08X})",
+                )
+            )
+            print_test_result(
+                test_name_flash_s0,
+                True,
+                f"Flashed {boot_mgr_bin} to Slot 0 (LBA 64, {meta['num_sectors']} sectors, CRC=0x{meta['crc32']:08X})",
+            )
         except Exception as e:
             results.append((test_name_flash_s0, False, str(e)))
             print_test_result(test_name_flash_s0, False, str(e))
@@ -103,7 +117,11 @@ def run_hardware_test_suite(port="auto", baud=115200):
         test_name_insp_s0 = "5. Header Verification: Slot 0 ('s0' / vux_tool.inspect_slot)"
         out = vux_tool.inspect_slot(ser, slot=0, timeout=6.0)
         passed = ("VUX9" in out) and (("Mode:  1" in out) or ("RISC-V" in out))
-        msg = "Verified Slot 0 header (Magic: VUX9, Mode: 1/RISC-V, Name: Boot Manager)" if passed else f"Failed inspect. Output: {out!r}"
+        msg = (
+            "Verified Slot 0 header (Magic: VUX9, Mode: 1/RISC-V, Name: Boot Manager)"
+            if passed
+            else f"Failed inspect. Output: {out!r}"
+        )
         results.append((test_name_insp_s0, passed, msg))
         print_test_result(test_name_insp_s0, passed, msg)
 
@@ -120,8 +138,18 @@ def run_hardware_test_suite(port="auto", baud=115200):
         test_name_flash_s1 = "6. Flash Slot 1: Default RISC-V App ('w' / vux_tool.flash_slot)"
         try:
             meta = vux_tool.flash_slot(ser, app_bin, slot=1, name="Rust App", mode="riscv")
-            results.append((test_name_flash_s1, True, f"Flashed {app_bin} to Slot 1 (LBA 128, {meta['num_sectors']} sectors, CRC=0x{meta['crc32']:08X})"))
-            print_test_result(test_name_flash_s1, True, f"Flashed {app_bin} to Slot 1 (LBA 128, {meta['num_sectors']} sectors, CRC=0x{meta['crc32']:08X})")
+            results.append(
+                (
+                    test_name_flash_s1,
+                    True,
+                    f"Flashed {app_bin} to Slot 1 (LBA 128, {meta['num_sectors']} sectors, CRC=0x{meta['crc32']:08X})",
+                )
+            )
+            print_test_result(
+                test_name_flash_s1,
+                True,
+                f"Flashed {app_bin} to Slot 1 (LBA 128, {meta['num_sectors']} sectors, CRC=0x{meta['crc32']:08X})",
+            )
         except Exception as e:
             results.append((test_name_flash_s1, False, str(e)))
             print_test_result(test_name_flash_s1, False, str(e))
@@ -132,8 +160,12 @@ def run_hardware_test_suite(port="auto", baud=115200):
         test_name_insp_s1 = "7. Header Verification: Slot 1 ('s1' / vux_tool.inspect_slot)"
         out = vux_tool.inspect_slot(ser, slot=1, timeout=6.0)
         passed = ("VUX9" in out) and (("Mode:  1" in out) or ("RISC-V" in out))
-        results.append((test_name_insp_s1, passed, "Verified Slot 1 header (Magic: VUX9, Mode: 1/RISC-V, Name: Rust App)"))
-        print_test_result(test_name_insp_s1, passed, "Verified Slot 1 header (Magic: VUX9, Mode: 1/RISC-V, Name: Rust App)")
+        results.append(
+            (test_name_insp_s1, passed, "Verified Slot 1 header (Magic: VUX9, Mode: 1/RISC-V, Name: Rust App)")
+        )
+        print_test_result(
+            test_name_insp_s1, passed, "Verified Slot 1 header (Magic: VUX9, Mode: 1/RISC-V, Name: Rust App)"
+        )
 
         # -------------------------------------------------------------
         # Test 8: Flash Slot 2: Hack 16-bit Firmware (vux_tool.flash_slot)
@@ -147,8 +179,18 @@ def run_hardware_test_suite(port="auto", baud=115200):
         test_name_flash_s2 = "8. Flash Slot 2: Hack 16-bit Firmware ('w' / vux_tool.flash_slot)"
         try:
             meta = vux_tool.flash_slot(ser, hack_bin, slot=2, name="Hack Demo", mode="hack")
-            results.append((test_name_flash_s2, True, f"Flashed {hack_bin} to Slot 2 (LBA 192, {meta['num_sectors']} sectors, CRC=0x{meta['crc32']:08X})"))
-            print_test_result(test_name_flash_s2, True, f"Flashed {hack_bin} to Slot 2 (LBA 192, {meta['num_sectors']} sectors, CRC=0x{meta['crc32']:08X})")
+            results.append(
+                (
+                    test_name_flash_s2,
+                    True,
+                    f"Flashed {hack_bin} to Slot 2 (LBA 192, {meta['num_sectors']} sectors, CRC=0x{meta['crc32']:08X})",
+                )
+            )
+            print_test_result(
+                test_name_flash_s2,
+                True,
+                f"Flashed {hack_bin} to Slot 2 (LBA 192, {meta['num_sectors']} sectors, CRC=0x{meta['crc32']:08X})",
+            )
         except Exception as e:
             results.append((test_name_flash_s2, False, str(e)))
             print_test_result(test_name_flash_s2, False, str(e))
@@ -159,7 +201,11 @@ def run_hardware_test_suite(port="auto", baud=115200):
         test_name_insp_s2 = "9. Header Verification: Slot 2 ('s2' / vux_tool.inspect_slot)"
         out = vux_tool.inspect_slot(ser, slot=2, timeout=6.0)
         passed = ("VUX9" in out) and (("Mode:  0" in out) or ("Hack" in out))
-        msg = "Verified Slot 2 header (Magic: VUX9, Mode: 0/Hack, Name: Hack Demo)" if passed else f"Failed inspect. Output: {out!r}"
+        msg = (
+            "Verified Slot 2 header (Magic: VUX9, Mode: 0/Hack, Name: Hack Demo)"
+            if passed
+            else f"Failed inspect. Output: {out!r}"
+        )
         results.append((test_name_insp_s2, passed, msg))
         print_test_result(test_name_insp_s2, passed, msg)
 
@@ -169,7 +215,11 @@ def run_hardware_test_suite(port="auto", baud=115200):
         test_name_catalog = "10. Program Slots Catalog Listing ('l' / vux_tool.list_slots)"
         out = vux_tool.list_slots(ser, timeout=8.0)
         passed = ("Slot 0" in out) and ("Slot 1" in out) and ("Slot 2" in out)
-        msg = "Verified multi-slot catalog listing with names and sizes" if passed else f"Catalog incomplete. Output: {out!r}"
+        msg = (
+            "Verified multi-slot catalog listing with names and sizes"
+            if passed
+            else f"Catalog incomplete. Output: {out!r}"
+        )
         results.append((test_name_catalog, passed, msg))
         print_test_result(test_name_catalog, passed, msg)
 
@@ -178,13 +228,19 @@ def run_hardware_test_suite(port="auto", baud=115200):
         # -------------------------------------------------------------
         test_name_crc = "11. Negative Test: CRC32 Corrupted Payload Rejection (Slot 0)"
         try:
-            vux_tool.flash_slot(ser, boot_mgr_bin, slot=0, name="CorruptBM", mode="riscv", version=11, crc_override=0xDEADBEEF)
+            vux_tool.flash_slot(
+                ser, boot_mgr_bin, slot=0, name="CorruptBM", mode="riscv", version=11, crc_override=0xDEADBEEF
+            )
             out = vux_tool.reboot_soc(ser, timeout=8.0)
-            passed = ("CRC32 mismatch" in out or "Corrupted payload" in out or "invalid" in out)
+            passed = "CRC32 mismatch" in out or "Corrupted payload" in out or "invalid" in out
             if passed and "vux>" not in out:
                 p_ok, _ = vux_tool.sync_prompt(ser, timeout=4.0)
                 passed = passed and p_ok
-            msg = "Detected corrupted CRC32, bypassed auto-update, and preserved Boot Manager" if passed else f"Failed CRC check. Output: {out!r}"
+            msg = (
+                "Detected corrupted CRC32, bypassed auto-update, and preserved Boot Manager"
+                if passed
+                else f"Failed CRC check. Output: {out!r}"
+            )
             # Rollback Slot 0 back to valid Version 10
             time.sleep(0.5)
             vux_tool.sync_prompt(ser, timeout=4.0)
@@ -202,11 +258,15 @@ def run_hardware_test_suite(port="auto", baud=115200):
         try:
             vux_tool.flash_slot(ser, b"\x00" * 64, slot=3, name="BadMagic", mode="riscv", magic_override=0x12345678)
             out = vux_tool.boot_slot(ser, slot=3, timeout=8.0)
-            passed = ("Load failed" in out or "returning to Boot Manager" in out)
+            passed = "Load failed" in out or "returning to Boot Manager" in out
             if passed and "vux>" not in out:
                 p_ok, _ = vux_tool.sync_prompt(ser, timeout=4.0)
                 passed = passed and p_ok
-            msg = "Resident Loader rejected invalid Magic header and returned to Boot Manager" if passed else f"Failed Magic check. Output: {out!r}"
+            msg = (
+                "Resident Loader rejected invalid Magic header and returned to Boot Manager"
+                if passed
+                else f"Failed Magic check. Output: {out!r}"
+            )
             results.append((test_name_magic, passed, msg))
             print_test_result(test_name_magic, passed, msg)
         except Exception as e:
@@ -220,11 +280,17 @@ def run_hardware_test_suite(port="auto", baud=115200):
         try:
             vux_tool.flash_slot(ser, boot_mgr_bin, slot=0, name="BootMgr v2", mode="riscv", version=11)
             out = vux_tool.reboot_soc(ser, timeout=8.0)
-            passed = ("Verified valid Boot Manager update" in out or "Booted newly updated" in out or "v11" in out) and ("Auto-updating" in out or "Booted newly updated" in out)
+            passed = (
+                "Verified valid Boot Manager update" in out or "Booted newly updated" in out or "v11" in out
+            ) and ("Auto-updating" in out or "Booted newly updated" in out)
             if passed and "vux>" not in out:
                 p_ok, _ = vux_tool.sync_prompt(ser, timeout=4.0)
                 passed = passed and p_ok
-            msg = "Verified automatic Boot Manager self-update from Slot 0 (v11)" if passed else f"Failed self-update. Output: {out!r}"
+            msg = (
+                "Verified automatic Boot Manager self-update from Slot 0 (v11)"
+                if passed
+                else f"Failed self-update. Output: {out!r}"
+            )
 
             # Rollback Slot 0 back to Version 10 for clean state
             time.sleep(0.5)
@@ -242,7 +308,11 @@ def run_hardware_test_suite(port="auto", baud=115200):
         # -------------------------------------------------------------
         test_name_boot_s1 = "14. Boot Slot 1: Rust App Execution & Return ('1' / vux_tool.boot_slot)"
         out = vux_tool.boot_slot(ser, slot=1, timeout=8.0)
-        passed = ("[RL] Slot 1" in out) and ("[Rust App]" in out) and ("All Rust application tasks finished successfully!" in out)
+        passed = (
+            ("[RL] Slot 1" in out)
+            and ("[Rust App]" in out)
+            and ("All Rust application tasks finished successfully!" in out)
+        )
         msg = "Executed standalone Rust application tasks" if passed else f"Failed Slot 1 execution. Output: {out!r}"
         results.append((test_name_boot_s1, passed, msg))
         print_test_result(test_name_boot_s1, passed, msg)
@@ -251,7 +321,9 @@ def run_hardware_test_suite(port="auto", baud=115200):
         ser.close()
         pack_fs = os.path.join(REPO_ROOT, "build", "synth", "pack.fs")
         loader_bin = shutil.which("openFPGALoader") or os.path.expanduser("~/.local/oss-cad-suite/bin/openFPGALoader")
-        subprocess.run([loader_bin, "-b", "tangnano9k", pack_fs], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(
+            [loader_bin, "-b", "tangnano9k", pack_fs], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
         time.sleep(0.5)
         ser = vux_tool.open_port(port, baudrate=baud, timeout=0.1)
         vux_tool.sync_prompt(ser, timeout=4.0)
@@ -271,8 +343,16 @@ def run_hardware_test_suite(port="auto", baud=115200):
                 out += c.decode("utf-8", errors="replace")
                 if "ALL HACK C FIRMWARE TESTS PASSED" in out:
                     break
-        passed = ("[RL] Slot 2" in out) and ("Hack 16-bit C Firmware Test" in out) and ("ALL HACK C FIRMWARE TESTS PASSED" in out)
-        msg = "Executed Hack 16-bit C firmware and verified 100% test pass" if passed else f"Failed Slot 2 execution. Output: {out!r}"
+        passed = (
+            ("[RL] Slot 2" in out)
+            and ("Hack 16-bit C Firmware Test" in out)
+            and ("ALL HACK C FIRMWARE TESTS PASSED" in out)
+        )
+        msg = (
+            "Executed Hack 16-bit C firmware and verified 100% test pass"
+            if passed
+            else f"Failed Slot 2 execution. Output: {out!r}"
+        )
         results.append((test_name_boot_s2, passed, msg))
         print_test_result(test_name_boot_s2, passed, msg)
 
@@ -280,7 +360,9 @@ def run_hardware_test_suite(port="auto", baud=115200):
         ser.close()
         pack_fs = os.path.join(REPO_ROOT, "build", "synth", "pack.fs")
         loader_bin = shutil.which("openFPGALoader") or os.path.expanduser("~/.local/oss-cad-suite/bin/openFPGALoader")
-        subprocess.run([loader_bin, "-b", "tangnano9k", pack_fs], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(
+            [loader_bin, "-b", "tangnano9k", pack_fs], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
         time.sleep(0.5)
     finally:
         try:
@@ -297,7 +379,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
     print(f"Total Tests : {total_tests}")
     print(f"Passed      : {passed_tests}")
     print(f"Failed      : {total_tests - passed_tests}")
-    print(f"Score       : {passed_tests}/{total_tests} ({(passed_tests/total_tests)*100:.1f}%)")
+    print(f"Score       : {passed_tests}/{total_tests} ({(passed_tests / total_tests) * 100:.1f}%)")
 
     if passed_tests == total_tests:
         print("\n\033[92m========================================================================")

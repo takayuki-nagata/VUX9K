@@ -5,6 +5,7 @@ import cocotb
 from cocotb.triggers import ClockCycles, Timer
 from cocotb.clock import Clock
 
+
 @cocotb.test()
 async def test_auto_mode_detection(dut):
     """Test first-instruction RISC-V vs Hack ISA mode auto-detection"""
@@ -22,7 +23,7 @@ async def test_auto_mode_detection(dut):
     assert int(dut.is_riscv_mode.value) == 1, "Should detect RISC-V 32-bit mode!"
 
     # Subsequent instruction change should not alter latched mode
-    dut.first_instr.value = 0x00000000 # Hack instruction
+    dut.first_instr.value = 0x00000000  # Hack instruction
     await ClockCycles(dut.clk, 2)
     assert int(dut.is_riscv_mode.value) == 1, "Mode must remain latched as RISC-V!"
 

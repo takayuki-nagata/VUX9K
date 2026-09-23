@@ -5,6 +5,7 @@ import cocotb
 from cocotb.triggers import FallingEdge, Timer
 from cocotb.clock import Clock
 
+
 @cocotb.test()
 async def test_shift_registers(dut):
     """Test shift_registers parallel load and serial right shifting"""
@@ -15,7 +16,7 @@ async def test_shift_registers(dut):
     await FallingEdge(dut.clk)
     dut.ce.value = 1
     dut.set.value = 1
-    dut.pin.value = 0x297 # 10 bits: 10_1001_0111
+    dut.pin.value = 0x297  # 10 bits: 10_1001_0111
     dut.sin.value = 1
 
     await FallingEdge(dut.clk)
