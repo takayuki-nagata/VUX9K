@@ -33,6 +33,10 @@ UNIT = [
     ("uart_tx", "test_uart_tx"),
     ("uart_rx", "test_uart_rx"),
     ("uart_controller", "test_uart_controller"),
+    ("timer_core", "test_timer_core"),
+    ("gpio_controller", "test_gpio_controller"),
+    ("sdcard_spi", "test_sdcard_spi"),
+    ("soc_ram", "test_soc_ram"),
 ]
 
 # Gate-level: netlists from `make synth-units`
