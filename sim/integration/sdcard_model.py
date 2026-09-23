@@ -4,22 +4,61 @@
 """
 Cocotb Virtual SD Card SPI Slave Model
 Simulates SD Card SPI mode for RTL simulation and verification.
-Supports CMD0, CMD8, CMD55, ACMD41, CMD17 (Read), and CMD24 (Write).
+Supports CMD0, CMD8, CMD55, ACMD41, CMD58, CMD16, CMD17 (Read), and CMD24 (Write).
+
+Default (sdhc=True, strict=False) is deliberately forgiving: an SDHC card that also
+accepts byte addresses (CMD17/CMD24 args >= 0x10000 are treated as byte offsets).
+Two opt-in knobs model real-card behavior the default hides:
+- sdhc=False: an SDSC card -- OCR CCS=0, and CMD17/CMD24 take a *byte* address.
+- strict=True: addresses are interpreted exactly as the card type requires (no
+  guessing), and protocol problems are recorded in `violations`: a byte address that
+  isn't a multiple of 512 on SDSC, and fewer than 74 SCLK cycles with CS high between
+  power-up (model start) and the first command (SD spec power-up sequence).
 """
 
+import cocotb
 from cocotb.triggers import FallingEdge, RisingEdge
+
+POWER_UP_CLOCKS = 74  # SD spec: >= 74 clocks with CS high before the first command
 
 
 class SpiSdCardModel:
-    def __init__(self, sclk_sig, mosi_sig, miso_sig, cs_n_sig):
+    def __init__(self, sclk_sig, mosi_sig, miso_sig, cs_n_sig, *, sdhc=True, strict=False):
         self.sclk = sclk_sig
         self.mosi = mosi_sig
         self.miso = miso_sig
         self.cs_n = cs_n_sig
+        self.sdhc = sdhc
+        self.strict = strict
         self.sectors = {}  # lba -> bytearray(512)
         self.in_app_cmd = False
         self.is_ready = False
+        self.violations = []  # human-readable protocol problems (strict mode)
+        self.commands = []  # (cmd, arg) log
+        self._idle_clocks = 0  # SCLK cycles with CS high before the first command
+        self._first_cmd_seen = False
         self.miso.value = 1
+
+    @property
+    def idle_clocks(self) -> int:
+        """SCLK cycles seen with CS high before the first command (power-up preamble)."""
+        return self._idle_clocks
+
+    def _lba(self, cmd: int, arg: int) -> int:
+        """Sector addressed by a CMD17/CMD24 argument."""
+        if not self.strict:
+            return arg if arg < 0x10000 else (arg >> 9)
+        if self.sdhc:
+            return arg
+        if arg % 512:
+            self.violations.append(f"CMD{cmd}: SDSC byte address 0x{arg:X} is not sector-aligned (block address sent?)")
+        return arg >> 9
+
+    async def _count_power_up_clocks(self):
+        while not self._first_cmd_seen:
+            await RisingEdge(self.sclk)
+            if self.cs_n.value == 1 and not self._first_cmd_seen:
+                self._idle_clocks += 1
 
     def preload_sector(self, lba: int, data: bytes):
         """Preload binary data into a sector"""
@@ -32,6 +71,7 @@ class SpiSdCardModel:
 
     async def run(self):
         """Main SPI slave coroutine"""
+        cocotb.start_soon(self._count_power_up_clocks())
         while True:
             # Wait for CS Low
             if self.cs_n.value != 0:
@@ -51,6 +91,14 @@ class SpiSdCardModel:
 
             cmd = cmd_bytes[0] & 0x3F
             arg = (cmd_bytes[1] << 24) | (cmd_bytes[2] << 16) | (cmd_bytes[3] << 8) | cmd_bytes[4]
+            self.commands.append((cmd, arg))
+            if not self._first_cmd_seen:
+                self._first_cmd_seen = True
+                if self.strict and self._idle_clocks < POWER_UP_CLOCKS:
+                    self.violations.append(
+                        f"power-up: only {self._idle_clocks} SCLK cycles with CS high before the first command "
+                        f"(CMD{cmd}), SD spec requires >= {POWER_UP_CLOCKS}"
+                    )
 
             if cmd == 0:  # CMD0: GO_IDLE_STATE
                 self.is_ready = False
@@ -77,15 +125,15 @@ class SpiSdCardModel:
             elif cmd == 58:  # CMD58: READ_OCR
                 await self._send_byte(0xFF)
                 await self._send_byte(0x00)  # R1: Success
-                # OCR with CCS=1 (bit 30) and Powered Up (bit 31) -> 0xC0
-                await self._send_bytes(bytes([0xC0, 0xFF, 0x80, 0x00]))
+                # OCR: Powered Up (bit 31) and CCS (bit 30) = 1 for SDHC, 0 for SDSC
+                await self._send_bytes(bytes([0xC0 if self.sdhc else 0x80, 0xFF, 0x80, 0x00]))
 
             elif cmd == 16:  # CMD16: SET_BLOCKLEN
                 await self._send_byte(0xFF)
                 await self._send_byte(0x00)  # R1: Success
 
             elif cmd == 17:  # CMD17: READ_SINGLE_BLOCK
-                lba = arg if arg < 0x10000 else (arg >> 9)
+                lba = self._lba(cmd, arg)
                 sector_data = self.sectors.get(lba, bytearray(512))
                 await self._send_byte(0xFF)
                 await self._send_byte(0x00)  # R1: Success
@@ -95,7 +143,7 @@ class SpiSdCardModel:
                 await self._send_bytes(bytes([0x12, 0x34]))  # 2 bytes CRC
 
             elif cmd == 24:  # CMD24: WRITE_SINGLE_BLOCK
-                lba = arg if arg < 0x10000 else (arg >> 9)
+                lba = self._lba(cmd, arg)
                 await self._send_byte(0xFF)
                 await self._send_byte(0x00)  # R1: Success
                 # Wait for Data Token 0xFE

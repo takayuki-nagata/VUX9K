@@ -61,7 +61,7 @@ async def wait_cycles(n: int):
     await Timer(n * CLK_PERIOD_PS, unit="ps")
 
 
-async def start_soc(dut, *, sd_sectors=None, mbr=True, btn=1, accelerate_por=True, during_reset=None):
+async def start_soc(dut, *, sd_sectors=None, mbr=True, btn=1, accelerate_por=True, during_reset=None, sd_card=None):
     """Start the clock, attach models, and release reset.
 
     dut is either sim/tb_soc_top.sv (preferred: clock generated in HDL, SoC at
@@ -71,6 +71,7 @@ async def start_soc(dut, *, sd_sectors=None, mbr=True, btn=1, accelerate_por=Tru
     btn: level of the active-low S2 button during and after reset (0 = held, e.g. for Safe Mode).
     accelerate_por: jump soc_top's POR counter to its end if the signal is visible (RTL only).
     during_reset: optional callable(soc) run while rst_n is still low, e.g. to preload I-RAM.
+    sd_card: optional kwargs for SpiSdCardModel (e.g. {"sdhc": False, "strict": True}).
 
     Returns (ser, sd_model).
     """
@@ -83,7 +84,7 @@ async def start_soc(dut, *, sd_sectors=None, mbr=True, btn=1, accelerate_por=Tru
     dut.uart_rx.value = 1
     dut.sd_miso.value = 1
 
-    sd_model = SpiSdCardModel(dut.sd_sclk, dut.sd_mosi, dut.sd_miso, dut.sd_cs_n)
+    sd_model = SpiSdCardModel(dut.sd_sclk, dut.sd_mosi, dut.sd_miso, dut.sd_cs_n, **(sd_card or {}))
     cocotb.start_soon(sd_model.run())
     if mbr:
         sd_model.preload_sector(0, mbr_sector())
