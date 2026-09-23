@@ -27,6 +27,7 @@ UNIT = [
     ("unified_cpu", "test_unified_cpu"),
     ("unified_cpu", "test_hack_cpu_ops"),
     ("unified_cpu", "test_rv32i_smoke"),
+    ("unified_cpu", "test_unified_cpu_traps"),
     ("clk_timer", "test_clk_timer"),
     ("shift_registers", "test_shift_registers"),
     ("fifo_sync", "test_fifo_sync"),
