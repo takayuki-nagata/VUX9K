@@ -12,6 +12,16 @@ async def test_shift_registers(dut):
     clock = Clock(dut.clk, 20, unit="ns")
     cocotb.start_soon(clock.start())
 
+    # Reset (active-low). Leaving rst undriven only "worked" on Icarus, where the
+    # X on rst skips the reset branch; on 2-state Verilator it holds reset forever.
+    dut.rst.value = 0
+    dut.ce.value = 0
+    dut.set.value = 0
+    await FallingEdge(dut.clk)
+    await FallingEdge(dut.clk)
+    assert int(dut.pout.value) == 0x3FF, "Reset should load all-1 (UART idle high)"
+    dut.rst.value = 1
+
     # 1. Parallel Load 10'b1010010111 (0x297)
     await FallingEdge(dut.clk)
     dut.ce.value = 1
