@@ -48,7 +48,7 @@ UNIT_GLS = [
 # the rest still drive their own clock on a bare soc_top.
 SOC = [
     ("tb_soc_top", "test_soc_boot"),
-    ("soc_top", "test_soc_rv32i"),
+    ("tb_soc_top", "test_soc_rv32i"),
     ("tb_soc_top", "test_soc_hack"),
     ("soc_top", "test_soc_zephyr"),
     ("tb_soc_top", "test_soc_fast"),
