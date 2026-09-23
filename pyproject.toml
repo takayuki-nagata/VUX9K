@@ -19,3 +19,16 @@ select = ["E", "F", "I", "B", "ASYNC", "RUF006"]
 # cocotb coroutines aren't an asyncio event loop: the simulator is paused while
 # Python runs, so blocking file I/O inside a test can't stall anything.
 "sim/**/*.py" = ["ASYNC2"]
+
+[tool.pytest.ini_options]
+# cocotb testbenches run through sim/runners/test_sim.py; sim/unit and
+# sim/integration hold cocotb (not pytest) modules and must not be collected.
+testpaths = ["sim/runners", "sim/emulator"]
+cache_dir = "build/pytest_cache"
+addopts = "--strict-markers"
+markers = [
+    "unit: single-module cocotb testbench",
+    "soc: full soc_top cocotb testbench",
+    "gls: gate-level simulation of a yosys netlist",
+    "slow: takes many minutes; excluded from test-ci",
+]

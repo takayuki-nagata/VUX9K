@@ -36,17 +36,18 @@ except the handful of firmware-hex symlinks described below.
 
 Every build artifact (Veryl `.sv`/`.map` output, firmware `.bin`/`.hex`, Hack
 firmware, riscv-tests ISA test files, Zephyr's `west build` output, synthesis/PnR/
-STA/bitstream files, cocotb `sim_build_*/` dirs) lands under `build/<category>/`.
+STA/bitstream files, cocotb builds and runs under `build/sim/`) lands under `build/<category>/`.
 Run `veryl build --out-dir build/veryl` (or `make veryl`) and it mirrors the
 source tree exactly — `build/veryl/soc/cpu/*.sv`, `build/veryl/soc/uart/*.sv`, etc.
 See the `Makefile`'s `BUILD_DIR`/`VERYL_OUT_DIR`/`FIRMWARE_BUILD_DIR`/`SYNTH_DIR`
 variables for the exact layout.
 
 **Exception:** `firmware.hex` and `firmware_d0-3.hex` also exist as symlinks at
-the repo root and in `sim/`, pointing into `build/firmware/`. This is required
+the repo root, pointing into `build/firmware/`. This is required
 because `soc/soc_ram.veryl`'s `$readmemh("firmware.hex", ...)` calls use a bare
 filename resolved relative to whatever directory the invoking tool's process cwd
-is (yosys/nextpnr: repo root; cocotb/icarus: `sim/`) — `$readmemh` is **not**
+is (yosys/nextpnr: repo root). cocotb runs don't use them: `sim/runners/sim_runner.py`
+puts the same symlinks into each test's own run directory, its cwd. `$readmemh` is **not**
 simulation-only, it's how the actual FPGA bitstream gets the boot firmware baked
 into BRAM at synthesis time. Don't remove these symlinks or "clean up" the
 duplication without also fixing the underlying `$readmemh` calls (out of scope
@@ -58,8 +59,8 @@ for a build-layout change; would require re-verifying real hardware).
 files and resolve module names (via `inst`) in one flat global namespace — there
 is no `import`/`use`/`include` syntax. Moving `.veryl` files between directories
 never breaks Veryl itself; only external tooling that hardcodes paths to the
-*generated* `.sv` output (Makefile `read_verilog` commands, `sim/Makefile`
-`VERILOG_SOURCES`, `scripts/run_riscv_tests.py`) needs updating.
+*generated* `.sv` output (Makefile `read_verilog` commands, `sim/runners/sim_runner.py`'s
+`RTL_SOURCES`, `scripts/run_riscv_tests.py`) needs updating.
 
 ## `sim/` is split by test kind, not by module under test
 
@@ -69,12 +70,12 @@ tests against the Python software emulator (`emulator.py`). This split (done in
 a 2026-09 `sim/` reorg pass) tracks *which helper module a test needs*, not
 directory conventions — `sdcard_model.py`/`virtual_serial.py` only ever get
 imported by `sim/integration/` tests, `emulator.py` only by `sim/emulator/`
-tests, so each helper lives alongside its only consumers. `sim/Makefile`,
+tests, so each helper lives alongside its only consumers. `sim/runners/` holds
+the pytest entry point that builds and runs all cocotb tests (see below).
 `gowin_cells_sim.v`, `tb_soc_top.sv`, and `tb_hex_runner.veryl` stay at `sim/`'s
 top level — **do not move them into a subdirectory**:
-- `sim/Makefile` hardcodes `$(CURDIR)/gowin_cells_sim.v` (GLS) and
-  `$(CURDIR)/tb_soc_top.sv` (RTL and GLS) — `$(CURDIR)` means wherever
-  `sim/Makefile` itself is invoked from.
+- `sim/runners/sim_runner.py` refers to `sim/gowin_cells_sim.v` (GLS) and
+  `sim/tb_soc_top.sv` (RTL and GLS) by path.
 - `tb_hex_runner.veryl` is the one `.veryl` file inside `sim/` (everything else
   lives under `soc/`); Veryl mirrors the source tree into `build/veryl/`, so it
   compiles to `build/veryl/sim/tb_hex_runner.sv`, a path `scripts/run_riscv_tests.py`
@@ -83,12 +84,30 @@ top level — **do not move them into a subdirectory**:
   in "Veryl module resolution is directory-agnostic" above, but easy to miss
   since `tb_hex_runner.veryl` looks like an ordinary test helper, not RTL source).
 
-cocotb's bare `MODULE=test_xxx` resolution (used by ~30 call sites in the root
-`Makefile`'s `$(MAKE) -C sim TOPLEVEL=... MODULE=...` invocations) works across
-all three subdirectories because `sim/Makefile` puts all of `unit/`,
-`integration/`, and `emulator/` on `PYTHONPATH` — there are no module-name
-collisions, so this needed no changes to the 30 call sites themselves. The
-pytest-based files in `sim/emulator/` rely on pytest's *implicit* same-directory
+## cocotb tests run through pytest + `cocotb_tools.runner`, not a Makefile
+
+Every cocotb test module is one parametrized case in `sim/runners/test_sim.py`
+(`test_unit`, `test_unit_gls`, `test_soc`, `test_soc_gls`, keyed by module
+name); the root `Makefile`'s `sim-*` targets just select node IDs, e.g.
+`pytest -s "sim/runners/test_sim.py::test_soc[test_soc_fast]"`. `SIM=verilator`
+selects the simulator. `sim/runners/sim_runner.py` owns the source lists and
+layout: one compiled build per `build/sim/<sim>[-gls]/<toplevel>/` (compile is
+`flock`-serialized), and a separate run directory + results file per test
+module under it, so any tests can run concurrently. Non-obvious bits:
+- **cocotb test modules are imported by bare name** inside the simulator, from
+  `PYTHONPATH` — which the runner builds from the *pytest process's* `sys.path`
+  (and it ignores an inherited `PYTHONPATH`), so `sim_runner.run()` inserts
+  `sim/unit` and `sim/integration` into `sys.path` itself. Module names must stay
+  unique across both directories.
+- **`LD_PRELOAD` of `librt.so.1`/`libutil.so.1` is required** for oss-cad-suite's
+  `vvp` to load the uv-built libpython ("librt.so.1: cannot open shared object
+  file"); the runner adds it. Don't set `PYTHONHOME` — it trips cocotb's
+  "unexpected sys.executable" check.
+- `pyproject.toml` restricts pytest's `testpaths` to `sim/runners` and
+  `sim/emulator`: `sim/unit`/`sim/integration` contain cocotb modules named
+  `test_*.py` that pytest must never collect directly.
+
+The pytest-based files in `sim/emulator/` rely on pytest's *implicit* same-directory
 `sys.path` insertion (no `conftest.py`/`pytest.ini` backs this) to find
 `emulator.py` — keep any new pytest-based emulator test in that same directory.
 Any test file that computes `REPO_ROOT` via `dirname(dirname(__file__))` (used
@@ -182,7 +201,8 @@ RTL, `sim-soc-fast`: 491 s -> 194 s):
   generates 27 MHz in HDL; the SoC is `dut.soc` inside it. Driving the clock
   with `cocotb.clock.Clock` costs a VPI write + callback every half period and
   alone made Icarus ~2.4x slower (7.9k vs 19k cycles/s). Run SoC tests with
-  `TOPLEVEL=tb_soc_top` (RTL or `SIM_GLS=1`) and set them up with
+  toplevel `tb_soc_top` (RTL and GLS; see `SOC`/`SOC_GLS` in `sim/runners/test_sim.py`)
+  and set them up with
   `sim/integration/soc_env.py`'s `start_soc()`, which only falls back to a
   cocotb `Clock` when handed a bare `soc_top`.
 - **Long waits use `Timer` or events, not `ClockCycles(clk, n)`** — cocotb 2.0's
@@ -214,7 +234,7 @@ caused by any restructuring:
 ## `sim-hw-flow` / `sim-gls-hw-flow`: slow, deliberately excluded from `test-sim`
 
 `make sim-hw-flow` (`sim/integration/test_soc_hardware_flow.py`, RTL) and
-`make sim-gls-hw-flow` (same test, `SIM_GLS=1`) are the only tests that drive
+`make sim-gls-hw-flow` (same test, gate-level) are the only tests that drive
 the full multi-step UART flashing/boot protocol end-to-end through
 `tools/vux_tool.py`'s `build_vux9_image()`: prompt sync, hardware
 self-diagnostics, SD sector dump, `'w'`-command flash of both a Hack and a

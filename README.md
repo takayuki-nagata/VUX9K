@@ -299,7 +299,7 @@ VUX9K/
 ├── hack_demo/                      # Hack 16-bit C/Assembly demo app (toolchain self-test)
 ├── zephyr_workspace/               # Zephyr RTOS out-of-tree application & bc_clone_rs integration
 │   └── app/rust_demo/              # Standalone/Zephyr Rust demo app (vux9k_rust_demo)
-├── sim/                            # Cocotb & Pytest RTL simulation testbenches
+├── sim/                            # cocotb & pytest testbenches (run via sim/runners/test_sim.py)
 ├── scripts/                        # Build/CI plumbing (elf2bin.py, run_riscv_tests.py, test_hardware.py, run_pnr.py, report_sta.py, ...)
 ├── tools/                          # End-user CLI: vux_tool.py (UART flashing, diagnostics, monitor)
 ├── vendor/                         # bc_clone_rs (git submodule); riscv-tests (fetched on demand by run_riscv_tests.py, gitignored)
@@ -310,7 +310,7 @@ VUX9K/
     ├── riscv_tests/                # riscv-tests ELFs/hex images and tb_hex_runner build
     ├── zephyr/                     # Zephyr `west build` output
     ├── synth/                      # soc.json, soc_syn.v, soc_pnr.json, soc_sta.json, pack.fs, unit netlists
-    └── sim/                        # cocotb sim_build_*/ directories and results.xml
+    └── sim/                        # cocotb builds (<sim>[-gls]/<toplevel>/) and per-test run dirs/results
 ```
 
 ---

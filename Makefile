@@ -12,6 +12,11 @@ OPENFPGALOADER ?= openFPGALoader
 CST_FILE ?= tangnano9k.cst
 CARGO = cargo
 PYTHON = python3
+# cocotb testbenches run through pytest + cocotb_tools.runner (sim/runners/); SIM=icarus|verilator
+SIM ?= icarus
+export SIM
+SIM_TESTS = sim/runners/test_sim.py
+PYTEST_SIM = $(PYTHON) -m pytest -s -q
 UV = uv
 
 VENV_PATH ?= .venv
@@ -87,12 +92,10 @@ $(FIRMWARE_BUILD_DIR)/firmware.hex: $(FIRMWARE_SRCS) $(LOADER_SRCS)
 	$(PYTHON) scripts/elf2bin.py firmware/target/riscv32i-unknown-none-elf/release/boot_manager $(FIRMWARE_BUILD_DIR)/firmware.bin $(FIRMWARE_BUILD_DIR)
 	$(PYTHON) scripts/merge_firmware_hex.py $(FIRMWARE_BUILD_DIR)/firmware.bin $(FIRMWARE_BUILD_DIR)/resident_loader.bin $(FIRMWARE_BUILD_DIR)/firmware.hex
 	@# soc_ram.veryl's $$readmemh() resolves these bare filenames relative to each tool's own
-	@# process cwd (yosys/nextpnr: repo root, cocotb/icarus: sim/), so a copy must exist in each
-	@# location; symlinks (not cp) keep them structurally identical to the canonical build/firmware/ copy.
+	@# process cwd. yosys/nextpnr run from the repo root, so they need these symlinks (not cp, to stay
+	@# identical to build/firmware/); cocotb tests get their own per-run symlinks from sim/runners/sim_runner.py.
 	ln -sf $(CURDIR)/$(FIRMWARE_BUILD_DIR)/firmware.hex ./firmware.hex
 	ln -sf $(CURDIR)/$(FIRMWARE_BUILD_DIR)/firmware_d0.hex $(CURDIR)/$(FIRMWARE_BUILD_DIR)/firmware_d1.hex $(CURDIR)/$(FIRMWARE_BUILD_DIR)/firmware_d2.hex $(CURDIR)/$(FIRMWARE_BUILD_DIR)/firmware_d3.hex .
-	ln -sf $(CURDIR)/$(FIRMWARE_BUILD_DIR)/firmware.hex ./sim/firmware.hex 2>/dev/null || true
-	ln -sf $(CURDIR)/$(FIRMWARE_BUILD_DIR)/firmware_d0.hex $(CURDIR)/$(FIRMWARE_BUILD_DIR)/firmware_d1.hex $(CURDIR)/$(FIRMWARE_BUILD_DIR)/firmware_d2.hex $(CURDIR)/$(FIRMWARE_BUILD_DIR)/firmware_d3.hex ./sim/ 2>/dev/null || true
 
 firmware: $(FIRMWARE_BUILD_DIR)/firmware.hex
 
@@ -158,36 +161,8 @@ build-hack:
 # ===== Simulation - Unit Tests =====
 
 sim-unit: veryl
-	@echo "=== Running RV32I ALU Unit Tests ==="
-	$(MAKE) -C sim TOPLEVEL=rv32i_alu MODULE=test_rv32i_alu
-	@echo "=== Running RV32I Decoder Unit Tests ==="
-	$(MAKE) -C sim TOPLEVEL=rv32i_decode MODULE=test_rv32i_decode
-	@echo "=== Running Hack Translator Unit Tests ==="
-	$(MAKE) -C sim TOPLEVEL=hack_translator MODULE=test_hack_translator
-	@echo "=== Running RV32I Register File Unit Tests ==="
-	$(MAKE) -C sim TOPLEVEL=rv32i_regfile MODULE=test_rv32i_regfile
-	@echo "=== Running RV32I CSRs & Trap Unit Tests ==="
-	$(MAKE) -C sim TOPLEVEL=rv32i_csrs MODULE=test_rv32i_csrs
-	@echo "=== Running Auto Mode Detector Unit Tests ==="
-	$(MAKE) -C sim TOPLEVEL=auto_mode_detector MODULE=test_auto_mode_detector
-	@echo "=== Running Unified Dual-ISA CPU Unit Tests ==="
-	$(MAKE) -C sim TOPLEVEL=unified_cpu MODULE=test_unified_cpu
-	@echo "=== Running Hack CPU Comprehensive Ops Tests ==="
-	$(MAKE) -C sim TOPLEVEL=unified_cpu MODULE=test_hack_cpu_ops
-	@echo "=== Running RV32I ISA Compliance Tests ==="
-	$(MAKE) -C sim TOPLEVEL=unified_cpu MODULE=test_rv32i_compliance
-	@echo "=== Running UART Clock Timer Unit Tests ==="
-	$(MAKE) -C sim TOPLEVEL=clk_timer MODULE=test_clk_timer
-	@echo "=== Running UART Shift Registers Unit Tests ==="
-	$(MAKE) -C sim TOPLEVEL=shift_registers MODULE=test_shift_registers
-	@echo "=== Running UART FIFO Sync Unit Tests ==="
-	$(MAKE) -C sim TOPLEVEL=fifo_sync MODULE=test_fifo_sync
-	@echo "=== Running UART TX Unit Tests ==="
-	$(MAKE) -C sim TOPLEVEL=uart_tx MODULE=test_uart_tx
-	@echo "=== Running UART RX Unit Tests ==="
-	$(MAKE) -C sim TOPLEVEL=uart_rx MODULE=test_uart_rx
-	@echo "=== Running UART Controller Loopback Tests ==="
-	$(MAKE) -C sim TOPLEVEL=uart_controller MODULE=test_uart_controller
+	@echo "=== Running RTL Unit Tests (cocotb) ==="
+	$(PYTEST_SIM) "$(SIM_TESTS)::test_unit"
 
 # ===== Simulation - RV32I ISA Tests (riscv-tests) =====
 
@@ -199,7 +174,7 @@ test-isa: veryl
 
 sim-boot: veryl
 	@echo "=== Running Hardware Boot Manager & Bridge Cocotb Tests ==="
-	$(MAKE) -C sim TOPLEVEL=soc_top MODULE=test_soc_boot
+	$(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_boot]"
 
 sim-soc: veryl firmware sim-boot
 	@echo "=== Running Python Software Emulator Unit Tests ==="
@@ -207,9 +182,9 @@ sim-soc: veryl firmware sim-boot
 	@echo "=== Running Python Software Emulator ==="
 	$(PYTHON) sim/emulator/emulator.py $(FIRMWARE_BUILD_DIR)/firmware.bin
 	@echo "=== Running SoC Top RISC-V Integration Tests ==="
-	$(MAKE) -C sim TOPLEVEL=soc_top MODULE=test_soc_rv32i
+	$(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_rv32i]"
 	@echo "=== Running SoC Top Hack Integration Tests ==="
-	$(MAKE) -C sim TOPLEVEL=soc_top MODULE=test_soc_hack
+	$(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_hack]"
 
 sim-zephyr-emu: build-zephyr
 	@echo "=== Running Zephyr bc_clone_rs Python Emulator ==="
@@ -225,7 +200,7 @@ sim-zephyr-repl: build-zephyr
 
 sim-zephyr-rtl: veryl zephyr-bc-lib
 	@echo "=== Running Zephyr/Rust SoC RTL Simulation ==="
-	$(MAKE) -C sim TOPLEVEL=soc_top MODULE=test_soc_zephyr
+	$(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_zephyr]"
 
 sim-zephyr: sim-zephyr-emu sim-zephyr-repl sim-zephyr-rtl
 
@@ -239,17 +214,17 @@ sim-hack-pytest: build-hack
 
 sim-hack-rtl: veryl build-hack
 	@echo "=== Running Hack 16-bit SoC RTL Simulation ==="
-	$(MAKE) -C sim TOPLEVEL=soc_top MODULE=test_soc_hack
+	$(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_hack]"
 
 sim-hack: sim-hack-emu sim-hack-pytest sim-hack-rtl
 
 sim-hw-flow: veryl firmware build-hack
 	@echo "=== Running SoC Top End-to-End Hardware Verification Flow (RTL Simulation) ==="
-	$(MAKE) -C sim TOPLEVEL=tb_soc_top MODULE=test_soc_hardware_flow
+	$(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_hardware_flow]"
 
 sim-gls-hw-flow: synth-top firmware build-hack
 	@echo "=== Running SoC Top End-to-End Hardware Verification Flow (GLS Simulation) ==="
-	$(MAKE) -C sim TOPLEVEL=tb_soc_top MODULE=test_soc_hardware_flow SIM_GLS=1
+	$(PYTEST_SIM) "$(SIM_TESTS)::test_soc_gls[test_soc_hardware_flow]"
 
 sim: sim-unit test-isa sim-gls-unit sim-soc-fast
 
@@ -263,24 +238,16 @@ synth-units: veryl
 	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_pkg.sv $(VERYL_OUT_DIR)/soc/cpu/auto_mode_detector.sv; synth_gowin -top auto_mode_detector; write_verilog -noattr $(SYNTH_DIR)/auto_mode_detector_syn.v"
 
 sim-gls-unit: synth-units
-	@echo "=== Running Gowin Primitive GLS: Unified CPU Tests ==="
-	$(MAKE) -C sim TOPLEVEL=unified_cpu MODULE=test_unified_cpu SIM_GLS=1
-	@echo "=== Running Gowin Primitive GLS: Hack CPU Ops Tests ==="
-	$(MAKE) -C sim TOPLEVEL=unified_cpu MODULE=test_hack_cpu_ops SIM_GLS=1
-	@echo "=== Running Gowin Primitive GLS: RV32I ISA Compliance Tests ==="
-	$(MAKE) -C sim TOPLEVEL=unified_cpu MODULE=test_rv32i_compliance SIM_GLS=1
-	@echo "=== Running Gowin Primitive GLS: UART Controller Loopback Tests ==="
-	$(MAKE) -C sim TOPLEVEL=uart_controller MODULE=test_uart_controller SIM_GLS=1
-	@echo "=== Running Gowin Primitive GLS: Auto Mode Detector Tests ==="
-	$(MAKE) -C sim TOPLEVEL=auto_mode_detector MODULE=test_auto_mode_detector SIM_GLS=1
+	@echo "=== Running Gowin Primitive GLS Unit Tests (cocotb) ==="
+	$(PYTEST_SIM) "$(SIM_TESTS)::test_unit_gls"
 
 sim-soc-fast: veryl firmware
 	@echo "=== Running Fast SoC Top Boot & Execution Verification (RTL) ==="
-	$(MAKE) -C sim TOPLEVEL=tb_soc_top MODULE=test_soc_fast
+	$(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_fast]"
 
 sim-soc-gls-fast: synth-top firmware
 	@echo "=== Running Fast SoC Top Boot & Execution Verification (GLS Netlist) ==="
-	$(MAKE) -C sim TOPLEVEL=tb_soc_top MODULE=test_soc_gls_fast SIM_GLS=1
+	$(PYTEST_SIM) "$(SIM_TESTS)::test_soc_gls[test_soc_gls_fast]"
 
 SOC_RTL_SRCS = $(VERYL_OUT_DIR)/soc/cpu/rv32i_pkg.sv $(VERYL_OUT_DIR)/soc/cpu/auto_mode_detector.sv $(VERYL_OUT_DIR)/soc/cpu/hack_translator.sv \
                $(VERYL_OUT_DIR)/soc/cpu/rv32i_alu.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_decode.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_regfile.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_csrs.sv \
@@ -356,4 +323,4 @@ clean:
 	cd zephyr_workspace/app/rust_demo && $(CARGO) clean
 	cd vendor/bc_clone_rs/crates/bc_zephyr 2>/dev/null && $(CARGO) clean || true
 	$(MAKE) -C hack_demo clean
-	rm -rf $(BUILD_DIR) ./firmware.hex ./firmware_d*.hex ./sim/firmware.hex ./sim/firmware_d*.hex zephyr_workspace/app/build
+	rm -rf $(BUILD_DIR) ./firmware.hex ./firmware_d*.hex zephyr_workspace/app/build
