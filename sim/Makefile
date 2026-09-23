@@ -7,7 +7,7 @@
 export LD_PRELOAD := $(shell gcc -print-file-name=librt.so.1 2>/dev/null) $(shell gcc -print-file-name=libutil.so.1 2>/dev/null)
 export LIBPYTHON_LOC := $(shell cocotb-config --libpython 2>/dev/null)
 export PYTHONHOME := $(shell python3 -c 'import sys; print(sys.base_prefix)' 2>/dev/null)
-export PYTHONPATH := $(shell python3 -c 'import sys; print(":".join(sys.path))' 2>/dev/null):$(CURDIR)
+export PYTHONPATH := $(shell python3 -c 'import sys; print(":".join(sys.path))' 2>/dev/null):$(CURDIR)/unit:$(CURDIR)/integration:$(CURDIR)/emulator
 
 SIM ?= icarus
 TOPLEVEL_LANG ?= verilog

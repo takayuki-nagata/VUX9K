@@ -198,9 +198,9 @@ sim-boot: veryl
 
 sim-soc: firmware sim-boot
 	@echo "=== Running Python Software Emulator Unit Tests ==="
-	$(PYTHON) -m pytest sim/test_emulator.py
+	$(PYTHON) -m pytest sim/emulator/test_emulator.py
 	@echo "=== Running Python Software Emulator ==="
-	$(PYTHON) sim/emulator.py $(FIRMWARE_BUILD_DIR)/firmware.bin
+	$(PYTHON) sim/emulator/emulator.py $(FIRMWARE_BUILD_DIR)/firmware.bin
 	@echo "=== Running SoC Top RISC-V Integration Tests ==="
 	$(MAKE) -C sim TOPLEVEL=soc_top MODULE=test_soc_rv32i
 	@echo "=== Running SoC Top Hack Integration Tests ==="
@@ -209,14 +209,14 @@ sim-soc: firmware sim-boot
 sim-zephyr-emu: build-zephyr
 	@echo "=== Running Zephyr bc_clone_rs Python Emulator ==="
 	@if [ -f "$(ZEPHYR_BUILD_DIR)/zephyr/zephyr.bin" ]; then \
-		$(PYTHON) sim/emulator.py $(ZEPHYR_BUILD_DIR)/zephyr/zephyr.bin --steps 120000000 --until "bc> "; \
+		$(PYTHON) sim/emulator/emulator.py $(ZEPHYR_BUILD_DIR)/zephyr/zephyr.bin --steps 120000000 --until "bc> "; \
 	else \
-		$(PYTHON) sim/emulator.py $(FIRMWARE_BUILD_DIR)/firmware.bin; \
+		$(PYTHON) sim/emulator/emulator.py $(FIRMWARE_BUILD_DIR)/firmware.bin; \
 	fi
 
 sim-zephyr-repl: build-zephyr
 	@echo "=== Running Zephyr bc_clone_rs Self-Tests & REPL Pytest Suite ==="
-	$(PYTHON) -m pytest sim/test_soc_bc.py
+	$(PYTHON) -m pytest sim/emulator/test_soc_bc.py
 
 sim-zephyr-rtl: zephyr-bc-lib
 	@echo "=== Running Zephyr/Rust SoC RTL Simulation ==="
@@ -226,11 +226,11 @@ sim-zephyr: sim-zephyr-emu sim-zephyr-repl sim-zephyr-rtl
 
 sim-hack-emu: build-hack
 	@echo "=== Running Hack Firmware on Python SoC Emulator ==="
-	$(PYTHON) sim/emulator.py $(HACK_BUILD_DIR)/firmware.bin
+	$(PYTHON) sim/emulator/emulator.py $(HACK_BUILD_DIR)/firmware.bin
 
 sim-hack-pytest: build-hack
 	@echo "=== Running Hack Firmware Pytest Test Suite ==="
-	$(PYTHON) -m pytest sim/test_hack_firmware.py
+	$(PYTHON) -m pytest sim/emulator/test_hack_firmware.py
 
 sim-hack-rtl: build-hack
 	@echo "=== Running Hack 16-bit SoC RTL Simulation ==="

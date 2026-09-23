@@ -19,6 +19,9 @@ hack_demo/              Standalone Hack 16-bit C/asm demo app (toolchain self-te
 zephyr_workspace/       Zephyr west module: board/SoC/driver/dts support for "vux9k"
   app/rust_demo/        Shared Rust app core, dual-backend (see "rust_demo" below)
 sim/                    cocotb/pytest RTL testbenches
+  unit/                 cocotb unit tests (single RTL module each)
+  integration/          cocotb SoC-level integration tests + sdcard_model.py/virtual_serial.py
+  emulator/             pytest Python-emulator tests + emulator.py
 scripts/                Build/CI plumbing only (elf2bin.py, run_arch_test.py, ...)
 tools/                  End-user CLI: vux_tool.py (UART flashing/diagnostics/monitor)
 vendor/                 bc_clone_rs submodule; riscv-arch-test (fetched on demand)
@@ -57,6 +60,40 @@ is no `import`/`use`/`include` syntax. Moving `.veryl` files between directories
 never breaks Veryl itself; only external tooling that hardcodes paths to the
 *generated* `.sv` output (Makefile `read_verilog` commands, `sim/Makefile`
 `VERILOG_SOURCES`, `scripts/run_arch_test.py`) needs updating.
+
+## `sim/` is split by test kind, not by module under test
+
+`sim/unit/`, `sim/integration/`, `sim/emulator/` hold, respectively: cocotb tests
+against a single RTL module, cocotb tests against the full `soc_top`, and pytest
+tests against the Python software emulator (`emulator.py`). This split (done in
+a 2026-09 `sim/` reorg pass) tracks *which helper module a test needs*, not
+directory conventions — `sdcard_model.py`/`virtual_serial.py` only ever get
+imported by `sim/integration/` tests, `emulator.py` only by `sim/emulator/`
+tests, so each helper lives alongside its only consumers. `sim/Makefile`,
+`gowin_cells_sim.v`, and `tb_hex_runner.veryl` stay at `sim/`'s top level —
+**do not move them into a subdirectory**:
+- `sim/Makefile`'s GLS branch hardcodes `VERILOG_SOURCES = $(CURDIR)/gowin_cells_sim.v ...`
+  — `$(CURDIR)` means wherever `sim/Makefile` itself is invoked from.
+- `tb_hex_runner.veryl` is the one `.veryl` file inside `sim/` (everything else
+  lives under `soc/`); Veryl mirrors the source tree into `build/veryl/`, so it
+  compiles to `build/veryl/sim/tb_hex_runner.sv`, a path `scripts/run_arch_test.py`
+  hardcodes. Moving the `.veryl` file changes that generated path and silently
+  breaks arch-compliance testing (this is the same class of landmine described
+  in "Veryl module resolution is directory-agnostic" above, but easy to miss
+  since `tb_hex_runner.veryl` looks like an ordinary test helper, not RTL source).
+
+cocotb's bare `MODULE=test_xxx` resolution (used by ~30 call sites in the root
+`Makefile`'s `$(MAKE) -C sim TOPLEVEL=... MODULE=...` invocations) works across
+all three subdirectories because `sim/Makefile` puts all of `unit/`,
+`integration/`, and `emulator/` on `PYTHONPATH` — there are no module-name
+collisions, so this needed no changes to the 30 call sites themselves. The
+pytest-based files in `sim/emulator/` rely on pytest's *implicit* same-directory
+`sys.path` insertion (no `conftest.py`/`pytest.ini` backs this) to find
+`emulator.py` — keep any new pytest-based emulator test in that same directory.
+Any test file that computes `REPO_ROOT` via `dirname(dirname(__file__))` (used
+to reach `build/`/`tools/` from a `sim/<file>.py` that's one level below repo
+root) needed an extra `dirname()` after the move to `sim/<subdir>/<file>.py`
+(two levels below repo root) — check this if you add a new such computation.
 
 ## Cargo workspace gotcha: rustflags paths are workspace-root-relative
 
@@ -106,11 +143,56 @@ hasn't been done, don't assume it works without testing on real hardware.
 
 Confirmed present on `main` too (reproduced in a clean `git worktree`), not
 caused by any restructuring:
-- `make sim-hack-pytest` (`sim/test_hack_firmware.py`, 5 tests) — the Python
-  software emulator doesn't reach the firmware's PASS banners; likely an
+- `make sim-hack-pytest` (`sim/emulator/test_hack_firmware.py`, 5 tests) — the
+  Python software emulator doesn't reach the firmware's PASS banners; likely an
   emulator/firmware interaction bug, unrelated to file layout.
+- `make sim-zephyr-repl` (`sim/emulator/test_soc_bc.py`, 3 of 4 tests) — the
+  first REPL round-trip after boot passes, but every subsequent interactive
+  `feed_input()`/`run()` round-trip returns empty output instead of the
+  expected `bc` result; likely an emulator UART/REPL-loop interaction bug
+  (input not being re-delivered, or the emulator's output buffer being cleared
+  before the SoC has actually produced it), unrelated to file layout. Confirmed
+  by reproducing on a clean `git worktree` of `main` reusing the same
+  `build/zephyr/zephyr/zephyr.bin` (2026-09).
 - `make sta` — nextpnr timing closure fails (~-2ns slack) across all
   `PNR_SEEDS`; a physical-design marginality issue, not a build-system bug.
+
+## `sim-hw-flow` / `sim-gls-hw-flow`: slow, deliberately excluded from `test-sim`
+
+`make sim-hw-flow` (`sim/integration/test_soc_hardware_flow.py`, RTL) and
+`make sim-gls-hw-flow` (same test, `SIM_GLS=1`) are the only tests that drive
+the full multi-step UART flashing/boot protocol end-to-end through
+`tools/vux_tool.py`'s `build_vux9_image()`: prompt sync, hardware
+self-diagnostics, SD sector dump, `'w'`-command flash of both a Hack and a
+RISC-V payload (slot-ID handshake → sector-count handshake → per-sector
+streaming), boot-header verification, and SD-boot execution. Each run takes
+roughly 25–35 minutes for RTL and longer for GLS, which is why `test-sim`/
+`test`/`test-ci` use the much lighter `sim-soc-fast`/`sim-soc-gls-fast`
+instead (boot + execution only, no flashing protocol, no SD dump/verify
+round trip) and never run these two. A green CI (`test-sim`) therefore does
+**not** confirm the flashing protocol still works.
+
+Run `sim-hw-flow`/`sim-gls-hw-flow` explicitly whenever you touch:
+- the UART flashing handshake (`firmware/boot_manager/src/main.rs`'s
+  `write_sectors_from_uart()` and its `[READY]`/`[READY-SLOT:N]`/
+  `[READY-COUNT:N]`/`[READY-SEC:i]` protocol),
+- `tools/vux_tool.py`'s `build_vux9_image()` or the sector/header layout it
+  produces,
+- the SD boot/slot-loading chain (`resident_loader`, `slot_sector()`), or
+- anything under `sim/integration/` that talks to the virtual UART/SD models
+  (`sdcard_model.py`, `virtual_serial.py`) — a change there can silently
+  desync `test_soc_hardware_flow.py`'s own protocol assumptions from the
+  firmware's actual behavior (this happened during the 2026-09 `sim/` reorg:
+  the test's handshake had drifted from a 2-step to a 3-step protocol
+  sometime after the VUX9 v3 boot header work, undetected until this test was
+  actually run — `sim-soc-fast`'s lighter flow never exercises the `'w'`
+  command at all).
+
+It's also worth running once as a final check after any `sim/` directory
+layout change (as opposed to content change), even though the fast tests all
+pass, precisely because it is the one test exercising the longest real
+UART/SD interaction chain and is therefore most likely to surface a subtle
+path- or timing-related regression the fast tests can't reach.
 
 ## Verification checklist after touching build paths or directory layout
 

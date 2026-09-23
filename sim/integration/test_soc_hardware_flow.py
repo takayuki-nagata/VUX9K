@@ -16,7 +16,7 @@ sys.path.append(os.path.dirname(__file__))
 from virtual_serial import VirtualSerialBridge
 from sdcard_model import SpiSdCardModel
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, REPO_ROOT)
 import tools.vux_tool as vux_tool
 
@@ -25,8 +25,13 @@ UART_BAUD_CYCLES = 234  # 27.0 MHz / 115200 baud
 
 async def send_str_and_wait(ser, clk, text: str, expect_token: bytes, timeout_cycles=3500000) -> str:
     await ClockCycles(clk, UART_BAUD_CYCLES * 50)
-    ser.reset_input_buffer()
     if text:
+        # Only discard stale buffered bytes when we're about to write something
+        # new -- if the firmware already started an unprompted follow-up
+        # response (e.g. printing "[READY-SEC:0]" immediately after
+        # "[READY-COUNT:N]" with no host input in between), resetting here
+        # would clip the start of it off the wire.
+        ser.reset_input_buffer()
         ser.write(text.encode("utf-8"))
     
     buf = b""
@@ -47,17 +52,20 @@ async def send_str_and_wait(ser, clk, text: str, expect_token: bytes, timeout_cy
     raise TimeoutError(f"Timeout waiting for {expect_token!r}. Received: {buf.decode('utf-8', errors='replace')!r}")
 
 
-async def flash_payload_sim(ser, clk, payload: bytes, mode: str = "hack"):
-    raw_data, meta = vux_tool.build_vux9_image(payload, slot=1, mode=mode)
+async def flash_payload_sim(ser, clk, payload: bytes, mode: str = "hack", slot: int = 1):
+    raw_data, meta = vux_tool.build_vux9_image(payload, slot=slot, mode=mode)
     num_sectors = meta["num_sectors"]
 
     # 1. Send 'w' and wait for [READY]
     await send_str_and_wait(ser, clk, "w", b"[READY]", timeout_cycles=4000000)
 
-    # 2. Send sector count
-    ser.write(bytes([num_sectors]))
+    # 2. Send slot ID and wait for [READY-SLOT:N]
+    await send_str_and_wait(ser, clk, chr(slot), f"[READY-SLOT:{slot}]".encode("utf-8"), timeout_cycles=4000000)
 
-    # 3. Stream sectors
+    # 3. Send sector count and wait for [READY-COUNT:N]
+    await send_str_and_wait(ser, clk, chr(num_sectors), f"[READY-COUNT:{num_sectors}]".encode("utf-8"), timeout_cycles=4000000)
+
+    # 4. Stream sectors
     for sec_idx in range(num_sectors):
         sec_token = f"[READY-SEC:{sec_idx}]".encode("utf-8")
         await send_str_and_wait(ser, clk, "", sec_token, timeout_cycles=4000000)
@@ -65,7 +73,7 @@ async def flash_payload_sim(ser, clk, payload: bytes, mode: str = "hack"):
         sector_bytes = raw_data[sec_idx * 512 : (sec_idx + 1) * 512]
         ser.write(sector_bytes)
 
-    # 4. Wait for completion and return to prompt
+    # 5. Wait for completion and return to prompt
     await send_str_and_wait(ser, clk, "", b"vux> ", timeout_cycles=4000000)
 
 
