@@ -9,101 +9,45 @@ import os
 import sys
 
 import cocotb
-from cocotb.clock import Clock
-from cocotb.triggers import ClockCycles
 
 sys.path.append(os.path.dirname(__file__))
-from sdcard_model import SpiSdCardModel
-from virtual_serial import VirtualSerialBridge
+from soc_env import send_and_wait, start_soc, wait_cycles
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, REPO_ROOT)
 import tools.vux_tool as vux_tool  # noqa: E402 (needs REPO_ROOT on sys.path)
 
-UART_BAUD_CYCLES = 234  # 27.0 MHz / 115200 baud
 
-
-async def send_str_and_wait(ser, clk, text: str, expect_token: bytes, timeout_cycles=3500000) -> str:
-    await ClockCycles(clk, UART_BAUD_CYCLES * 50)
-    if text:
-        # Only discard stale buffered bytes when we're about to write something
-        # new -- if the firmware already started an unprompted follow-up
-        # response (e.g. printing "[READY-SEC:0]" immediately after
-        # "[READY-COUNT:N]" with no host input in between), resetting here
-        # would clip the start of it off the wire.
-        ser.reset_input_buffer()
-        ser.write(text.encode("utf-8"))
-
-    buf = b""
-    cycles = 0
-    last_log = 0
-    while cycles < timeout_cycles:
-        if ser.in_waiting:
-            c = ser.read(ser.in_waiting)
-            buf += c
-            if expect_token in buf:
-                return buf.decode("utf-8", errors="replace")
-        await ClockCycles(clk, UART_BAUD_CYCLES)
-        cycles += UART_BAUD_CYCLES
-        if cycles - last_log >= 200000:
-            cocotb.log.info(f"Waiting for {expect_token!r} @ {cycles} cycles. received: {buf[-60:]!r}")
-            last_log = cycles
-
-    raise TimeoutError(f"Timeout waiting for {expect_token!r}. Received: {buf.decode('utf-8', errors='replace')!r}")
-
-
-async def flash_payload_sim(ser, clk, payload: bytes, mode: str = "hack", slot: int = 1):
+async def flash_payload_sim(ser, payload: bytes, mode: str = "hack", slot: int = 1):
     raw_data, meta = vux_tool.build_vux9_image(payload, slot=slot, mode=mode)
     num_sectors = meta["num_sectors"]
 
     # 1. Send 'w' and wait for [READY]
-    await send_str_and_wait(ser, clk, "w", b"[READY]", timeout_cycles=4000000)
+    await send_and_wait(ser, "w", b"[READY]", timeout_cycles=4000000)
 
     # 2. Send slot ID and wait for [READY-SLOT:N]
-    await send_str_and_wait(ser, clk, chr(slot), f"[READY-SLOT:{slot}]".encode("utf-8"), timeout_cycles=4000000)
+    await send_and_wait(ser, chr(slot), f"[READY-SLOT:{slot}]".encode("utf-8"), timeout_cycles=4000000)
 
     # 3. Send sector count and wait for [READY-COUNT:N]
-    await send_str_and_wait(
-        ser, clk, chr(num_sectors), f"[READY-COUNT:{num_sectors}]".encode("utf-8"), timeout_cycles=4000000
-    )
+    await send_and_wait(ser, chr(num_sectors), f"[READY-COUNT:{num_sectors}]".encode("utf-8"), timeout_cycles=4000000)
 
     # 4. Stream sectors
     for sec_idx in range(num_sectors):
         sec_token = f"[READY-SEC:{sec_idx}]".encode("utf-8")
-        await send_str_and_wait(ser, clk, "", sec_token, timeout_cycles=4000000)
+        await send_and_wait(ser, "", sec_token, timeout_cycles=4000000)
 
         sector_bytes = raw_data[sec_idx * 512 : (sec_idx + 1) * 512]
         ser.write(sector_bytes)
 
     # 5. Wait for completion and return to prompt
-    await send_str_and_wait(ser, clk, "", b"vux> ", timeout_cycles=4000000)
+    await send_and_wait(ser, "", b"vux> ", timeout_cycles=4000000)
 
 
 @cocotb.test()
 async def test_soc_hardware_flow(dut):
     """Run full hardware test suite on top-level SoC (RTL or GLS)"""
-    clock = Clock(dut.clk, 37038, unit="ps")
-    cocotb.start_soon(clock.start())
-
-    sd_model = SpiSdCardModel(dut.sd_sclk, dut.sd_mosi, dut.sd_miso, dut.sd_cs_n)
-    cocotb.start_soon(sd_model.run())
-
-    # Assert active-low reset pulse to initialize por_counter and SoC state
-    dut.rst_n.value = 0
-    dut.btn.value = 1
-    dut.uart_rx.value = 1
-    dut.sd_miso.value = 1
-
-    ser = VirtualSerialBridge(dut, baud_cycles=UART_BAUD_CYCLES)
-
-    await ClockCycles(dut.clk, 10)
-    dut.rst_n.value = 1
-    await ClockCycles(dut.clk, 5)
-
-    # Accelerate POR in simulation
-    if hasattr(dut, "por_counter"):
-        dut.por_counter.value = 1 << 15
-    await ClockCycles(dut.clk, 10)
+    # No MBR preload: this flow has always run against an empty card
+    ser, _ = await start_soc(dut, mbr=False)
 
     dut._log.info("=== SoC Reset Released. Synchronizing with Boot Manager ===")
 
@@ -111,7 +55,7 @@ async def test_soc_hardware_flow(dut):
     # Test 1: UART Connection & Prompt Synchronization
     # -------------------------------------------------------------
     dut._log.info("--- Test 1: UART Connection & Prompt Synchronization ---")
-    resp = await send_str_and_wait(ser, dut.clk, "", b"vux> ", timeout_cycles=2500000)
+    resp = await send_and_wait(ser, "", b"vux> ", timeout_cycles=2500000)
     assert "vux> " in resp, f"Failed prompt sync. Output: {resp!r}"
     dut._log.info("[PASS] Test 1: Connected and synchronized with Boot Manager")
 
@@ -119,7 +63,7 @@ async def test_soc_hardware_flow(dut):
     # Test 2: Hardware Self-Diagnostics
     # -------------------------------------------------------------
     dut._log.info("--- Test 2: Hardware Self-Diagnostics ---")
-    resp = await send_str_and_wait(ser, dut.clk, "t", b"vux> ", timeout_cycles=5000000)
+    resp = await send_and_wait(ser, "t", b"vux> ", timeout_cycles=5000000)
     assert "MicroSD SPI" in resp or "PASS" in resp, f"Diagnostics failed: {resp!r}"
     dut._log.info("[PASS] Test 2: Hardware Self-Diagnostics passed")
 
@@ -127,7 +71,7 @@ async def test_soc_hardware_flow(dut):
     # Test 3: MicroSD Sector 0 (MBR) Dump & 0x55AA Check
     # -------------------------------------------------------------
     dut._log.info("--- Test 3: MicroSD Sector 0 (MBR) Dump ---")
-    resp = await send_str_and_wait(ser, dut.clk, "d", b"vux> ", timeout_cycles=3500000)
+    resp = await send_and_wait(ser, "d", b"vux> ", timeout_cycles=3500000)
     assert (
         "55 AA" in resp
         or "0x55AA" in resp
@@ -143,14 +87,14 @@ async def test_soc_hardware_flow(dut):
     # -------------------------------------------------------------
     hack_test_payload = bytes([0x00, 0x00, 0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC] * 4)
     dut._log.info("--- Test 4: Flash Hack 16-bit Firmware ---")
-    await flash_payload_sim(ser, dut.clk, hack_test_payload, mode="hack")
+    await flash_payload_sim(ser, hack_test_payload, mode="hack")
     dut._log.info("[PASS] Test 4: Hack 16-bit firmware successfully flashed to Sector 64")
 
     # -------------------------------------------------------------
     # Test 5: Header Verification: Hack 16-bit
     # -------------------------------------------------------------
     dut._log.info("--- Test 5: Header Verification (Hack) ---")
-    resp = await send_str_and_wait(ser, dut.clk, "s", b"vux> ", timeout_cycles=3500000)
+    resp = await send_and_wait(ser, "s", b"vux> ", timeout_cycles=3500000)
     assert "VUX9" in resp or "56555839" in resp or "Hack" in resp or "Mode: 0" in resp or "0 (Hack 16-bit)" in resp, (
         f"Invalid Hack header: {resp!r}"
     )
@@ -177,14 +121,14 @@ async def test_soc_hardware_flow(dut):
         * 4
     )
     dut._log.info("--- Test 6: Flash RISC-V 32-bit Firmware ---")
-    await flash_payload_sim(ser, dut.clk, rv32_test_payload, mode="riscv")
+    await flash_payload_sim(ser, rv32_test_payload, mode="riscv")
     dut._log.info("[PASS] Test 6: RISC-V 32-bit firmware successfully flashed to Sector 64")
 
     # -------------------------------------------------------------
     # Test 7: Header Verification: RISC-V 32-bit
     # -------------------------------------------------------------
     dut._log.info("--- Test 7: Header Verification (RISC-V) ---")
-    resp = await send_str_and_wait(ser, dut.clk, "s", b"vux> ", timeout_cycles=3500000)
+    resp = await send_and_wait(ser, "s", b"vux> ", timeout_cycles=3500000)
     assert (
         "VUX9" in resp or "56555839" in resp or "RISC-V" in resp or "Mode: 1" in resp or "1 (RISC-V 32-bit)" in resp
     ), f"Invalid RISC-V header: {resp!r}"
@@ -195,7 +139,7 @@ async def test_soc_hardware_flow(dut):
     # -------------------------------------------------------------
     dut._log.info("--- Test 8: SD Card Boot & Execution Trigger ---")
     ser.write(b"l")
-    await ClockCycles(dut.clk, 200000)
+    await wait_cycles(200000)
     dut._log.info("[PASS] Test 8: Payload boot executed successfully!")
 
     dut._log.info("=========================================================================")

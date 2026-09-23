@@ -19,8 +19,9 @@ SIM_BUILD_DIR := $(CURDIR)/../build/sim
 ifeq ($(SIM_GLS),1)
 # Gate-Level Simulation (GLS) using Gowin primitive simulation models + Synthesized Netlist
 TOPLEVEL ?= soc_top
-SYN_NETLIST ?= $(if $(filter soc_top,$(TOPLEVEL)),$(SYNTH_DIR)/soc_syn.v,$(SYNTH_DIR)/$(TOPLEVEL)_syn.v)
-VERILOG_SOURCES = $(CURDIR)/gowin_cells_sim.v $(SYN_NETLIST)
+# soc_top and its tb_soc_top.sv clock wrapper both simulate the full-SoC netlist
+SYN_NETLIST ?= $(if $(filter soc_top tb_soc_top,$(TOPLEVEL)),$(SYNTH_DIR)/soc_syn.v,$(SYNTH_DIR)/$(TOPLEVEL)_syn.v)
+VERILOG_SOURCES = $(CURDIR)/gowin_cells_sim.v $(SYN_NETLIST) $(CURDIR)/tb_soc_top.sv
 COMPILE_ARGS = -g2012
 MODULE ?= test_soc_fast
 SIM_BUILD = $(SIM_BUILD_DIR)/sim_build_gls_$(TOPLEVEL)
@@ -47,6 +48,7 @@ VERILOG_SOURCES += $(VERYL_OUT_DIR)/soc/sdcard_spi.sv
 VERILOG_SOURCES += $(VERYL_OUT_DIR)/soc/gpio_controller.sv
 VERILOG_SOURCES += $(VERYL_OUT_DIR)/soc/soc_ram.sv
 VERILOG_SOURCES += $(VERYL_OUT_DIR)/soc/soc_top.sv
+VERILOG_SOURCES += $(CURDIR)/tb_soc_top.sv
 
 COMPILE_ARGS += -g2012
 TOPLEVEL ?= soc_top

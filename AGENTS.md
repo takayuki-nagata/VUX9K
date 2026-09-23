@@ -70,10 +70,11 @@ a 2026-09 `sim/` reorg pass) tracks *which helper module a test needs*, not
 directory conventions — `sdcard_model.py`/`virtual_serial.py` only ever get
 imported by `sim/integration/` tests, `emulator.py` only by `sim/emulator/`
 tests, so each helper lives alongside its only consumers. `sim/Makefile`,
-`gowin_cells_sim.v`, and `tb_hex_runner.veryl` stay at `sim/`'s top level —
-**do not move them into a subdirectory**:
-- `sim/Makefile`'s GLS branch hardcodes `VERILOG_SOURCES = $(CURDIR)/gowin_cells_sim.v ...`
-  — `$(CURDIR)` means wherever `sim/Makefile` itself is invoked from.
+`gowin_cells_sim.v`, `tb_soc_top.sv`, and `tb_hex_runner.veryl` stay at `sim/`'s
+top level — **do not move them into a subdirectory**:
+- `sim/Makefile` hardcodes `$(CURDIR)/gowin_cells_sim.v` (GLS) and
+  `$(CURDIR)/tb_soc_top.sv` (RTL and GLS) — `$(CURDIR)` means wherever
+  `sim/Makefile` itself is invoked from.
 - `tb_hex_runner.veryl` is the one `.veryl` file inside `sim/` (everything else
   lives under `soc/`); Veryl mirrors the source tree into `build/veryl/`, so it
   compiles to `build/veryl/sim/tb_hex_runner.sv`, a path `scripts/run_riscv_tests.py`
@@ -171,6 +172,26 @@ are easy to break without noticing:
   don't remove it to "speed things up".
 - The tb accepts `+TRACE` (per-cycle PC/instruction log) and `+MAX_CYCLES=N`,
   e.g. `vvp -n build/riscv_tests/tb_hex_runner.vvp +HEX_FILE=build/riscv_tests/<test>.hex +TRACE`.
+
+## SoC cocotb tests: clock in HDL, never wait with `ClockCycles`
+
+Simulation speed of the long `soc_top` tests is dominated by per-clock Python/VPI
+work, not by the design, so two rules keep them fast (measured 2026-09 on Icarus
+RTL, `sim-soc-fast`: 491 s -> 194 s):
+- **The clock comes from `sim/tb_soc_top.sv`**, a pass-through wrapper that
+  generates 27 MHz in HDL; the SoC is `dut.soc` inside it. Driving the clock
+  with `cocotb.clock.Clock` costs a VPI write + callback every half period and
+  alone made Icarus ~2.4x slower (7.9k vs 19k cycles/s). Run SoC tests with
+  `TOPLEVEL=tb_soc_top` (RTL or `SIM_GLS=1`) and set them up with
+  `sim/integration/soc_env.py`'s `start_soc()`, which only falls back to a
+  cocotb `Clock` when handed a bare `soc_top`.
+- **Long waits use `Timer` or events, not `ClockCycles(clk, n)`** — cocotb 2.0's
+  `ClockCycles` is a Python loop awaiting every edge. Use `soc_env.wait_cycles(n)`
+  (one Timer) and `VirtualSerialBridge.wait_for(token, timeout_cycles)` (sleeps
+  until a byte arrives) instead of polling the UART buffer every bit.
+
+Tests not yet on `soc_env` (`test_soc_boot`/`_hack`/`_rv32i`/`_zephyr`) still drive
+their own clock on bare `soc_top`.
 
 ## Known pre-existing (structure-independent) failures
 

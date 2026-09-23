@@ -245,11 +245,11 @@ sim-hack: sim-hack-emu sim-hack-pytest sim-hack-rtl
 
 sim-hw-flow: veryl firmware build-hack
 	@echo "=== Running SoC Top End-to-End Hardware Verification Flow (RTL Simulation) ==="
-	$(MAKE) -C sim TOPLEVEL=soc_top MODULE=test_soc_hardware_flow
+	$(MAKE) -C sim TOPLEVEL=tb_soc_top MODULE=test_soc_hardware_flow
 
 sim-gls-hw-flow: synth-top firmware build-hack
 	@echo "=== Running SoC Top End-to-End Hardware Verification Flow (GLS Simulation) ==="
-	$(MAKE) -C sim TOPLEVEL=soc_top MODULE=test_soc_hardware_flow SIM_GLS=1
+	$(MAKE) -C sim TOPLEVEL=tb_soc_top MODULE=test_soc_hardware_flow SIM_GLS=1
 
 sim: sim-unit test-isa sim-gls-unit sim-soc-fast
 
@@ -276,11 +276,11 @@ sim-gls-unit: synth-units
 
 sim-soc-fast: veryl firmware
 	@echo "=== Running Fast SoC Top Boot & Execution Verification (RTL) ==="
-	$(MAKE) -C sim TOPLEVEL=soc_top MODULE=test_soc_fast
+	$(MAKE) -C sim TOPLEVEL=tb_soc_top MODULE=test_soc_fast
 
 sim-soc-gls-fast: synth-top firmware
 	@echo "=== Running Fast SoC Top Boot & Execution Verification (GLS Netlist) ==="
-	$(MAKE) -C sim TOPLEVEL=soc_top MODULE=test_soc_gls_fast SIM_GLS=1
+	$(MAKE) -C sim TOPLEVEL=tb_soc_top MODULE=test_soc_gls_fast SIM_GLS=1
 
 SOC_RTL_SRCS = $(VERYL_OUT_DIR)/soc/cpu/rv32i_pkg.sv $(VERYL_OUT_DIR)/soc/cpu/auto_mode_detector.sv $(VERYL_OUT_DIR)/soc/cpu/hack_translator.sv \
                $(VERYL_OUT_DIR)/soc/cpu/rv32i_alu.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_decode.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_regfile.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_csrs.sv \
