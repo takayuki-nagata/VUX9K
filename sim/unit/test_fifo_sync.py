@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: MIT
 
 import cocotb
-from cocotb.triggers import FallingEdge, Timer
 from cocotb.clock import Clock
+from cocotb.triggers import FallingEdge, Timer
 
 
 @cocotb.test()

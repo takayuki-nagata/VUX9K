@@ -6,16 +6,17 @@ Fast Top-Level SoC Verification Testbench (test_soc_fast.py)
 Verifies power-on reset, CPU boot, instruction execution, and initial peripheral activation.
 """
 
-import cocotb
-from cocotb.triggers import ClockCycles
-from cocotb.clock import Clock
 import os
-import sys
 import struct
+import sys
+
+import cocotb
+from cocotb.clock import Clock
+from cocotb.triggers import ClockCycles
 
 sys.path.append(os.path.dirname(__file__))
-from virtual_serial import VirtualSerialBridge
 from sdcard_model import SpiSdCardModel
+from virtual_serial import VirtualSerialBridge
 
 VUX_MAGIC = 0x56555839
 

@@ -8,9 +8,9 @@ Merge Boot Manager binary and Resident Loader binary into a 4096-word (16KB) hex
 - Words 3584..4095 (2 KB): Resident Loader
 """
 
-import sys
-import struct
 import os
+import struct
+import sys
 
 NOP = 0x00000013  # RISC-V addi x0, x0, 0
 

@@ -15,17 +15,17 @@ Performs end-to-end hardware verification on Sipeed Tang Nano 9K & MicroSD card:
 8. SD Card Boot & Dual-ISA Execution Trigger
 """
 
-import sys
-import os
-import time
 import argparse
-import subprocess
+import os
 import shutil
+import subprocess
+import sys
+import time
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 
-import tools.vux_tool as vux_tool
+import tools.vux_tool as vux_tool  # noqa: E402 (needs REPO_ROOT on sys.path)
 
 
 def print_banner(title):
@@ -99,7 +99,8 @@ def run_hardware_test_suite(port="auto", baud=115200):
                 (
                     test_name_flash_s0,
                     True,
-                    f"Flashed {boot_mgr_bin} to Slot 0 (LBA 64, {meta['num_sectors']} sectors, CRC=0x{meta['crc32']:08X})",
+                    f"Flashed {boot_mgr_bin} to Slot 0 "
+                    f"(LBA 64, {meta['num_sectors']} sectors, CRC=0x{meta['crc32']:08X})",
                 )
             )
             print_test_result(

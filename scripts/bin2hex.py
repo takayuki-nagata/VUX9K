@@ -7,9 +7,8 @@ Binary to Hex Word Converter for VHDL Memory Preloading
 Reads binary file and outputs 8-digit hex words per line.
 """
 
-import sys
-import struct
 import argparse
+import struct
 
 
 def bin2hex(bin_path, hex_path, is_hack=None):
@@ -25,7 +24,8 @@ def bin2hex(bin_path, hex_path, is_hack=None):
 
     lines = []
     if is_hack:
-        # Hack big-endian 16-bit instructions packed into 32-bit words (instr0 in lower 16 bits, instr1 in upper 16 bits)
+        # Hack big-endian 16-bit instructions packed into 32-bit words
+        # (instr0 in lower 16 bits, instr1 in upper 16 bits)
         for i in range(0, len(data), 4):
             chunk = data[i : i + 4]
             if len(chunk) < 4:

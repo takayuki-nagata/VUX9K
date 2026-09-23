@@ -7,18 +7,18 @@ Cocotb End-to-End Hardware Test Flow Runner (test_soc_hardware_flow.py)
 
 import os
 import sys
-import struct
+
 import cocotb
-from cocotb.triggers import ClockCycles
 from cocotb.clock import Clock
+from cocotb.triggers import ClockCycles
 
 sys.path.append(os.path.dirname(__file__))
-from virtual_serial import VirtualSerialBridge
 from sdcard_model import SpiSdCardModel
+from virtual_serial import VirtualSerialBridge
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, REPO_ROOT)
-import tools.vux_tool as vux_tool
+import tools.vux_tool as vux_tool  # noqa: E402 (needs REPO_ROOT on sys.path)
 
 UART_BAUD_CYCLES = 234  # 27.0 MHz / 115200 baud
 

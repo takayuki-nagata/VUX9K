@@ -6,8 +6,8 @@
 
 import os
 import re
-import sys
 import subprocess
+import sys
 
 FORBIDDEN_PATTERNS = [
     (re.compile(r"/(home|var/home|Users)/[a-zA-Z0-9_\-]+"), "User home directory path"),
@@ -84,7 +84,8 @@ def main():
 
     if total_violations > 0:
         print(
-            f"\n[FAIL] Found {total_violations} forbidden absolute path violation(s). Please use dynamic or relative paths."
+            f"\n[FAIL] Found {total_violations} forbidden absolute path violation(s). "
+            "Please use dynamic or relative paths."
         )
         sys.exit(1)
     else:

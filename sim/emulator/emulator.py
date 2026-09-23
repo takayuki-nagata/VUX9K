@@ -8,8 +8,8 @@ Simulates RV32I & Hack 16-bit CPU execution, Machine-Mode CSRs & Traps (Zicsr),
 256KB I-RAM, 128KB D-RAM, MMIO UART, MMIO Timer (with Timer IRQ), and MMIO SD Card SPI controller.
 """
 
-import sys
 import struct
+import sys
 
 
 class SocEmulator:
@@ -478,7 +478,8 @@ class SocEmulator:
 
         if self.verbose:
             print(
-                f"[STEP] PC={self.pc:08x} INST={instr:08x} op={opcode:02x} rd={rd} rs1={rs1}({self.regs[rs1]:x}) rs2={rs2}({self.regs[rs2]:x})"
+                f"[STEP] PC={self.pc:08x} INST={instr:08x} op={opcode:02x} rd={rd} "
+                f"rs1={rs1}({self.regs[rs1]:x}) rs2={rs2}({self.regs[rs2]:x})"
             )
 
         next_pc = self.pc + 4

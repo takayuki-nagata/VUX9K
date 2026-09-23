@@ -6,15 +6,16 @@ Fast Gate-Level SoC Verification Testbench (test_soc_gls_fast.py)
 Verifies power-on reset release, gate-level netlist execution, and initial UART activity in GLS.
 """
 
-import cocotb
-from cocotb.triggers import ClockCycles
-from cocotb.clock import Clock
 import os
 import sys
 
+import cocotb
+from cocotb.clock import Clock
+from cocotb.triggers import ClockCycles
+
 sys.path.append(os.path.dirname(__file__))
-from virtual_serial import VirtualSerialBridge
 from sdcard_model import SpiSdCardModel
+from virtual_serial import VirtualSerialBridge
 
 
 @cocotb.test()

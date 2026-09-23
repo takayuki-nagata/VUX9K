@@ -7,8 +7,7 @@ Simulates SD Card SPI mode for RTL simulation and verification.
 Supports CMD0, CMD8, CMD55, ACMD41, CMD17 (Read), and CMD24 (Write).
 """
 
-import cocotb
-from cocotb.triggers import RisingEdge, FallingEdge
+from cocotb.triggers import FallingEdge, RisingEdge
 
 
 class SpiSdCardModel:

@@ -7,11 +7,11 @@ nextpnr Place & Route Runner with Timing Closure Exploration.
 Tries candidate seeds to guarantee timing closure across varied CI/host environments.
 """
 
-import sys
-import subprocess
+import argparse
 import json
 import os
-import argparse
+import subprocess
+import sys
 
 
 def get_timing_info(report_path, target_freq_mhz=27.0):
@@ -90,7 +90,7 @@ def main():
                 print("   Seed jitter (~0.3-0.8 ns) cannot close this gap. Aborting multi-seed search early.\n")
                 break
             elif i < len(args.seeds):
-                print(f"   Trying next candidate seed...")
+                print("   Trying next candidate seed...")
 
     print("❌ [WARNING] Exhausted candidate seeds or aborted early without achieving timing closure.")
     return 0

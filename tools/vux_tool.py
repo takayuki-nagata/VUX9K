@@ -13,12 +13,12 @@ Provides unified communication with VUX9K Boot Manager on Tang Nano 9K:
 - Dual-ISA (Hack / RISC-V) Binary Preparation
 """
 
-import sys
-import os
-import time
-import struct
 import argparse
 import binascii
+import os
+import struct
+import sys
+import time
 
 try:
     import pyftdi.serialext
@@ -70,7 +70,7 @@ def open_port(port_name="auto", baudrate=115200, timeout=0.2):
             try:
                 ser = serial.Serial(port, baudrate=baudrate, timeout=timeout)
                 return ser
-            except Exception as e:
+            except Exception:
                 pass
 
         # If pyftdi is available and by-id did not work, try pyftdi URL
@@ -400,7 +400,7 @@ def flash_slot(
     # 1. Wait for [READY] with gentle retry
     buf = b""
     ready = False
-    for attempt in range(3):
+    for _attempt in range(3):
         drain_serial(ser, timeout=0.1)
         ser.write(b"w")
         ser.flush()
@@ -590,7 +590,7 @@ def cmd_flash_sd(args):
     ser = open_port(args.port, baudrate=args.baud, timeout=0.1)
     try:
         _, meta = build_vux9_image(args.file, slot=slot, name=name, mode=mode, version=version)
-        print(f"=== Preparing VUX9 v2 Slot Boot Image ===")
+        print("=== Preparing VUX9 v2 Slot Boot Image ===")
         print(f"  File: {args.file} ({meta['size_bytes']} bytes payload)")
         print(f"  Slot: {slot} (Sector {meta['start_sector']}, LBA {meta['start_sector']})")
         print(f"  Name: {meta['name']!r}")
@@ -607,7 +607,7 @@ def cmd_flash_sd(args):
         print(f"\n=== Verifying Slot {slot} Header ===")
         out = inspect_slot(ser, slot=slot)
         print(out)
-        print(f"\n=== Multi-Sector Flash & Verification Complete! ===")
+        print("\n=== Multi-Sector Flash & Verification Complete! ===")
     except Exception as e:
         print(f"Error flashing slot: {e}")
         sys.exit(1)
@@ -617,8 +617,8 @@ def cmd_flash_sd(args):
 
 def cmd_reset(args):
     """Trigger FPGA hardware reset via openFPGALoader --reset"""
-    import subprocess
     import shutil
+    import subprocess
 
     loader_bin = shutil.which("openFPGALoader")
     if not loader_bin:

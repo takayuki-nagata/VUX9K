@@ -7,8 +7,9 @@ High-performance event-driven UART receiver and transmitter.
 """
 
 import collections
+
 import cocotb
-from cocotb.triggers import ClockCycles, FallingEdge, Event
+from cocotb.triggers import ClockCycles, Event, FallingEdge
 
 
 def _get_bit(val):

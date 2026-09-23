@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: MIT
 
 import cocotb
-from cocotb.triggers import FallingEdge, Timer, ClockCycles
 from cocotb.clock import Clock
+from cocotb.triggers import ClockCycles, FallingEdge
 
 
 async def send_uart_byte(dut, byte_val: int, cnt: int = 234):

@@ -7,6 +7,7 @@ Verifies all arbitrary-precision mathematical self-tests and interactive REPL co
 """
 
 import os
+
 import pytest
 from emulator import SocEmulator
 

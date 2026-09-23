@@ -7,6 +7,7 @@ Verifies mode auto-detection, execution, math computations, array manipulation, 
 """
 
 import os
+
 import pytest
 from emulator import SocEmulator
 
@@ -24,7 +25,7 @@ def hack_emulator():
     emu.load_binary(HACK_BIN)
     assert emu.detect_mode() is False, "Auto-mode detector should detect Hack mode"
 
-    steps = emu.run(max_steps=50000, target_str="ALL HACK C FIRMWARE TESTS PASSED (100%)!\n")
+    emu.run(max_steps=50000, target_str="ALL HACK C FIRMWARE TESTS PASSED (100%)!\n")
     output = emu.get_tx_output()
     return emu, output
 

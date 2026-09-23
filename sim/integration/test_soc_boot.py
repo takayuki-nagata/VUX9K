@@ -8,11 +8,12 @@ Tests:
 2. Boot Manager UART Communication & CLI Command Response
 """
 
-import cocotb
-from cocotb.triggers import ClockCycles, Timer, RisingEdge, FallingEdge
-from cocotb.clock import Clock
 import os
 import sys
+
+import cocotb
+from cocotb.clock import Clock
+from cocotb.triggers import ClockCycles
 
 # Import SD Card SPI Model
 sys.path.append(os.path.dirname(__file__))

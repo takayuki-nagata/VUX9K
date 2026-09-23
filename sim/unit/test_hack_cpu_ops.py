@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: MIT
 
 import cocotb
-from cocotb.triggers import FallingEdge, Timer, ClockCycles
 from cocotb.clock import Clock
+from cocotb.triggers import ClockCycles, FallingEdge, Timer
 
 
 def make_hack_a(val: int) -> int:

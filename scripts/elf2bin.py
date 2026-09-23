@@ -7,8 +7,8 @@ Tang Nano 9K Harvard Architecture ELF to Binary Image Extractor
 Extracts instruction ROM image (p_paddr < 0x20000000) from RISC-V ELF.
 """
 
-import sys
 import struct
+import sys
 
 
 def elf2bin(elf_path, bin_path, dram_outdir=None):
