@@ -201,7 +201,7 @@ sim-boot: veryl
 	@echo "=== Running Hardware Boot Manager & Bridge Cocotb Tests ==="
 	$(MAKE) -C sim TOPLEVEL=soc_top MODULE=test_soc_boot
 
-sim-soc: firmware sim-boot
+sim-soc: veryl firmware sim-boot
 	@echo "=== Running Python Software Emulator Unit Tests ==="
 	$(PYTHON) -m pytest sim/emulator/test_emulator.py
 	@echo "=== Running Python Software Emulator ==="
@@ -223,7 +223,7 @@ sim-zephyr-repl: build-zephyr
 	@echo "=== Running Zephyr bc_clone_rs Self-Tests & REPL Pytest Suite ==="
 	$(PYTHON) -m pytest sim/emulator/test_soc_bc.py
 
-sim-zephyr-rtl: zephyr-bc-lib
+sim-zephyr-rtl: veryl zephyr-bc-lib
 	@echo "=== Running Zephyr/Rust SoC RTL Simulation ==="
 	$(MAKE) -C sim TOPLEVEL=soc_top MODULE=test_soc_zephyr
 
@@ -237,13 +237,13 @@ sim-hack-pytest: build-hack
 	@echo "=== Running Hack Firmware Pytest Test Suite ==="
 	$(PYTHON) -m pytest sim/emulator/test_hack_firmware.py
 
-sim-hack-rtl: build-hack
+sim-hack-rtl: veryl build-hack
 	@echo "=== Running Hack 16-bit SoC RTL Simulation ==="
 	$(MAKE) -C sim TOPLEVEL=soc_top MODULE=test_soc_hack
 
 sim-hack: sim-hack-emu sim-hack-pytest sim-hack-rtl
 
-sim-hw-flow: firmware build-hack
+sim-hw-flow: veryl firmware build-hack
 	@echo "=== Running SoC Top End-to-End Hardware Verification Flow (RTL Simulation) ==="
 	$(MAKE) -C sim TOPLEVEL=soc_top MODULE=test_soc_hardware_flow
 
