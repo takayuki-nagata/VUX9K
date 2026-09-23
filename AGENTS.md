@@ -211,8 +211,7 @@ RTL, `sim-soc-fast`: 491 s -> 194 s):
   (one Timer) and `VirtualSerialBridge.wait_for(token, timeout_cycles)` (sleeps
   until a byte arrives) instead of polling the UART buffer every bit.
 
-Tests not yet on `soc_env` (`test_soc_boot`/`_hack`/`_rv32i`/`_zephyr`) still drive
-their own clock on bare `soc_top`.
+All SoC tests are on `soc_env`/`tb_soc_top`; keep new ones there too.
 
 ## Verilator: which tests use it, and the `--public-flat-rw` trap
 

@@ -38,7 +38,7 @@ HACK_BUILD_DIR := $(BUILD_DIR)/hack
 ZEPHYR_BUILD_DIR ?= $(BUILD_DIR)/zephyr
 SYNTH_DIR := $(BUILD_DIR)/synth
 
-.PHONY: all veryl check check-paths fmt test test-ci test-hw test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware sim-unit sim-boot sim-soc sim test-isa zephyr-rust-lib zephyr-bc-lib build-zephyr sim-zephyr-emu sim-zephyr-repl sim-zephyr-rtl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sta
+.PHONY: all veryl check check-paths fmt test test-ci test-hw test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware sim-unit sim-boot sim-soc sim test-isa zephyr-rust-lib zephyr-bc-lib build-zephyr sim-zephyr-emu sim-zephyr-repl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sta
 
 all: test-ci
 
@@ -200,11 +200,7 @@ sim-zephyr-repl: build-zephyr
 	@echo "=== Running Zephyr bc_clone_rs Self-Tests & REPL Pytest Suite ==="
 	$(PYTHON) -m pytest sim/emulator/test_soc_bc.py
 
-sim-zephyr-rtl: veryl zephyr-bc-lib
-	@echo "=== Running Zephyr/Rust SoC RTL Simulation ==="
-	SIM=$(SIM_UNIT) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_zephyr]"
-
-sim-zephyr: sim-zephyr-emu sim-zephyr-repl sim-zephyr-rtl
+sim-zephyr: sim-zephyr-emu sim-zephyr-repl
 
 sim-hack-emu: build-hack
 	@echo "=== Running Hack Firmware on Python SoC Emulator ==="

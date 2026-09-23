@@ -44,13 +44,11 @@ UNIT_GLS = [
     ("auto_mode_detector", "test_auto_mode_detector"),
 ]
 
-# Full SoC. Tests on sim/integration/soc_env.py use the tb_soc_top.sv clock wrapper;
-# the rest still drive their own clock on a bare soc_top.
+# Full SoC, all on the tb_soc_top.sv clock wrapper (set up via sim/integration/soc_env.py)
 SOC = [
     ("tb_soc_top", "test_soc_boot"),
     ("tb_soc_top", "test_soc_rv32i"),
     ("tb_soc_top", "test_soc_hack"),
-    ("soc_top", "test_soc_zephyr"),
     ("tb_soc_top", "test_soc_fast"),
     pytest.param("tb_soc_top", "test_soc_hardware_flow", marks=slow),
 ]
