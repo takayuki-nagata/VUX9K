@@ -53,6 +53,7 @@ check-paths:
 	$(PYTHON) scripts/check_no_absolute_paths.py
 
 check: check-paths
+	$(VERYL) fmt --check
 	$(VERYL) check
 
 fmt:
