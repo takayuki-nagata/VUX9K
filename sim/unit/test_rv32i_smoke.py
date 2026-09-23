@@ -1,6 +1,13 @@
 # Copyright (c) 2026 Takayuki Nagata
 # SPDX-License-Identifier: MIT
 
+"""
+Directed RV32I smoke test on unified_cpu (a handful of ALU/load/store/branch/jump
+instructions driven through the instruction port). Also runs gate-level
+(test_unit_gls), where the ISA suite (`make test-isa`, riscv-tests) doesn't.
+Not a compliance suite: ISA conformance is `make test-isa`.
+"""
+
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, FallingEdge, Timer
