@@ -22,8 +22,8 @@ target/
 zephyr_workspace/**/build/
 zephyr_workspace/**/*.bin
 
-# Fetched riscv-arch-test submodule content (pulled on demand by run_arch_test.py)
-vendor/riscv-arch-test/
+# riscv-tests (+ its env submodule), fetched at a pinned commit on demand by scripts/run_riscv_tests.py
+vendor/riscv-tests/
 
 # Simulation stray artifacts (non-standard names cocotb/Icarus occasionally leave behind)
 sim/soc_top

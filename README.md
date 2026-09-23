@@ -230,7 +230,7 @@ make test-hw
 | Level | Command | Typical Time | Verification Scope |
 |:---|:---|:---|:---|
 | **RTL Unit Tests** | `make sim-unit` | ~25 sec | 15 testbenches verifying CPU, ALU, Decoder, Register File, CSRs, UART, FIFO, and Auto-Mode detector |
-| **Arch Compliance** | `make test-arch-compliance` | ~15 sec | Official RISC-V architectural compliance suite (45/45 tests passed 100%) |
+| **ISA Tests** | `make test-isa` | ~15 sec | riscv-tests `rv32ui`/`rv32mi` on `tb_hex_runner` (48 pass; 10 known gaps tracked as expected failures in `scripts/run_riscv_tests.py`, mostly the missing trap path) |
 | **GLS Unit Tests** | `make sim-gls-unit` | ~40 sec | Gowin primitive netlists (`gowin_cells_sim.v`) with LUTRAMs (`RAM16SDP4`), ALUs, and DFFs |
 | **Fast SoC Boot** | `make sim-soc-fast` / `make sim-soc-gls-fast` | < 1 sec | Fast power-on reset, CPU boot, and instruction execution verification on RTL & full Gowin netlist |
 | **End-to-End Flow** | `make sim-hw-flow` / `make sim-gls-hw-flow` | ~3-4 min | Full 8-step hardware test suite in simulation using `VirtualSerialBridge` (UART) and `SpiSdCardModel` (SD SPI) |
@@ -300,14 +300,14 @@ VUX9K/
 ├── zephyr_workspace/               # Zephyr RTOS out-of-tree application & bc_clone_rs integration
 │   └── app/rust_demo/              # Standalone/Zephyr Rust demo app (vux9k_rust_demo)
 ├── sim/                            # Cocotb & Pytest RTL simulation testbenches
-├── scripts/                        # Build/CI plumbing (elf2bin.py, run_arch_test.py, test_hardware.py, run_pnr.py, report_sta.py, ...)
+├── scripts/                        # Build/CI plumbing (elf2bin.py, run_riscv_tests.py, test_hardware.py, run_pnr.py, report_sta.py, ...)
 ├── tools/                          # End-user CLI: vux_tool.py (UART flashing, diagnostics, monitor)
-├── vendor/                         # bc_clone_rs (git submodule); riscv-arch-test (fetched on demand by run_arch_test.py, gitignored)
+├── vendor/                         # bc_clone_rs (git submodule); riscv-tests (fetched on demand by run_riscv_tests.py, gitignored)
 └── build/                          # Unified build output (gitignored) - every generated artifact lands here
     ├── veryl/                      # veryl build --out-dir output: generated .sv/.map for soc/, soc/cpu/, soc/uart/, sim/
     ├── firmware/                   # firmware.bin/.hex, firmware_d0-3.hex, resident_loader.bin
     ├── hack/                       # Hack 16-bit firmware.bin/.hex
-    ├── arch_test/                  # RISC-V architectural compliance test artifacts
+    ├── riscv_tests/                # riscv-tests ELFs/hex images and tb_hex_runner build
     ├── zephyr/                     # Zephyr `west build` output
     ├── synth/                      # soc.json, soc_syn.v, soc_pnr.json, soc_sta.json, pack.fs, unit netlists
     └── sim/                        # cocotb sim_build_*/ directories and results.xml

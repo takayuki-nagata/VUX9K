@@ -22,9 +22,9 @@ sim/                    cocotb/pytest RTL testbenches
   unit/                 cocotb unit tests (single RTL module each)
   integration/          cocotb SoC-level integration tests + sdcard_model.py/virtual_serial.py
   emulator/             pytest Python-emulator tests + emulator.py
-scripts/                Build/CI plumbing only (elf2bin.py, run_arch_test.py, ...)
+scripts/                Build/CI plumbing only (elf2bin.py, run_riscv_tests.py, ...)
 tools/                  End-user CLI: vux_tool.py (UART flashing/diagnostics/monitor)
-vendor/                 bc_clone_rs submodule; riscv-arch-test (fetched on demand)
+vendor/                 bc_clone_rs submodule; riscv-tests (fetched on demand)
 build/                  ALL generated/build output (gitignored) — see below
 ```
 
@@ -35,7 +35,7 @@ except the handful of firmware-hex symlinks described below.
 ## `build/` — unified generated output
 
 Every build artifact (Veryl `.sv`/`.map` output, firmware `.bin`/`.hex`, Hack
-firmware, arch-compliance test files, Zephyr's `west build` output, synthesis/PnR/
+firmware, riscv-tests ISA test files, Zephyr's `west build` output, synthesis/PnR/
 STA/bitstream files, cocotb `sim_build_*/` dirs) lands under `build/<category>/`.
 Run `veryl build --out-dir build/veryl` (or `make veryl`) and it mirrors the
 source tree exactly — `build/veryl/soc/cpu/*.sv`, `build/veryl/soc/uart/*.sv`, etc.
@@ -59,7 +59,7 @@ files and resolve module names (via `inst`) in one flat global namespace — the
 is no `import`/`use`/`include` syntax. Moving `.veryl` files between directories
 never breaks Veryl itself; only external tooling that hardcodes paths to the
 *generated* `.sv` output (Makefile `read_verilog` commands, `sim/Makefile`
-`VERILOG_SOURCES`, `scripts/run_arch_test.py`) needs updating.
+`VERILOG_SOURCES`, `scripts/run_riscv_tests.py`) needs updating.
 
 ## `sim/` is split by test kind, not by module under test
 
@@ -76,9 +76,9 @@ tests, so each helper lives alongside its only consumers. `sim/Makefile`,
   — `$(CURDIR)` means wherever `sim/Makefile` itself is invoked from.
 - `tb_hex_runner.veryl` is the one `.veryl` file inside `sim/` (everything else
   lives under `soc/`); Veryl mirrors the source tree into `build/veryl/`, so it
-  compiles to `build/veryl/sim/tb_hex_runner.sv`, a path `scripts/run_arch_test.py`
+  compiles to `build/veryl/sim/tb_hex_runner.sv`, a path `scripts/run_riscv_tests.py`
   hardcodes. Moving the `.veryl` file changes that generated path and silently
-  breaks arch-compliance testing (this is the same class of landmine described
+  breaks `make test-isa` (this is the same class of landmine described
   in "Veryl module resolution is directory-agnostic" above, but easy to miss
   since `tb_hex_runner.veryl` looks like an ordinary test helper, not RTL source).
 
@@ -138,6 +138,39 @@ If you actually need to test the Zephyr-backed path, you'd have to add a new
 `west build` invocation pointing at `zephyr_workspace/app` (or extend
 `vendor/bc_clone_rs/examples/zephyr_app` to link `libvux9k_rust_demo.a`) — this
 hasn't been done, don't assume it works without testing on real hardware.
+
+## `make test-isa`: riscv-tests on `tb_hex_runner`, and why it doesn't use `ecall`
+
+`scripts/run_riscv_tests.py` builds riscv-tests (`rv32ui`/`rv32mi`, `env/p`, both
+pinned and fetched into `vendor/riscv-tests/`) and runs each on
+`sim/tb_hex_runner.veryl`. It replaced a riscv-arch-test (ACT4) harness that could
+never fail: its halt address (`0x1000`) sat *inside* the test code, so every test
+"passed" after executing its first ~4 KB, and ACT4's self-checking needs expected
+signatures from the Sail reference model, which were never generated. Things that
+are easy to break without noticing:
+- **Results travel through `tohost`, not the console.** `scripts/riscv_tests/link.ld`
+  places `.tohost` at `0xF000_0000` (NOLOAD, outside the tb's 256 KB RAM window);
+  the tb treats a store there as the verdict (`1` = PASS, `(TESTNUM<<1)|1` = FAIL).
+  Keep the address in the linker script and the tb's `TOHOST_ADDR` in sync, and
+  never let it alias into RAM.
+- **`scripts/riscv_tests/env/riscv_test.h` overrides `RVTEST_PASS`/`RVTEST_FAIL`**
+  (via `#include_next`) to jump straight to `write_tohost` instead of `ecall`.
+  Upstream `env/p` reports via `ecall` -> trap handler, but `unified_cpu` currently
+  takes **no traps at all**: commit `02a105a` dropped the ECALL/EBREAK/MRET/
+  interrupt decode (`trap_entry`/`is_ecall`/`is_mret` are only ever assigned 0).
+  Without the override every test would hang instead of reporting. Its `mret`
+  into the test body only works because `mepc` happens to point at the very next
+  instruction. Once traps are restored, the override can be dropped.
+- **`EXPECTED_FAILURES` is strict.** Known gaps (the trap-dependent `rv32mi`
+  tests, misaligned access, PMP) are listed with reasons; a listed test that
+  starts passing is reported as XPASS and fails the run — remove the entry
+  when fixing the CPU rather than loosening the check.
+- **The harness self-test must stay first.** `scripts/riscv_tests/selftest_fail.S`
+  deliberately fails test case 2, and the run aborts unless it's reported as
+  exactly `FAIL (TESTNUM=2)`. This is what proves the verdict plumbing works;
+  don't remove it to "speed things up".
+- The tb accepts `+TRACE` (per-cycle PC/instruction log) and `+MAX_CYCLES=N`,
+  e.g. `vvp -n build/riscv_tests/tb_hex_runner.vvp +HEX_FILE=build/riscv_tests/<test>.hex +TRACE`.
 
 ## Known pre-existing (structure-independent) failures
 
@@ -200,7 +233,7 @@ Run in this order (each depends on the previous succeeding):
 ```
 make firmware        # Cargo workspace build -> build/firmware/
 make sim-unit         # broadest RTL path coverage (15 unit tests)
-make test-arch-compliance
+make test-isa
 make build-hack        # hack_demo/
 make sim-hack-rtl
 make synth-top          # yosys must resolve build/veryl/soc/{cpu,uart}/*.sv

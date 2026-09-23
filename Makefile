@@ -30,7 +30,7 @@ HACK_BUILD_DIR := $(BUILD_DIR)/hack
 ZEPHYR_BUILD_DIR ?= $(BUILD_DIR)/zephyr
 SYNTH_DIR := $(BUILD_DIR)/synth
 
-.PHONY: all veryl check check-paths fmt test test-ci test-hw test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware sim-unit sim-boot sim-soc sim test-arch-compliance zephyr-rust-lib zephyr-bc-lib build-zephyr sim-zephyr-emu sim-zephyr-repl sim-zephyr-rtl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls sta
+.PHONY: all veryl check check-paths fmt test test-ci test-hw test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware sim-unit sim-boot sim-soc sim test-isa zephyr-rust-lib zephyr-bc-lib build-zephyr sim-zephyr-emu sim-zephyr-repl sim-zephyr-rtl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls sta
 
 all: test-ci
 
@@ -184,11 +184,11 @@ sim-unit: veryl
 	@echo "=== Running UART Controller Loopback Tests ==="
 	$(MAKE) -C sim TOPLEVEL=uart_controller MODULE=test_uart_controller
 
-# ===== Simulation - Arch Compliance =====
+# ===== Simulation - RV32I ISA Tests (riscv-tests) =====
 
-test-arch-compliance: veryl
-	@echo "=== Running Official RISC-V Architectural Compliance Tests ==="
-	$(PYTHON) scripts/run_arch_test.py
+test-isa: veryl
+	@echo "=== Running riscv-tests (rv32ui/rv32mi) on tb_hex_runner ==="
+	$(PYTHON) scripts/run_riscv_tests.py
 
 # ===== Simulation - SoC Integration =====
 
@@ -246,7 +246,7 @@ sim-gls-hw-flow: synth-top firmware build-hack
 	@echo "=== Running SoC Top End-to-End Hardware Verification Flow (GLS Simulation) ==="
 	$(MAKE) -C sim TOPLEVEL=soc_top MODULE=test_soc_hardware_flow SIM_GLS=1
 
-sim: sim-unit test-arch-compliance sim-gls-unit sim-soc-fast
+sim: sim-unit test-isa sim-gls-unit sim-soc-fast
 
 # ===== Synthesis / PnR / STA / Bitstream / Programming =====
 
@@ -322,7 +322,7 @@ prog-flash: $(SYNTH_DIR)/pack.fs
 
 # ===== Aggregate Test Targets =====
 
-test-sim: check firmware zephyr-rust-lib zephyr-bc-lib build-hack build-zephyr sim-unit test-arch-compliance sim-gls-unit sim-soc-fast synth-top sim-soc-gls-fast
+test-sim: check firmware zephyr-rust-lib zephyr-bc-lib build-hack build-zephyr sim-unit test-isa sim-gls-unit sim-soc-fast synth-top sim-soc-gls-fast
 	@echo "========================================================================"
 	@echo "  [SIM] ALL RTL, GLS NETLIST, COMPLIANCE & SOC SIMULATION TESTS PASSED! "
 	@echo "========================================================================"
