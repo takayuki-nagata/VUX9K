@@ -40,7 +40,7 @@ async def wait_cycles(n: int):
     await Timer(n * CLK_PERIOD_PS, unit="ps")
 
 
-async def start_soc(dut, *, sd_sectors=None, mbr=True, btn=1, accelerate_por=True):
+async def start_soc(dut, *, sd_sectors=None, mbr=True, btn=1, accelerate_por=True, during_reset=None):
     """Start the clock, attach models, and release reset.
 
     dut is either sim/tb_soc_top.sv (preferred: clock generated in HDL, SoC at
@@ -49,6 +49,7 @@ async def start_soc(dut, *, sd_sectors=None, mbr=True, btn=1, accelerate_por=Tru
     sd_sectors: {lba: bytes} preloaded into the SD model before reset (after the MBR if mbr=True).
     btn: level of the active-low S2 button during and after reset (0 = held, e.g. for Safe Mode).
     accelerate_por: jump soc_top's POR counter to its end if the signal is visible (RTL only).
+    during_reset: optional callable(soc) run while rst_n is still low, e.g. to preload I-RAM.
 
     Returns (ser, sd_model).
     """
@@ -71,12 +72,26 @@ async def start_soc(dut, *, sd_sectors=None, mbr=True, btn=1, accelerate_por=Tru
     ser = VirtualSerialBridge(dut, baud_cycles=UART_BAUD_CYCLES, clk_period_ps=CLK_PERIOD_PS)
 
     await ClockCycles(soc.clk, 10)
+    if during_reset is not None:
+        during_reset(soc)
     dut.rst_n.value = 1
     await ClockCycles(soc.clk, 5)
     if accelerate_por and hasattr(soc, "por_counter"):
         soc.por_counter.value = POR_DONE
     await ClockCycles(soc.clk, 10)
     return ser, sd_model
+
+
+def load_imem(soc, words):
+    """Overwrite soc_ram's I-RAM from word 0 (call while the CPU is held in reset)."""
+    for idx, word in enumerate(words):
+        soc.ram_inst.i_mem[idx].value = word
+
+
+def read_hex_words(path) -> list[int]:
+    """One 32-bit hex word per line, as produced by scripts/bin2hex.py / elf2bin.py."""
+    with open(path) as f:
+        return [int(line, 16) for line in f if line.strip()]
 
 
 async def send_and_wait(ser, text: str, token: bytes, timeout_cycles: int, settle_bits: int = 50) -> str:

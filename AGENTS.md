@@ -244,8 +244,10 @@ hw-flow RTL 860 s (Icarus) -> ~30 s; gls-fast ~1,050 s -> ~33 s. Verilator needs
 Confirmed present on `main` too (reproduced in a clean `git worktree`), not
 caused by any restructuring:
 - `make sim-hack-pytest` (`sim/emulator/test_hack_firmware.py`, 5 tests) — the
-  Python software emulator doesn't reach the firmware's PASS banners; likely an
-  emulator/firmware interaction bug, unrelated to file layout.
+  Python software emulator doesn't reach the firmware's PASS banners. **This is
+  an emulator bug, not a firmware one:** the same `build/hack/firmware.hex` on
+  the RTL (`make sim-hack-rtl`, `test_soc_hack`) prints the complete report up to
+  `ALL HACK C FIRMWARE TESTS PASSED (100%)!` (verified 2026-09).
 - `make sim-zephyr-repl` (`sim/emulator/test_soc_bc.py`, 3 of 4 tests) — the
   first REPL round-trip after boot passes, but every subsequent interactive
   `feed_input()`/`run()` round-trip returns empty output instead of the

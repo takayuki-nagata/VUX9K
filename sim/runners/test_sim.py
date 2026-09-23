@@ -49,7 +49,7 @@ UNIT_GLS = [
 SOC = [
     ("soc_top", "test_soc_boot"),
     ("soc_top", "test_soc_rv32i"),
-    ("soc_top", "test_soc_hack"),
+    ("tb_soc_top", "test_soc_hack"),
     ("soc_top", "test_soc_zephyr"),
     ("tb_soc_top", "test_soc_fast"),
     pytest.param("tb_soc_top", "test_soc_hardware_flow", marks=slow),

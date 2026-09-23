@@ -2,60 +2,45 @@
 # SPDX-License-Identifier: MIT
 
 """
-Cocotb RTL verification for VUX9K SoC executing Hack 16-bit C/Asm Firmware.
-Verifies mode auto-detection (active_mode = 0), instruction execution, and UART MMIO output.
+Cocotb RTL verification for VUX9K SoC executing the Hack 16-bit C/Asm firmware (hack_demo/).
+Verifies Hack mode auto-detection (active_mode = 0), instruction execution and Hack UART MMIO
+output, by checking the firmware's own self-test report on the UART.
 """
 
 import os
+import sys
 
 import cocotb
-from cocotb.clock import Clock
-from cocotb.triggers import ClockCycles
+
+sys.path.append(os.path.dirname(__file__))
+from soc_env import load_imem, read_hex_words, start_soc
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 HACK_HEX = os.path.join(REPO_ROOT, "build", "hack", "firmware.hex")
 
+# Same report the Python emulator test (sim/emulator/test_hack_firmware.py) expects
+EXPECTED_LINES = [
+    "VUX9K SoC Hack 16-bit C Firmware Test",
+    "Factorial(6) = 720 ... [PASS]",
+    "Fibonacci(10) = 55 ... [PASS]",
+    "Array Sum = 150 ... [PASS]",
+]
+DONE = "ALL HACK C FIRMWARE TESTS PASSED (100%)!"
+
 
 @cocotb.test()
-async def test_soc_hack_execution(dut):
-    """Test Hack 16-bit firmware execution on VUX9K SoC RTL"""
-    clock = Clock(dut.clk, 20, unit="ns")  # 50 MHz clock
-    cocotb.start_soon(clock.start())
+async def test_soc_hack_firmware(dut):
+    """Hack firmware runs from I-RAM and reports all self-tests passed over the UART"""
+    assert os.path.exists(HACK_HEX), f"{HACK_HEX} missing; run `make build-hack` first"
+    words = read_hex_words(HACK_HEX)
 
-    # Assert Reset (active-low)
-    dut.rst_n.value = 0
-    if hasattr(dut, "rst"):
-        dut.rst.value = 0
-    dut.btn.value = 1
-    dut.uart_rx.value = 1
-    dut.sd_miso.value = 1
+    ser, _ = await start_soc(dut, during_reset=lambda soc: load_imem(soc, words))
 
-    # Preload Hack firmware hex image into SoC Instruction Memory (i_mem)
-    if os.path.exists(HACK_HEX):
-        with open(HACK_HEX, "r") as f:
-            for idx, line in enumerate(f):
-                line = line.strip()
-                if line:
-                    word = int(line, 16)
-                    dut.ram_inst.i_mem[idx].value = word
-        dut._log.info(f"Preloaded {HACK_HEX} into SoC I-RAM.")
+    mode = int(dut.soc.active_mode.value)
+    assert mode == 0, f"SoC must auto-detect Hack 16-bit mode (active_mode=0), got {mode}"
 
-    await ClockCycles(dut.clk, 10)
-    # Release Reset
-    dut.rst_n.value = 1
-    if hasattr(dut, "rst"):
-        dut.rst.value = 1
-    await ClockCycles(dut.clk, 5)
-    if hasattr(dut, "por_counter"):
-        dut.por_counter.value = 1 << 15
-
-    await ClockCycles(dut.clk, 20)
-
-    # Check that SoC auto-detects Hack 16-bit mode (active_mode == 0)
-    mode = int(dut.active_mode.value)
-    dut._log.info(f"SoC active_mode after reset: {mode} (0 = Hack, 1 = RISC-V)")
-    assert mode == 0, "SoC must auto-detect Hack 16-bit mode!"
-
-    # Run for simulation cycles and verify execution
-    await ClockCycles(dut.clk, 5000)
-    dut._log.info("Hack 16-bit SoC RTL simulation verified successfully.")
+    out = (await ser.wait_for(DONE.encode(), timeout_cycles=20_000_000)).decode("utf-8", errors="replace")
+    for line in EXPECTED_LINES:
+        assert line in out, f"missing {line!r} in Hack firmware output: {out!r}"
+    assert "[FAIL]" not in out, f"Hack firmware reported a failure: {out!r}"
+    dut._log.info("Hack 16-bit firmware self-test report verified over UART")

@@ -186,7 +186,7 @@ sim-soc: veryl firmware sim-boot
 	@echo "=== Running SoC Top RISC-V Integration Tests ==="
 	SIM=$(SIM_UNIT) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_rv32i]"
 	@echo "=== Running SoC Top Hack Integration Tests ==="
-	SIM=$(SIM_UNIT) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_hack]"
+	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_hack]"
 
 sim-zephyr-emu: build-zephyr
 	@echo "=== Running Zephyr bc_clone_rs Python Emulator ==="
@@ -216,7 +216,7 @@ sim-hack-pytest: build-hack
 
 sim-hack-rtl: veryl build-hack
 	@echo "=== Running Hack 16-bit SoC RTL Simulation ==="
-	SIM=$(SIM_UNIT) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_hack]"
+	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_hack]"
 
 sim-hack: sim-hack-emu sim-hack-pytest sim-hack-rtl
 
