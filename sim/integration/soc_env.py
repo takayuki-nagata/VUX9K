@@ -11,11 +11,19 @@ ClockCycles resumes Python on every clock edge, which dominates the runtime of
 multi-million-cycle SoC tests.
 """
 
+import os
+import sys
+
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, Timer
 from sdcard_model import SpiSdCardModel
 from virtual_serial import VirtualSerialBridge
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
+import tools.vux_tool as vux_tool  # noqa: E402 (needs REPO_ROOT on sys.path)
 
 CLK_PERIOD_PS = 37038  # 27.0 MHz board clock
 UART_BAUD_CYCLES = 234  # 27.0 MHz / 115200 baud
@@ -28,6 +36,19 @@ def mbr_sector() -> bytes:
     mbr[510] = 0x55
     mbr[511] = 0xAA
     return bytes(mbr)
+
+
+def slot_lba(slot: int) -> int:
+    """First SD sector of a program slot (same formula as the firmware and vux_tool)."""
+    return 64 + (slot << 6)
+
+
+def slot_image(payload: bytes, *, slot: int, mode: str, name: str = ""):
+    """VUX9 v3 image for slot, as {lba: sector bytes} for start_soc(sd_sectors=...), plus vux_tool's meta."""
+    raw, meta = vux_tool.build_vux9_image(payload, slot=slot, name=name, mode=mode)
+    base = slot_lba(slot)
+    sectors = {base + i: raw[i * 512 : (i + 1) * 512] for i in range(meta["num_sectors"])}
+    return sectors, meta
 
 
 def soc_of(dut):

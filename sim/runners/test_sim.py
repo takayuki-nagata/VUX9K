@@ -47,7 +47,7 @@ UNIT_GLS = [
 # Full SoC. Tests on sim/integration/soc_env.py use the tb_soc_top.sv clock wrapper;
 # the rest still drive their own clock on a bare soc_top.
 SOC = [
-    ("soc_top", "test_soc_boot"),
+    ("tb_soc_top", "test_soc_boot"),
     ("soc_top", "test_soc_rv32i"),
     ("tb_soc_top", "test_soc_hack"),
     ("soc_top", "test_soc_zephyr"),

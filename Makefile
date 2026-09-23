@@ -176,7 +176,7 @@ test-isa: veryl
 
 sim-boot: veryl
 	@echo "=== Running Hardware Boot Manager & Bridge Cocotb Tests ==="
-	SIM=$(SIM_UNIT) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_boot]"
+	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_boot]"
 
 sim-soc: veryl firmware sim-boot
 	@echo "=== Running Python Software Emulator Unit Tests ==="
