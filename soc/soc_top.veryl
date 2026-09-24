@@ -291,11 +291,8 @@ pub module soc_top (
         sd_we       = mem_write && sd_wsel;
         gpio_we     = mem_write && gpio_wsel;
 
-        uart_re  = if active_mode == 1'b0 ?
-            (!mem_write && uart_sel)
-        :
-            (mem_read_req && last_uart_sel && (last_addr_low == 4'h0))
-        ;
+        // Pop the RX FIFO only when the CPU actually reads the data register (either mode)
+        uart_re  = mem_read_req && last_uart_sel && (last_addr_low == 4'h0);
         timer_re = 1'b1;
         sd_re    = 1'b1;
         gpio_re  = 1'b1;

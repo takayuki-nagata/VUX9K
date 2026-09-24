@@ -320,12 +320,6 @@ caused by any restructuring:
   before the SoC has actually produced it), unrelated to file layout. Confirmed
   by reproducing on a clean `git worktree` of `main` reusing the same
   `build/zephyr/zephyr/zephyr.bin` (2026-09).
-- Hack-mode UART RX (`test_soc_hack_mmio.test_soc_hack_uart_rx`, `expect_fail`):
-  `soc_top` pops the RX FIFO whenever the A register points at 0x6000-0x6003
-  without a write (`uart_re = !mem_write && uart_sel` in Hack mode), so even a
-  status read discards the byte. An RTL bug (no Hack firmware reads the UART
-  yet); fixing it is a behavior change, after which the test must drop
-  `expect_fail` (cocotb fails an expect_fail test that passes).
 - `make sta` — nextpnr timing closure at 30 MHz fails for every seed in
   `PNR_SEEDS` (-4.1 to -4.7 ns after the trap path was restored, 2026-09); this is
   the timing-closure work of step 3, not a build-system bug.

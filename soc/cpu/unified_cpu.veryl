@@ -31,12 +31,15 @@ pub module unified_cpu #(
         HACK_WR_D, // second write-back cycle of a Hack AD=/AMD= instruction (writes D)
     }
 
-    var state      : CpuState    ;
-    var r_load_we  : logic       ;
-    var r_hack_data: logic   <32>;
-    var r_hack_d   : logic   <32>; // D value waiting for HACK_WR_D
-    assign mem_read_req = if (state == CpuState::MEM_WAIT && r_load_we) ? 1'b1 : 1'b0;
-    var is_riscv_mode: logic    ;
+    var state        : CpuState    ;
+    var r_load_we    : logic       ;
+    var r_hack_data  : logic   <32>;
+    var r_hack_d     : logic   <32>; // D value waiting for HACK_WR_D
+    var is_riscv_mode: logic       ;
+    // A data read completes in MEM_WAIT: an RV32 load, or a Hack comp reading M
+    // (Hack mode enters MEM_WAIT only for that). Peripherals with read side effects
+    // (UART RX pop) act on this, not on the address alone.
+    assign mem_read_req = state == CpuState::MEM_WAIT && (if is_riscv_mode ? r_load_we : 1'b1);
     var pc_reg       : logic<32>;
     var pc_plus_4_reg: logic<32>;
     var next_pc      : logic<32>;

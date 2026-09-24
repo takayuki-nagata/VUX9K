@@ -10,12 +10,10 @@ otherwise unexercised. Small hand-assembled Hack programs (hack_asm) are
 preloaded straight into I-RAM, read registers and print what they read as one
 character each, which the tests compare against the expected values.
 
-Known bug (expect_fail below): in Hack mode soc_top pops the UART RX FIFO on
-every cycle the A register points at 0x6000-0x6003 without a write
-(`uart_re = !mem_write && uart_sel`), not only on an actual read of the data
-register, so a received byte is gone before a status or data read sees it.
-Fixing it changes behavior; when it is fixed, test_soc_hack_uart_rx passes and
-cocotb reports that as a failure until expect_fail is removed.
+test_soc_hack_uart_rx guards a fixed bug: soc_top used to pop the UART RX FIFO
+on every cycle the A register pointed at the UART (even for a status read), so a
+received byte was gone before the program could see it. Now only a read of the
+data register (mem_read_req) pops it.
 """
 
 import os
@@ -128,16 +126,12 @@ async def test_soc_hack_mmio_status_gpio(dut):
     dut._log.info("Hack-mode MMIO reads (UART status, GPIO) and unmapped accesses verified")
 
 
-@cocotb.test(expect_fail=True)
+@cocotb.test()
 async def test_soc_hack_uart_rx(dut):
     """Hack mode sees a received byte in the UART status and reads it from the data register"""
     ser = await _start_hack(dut, uart_rx_program())
     await ser.wait_for(b"?", timeout_cycles=200_000)
     ser.reset_input_buffer()
     ser.write(b"x")
-    try:
-        out = (await ser.wait_for(b"\n", timeout_cycles=500_000)).decode("ascii", errors="replace")
-    except TimeoutError as e:
-        # expect_fail only covers assertion failures, so a hang must surface as one
-        raise AssertionError(f"no report after the byte was sent (status never showed it): {e}") from None
+    out = (await ser.wait_for(b"\n", timeout_cycles=500_000)).decode("ascii", errors="replace")
     assert out == "0x1\n", f"expected '0x1\\n' (status, echo, status), got {out!r}"
