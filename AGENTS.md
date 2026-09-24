@@ -160,7 +160,7 @@ If you actually need to test the Zephyr-backed path, you'd have to add a new
 `vendor/bc_clone_rs/examples/zephyr_app` to link `libvux9k_rust_demo.a`) — this
 hasn't been done, don't assume it works without testing on real hardware.
 
-## `make test-isa`: riscv-tests on `tb_hex_runner`, and why it doesn't use `ecall`
+## `make test-isa`: riscv-tests on `tb_hex_runner`
 
 `scripts/run_riscv_tests.py` builds riscv-tests (`rv32ui`/`rv32mi`, `env/p`, both
 pinned and fetched into `vendor/riscv-tests/`) and runs each on
@@ -174,28 +174,29 @@ are easy to break without noticing:
   the tb treats a store there as the verdict (`1` = PASS, `(TESTNUM<<1)|1` = FAIL).
   Keep the address in the linker script and the tb's `TOHOST_ADDR` in sync, and
   never let it alias into RAM.
-- **`scripts/riscv_tests/env/riscv_test.h` overrides `RVTEST_PASS`/`RVTEST_FAIL`**
-  (via `#include_next`) to jump straight to `write_tohost` instead of `ecall`.
-  Upstream `env/p` reports via `ecall` -> trap handler, but `unified_cpu` currently
-  takes **no traps at all**: commit `02a105a` dropped the ECALL/EBREAK/MRET/
-  interrupt decode (`trap_entry`/`is_ecall`/`is_mret` are only ever assigned 0).
-  Without the override every test would hang instead of reporting. Its `mret`
-  into the test body only works because `mepc` happens to point at the very next
-  instruction. Once traps are restored, the override can be dropped.
-- **`EXPECTED_FAILURES` is strict.** Known gaps (the trap-dependent `rv32mi`
-  tests, misaligned access, PMP) are listed with reasons; a listed test that
+- **Verdicts go through the CPU's trap path.** Upstream `env/p` reports PASS/FAIL
+  via `ecall` -> `trap_vector` -> `write_tohost`, so a broken ECALL/MRET shows up
+  as a harness self-test failure (typically a timeout), not as quietly green
+  tests. From `02a105a` until the trap path was restored, a local
+  `riscv_test.h` override sidestepped this; don't bring one back to paper over
+  a trap regression.
+- **`EXPECTED_FAILURES` is strict.** Known gaps are listed with reasons
+  (`rv32ui-p-ma_data`: misaligned accesses trap rather than being done in
+  hardware, and `env/p` has no handler to emulate them; `rv32mi-p-pmpaddr`: no
+  PMP); a listed test that
   starts passing is reported as XPASS and fails the run — remove the entry
   when fixing the CPU rather than loosening the check.
 - **The harness self-test must stay first.** `scripts/riscv_tests/selftest_fail.S`
   deliberately fails test case 2, and the run aborts unless it's reported as
   exactly `FAIL (TESTNUM=2)`. This is what proves the verdict plumbing works;
   don't remove it to "speed things up".
-- **When the trap path is restored, update every place that encodes the
-  regression, together:** the trap entries in `EXPECTED_FAILURES`, the
-  `RVTEST_PASS/FAIL` override in `scripts/riscv_tests/env/riscv_test.h`, and the
-  `expect_fail=True` markers on `sim/unit/test_unified_cpu_traps.py` (3 tests) and
-  `sim/integration/test_soc_rv32i.py::test_soc_timer_interrupt`. All of them turn
-  red on their own once the CPU traps correctly (XPASS / "passed unexpectedly").
+- **The CPU is M-mode only, with WARL CSRs the `rv32mi` tests depend on.**
+  `mstatus` keeps only MIE/MPIE and reads MPP as M (`illegal`/`scall` write MPP
+  and read it back to detect S/U-mode; a fully writable `mstatus` makes them take
+  the S-mode path and fail), `mtvec` is direct-mode only, `misa` is read-only
+  (so `ma_fetch` skips its RVC part). Unimplemented CSR addresses read 0 and
+  ignore writes instead of trapping (firmware/Zephyr read e.g. `mhartid`); only
+  a write to a read-only CSR (`addr[11:10] == 3`, e.g. `unimp`) is illegal.
 - The tb accepts `+TRACE` (per-cycle PC/instruction log) and `+MAX_CYCLES=N`,
   e.g. `vvp -n build/riscv_tests/tb_hex_runner.vvp +HEX_FILE=build/riscv_tests/<test>.hex +TRACE`.
 
