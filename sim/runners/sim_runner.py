@@ -12,6 +12,7 @@ Layout (all under build/sim/):
     <sim>[-gls]/<toplevel>/                  one compiled simulation per toplevel,
                                              shared by every test of that toplevel
     <sim>[-gls]/<toplevel>/run_<module>/     cwd, results and logs of one test module
+    verilator-cov/...                        same, instrumented for COVERAGE=1
 
 Each test module runs in its own directory with its own results file, so any
 two tests (even of the same toplevel) can run concurrently; the compile step is
@@ -60,6 +61,11 @@ BUILD_ARGS = {
     # checks run in `make check`), so keep them from failing the build.
     "verilator": ["--timing", "-Wno-fatal", "-Wno-lint", "-Wno-style"],
 }
+
+# COVERAGE=1 (Verilator RTL only, see `make coverage`): line + toggle coverage.
+# Instrumented builds live in their own build/sim/verilator-cov/ tree; each test
+# writes coverage.dat into its run directory when the simulation exits.
+COVERAGE_ARGS = ["--coverage-line", "--coverage-toggle"]
 
 # Internal (non-toplevel) signals the RTL SoC tests read or write, as (module, var).
 # Under Verilator only these plus the toplevel's own signals are made VPI-visible;
@@ -154,7 +160,12 @@ def run(toplevel: str, module: str, *, gls: bool = False, sim: str | None = None
     a failing cocotb test fails the calling pytest test.
     """
     sim = sim or os.environ.get("SIM", "icarus")
+    coverage = os.environ.get("COVERAGE", "") not in ("", "0")
+    if coverage and (sim != "verilator" or gls):
+        raise ValueError("COVERAGE=1 needs SIM=verilator and an RTL (non-GLS) build")
     variant = f"{sim}-gls" if gls else sim
+    if coverage:
+        variant += "-cov"
     build_dir = SIM_BUILD_DIR / variant / toplevel
     test_dir = build_dir / f"run_{module}"
 
@@ -170,7 +181,7 @@ def run(toplevel: str, module: str, *, gls: bool = False, sim: str | None = None
             sys.path.insert(0, str(d))
 
     runner = _VerilatorWithSelectivePublic() if sim == "verilator" else get_runner(sim)
-    build_args = BUILD_ARGS[sim]
+    build_args = BUILD_ARGS[sim] + (COVERAGE_ARGS if coverage else [])
     with _exclusive(build_dir.with_name(f"{toplevel}.lock")):
         if sim == "verilator":
             # The runner infers the HDL language from the *last* source, so the .vlt goes first
@@ -193,6 +204,8 @@ def run(toplevel: str, module: str, *, gls: bool = False, sim: str | None = None
 
     test_dir.mkdir(parents=True, exist_ok=True)
     _stage_firmware(test_dir)
+    if coverage:
+        (test_dir / "coverage.dat").unlink(missing_ok=True)  # never merge a stale run
     extra_env = {}
     preload = _libs_to_preload()
     if preload and "LD_PRELOAD" not in os.environ:

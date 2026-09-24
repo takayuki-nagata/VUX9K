@@ -38,7 +38,7 @@ HACK_BUILD_DIR := $(BUILD_DIR)/hack
 ZEPHYR_BUILD_DIR ?= $(BUILD_DIR)/zephyr
 SYNTH_DIR := $(BUILD_DIR)/synth
 
-.PHONY: all veryl check check-paths fmt test test-ci test-hw test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware sim-unit sim-boot sim-soc sim test-isa zephyr-rust-lib zephyr-bc-lib build-zephyr sim-zephyr-emu sim-zephyr-repl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta FORCE
+.PHONY: all veryl check check-paths fmt test test-ci test-hw test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware sim-unit sim-boot sim-soc sim test-isa zephyr-rust-lib zephyr-bc-lib build-zephyr sim-zephyr-emu sim-zephyr-repl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage FORCE
 
 all: test-ci
 
@@ -258,6 +258,21 @@ sim-sd-quirks: veryl firmware
 	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_sd_quirks]"
 
 # Full flashing flow on Icarus: 4-state coverage of the longest RTL run (~15 min; test-slow only)
+# Line + toggle coverage of the Verilator RTL runs (unit + SoC, incl. the slow hw-flow),
+# merged and annotated onto the generated .sv under build/coverage/. Icarus-only runs
+# (test-isa) and GLS aren't measured. The merge also runs when a test fails; the
+# target still fails then.
+COVERAGE_DIR := $(BUILD_DIR)/coverage
+
+coverage: veryl firmware build-hack
+	@echo "=== Measuring Verilator line/toggle coverage (RTL unit + SoC tests) ==="
+	@rm -rf $(COVERAGE_DIR) && mkdir -p $(COVERAGE_DIR)
+	COVERAGE=1 SIM=verilator $(PYTEST_SIM) "$(SIM_TESTS)::test_unit" "$(SIM_TESTS)::test_soc"; rc=$$?; \
+	verilator_coverage --write $(COVERAGE_DIR)/merged.dat --write-info $(COVERAGE_DIR)/merged.info \
+		$(BUILD_DIR)/sim/verilator-cov/*/run_*/coverage.dat && \
+	verilator_coverage --annotate $(COVERAGE_DIR)/annotated --annotate-min 1 $(COVERAGE_DIR)/merged.dat && \
+	echo "=== Annotated sources: $(COVERAGE_DIR)/annotated ===" && exit $$rc
+
 sim-hw-flow-icarus: veryl firmware build-hack
 	@echo "=== Running SoC Top End-to-End Hardware Verification Flow (RTL, Icarus 4-state) ==="
 	SIM=icarus $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_hardware_flow]"

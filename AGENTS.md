@@ -245,6 +245,22 @@ hw-flow RTL 860 s (Icarus) -> ~30 s; gls-fast ~1,050 s -> ~33 s. Verilator needs
 - The runner infers the HDL language from the *last* source, so the `.vlt` is
   prepended, not appended.
 
+## Code coverage: `make coverage` (Verilator line + toggle)
+
+`COVERAGE=1` makes `sim_runner.py` build Verilator RTL sims with
+`--coverage-line --coverage-toggle` into their own `build/sim/verilator-cov/` tree
+(so normal builds are untouched); each test writes `coverage.dat` into its run
+directory. `make coverage` runs every RTL unit + SoC test that way (incl. the slow
+hw-flow), merges them with `verilator_coverage` into `build/coverage/merged.dat`
+(+ `merged.info` for lcov) and annotates the generated `.sv` into
+`build/coverage/annotated/`. When reading the annotation:
+- Points are per hierarchy (unit-test toplevel vs `tb_soc_top.soc.cpu_inst`), so a
+  `~` (partial) line is often covered by another instance; `%` lines were reached by
+  nothing at all. `--annotate-points` shows every point with its `hier=`.
+- Not measured: Icarus-only runs (`make test-isa`'s `tb_hex_runner`) and GLS. RV32I
+  load/ALU/misaligned-fetch lines in `unified_cpu` that riscv-tests exercise
+  therefore show as `%` — cross-check against `test-isa` before calling them holes.
+
 ## Known pre-existing (structure-independent) failures
 
 Confirmed present on `main` too (reproduced in a clean `git worktree`), not
