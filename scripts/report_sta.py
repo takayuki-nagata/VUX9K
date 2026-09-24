@@ -17,7 +17,7 @@ def format_delay(val_ns):
     return f"{val_ns:.2f} ns"
 
 
-def analyze_sta(report_path, target_freq_mhz=27.0):
+def analyze_sta(report_path, target_freq_mhz=27.0, seed_info_path=None):
     if not os.path.exists(report_path):
         print(f"Error: Timing report file '{report_path}' not found.", file=sys.stderr)
         return False
@@ -41,6 +41,11 @@ def analyze_sta(report_path, target_freq_mhz=27.0):
     print("=" * 80)
     print(f"Target Clock Frequency : {target_freq_mhz:.2f} MHz (Period: {target_period_ns:.2f} ns)")
     print(f"Report Source File     : {report_path}")
+    if seed_info_path:
+        with open(seed_info_path, "r", encoding="utf-8") as f:
+            info = json.load(f)
+        closure = "met timing" if info.get("closure") else "no seed met timing"
+        print(f"nextpnr Seed           : {info['seed']} ({closure}, slack {info['slack_ns']:+.2f} ns)")
     print("-" * 80)
 
     overall_pass = True
@@ -117,10 +122,11 @@ def main():
     parser = argparse.ArgumentParser(description="Format nextpnr STA JSON report.")
     parser.add_argument("report", nargs="?", default="build/synth/soc_sta.json", help="Path to nextpnr JSON report")
     parser.add_argument("--freq", type=float, default=27.0, help="Target clock frequency in MHz (default: 27.0)")
+    parser.add_argument("--seed-info", help="run_pnr.py's record of the adopted seed (shown in the header)")
     parser.add_argument("--strict", action="store_true", help="Exit with non-zero code on timing violation")
 
     args = parser.parse_args()
-    passed = analyze_sta(args.report, target_freq_mhz=args.freq)
+    passed = analyze_sta(args.report, target_freq_mhz=args.freq, seed_info_path=args.seed_info)
 
     if args.strict and not passed:
         sys.exit(1)

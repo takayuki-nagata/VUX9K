@@ -262,8 +262,24 @@ caused by any restructuring:
   before the SoC has actually produced it), unrelated to file layout. Confirmed
   by reproducing on a clean `git worktree` of `main` reusing the same
   `build/zephyr/zephyr/zephyr.bin` (2026-09).
-- `make sta` — nextpnr timing closure fails (~-2ns slack) across all
-  `PNR_SEEDS`; a physical-design marginality issue, not a build-system bug.
+- `make sta` — nextpnr timing closure at 30 MHz fails for every seed in
+  `PNR_SEEDS` (-4.1 to -4.7 ns after the trap path was restored, 2026-09); this is
+  the timing-closure work of step 3, not a build-system bug.
+
+## PnR seeds: `scripts/run_pnr.py` adopts one seed and records it
+
+`make pnr`/`sta`/`bitstream` run nextpnr once per seed in `PNR_SEEDS`, in parallel,
+each into `build/synth/pnr/seed_<N>/` (`soc_pnr.json`, `soc_sta.json`,
+`nextpnr.log`). The first seed to meet timing stops the others and is adopted;
+a seed finishing below `PNR_ABORT_SLACK` (-1.5 ns) stops them too, since seed
+jitter can't close that gap. Without a closing seed, the best finished one is
+adopted. Its results are copied to `build/synth/soc_{pnr,sta}.json` and the seed
+is recorded in `build/synth/pnr_seed.json`, which `make sta` prints — so
+`pack.fs` and the STA report always come from one known seed. Changing
+`PNR_SEEDS` re-runs PnR (stamp file); `PNR_ABORT_SLACK=none` runs every seed,
+e.g. to see the spread across seeds before/after a timing change. The seed list
+is simply the first few primes: a seed only initializes nextpnr's RNG, so the
+point is a fixed, documented list, not any property of the values.
 
 ## Test tiers: what `test-sim` does and doesn't cover
 

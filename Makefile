@@ -38,7 +38,7 @@ HACK_BUILD_DIR := $(BUILD_DIR)/hack
 ZEPHYR_BUILD_DIR ?= $(BUILD_DIR)/zephyr
 SYNTH_DIR := $(BUILD_DIR)/synth
 
-.PHONY: all veryl check check-paths fmt test test-ci test-hw test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware sim-unit sim-boot sim-soc sim test-isa zephyr-rust-lib zephyr-bc-lib build-zephyr sim-zephyr-emu sim-zephyr-repl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta
+.PHONY: all veryl check check-paths fmt test test-ci test-hw test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware sim-unit sim-boot sim-soc sim test-isa zephyr-rust-lib zephyr-bc-lib build-zephyr sim-zephyr-emu sim-zephyr-repl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta FORCE
 
 all: test-ci
 
@@ -284,21 +284,35 @@ synth-top: $(SYNTH_DIR)/soc.json
 
 sim-gls: sim-gls-unit sim-soc-gls-fast
 
-PNR_SEEDS ?= 100 1 42 7 13
+# nextpnr seeds, tried in parallel (scripts/run_pnr.py): the first seed to meet timing is adopted
+# (else the best finished one) and recorded in pnr_seed.json. A seed finishing below
+# PNR_ABORT_SLACK stops the rest; PNR_ABORT_SLACK=none runs every seed (to see the spread).
+PNR_SEEDS ?= 2 3 5 7 11
+PNR_ABORT_SLACK ?= -1.5
+PNR_SEEDS_STAMP := $(SYNTH_DIR)/.pnr_seeds
 
-$(SYNTH_DIR)/soc_pnr.json $(SYNTH_DIR)/soc_sta.json: $(SYNTH_DIR)/soc.json $(CST_FILE)
-	$(PYTHON) scripts/run_pnr.py --device GW1NR-LV9QN88PC6/I5 --vopt family=GW1N-9C --vopt cst=$(CST_FILE) --json $(SYNTH_DIR)/soc.json --write $(SYNTH_DIR)/soc_pnr.json --report $(SYNTH_DIR)/soc_sta.json --freq 30.0 --seeds $(PNR_SEEDS)
+FORCE:
+
+# Rewritten only when PNR_SEEDS changes, so a different seed list re-runs PnR
+$(PNR_SEEDS_STAMP): FORCE
+	@mkdir -p $(SYNTH_DIR)
+	@echo "$(PNR_SEEDS)" | cmp -s - $@ || echo "$(PNR_SEEDS)" > $@
+
+$(SYNTH_DIR)/soc_pnr.json $(SYNTH_DIR)/soc_sta.json $(SYNTH_DIR)/pnr_seed.json &: $(SYNTH_DIR)/soc.json $(CST_FILE) $(PNR_SEEDS_STAMP)
+	$(PYTHON) scripts/run_pnr.py --device GW1NR-LV9QN88PC6/I5 --vopt family=GW1N-9C --vopt cst=$(CST_FILE) --json $(SYNTH_DIR)/soc.json --write $(SYNTH_DIR)/soc_pnr.json --report $(SYNTH_DIR)/soc_sta.json --freq 30.0 --seeds $(PNR_SEEDS) --seed-dir $(SYNTH_DIR)/pnr --seed-info $(SYNTH_DIR)/pnr_seed.json --abort-slack $(PNR_ABORT_SLACK)
 
 pnr: $(SYNTH_DIR)/soc_pnr.json
+	@echo "=== Routed with nextpnr seed $$($(PYTHON) -c 'import json,sys; print(json.load(open(sys.argv[1]))["seed"])' $(SYNTH_DIR)/pnr_seed.json) ==="
 
 sta: $(SYNTH_DIR)/soc_sta.json
 	@echo "=== Generating Static Timing Analysis (STA) Report (Target: 30.0 MHz, 10% Safety Margin) ==="
-	$(PYTHON) scripts/report_sta.py $(SYNTH_DIR)/soc_sta.json --freq 30.0 --strict
+	$(PYTHON) scripts/report_sta.py $(SYNTH_DIR)/soc_sta.json --freq 30.0 --seed-info $(SYNTH_DIR)/pnr_seed.json --strict
 
 $(SYNTH_DIR)/pack.fs: $(SYNTH_DIR)/soc_pnr.json
 	$(GOWIN_PACK) -d GW1N-9C -o $(SYNTH_DIR)/pack.fs $(SYNTH_DIR)/soc_pnr.json
 
 bitstream: $(SYNTH_DIR)/pack.fs
+	@echo "=== pack.fs routed with nextpnr seed $$($(PYTHON) -c 'import json,sys; print(json.load(open(sys.argv[1]))["seed"])' $(SYNTH_DIR)/pnr_seed.json) ==="
 
 build-hw: $(SYNTH_DIR)/pack.fs
 	@echo "=== Hardware Bitstream pack.fs Built Successfully! ==="
