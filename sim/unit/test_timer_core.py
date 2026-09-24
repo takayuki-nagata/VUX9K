@@ -6,9 +6,7 @@ timer_core (machine timer: 64-bit mtime / mtimecmp, timer_irq) unit tests.
 
 Register map (addr[3:0]): 0x0/0x4 mtime lo/hi, 0x8/0xC mtimecmp lo/hi; others read 0.
 Reads are registered: data_out reflects the addressed register at the previous
-rising edge. Known quirk, deliberately not asserted here: writing mtime's low
-word while it is 0xFFFFFFFF still carries into the high word (the increment and
-the partial write land on the same edge).
+rising edge.
 """
 
 import cocotb
@@ -112,3 +110,19 @@ async def test_timer_irq_compare(dut):
     await write(dut, 0xC, 1)  # mtimecmp now 2^32 above mtime
     await ClockCycles(dut.clk, 2)
     assert int(dut.timer_irq.value) == 0, "irq must clear after mtimecmp is moved past mtime"
+
+
+@cocotb.test()
+async def test_mtime_low_write_does_not_carry(dut):
+    """Writing mtime's low word while it is 0xFFFFFFFF leaves the high word alone.
+
+    The write and that edge's +1 land on the same edge: the written low word wins,
+    and the increment's carry must not leak into the high word.
+    """
+    await setup(dut)
+    await write(dut, 0x4, 7)
+    await write(dut, 0x0, ALL_ONES - 1)  # the next edge (between writes) makes lo 0xFFFFFFFF
+    await write(dut, 0x0, 0x100)  # this edge would carry lo 0xFFFFFFFF -> 0 into hi
+    assert await read(dut, 0x4) == 7, "low-word write must not carry into the high word"
+    lo = await read(dut, 0x0)
+    assert 0x100 <= lo < 0x108, f"low word after write: 0x{lo:08X}"

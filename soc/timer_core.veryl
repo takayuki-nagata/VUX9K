@@ -25,7 +25,7 @@ module timer_core (
             mtime = mtime + 1'b1;
             if we {
                 case addr {
-                    4'h0   : mtime[31:0]     = data_in;
+                    4'h0   : mtime           = {mtime[63:32], data_in}; // no carry from this edge's +1
                     4'h4   : mtime[63:32]    = data_in;
                     4'h8   : mtimecmp[31:0]  = data_in;
                     4'hc   : mtimecmp[63:32] = data_in;
