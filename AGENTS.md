@@ -261,6 +261,34 @@ hw-flow), merges them with `verilator_coverage` into `build/coverage/merged.dat`
   load/ALU/misaligned-fetch lines in `unified_cpu` that riscv-tests exercise
   therefore show as `%` — cross-check against `test-isa` before calling them holes.
 
+## Step 3 commit rule: refactors are proven with `make eqy`, timing changes are tested
+
+Keep every RTL commit one of two kinds, never both:
+- **Behavior-preserving refactor** (renames, restructuring, dead-code removal,
+  expression rewrites): must pass `make eqy EQY_BASE=<parent> EQY_TOP=unified_cpu`
+  and `EQY_TOP=soc_top`. That is a proof over all inputs, not a test.
+- **Behavior-changing timing work** (pipelining, extra wait states, anything that
+  changes cycle-level behavior): verified with `make test-sim` plus the GLS runs.
+Mixing them loses the ability to tell which half caused a regression.
+
+`scripts/run_eqy.py` builds the base commit's RTL from a `git archive` in a temp
+directory *outside* the repo (Veryl scans the whole project root, so a copy inside
+it would clash), caches it as `build/eqy/gold-<sha>/`, snapshots both sides into
+`build/eqy/<top>/` and runs Yosys `eqy` (sby/bitwuzla, `memory_map`). Notes:
+- `soc_ram` is replaced by a ports-only stub on both sides (its `$readmemh` needs
+  `firmware.hex`; its RAMs are too big to prove usefully), so changes *inside*
+  `soc_ram` are not covered.
+- eqy pairs up gold/gate signals by name before proving anything. When a change
+  renames or restructures too much, it fails at that stage ("conflicting matches
+  ... Failed to partition design") rather than with a counterexample — e.g. the
+  trap-restore commit against its parent. Split such a refactor into smaller
+  steps (or add `[match]` hints) rather than skipping the check.
+- A mismatch is reported per partition ("Failed to prove equivalence of
+  partition unified_cpu.hack_jump_take"); details are under
+  `build/eqy/<top>/<top>/`. A partition that is truly equivalent but needs
+  deeper induction than `--depth` (5) can also fail: raise the depth before
+  concluding the refactor changed behavior.
+
 ## Known pre-existing (structure-independent) failures
 
 Confirmed present on `main` too (reproduced in a clean `git worktree`), not
