@@ -310,7 +310,7 @@ sim-gls: sim-gls-unit sim-soc-gls-fast
 
 # nextpnr seeds, tried in parallel (scripts/run_pnr.py): the first seed to meet timing is adopted
 # (else the best finished one) and recorded in pnr_seed.json. A seed finishing below
-# PNR_ABORT_SLACK stops the rest; PNR_ABORT_SLACK=none runs every seed (to see the spread).
+# PNR_ABORT_SLACK stops the rest (PNR_ABORT_SLACK=none: keep going); `make timing` routes every seed.
 PNR_SEEDS ?= 2 3 5 7 11
 PNR_ABORT_SLACK ?= -1.5
 PNR_SEEDS_STAMP := $(SYNTH_DIR)/.pnr_seeds
@@ -337,10 +337,10 @@ sta: $(SYNTH_DIR)/soc_sta.json
 	$(PYTHON) scripts/report_sta.py $(SYNTH_DIR)/soc_sta.json --freq 30.0 --seed-info $(SYNTH_DIR)/pnr_seed.json --netlist $(SYNTH_DIR)/soc_pnr.json --strict
 
 # Area + timing record for one RTL commit of the timing work: always routes every seed
-# (no early stop), then prints cell counts, per-seed slack and the worst path's end points and
+# (--all-seeds: no early stop, not even on closure), then prints cell counts, per-seed slack and the worst path's end points and
 # appends a row to build/timing/history.tsv. Leaves soc_pnr/soc_sta/pnr_seed.json consistent.
 timing: $(SYNTH_DIR)/soc.json $(CST_FILE) $(PNR_SEEDS_STAMP)
-	$(PYTHON) scripts/run_pnr.py $(PNR_ARGS) --abort-slack none
+	$(PYTHON) scripts/run_pnr.py $(PNR_ARGS) --all-seeds
 	$(PYTHON) scripts/timing_summary.py --synth-dir $(SYNTH_DIR) --seeds $(PNR_SEEDS) --freq 30.0 \
 		--history $(BUILD_DIR)/timing/history.tsv
 

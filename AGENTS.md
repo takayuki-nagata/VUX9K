@@ -247,7 +247,8 @@ hw-flow RTL 860 s (Icarus) -> ~30 s; gls-fast ~1,050 s -> ~33 s. Verilator needs
 
 ### `make timing`: one comparable record per RTL commit
 
-`make timing` synthesizes, routes *every* seed (`--abort-slack none`) and prints
+`make timing` synthesizes, routes *every* seed (`run_pnr.py --all-seeds`: no early
+stop, not even when a seed closes) and prints
 cell counts (LUT/MUX2/FF/ALU/BSRAM/SSRAM), per-seed slack, best and median, and
 the worst path's start/end flops; it also appends a row to
 `build/timing/history.tsv`. Run it after every RTL commit of the timing work:
@@ -339,8 +340,9 @@ jitter can't close that gap. Without a closing seed, the best finished one is
 adopted. Its results are copied to `build/synth/soc_{pnr,sta}.json` and the seed
 is recorded in `build/synth/pnr_seed.json`, which `make sta` prints — so
 `pack.fs` and the STA report always come from one known seed. Changing
-`PNR_SEEDS` re-runs PnR (stamp file); `PNR_ABORT_SLACK=none` runs every seed,
-e.g. to see the spread across seeds before/after a timing change. The seed list
+`PNR_SEEDS` re-runs PnR (stamp file); `PNR_ABORT_SLACK=none` keeps going past
+hopeless seeds (but still stops at the first closing one); `make timing` routes
+every seed. The seed list
 is simply the first few primes: a seed only initializes nextpnr's RNG, so the
 point is a fixed, documented list, not any property of the values.
 

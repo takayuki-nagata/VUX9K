@@ -10,8 +10,9 @@ Runs nextpnr once per candidate seed, in parallel, each into its own directory
 as they finish:
   - one meets timing        -> the others are stopped and that seed is adopted;
   - one is worse than --abort-slack -> seed jitter can't close that gap, so the
-    others are stopped too (disable with --abort-slack none, e.g. to measure
-    the spread across all seeds).
+    others are stopped too (disable with --abort-slack none).
+--all-seeds turns both stops off, so every seed is routed (make timing: the
+spread across seeds is the measurement).
 Without a closing seed, the finished seed with the best worst slack is adopted.
 
 The adopted seed's results are copied to --write/--report, and the seed itself
@@ -73,7 +74,10 @@ def main():
         default=-1.5,
         help="Stop all seeds once one finishes below this slack in ns (default: -1.5; 'none' runs every seed)",
     )
+    parser.add_argument("--all-seeds", action="store_true", help="Route every seed: no early stop of any kind")
     args, unknown = parser.parse_known_args()
+    if args.all_seeds:
+        args.abort_slack = None
     sys.stdout.reconfigure(line_buffering=True)  # per-seed lines show up as seeds finish, even in CI logs
     # Turn SIGTERM into SystemExit so the `finally` below kills the nextpnr children too
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
@@ -88,7 +92,8 @@ def main():
     seeds = list(dict.fromkeys(args.seeds))
     jobs = max(1, args.jobs or min(len(seeds), os.cpu_count() or 1))
     abort_str = "off" if args.abort_slack is None else f"{args.abort_slack:.2f} ns"
-    print(f"=== nextpnr: seeds {seeds}, {jobs} in parallel, target {args.freq:.2f} MHz, abort below {abort_str} ===")
+    stops = "none (all seeds)" if args.all_seeds else f"on closure, or below {abort_str}"
+    print(f"=== nextpnr: seeds {seeds}, {jobs} in parallel, target {args.freq:.2f} MHz, stop {stops} ===")
 
     def seed_path(seed, name):
         return os.path.join(args.seed_dir, f"seed_{seed}", name)
@@ -136,7 +141,7 @@ def main():
                     print(f"  seed {seed:>4}: unreadable timing report")
                     continue
                 print(f"  seed {seed:>4}: slack {slack:+.2f} ns, Fmax {1000.0 / (1000.0 / args.freq - slack):.2f} MHz")
-                if stop_reason is None and closure:
+                if stop_reason is None and closure and not args.all_seeds:
                     stop_reason = f"seed {seed} met timing"
                 elif stop_reason is None and args.abort_slack is not None and slack < args.abort_slack:
                     stop_reason = f"seed {seed} is below {args.abort_slack:.2f} ns; seed jitter can't close that gap"
