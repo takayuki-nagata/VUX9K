@@ -64,6 +64,7 @@ async def test_hack_cpu_comprehensive(dut):
     assert int(dut.data_addr.value) == 10, f"Expected store addr=10, got {int(dut.data_addr.value)}"
     assert int(dut.data_out.value) == 0x123F, f"Expected store data=0x123F, got {int(dut.data_out.value)}"
     await ClockCycles(dut.clk, 1)
+    await ClockCycles(dut.clk, 1)  # HACK_WR_D: with both A and D as destinations, D is written one cycle later
 
     # 6. Test Conditional Jump: JGT with D > 0 (D = 0x123F > 0 -> should jump to A = 0x123F)
     # PC should become (0x123F << 1) = 0x247E
@@ -300,3 +301,62 @@ async def test_hack_jump_jle(dut):
         await Timer(1, unit="ns")
         jumped = int(dut.pc_out.value) == (target << 1)
         assert jumped == taken, f"D;JLE with {label}: jumped={jumped}, expected {taken}"
+
+
+async def _run_then_store_d(dut, instr, *, m=0, pulses):
+    """Execute instr, then M=D; return the (data_addr, data_out) of each mem_write pulse.
+
+    `pulses` is how many writes to wait for: instr's own M write (if it has one) and
+    then M=D's, whose (data_addr, data_out) is (A, D) after instr. Counting pulses
+    instead of cycles keeps this independent of how many cycles instr takes.
+    """
+    dut.data_in.value = m
+    dut.instr_in.value = instr
+    await ClockCycles(dut.clk, 1)  # FETCH latches instr
+    dut.instr_in.value = make_hack_c(a=0, c=0x0C, d=0b001, j=0)  # M=D, fetched once instr is done
+    writes, prev = [], 0
+    for _ in range(20):
+        await FallingEdge(dut.clk)
+        now = int(dut.mem_write.value)
+        if now and not prev:
+            writes.append((int(dut.data_addr.value) & 0xFFFF, int(dut.data_out.value) & 0xFFFF))
+            if len(writes) == pulses:
+                break
+        prev = now
+    assert len(writes) == pulses, f"saw {len(writes)} memory writes, expected {pulses}"
+    await ClockCycles(dut.clk, 1)
+    return writes
+
+
+@cocotb.test()
+async def test_hack_dual_register_dest(dut):
+    """AD=/AMD= write both A and D (and M at the old A), from the A and the M form of the comp"""
+    await _reset_hack(dut)
+    # (label, instruction, M operand, whether it writes M, expected result)
+    cases = (
+        ("AD=D+1", make_hack_c(a=0, c=0x1F, d=0b110, j=0), 0, False, 11),
+        ("AMD=D+1", make_hack_c(a=0, c=0x1F, d=0b111, j=0), 0, True, 11),
+        ("AMD=M+1", make_hack_c(a=1, c=0x37, d=0b111, j=0), 20, True, 21),
+        ("AD=A+1", make_hack_c(a=0, c=0x37, d=0b110, j=0), 0, False, 6),
+    )
+    for label, instr, m, writes_m, result in cases:
+        await _set_ad(dut, a=5, d=10)
+        writes = await _run_then_store_d(dut, instr, m=m, pulses=2 if writes_m else 1)
+        if writes_m:
+            assert writes[0] == (5, result), f"{label}: M write (addr, data) {writes[0]}, expected (5, {result})"
+        a, d = writes[-1]
+        assert (a, d) == (result, result), f"{label}: afterwards A={a}, D={d}; expected both {result}"
+
+
+@cocotb.test()
+async def test_hack_dual_dest_jump_uses_old_a(dut):
+    """AD=D+1;JMP jumps to A as it was before the instruction, and fetches from there next"""
+    await _reset_hack(dut)
+    await _set_ad(dut, a=5, d=10)
+    dut.instr_in.value = make_hack_c(a=0, c=0x1F, d=0b110, j=0b111)  # AD=D+1;JMP
+    await ClockCycles(dut.clk, 2)  # FETCH, EXECUTE (PC <- old A), now in the D write-back cycle
+    await Timer(1, unit="ns")
+    assert int(dut.pc_out.value) == 5 << 1, f"jumped to {int(dut.pc_out.value):#x}, expected old A (5) << 1"
+    await ClockCycles(dut.clk, 1)  # D write-back cycle -> FETCH
+    await Timer(1, unit="ns")
+    assert int(dut.pc_out.value) == 5 << 1, "the instruction after the jump must be fetched from the target"

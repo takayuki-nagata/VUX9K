@@ -28,11 +28,13 @@ pub module unified_cpu #(
         EXECUTE,
         MEM_WAIT,
         HACK_WB,
+        HACK_WR_D, // second write-back cycle of a Hack AD=/AMD= instruction (writes D)
     }
 
     var state      : CpuState    ;
     var r_load_we  : logic       ;
     var r_hack_data: logic   <32>;
+    var r_hack_d   : logic   <32>; // D value waiting for HACK_WR_D
     assign mem_read_req = if (state == CpuState::MEM_WAIT && r_load_we) ? 1'b1 : 1'b0;
     var is_riscv_mode: logic    ;
     var pc_reg       : logic<32>;
@@ -135,7 +137,8 @@ pub module unified_cpu #(
     var rv_f3          : rv32i_pkg::Funct3    ;
 
     assign active_mode = is_riscv_mode;
-    assign pc_out      = if state == CpuState::FETCH ? pc_reg : next_pc;
+    // pc_reg is already final in HACK_WR_D (updated in the cycle before it)
+    assign pc_out = if state == CpuState::FETCH || state == CpuState::HACK_WR_D ? pc_reg : next_pc;
     let rv_mem_addr: logic<32> = rf_rs1_data + rv_imm;
     assign data_addr   = if is_riscv_mode ? rv_mem_addr : rf_rs2_data;
     assign data_waddr  = if is_riscv_mode ? r_store_addr : rf_rs2_data;
@@ -242,6 +245,10 @@ pub module unified_cpu #(
         mtvec_out   : mtvec_out                              ,
         mepc_out    : mepc_out                               ,
     );
+
+    // The cycle a Hack instruction writes its results: EXECUTE, or HACK_WB when the comp reads M
+    let hack_writeback: logic = if h_use_mem ? state == CpuState::HACK_WB : state == CpuState::EXECUTE;
+    let hack_dual_dest: logic = !is_riscv_mode && h_we_reg_a && h_we_reg_d;
 
     // Combinational Execution Datapath
     always_comb {
@@ -488,21 +495,15 @@ pub module unified_cpu #(
             r_mem_write = if (rv_op == rv32i_pkg::Opcode::STORE && state == CpuState::EXECUTE) ? 1'b1 : 1'b0;
 
         } else {
-            // Hack Mode
+            // Hack Mode: A is x1 (write port 1), D is x2 (write port 2). The register
+            // file writes one port per cycle, so an instruction writing both A and D
+            // writes A now and D from r_hack_d in the extra HACK_WR_D cycle.
             rf_rd_addr  = 5'd1;
-            rf_we       = if h_use_mem ?
-                (if (state == CpuState::HACK_WB) ? h_we_reg_a : 1'b0)
-            :
-                (if (state == CpuState::EXECUTE) ? h_we_reg_a : 1'b0)
-            ;
+            rf_we       = hack_writeback && h_we_reg_a;
             rf_wr_data  = alu_result;
             rf_rd2_addr = 5'd2;
-            rf_we2      = if h_use_mem ?
-                (if (state == CpuState::HACK_WB) ? h_we_reg_d : 1'b0)
-            :
-                (if (state == CpuState::EXECUTE) ? h_we_reg_d : 1'b0)
-            ;
-            rf_wr2_data = alu_result;
+            rf_we2      = (hack_writeback && h_we_reg_d && !h_we_reg_a) || state == CpuState::HACK_WR_D;
+            rf_wr2_data = if state == CpuState::HACK_WR_D ? r_hack_d : alu_result;
 
             let y_val: logic<32> = if h_use_mem ? r_hack_data : rf_rs2_data;
             case h_op_a_sel {
@@ -676,6 +677,7 @@ pub module unified_cpu #(
             r_load_we       = 1'b0;
             r_hack_mem_we   = 1'b0;
             r_hack_data     = 32'd0;
+            r_hack_d        = 32'd0;
         } else if soft_rst {
             state           = CpuState::FETCH;
             r_irq           = 1'b0;
@@ -693,6 +695,7 @@ pub module unified_cpu #(
             r_load_we       = 1'b0;
             r_hack_mem_we   = 1'b0;
             r_hack_data     = 32'd0;
+            r_hack_d        = 32'd0;
         } else {
             case state {
                 CpuState::FETCH: {
@@ -742,7 +745,12 @@ pub module unified_cpu #(
                         r_load_we     = 1'b0;
                         r_hack_mem_we = 1'b0;
                         pc_reg        = next_pc;
-                        state         = CpuState::FETCH;
+                        r_hack_d      = alu_result;
+                        if hack_dual_dest {
+                            state = CpuState::HACK_WR_D;
+                        } else {
+                            state = CpuState::FETCH;
+                        }
                     }
                 }
                 CpuState::MEM_WAIT: {
@@ -763,7 +771,15 @@ pub module unified_cpu #(
                     r_load_we     = 1'b0;
                     r_hack_mem_we = 1'b0;
                     pc_reg        = next_pc;
-                    state         = CpuState::FETCH;
+                    r_hack_d      = alu_result;
+                    if hack_dual_dest {
+                        state = CpuState::HACK_WR_D;
+                    } else {
+                        state = CpuState::FETCH;
+                    }
+                }
+                CpuState::HACK_WR_D: {
+                    state = CpuState::FETCH;
                 }
                 default: {
                     state = CpuState::FETCH;
