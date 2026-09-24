@@ -215,3 +215,88 @@ async def test_hack_cpu_comprehensive(dut):
     await ClockCycles(dut.clk, 1)
 
     dut._log.info("Comprehensive Hack CPU ops test passed [PASS]")
+
+
+async def _reset_hack(dut):
+    """Clock + reset with a Hack A-instruction first, so the CPU latches Hack mode."""
+    cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start())
+    await FallingEdge(dut.clk)
+    for sig in ("soft_rst", "rst", "data_in", "timer_irq_in", "ext_irq_in", "sw_irq_in"):
+        getattr(dut, sig).value = 0
+    dut.instr_in.value = make_hack_a(1)
+    await ClockCycles(dut.clk, 2)
+    await FallingEdge(dut.clk)
+    dut.rst.value = 1
+    await ClockCycles(dut.clk, 2)
+    assert int(dut.active_mode.value) == 0, "Failed to enter Hack mode!"
+
+
+async def _exec(dut, instr):
+    """One register-only Hack instruction (FETCH -> EXECUTE)."""
+    dut.instr_in.value = instr
+    await ClockCycles(dut.clk, 2)
+
+
+async def _set_ad(dut, a, d):
+    await _exec(dut, make_hack_a(d))
+    await _exec(dut, make_hack_c(a=0, c=0x30, d=0b010, j=0))  # D=A
+    await _exec(dut, make_hack_a(a))
+
+
+async def _alu_a_form(dut, c):
+    """M=<comp> with the A operand: the result is on data_out during EXECUTE."""
+    dut.instr_in.value = make_hack_c(a=0, c=c, d=0b001, j=0)
+    await ClockCycles(dut.clk, 1)
+    await Timer(1, unit="ns")
+    result = int(dut.data_out.value) & 0xFFFF
+    await ClockCycles(dut.clk, 1)
+    return result
+
+
+async def _alu_m_form(dut, c, m):
+    """D=<comp> with the M operand (data_in = m): the result is on data_out in HACK_WB."""
+    dut.instr_in.value = make_hack_c(a=1, c=c, d=0b010, j=0)
+    await ClockCycles(dut.clk, 1)  # FETCH -> EXECUTE
+    await Timer(1, unit="ns")
+    dut.data_in.value = m
+    await ClockCycles(dut.clk, 2)  # EXECUTE -> MEM_WAIT -> HACK_WB
+    await Timer(1, unit="ns")
+    result = int(dut.data_out.value) & 0xFFFF
+    await ClockCycles(dut.clk, 1)  # HACK_WB -> FETCH
+    return result
+
+
+@cocotb.test()
+async def test_hack_comp_const_one_or_xor(dut):
+    """Comps the comprehensive test misses: 1, D|A, D|M and the D^A/D^M extension"""
+    await _reset_hack(dut)
+    d, a, m = 0x00F0, 0x00CC, 0x0A0A
+    # (c bits, expected with A, expected with M) -- "1" ignores the a-bit
+    for name, c, want_a, want_m in (
+        ("1", 0b111111, 1, None),
+        ("D|A/D|M", 0b010101, d | a, d | m),
+        ("D^A/D^M", 0b000101, d ^ a, d ^ m),
+    ):
+        await _set_ad(dut, a, d)
+        got = await _alu_a_form(dut, c)
+        assert got == want_a, f"{name} (A form): expected {want_a:#06x}, got {got:#06x}"
+        if want_m is not None:
+            await _set_ad(dut, a, d)
+            got = await _alu_m_form(dut, c, m)
+            assert got == want_m, f"{name} (M form): expected {want_m:#06x}, got {got:#06x}"
+
+
+@cocotb.test()
+async def test_hack_jump_jle(dut):
+    """D;JLE jumps for D < 0 and D == 0, and falls through for D > 0"""
+    await _reset_hack(dut)
+    target = 0x0123
+    # (D, comp that loads it from A, taken)
+    for label, a, comp, taken in (("D>0", 0x7FFF, 0x30, False), ("D=0", 0, 0x30, True), ("D<0", 0, 0x3A, True)):
+        await _exec(dut, make_hack_a(a))
+        await _exec(dut, make_hack_c(a=0, c=comp, d=0b010, j=0))  # D=A or D=-1
+        await _exec(dut, make_hack_a(target))
+        await _exec(dut, make_hack_c(a=0, c=0x0C, d=0b000, j=0b110))  # D;JLE
+        await Timer(1, unit="ns")
+        jumped = int(dut.pc_out.value) == (target << 1)
+        assert jumped == taken, f"D;JLE with {label}: jumped={jumped}, expected {taken}"

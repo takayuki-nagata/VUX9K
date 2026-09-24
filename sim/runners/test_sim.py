@@ -54,6 +54,7 @@ UNIT_GLS = [
 SOC = [
     ("tb_soc_top", "test_soc_boot"),
     ("tb_soc_top", "test_soc_rv32i"),
+    ("tb_soc_top", "test_soc_hack_mmio"),
     ("tb_soc_top", "test_soc_hack"),
     ("tb_soc_top", "test_soc_fast"),
     ("tb_soc_top", "test_soc_sd_quirks"),

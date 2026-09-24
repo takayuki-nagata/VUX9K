@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: MIT
 
 """
-unified_cpu trap path (RISC-V mode): exceptions and the machine timer interrupt enter
-mtvec with the right mcause/mepc/mtval, a trapping instruction has no side effects,
-and mret returns to mepc.
+unified_cpu trap path (RISC-V mode): exceptions and the machine interrupts (timer;
+external/software for their priority) enter mtvec with the right mcause/mepc/mtval,
+a trapping instruction has no side effects, and mret returns to mepc.
 
 Each program installs a handler that checks the trap CSRs itself and then spins at
 label "ok" (or "bad" on any mismatch), so the tests only need to trace pc_out. They
@@ -20,11 +20,11 @@ HANDLER = 0x200
 MAX_CYCLES = 400
 
 
-async def run_program(dut, words, *, irq_after=None, max_cycles=MAX_CYCLES):
+async def run_program(dut, words, *, irq_after=None, irq_lines=("timer_irq_in",), max_cycles=MAX_CYCLES):
     """Serve `words` as instruction memory (pc_out -> instr_in) and reset the CPU.
 
     Returns (PCs seen, one per cycle; whether mem_write was ever asserted).
-    irq_after: raise timer_irq_in after that many cycles.
+    irq_after: raise the irq_lines inputs (default timer_irq_in) after that many cycles.
     """
     mem = {i * 4: w for i, w in enumerate(words)}
     cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start())
@@ -44,7 +44,8 @@ async def run_program(dut, words, *, irq_after=None, max_cycles=MAX_CYCLES):
         wrote |= bool(int(dut.mem_write.value))
         dut.instr_in.value = mem.get(pc, 0x00000013)  # nop outside the program
         if irq_after is not None and cycle == irq_after:
-            dut.timer_irq_in.value = 1
+            for line in irq_lines:
+                getattr(dut, line).value = 1
     return pcs, wrote
 
 
@@ -266,6 +267,63 @@ async def test_timer_interrupt_enters_mtvec_and_returns(dut):
 async def test_timer_interrupt_masked_by_mstatus_mie(dut):
     """With mstatus.MIE clear, a pending enabled timer interrupt is not taken"""
     await expect_ok(dut, timer_program(enable_mie=False), irq_after=40, max_cycles=600)
+
+
+def irq_priority_program():
+    """Enable MEIE/MSIE/MTIE and mstatus.MIE, then count down in a loop.
+
+    All three interrupt lines rise together and stay high. The handler checks that
+    they are taken in priority order MEI > MSI > MTI (mcause 0x8000000b, 0x80000003,
+    0x80000007), masking each one in mie before mret. After the loop, s1 must be 3.
+    """
+    a = Asm()
+    a.la("t0", "handler")
+    a.csrw("mtvec", "t0")
+    a.li("s1", 0)
+    a.li("t0", 0x888)  # MEIE | MTIE | MSIE
+    a.csrs("mie", "t0")
+    a.li("t0", 0x8)
+    a.csrs("mstatus", "t0")
+    a.li("t3", 80)
+    a.label("loop")
+    a.addi("t3", "t3", -1)
+    a.bnez("t3", "loop")
+    a.li("t1", 3)
+    a.bne("s1", "t1", "bad")
+    a.label("ok")
+    a.j("ok")
+    a.label("bad")
+    a.j("bad")
+
+    a.label("handler")
+    a.csrr("t0", "mcause")
+    # (interrupts taken so far, expected mcause, mie afterwards)
+    for taken, cause, mie_after in ((0, 0x8000000B, 0x88), (1, 0x80000003, 0x80), (2, 0x80000007, 0)):
+        a.li("t1", taken)
+        a.bne("s1", "t1", f"not_{taken}")
+        a.li("t1", cause)
+        a.bne("t0", "t1", "bad")
+        a.li("t2", mie_after)
+        a.csrw("mie", "t2")
+        a.j("taken")
+        a.label(f"not_{taken}")
+    a.j("bad")  # a fourth interrupt
+    a.label("taken")
+    a.addi("s1", "s1", 1)
+    a.mret()
+    return a.assemble(), a.labels
+
+
+@cocotb.test()
+async def test_interrupt_priority_mei_msi_mti(dut):
+    """Simultaneous external, software and timer interrupts are taken in order MEI > MSI > MTI"""
+    await expect_ok(
+        dut,
+        irq_priority_program(),
+        irq_after=40,
+        irq_lines=("ext_irq_in", "sw_irq_in", "timer_irq_in"),
+        max_cycles=900,
+    )
 
 
 @cocotb.test()

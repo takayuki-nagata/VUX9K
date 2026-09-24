@@ -251,7 +251,7 @@ sim-soc-fast-icarus: veryl firmware
 
 sim-soc-mmio: veryl
 	@echo "=== Running SoC Memory Map / MMIO Peripheral Tests (RTL) ==="
-	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_rv32i]"
+	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_rv32i]" "$(SIM_TESTS)::test_soc[test_soc_hack_mmio]"
 
 sim-sd-quirks: veryl firmware
 	@echo "=== Running SD Card Edge-Case Tests (strict / SDSC SD model, RTL) ==="
