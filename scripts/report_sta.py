@@ -17,7 +17,7 @@ def format_delay(val_ns):
     return f"{val_ns:.2f} ns"
 
 
-def analyze_sta(report_path, target_freq_mhz=27.0, seed_info_path=None):
+def analyze_sta(report_path, target_freq_mhz=27.0, seed_info_path=None, netlist_path=None):
     if not os.path.exists(report_path):
         print(f"Error: Timing report file '{report_path}' not found.", file=sys.stderr)
         return False
@@ -73,6 +73,12 @@ def analyze_sta(report_path, target_freq_mhz=27.0, seed_info_path=None):
 
         print(f"\n[Clock Domain #{i}] {clock_from} -> {clock_to}")
         print(f"  Status              : [{status}] (Slack: {slack_ns:+.2f} ns)")
+        if netlist_path and i == 1:
+            from timing_summary import worst_path_endpoints
+
+            start, end = worst_path_endpoints(netlist_path, report_path)
+            print(f"  From flop           : {start}")
+            print(f"  To flop             : {end}")
         print(f"  Max Frequency (Fmax): {fmax_mhz:.2f} MHz")
         print(f"  Total Data Delay    : {total_delay:.2f} ns")
         print(f"    - Logic Delay     : {logic_delay:.2f} ns ({logic_pct:.1f}%)")
@@ -123,10 +129,13 @@ def main():
     parser.add_argument("report", nargs="?", default="build/synth/soc_sta.json", help="Path to nextpnr JSON report")
     parser.add_argument("--freq", type=float, default=27.0, help="Target clock frequency in MHz (default: 27.0)")
     parser.add_argument("--seed-info", help="run_pnr.py's record of the adopted seed (shown in the header)")
+    parser.add_argument("--netlist", help="Routed netlist (soc_pnr.json): show the worst path's start/end flops")
     parser.add_argument("--strict", action="store_true", help="Exit with non-zero code on timing violation")
 
     args = parser.parse_args()
-    passed = analyze_sta(args.report, target_freq_mhz=args.freq, seed_info_path=args.seed_info)
+    passed = analyze_sta(
+        args.report, target_freq_mhz=args.freq, seed_info_path=args.seed_info, netlist_path=args.netlist
+    )
 
     if args.strict and not passed:
         sys.exit(1)

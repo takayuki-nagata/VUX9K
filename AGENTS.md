@@ -245,6 +245,19 @@ hw-flow RTL 860 s (Icarus) -> ~30 s; gls-fast ~1,050 s -> ~33 s. Verilator needs
 - The runner infers the HDL language from the *last* source, so the `.vlt` is
   prepended, not appended.
 
+### `make timing`: one comparable record per RTL commit
+
+`make timing` synthesizes, routes *every* seed (`--abort-slack none`) and prints
+cell counts (LUT/MUX2/FF/ALU/BSRAM/SSRAM), per-seed slack, best and median, and
+the worst path's start/end flops; it also appends a row to
+`build/timing/history.tsv`. Run it after every RTL commit of the timing work:
+seeds alone move slack by ~1.7 ns, so compare best *and* median, and treat LUT
+count as the steadier signal. Register names don't survive synthesis
+(`synth_gowin` ends with `autoname`), so end points are shown as the flop's
+`src` (generated `.sv` line range of its `always_ff`) plus the stem of its D
+net's autoname (e.g. `D=instr_addr` is the PC register). `make sta` prints the
+same end points for the adopted seed.
+
 ## Code coverage: `make coverage` (Verilator line + toggle)
 
 `COVERAGE=1` makes `sim_runner.py` build Verilator RTL sims with
