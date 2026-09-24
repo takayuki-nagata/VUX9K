@@ -20,9 +20,12 @@ pub module rv32i_csrs (
     ext_irq_in  : input  logic    ,
     sw_irq_in   : input  logic    ,
     irq_pending : output logic    ,
+    irq_cause   : output logic<32>,
     mtvec_out   : output logic<32>,
     mepc_out    : output logic<32>,
 ) {
+    // M-mode only: mstatus keeps just MIE/MPIE (MPP reads back as M), mie only the
+    // three standard enables, and mtvec is direct-mode only (WARL).
     var mstatus : logic<32>; // [3]: MIE, [7]: MPIE
     var mie     : logic<32>; // [7]: MTIE, [11]: MEIE, [3]: MSIE
     var mtvec   : logic<32>;
@@ -52,12 +55,21 @@ pub module rv32i_csrs (
         } else {
             irq_pending = 1'b0;
         }
+
+        // Standard priority among enabled pending interrupts: MEI > MSI > MTI
+        if pending[11] {
+            irq_cause = 32'h8000_000b;
+        } else if pending[3] {
+            irq_cause = 32'h8000_0003;
+        } else {
+            irq_cause = 32'h8000_0007;
+        }
     }
 
     // CSR Read Combinational Mux
     always_comb {
         case csr_addr {
-            12'h300: read_val = mstatus;
+            12'h300: read_val = mstatus | 32'h0000_1800; // MPP = M
             12'h301: read_val = 32'h4000_0100;
             12'h304: read_val = mie;
             12'h305: read_val = mtvec;
@@ -120,11 +132,11 @@ pub module rv32i_csrs (
                 // 3. Explicit CSR Write Instruction Execution
             } else if csr_op != 3'b000 {
                 case csr_addr {
-                    12'h300: mstatus  = write_val;
-                    12'h304: mie      = write_val;
-                    12'h305: mtvec    = write_val;
+                    12'h300: mstatus  = write_val & 32'h0000_0088;
+                    12'h304: mie      = write_val & 32'h0000_0888;
+                    12'h305: mtvec    = write_val & 32'hffff_fffc;
                     12'h340: mscratch = write_val;
-                    12'h341: mepc     = write_val;
+                    12'h341: mepc     = write_val & 32'hffff_fffc;
                     12'h342: mcause   = write_val;
                     12'h343: mtval    = write_val;
                     default: {}

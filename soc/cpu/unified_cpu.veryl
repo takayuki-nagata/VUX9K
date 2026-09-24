@@ -99,11 +99,22 @@ pub module unified_cpu #(
     var trap_val   : logic<32>;
     var trap_return: logic    ;
     var irq_pending: logic    ;
+    var irq_cause  : logic<32>;
     var mtvec_out  : logic<32>;
     var mepc_out   : logic<32>;
     var is_ecall   : logic    ;
     var is_ebreak  : logic    ;
     var is_mret    : logic    ;
+    var is_illegal : logic    ;
+    var r_irq      : logic    ; // interrupt sampled in FETCH, taken in EXECUTE
+    var r_irq_cause: logic<32>;
+    var csr_access : logic    ;
+
+    // Trap / next-PC helpers
+    var fetch_misalign : logic    ;
+    var mem_misalign   : logic    ;
+    var is_branch_taken: logic    ;
+    var jalr_target    : logic<32>;
 
     // Internal Helper Signals
     var load_val       : logic            <32>;
@@ -186,18 +197,18 @@ pub module unified_cpu #(
 
     // Dual-Port Register File
     inst reg_file: rv32i_regfile (
-        clk     : clk        ,
-        rst     : rst        ,
-        we      : rf_we      ,
-        rd_addr : rf_rd_addr ,
-        wr_data : rf_wr_data ,
-        we2     : rf_we2     ,
-        rd2_addr: rf_rd2_addr,
-        wr2_data: rf_wr2_data,
-        rs1_addr: rf_rs1_addr,
-        rs2_addr: rf_rs2_addr,
-        rs1_data: rf_rs1_data,
-        rs2_data: rf_rs2_data,
+        clk     : clk                 ,
+        rst     : rst                 ,
+        we      : rf_we && !trap_entry,
+        rd_addr : rf_rd_addr          ,
+        wr_data : rf_wr_data          ,
+        we2     : rf_we2              ,
+        rd2_addr: rf_rd2_addr         ,
+        wr2_data: rf_wr2_data         ,
+        rs1_addr: rf_rs1_addr         ,
+        rs2_addr: rf_rs2_addr         ,
+        rs1_data: rf_rs1_data         ,
+        rs2_data: rf_rs2_data         ,
     );
 
     // Main 32-bit ALU
@@ -211,38 +222,32 @@ pub module unified_cpu #(
 
     // Control and Status Registers (CSR)
     inst csrs_inst: rv32i_csrs (
-        clk         : clk                                                                                ,
-        rst         : rst                                                                                ,
-        soft_rst    : soft_rst                                                                           ,
-        csr_addr    : rv_csr_addr                                                                        ,
-        csr_wdata   : if (state == CpuState::EXECUTE) ? (if rv_funct3[2] ? rv_uimm : rf_rs1_data) : 32'd0,
-        csr_op      : if (state == CpuState::EXECUTE) ? rv_funct3 : 3'b000,
-        csr_rdata   : csr_rdata                                                                          ,
-        trap_entry  : trap_entry                                                                         ,
-        trap_cause  : trap_cause                                                                         ,
-        trap_pc     : pc_reg                                                                             ,
-        trap_val    : trap_val                                                                           ,
-        trap_return : trap_return                                                                        ,
-        timer_irq_in: timer_irq_in                                                                       ,
-        ext_irq_in  : ext_irq_in                                                                         ,
-        sw_irq_in   : sw_irq_in                                                                          ,
-        irq_pending : irq_pending                                                                        ,
-        mtvec_out   : mtvec_out                                                                          ,
-        mepc_out    : mepc_out                                                                           ,
+        clk         : clk                                    ,
+        rst         : rst                                    ,
+        soft_rst    : soft_rst                               ,
+        csr_addr    : rv_csr_addr                            ,
+        csr_wdata   : if rv_funct3[2] ? rv_uimm : rf_rs1_data,
+        csr_op      : if csr_access ? rv_funct3 : 3'b000,
+        csr_rdata   : csr_rdata                              ,
+        trap_entry  : trap_entry                             ,
+        trap_cause  : trap_cause                             ,
+        trap_pc     : pc_reg                                 ,
+        trap_val    : trap_val                               ,
+        trap_return : trap_return                            ,
+        timer_irq_in: timer_irq_in                           ,
+        ext_irq_in  : ext_irq_in                             ,
+        sw_irq_in   : sw_irq_in                              ,
+        irq_pending : irq_pending                            ,
+        irq_cause   : irq_cause                              ,
+        mtvec_out   : mtvec_out                              ,
+        mepc_out    : mepc_out                               ,
     );
 
     // Combinational Execution Datapath
     always_comb {
-        rv_op       = rv_opcode as rv32i_pkg::Opcode;
-        rv_f3       = rv_funct3 as rv32i_pkg::Funct3;
-        is_ecall    = 1'b0;
-        is_ebreak   = 1'b0;
-        is_mret     = 1'b0;
-        trap_entry  = 1'b0;
-        trap_return = 1'b0;
-        trap_cause  = 32'd0;
-        trap_val    = 32'd0;
-        csr_we      = 1'b0;
+        rv_op  = rv_opcode as rv32i_pkg::Opcode;
+        rv_f3  = rv_funct3 as rv32i_pkg::Funct3;
+        csr_we = 1'b0;
 
         // Branch & Jump Condition Evaluation (Direct Comparators for Minimum Critical Path Delay)
         let rs_eq : logic = rf_rs1_data == rf_rs2_data;
@@ -522,9 +527,104 @@ pub module unified_cpu #(
         }
     }
 
+    // RV32I legality & SYSTEM decode (from ir_reg). Unimplemented CSR addresses stay
+    // legal (read 0, writes ignored); a write to a read-only CSR (addr[11:10] == 3,
+    // e.g. `unimp` = csrrw x0, cycle, x0) is illegal.
+    let ir_f7     : logic<7> = ir_reg[31:25];
+    let csr_writes: logic    = rv_funct3[1:0] == 2'b01 || rv_rs1 != 5'd0; // CSRRW[I], or non-zero rs1/uimm
+    let csr_ro_wr : logic    = rv_csr_addr[11:10] == 2'b11 && csr_writes;
+    always_comb {
+        is_ecall  = ir_reg == 32'h0000_0073;
+        is_ebreak = ir_reg == 32'h0010_0073;
+        is_mret   = ir_reg == 32'h3020_0073;
+        case rv_op {
+            rv32i_pkg::Opcode::LUI, rv32i_pkg::Opcode::AUIPC, rv32i_pkg::Opcode::JAL: is_illegal = 1'b0;
+            rv32i_pkg::Opcode::JALR                                                 : is_illegal = rv_funct3 != 3'b000;
+            rv32i_pkg::Opcode::BRANCH                                               : is_illegal = rv_funct3[2:1]
+                == 2'b01;
+            rv32i_pkg::Opcode::LOAD                                                 : is_illegal = rv_funct3 == 3'b011
+                || rv_funct3[2:1] == 2'b11;
+            rv32i_pkg::Opcode::STORE                                                : is_illegal = rv_funct3[2]
+                || rv_funct3[1:0] == 2'b11;
+            rv32i_pkg::Opcode::I_TYPE                                               : {
+                case rv_funct3 {
+                    3'b001 : is_illegal = ir_f7 != 7'b000_0000; // SLLI (shamt[5] must be 0)
+                    3'b101 : is_illegal = ir_f7 != 7'b000_0000 && ir_f7 != 7'b010_0000; // SRLI/SRAI
+                    default: is_illegal = 1'b0;
+                }
+            }
+            rv32i_pkg::Opcode::R_TYPE: is_illegal = !(ir_f7 == 7'b000_0000
+                || (ir_f7 == 7'b010_0000 && (rv_funct3 == 3'b000 || rv_funct3 == 3'b101)));
+            rv32i_pkg::Opcode::FENCE : is_illegal = rv_funct3[2:1] != 2'b00; // FENCE / FENCE.I (no-ops)
+            rv32i_pkg::Opcode::SYSTEM: {
+                if rv_funct3 == 3'b000 {
+                    // ECALL / EBREAK / MRET / WFI (WFI is a no-op)
+                    is_illegal = !(is_ecall || is_ebreak || is_mret || ir_reg == 32'h1050_0073);
+                } else {
+                    is_illegal = rv_funct3 == 3'b100 || csr_ro_wr;
+                }
+            }
+            default: is_illegal = 1'b1; // includes 0x0000_0000
+        }
+    }
+
+    // Trap evaluation (RISC-V mode, EXECUTE only, so each trap is a one-cycle pulse).
+    // Priority: interrupt > illegal > misaligned fetch > ECALL/EBREAK > misaligned load/store.
+    // A trapping instruction has no side effects: no register/CSR write, no memory access.
+    let exec_rv     : logic    = is_riscv_mode && state == CpuState::EXECUTE;
+    let mem_addr_low: logic<2> = rf_rs1_data[1:0] + rv_imm[1:0];
+    always_comb {
+        case rv_op {
+            rv32i_pkg::Opcode::JAL   : fetch_misalign = rv_imm[1];
+            rv32i_pkg::Opcode::BRANCH: fetch_misalign = rv_imm[1] && rv_branch_take;
+            rv32i_pkg::Opcode::JALR  : fetch_misalign = mem_addr_low[1];
+            default                  : fetch_misalign = 1'b0;
+        }
+        if rv_op == rv32i_pkg::Opcode::LOAD || rv_op == rv32i_pkg::Opcode::STORE {
+            case rv_funct3[1:0] {
+                2'b01  : mem_misalign = mem_addr_low[0]; // LH/LHU/SH
+                2'b10  : mem_misalign = mem_addr_low != 2'b00; // LW/SW
+                default: mem_misalign = 1'b0;
+            }
+        } else {
+            mem_misalign = 1'b0;
+        }
+
+        trap_entry  = 1'b0;
+        trap_cause  = 32'd0;
+        trap_val    = 32'd0;
+        trap_return = 1'b0;
+        if exec_rv {
+            if r_irq {
+                trap_entry = 1'b1;
+                trap_cause = r_irq_cause;
+            } else if is_illegal {
+                trap_entry = 1'b1;
+                trap_cause = 32'd2;
+                trap_val   = ir_reg;
+            } else if fetch_misalign {
+                trap_entry = 1'b1;
+                trap_cause = 32'd0;
+                trap_val   = if rv_op == rv32i_pkg::Opcode::JALR ? jalr_target : (pc_reg as u32 + rv_imm as u32) as u32;
+            } else if is_ecall {
+                trap_entry = 1'b1;
+                trap_cause = 32'd11;
+            } else if is_ebreak {
+                trap_entry = 1'b1;
+                trap_cause = 32'd3;
+                trap_val   = pc_reg;
+            } else if mem_misalign {
+                trap_entry = 1'b1;
+                trap_cause = if rv_op == rv32i_pkg::Opcode::LOAD ? 32'd4 : 32'd6;
+                trap_val   = rv_mem_addr;
+            } else {
+                trap_return = is_mret;
+            }
+        }
+        csr_access = exec_rv && rv_op == rv32i_pkg::Opcode::SYSTEM && !trap_entry;
+    }
+
     // Next PC Calculation (Shared PC-Relative Adder)
-    var is_branch_taken: logic    ;
-    var jalr_target    : logic<32>;
 
     always_comb {
         is_branch_taken = (rv_op == rv32i_pkg::Opcode::BRANCH) && rv_branch_take;
@@ -536,7 +636,7 @@ pub module unified_cpu #(
                 next_pc = pc_plus_4_reg;
             } else if trap_entry {
                 next_pc = mtvec_out;
-            } else if is_mret {
+            } else if trap_return {
                 next_pc = mepc_out;
             } else {
                 case rv_op {
@@ -561,6 +661,8 @@ pub module unified_cpu #(
     always_ff (clk, rst) {
         if_reset {
             state           = CpuState::FETCH;
+            r_irq           = 1'b0;
+            r_irq_cause     = 32'd0;
             pc_reg          = RESET_VECTOR;
             pc_plus_4_reg   = (RESET_VECTOR as u32 + 4) as u32;
             ir_reg          = 32'h0000_0013; // NOP
@@ -576,6 +678,8 @@ pub module unified_cpu #(
             r_hack_data     = 32'd0;
         } else if soft_rst {
             state           = CpuState::FETCH;
+            r_irq           = 1'b0;
+            r_irq_cause     = 32'd0;
             pc_reg          = RESET_VECTOR;
             pc_plus_4_reg   = (RESET_VECTOR as u32 + 4) as u32;
             ir_reg          = 32'h0000_0013; // NOP
@@ -598,10 +702,18 @@ pub module unified_cpu #(
                     r_load_we     = 1'b0;
                     r_hack_mem_we = 1'b0;
                     pc_plus_4_reg = (pc_reg as u32 + 4) as u32;
+                    r_irq         = irq_pending && is_riscv_mode;
+                    r_irq_cause   = irq_cause;
                     state         = CpuState::EXECUTE;
                 }
                 CpuState::EXECUTE: {
-                    if is_riscv_mode && rv_op == rv32i_pkg::Opcode::LOAD {
+                    if trap_entry || trap_return {
+                        r_store_we    = 1'b0;
+                        r_load_we     = 1'b0;
+                        r_hack_mem_we = 1'b0;
+                        pc_reg        = next_pc;
+                        state         = CpuState::FETCH;
+                    } else if is_riscv_mode && rv_op == rv32i_pkg::Opcode::LOAD {
                         // 1 cycle wait for synchronous D-RAM read
                         r_store_addr    = rv_mem_addr;
                         r_load_byte_sel = rf_rs1_data[1:0] + rv_imm[1:0];

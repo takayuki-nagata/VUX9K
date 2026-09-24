@@ -236,10 +236,7 @@ async def test_soc_mmio_map(dut):
     dut._log.info("SoC memory map and MMIO peripherals verified")
 
 
-# unified_cpu currently takes no traps at all (ECALL/EBREAK/MRET/interrupt decode was
-# lost in commit 02a105a; see AGENTS.md). Remove expect_fail once that is restored:
-# cocotb then reports this test as failing if it unexpectedly passes.
-@cocotb.test(expect_fail=True)
+@cocotb.test()
 async def test_soc_timer_interrupt(dut):
     """Timer interrupt traps to mtvec with mcause 0x80000007, and mret returns"""
     program = timer_irq_program()

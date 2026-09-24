@@ -45,6 +45,7 @@ UNIT_GLS = [
     ("unified_cpu", "test_unified_cpu"),
     ("unified_cpu", "test_hack_cpu_ops"),
     ("unified_cpu", "test_rv32i_smoke"),
+    ("unified_cpu", "test_unified_cpu_traps"),
     ("uart_controller", "test_uart_controller"),
     ("auto_mode_detector", "test_auto_mode_detector"),
 ]

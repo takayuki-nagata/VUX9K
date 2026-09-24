@@ -15,6 +15,7 @@ pub package rv32i_pkg {
         LUI = 7'b011_0111,
         AUIPC = 7'b001_0111,
         SYSTEM = 7'b111_0011,
+        FENCE = 7'b000_1111,
     }
 
     const OPCODE_R_TYPE: logic<7> = 7'b011_0011;
@@ -27,6 +28,7 @@ pub package rv32i_pkg {
     const OPCODE_LUI   : logic<7> = 7'b011_0111;
     const OPCODE_AUIPC : logic<7> = 7'b001_0111;
     const OPCODE_SYSTEM: logic<7> = 7'b111_0011;
+    const OPCODE_FENCE : logic<7> = 7'b000_1111;
 
     // 3-bit Funct3 Enum
     enum Funct3 {

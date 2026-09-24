@@ -157,3 +157,77 @@ async def test_rv32i_csrs_basic(dut):
     assert (status & 0x80) != 0, "MPIE should be 1 on MRET"
 
     dut._log.info("RISC-V Machine-Mode CSRs & Trap Unit verified successfully [PASS]")
+
+
+async def csr_reset(dut):
+    cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start())
+    for sig in (
+        "soft_rst",
+        "rst",
+        "csr_addr",
+        "csr_wdata",
+        "csr_op",
+        "trap_entry",
+        "trap_cause",
+        "trap_pc",
+        "trap_val",
+        "trap_return",
+        "timer_irq_in",
+        "ext_irq_in",
+        "sw_irq_in",
+    ):
+        getattr(dut, sig).value = 0
+    await ClockCycles(dut.clk, 2)
+    dut.rst.value = 1
+    await ClockCycles(dut.clk, 1)
+
+
+async def csr_write(dut, addr, value):
+    dut.csr_addr.value = addr
+    dut.csr_wdata.value = value
+    dut.csr_op.value = FUNCT3_CSRRW
+    await ClockCycles(dut.clk, 1)
+    dut.csr_op.value = 0
+    await Timer(1, unit="ns")
+    return int(dut.csr_rdata.value)
+
+
+@cocotb.test()
+async def test_rv32i_csrs_warl(dut):
+    """M-mode-only WARL fields: mstatus keeps only MIE/MPIE with MPP reading as M,
+    mie only MSIE/MTIE/MEIE, mtvec and mepc drop their low two bits"""
+    await csr_reset(dut)
+    assert await csr_write(dut, CSR_MSTATUS, 0xFFFF_FFFF) == 0x0000_1888
+    assert await csr_write(dut, CSR_MSTATUS, 0) == 0x0000_1800, "MPP must stay M after clearing"
+    assert await csr_write(dut, CSR_MIE, 0xFFFF_FFFF) == 0x0000_0888
+    assert await csr_write(dut, CSR_MTVEC, 0x0000_0203) == 0x0000_0200, "mtvec is direct-mode only"
+    assert await csr_write(dut, CSR_MEPC, 0x0000_0307) == 0x0000_0304
+
+
+@cocotb.test()
+async def test_rv32i_csrs_irq_cause_priority(dut):
+    """irq_cause picks the highest-priority enabled pending interrupt: MEI > MSI > MTI"""
+    await csr_reset(dut)
+    await csr_write(dut, CSR_MIE, 0x888)
+    await csr_write(dut, CSR_MSTATUS, 0x8)
+    cases = [
+        ((1, 0, 0), 0x8000_0007),
+        ((1, 0, 1), 0x8000_0003),
+        ((1, 1, 1), 0x8000_000B),
+        ((0, 1, 0), 0x8000_000B),
+    ]
+    for (timer, ext, sw), cause in cases:
+        dut.timer_irq_in.value = timer
+        dut.ext_irq_in.value = ext
+        dut.sw_irq_in.value = sw
+        await Timer(1, unit="ns")
+        assert int(dut.irq_pending.value) == 1
+        assert int(dut.irq_cause.value) == cause, f"timer={timer} ext={ext} sw={sw}"
+
+    # An interrupt that is pending but not enabled in mie must not decide the cause
+    await csr_write(dut, CSR_MIE, 0x800)  # MEIE only
+    dut.timer_irq_in.value = 1
+    dut.ext_irq_in.value = 1
+    dut.sw_irq_in.value = 0
+    await Timer(1, unit="ns")
+    assert int(dut.irq_cause.value) == 0x8000_000B

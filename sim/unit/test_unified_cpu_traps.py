@@ -2,13 +2,13 @@
 # SPDX-License-Identifier: MIT
 
 """
-unified_cpu trap path (RISC-V mode): ECALL and the machine timer interrupt must enter
-mtvec, and mret must return to mepc.
+unified_cpu trap path (RISC-V mode): exceptions and the machine timer interrupt enter
+mtvec with the right mcause/mepc/mtval, a trapping instruction has no side effects,
+and mret returns to mepc.
 
-unified_cpu currently takes no traps at all -- the ECALL/EBREAK/MRET/interrupt decode
-was lost in commit 02a105a (see AGENTS.md) -- so every test here is expect_fail. When
-the trap path is restored, cocotb reports these as failures ("passed unexpectedly")
-until expect_fail is removed.
+Each program installs a handler that checks the trap CSRs itself and then spins at
+label "ok" (or "bad" on any mismatch), so the tests only need to trace pc_out. They
+use nothing but the CPU's ports and therefore also run on the gate-level netlist.
 """
 
 import cocotb
@@ -20,11 +20,11 @@ HANDLER = 0x200
 MAX_CYCLES = 400
 
 
-async def run_program(dut, words, *, irq_after=None):
+async def run_program(dut, words, *, irq_after=None, max_cycles=MAX_CYCLES):
     """Serve `words` as instruction memory (pc_out -> instr_in) and reset the CPU.
 
-    Returns a list of the PCs seen, one per cycle. irq_after: raise timer_irq_in
-    after that many cycles.
+    Returns (PCs seen, one per cycle; whether mem_write was ever asserted).
+    irq_after: raise timer_irq_in after that many cycles.
     """
     mem = {i * 4: w for i, w in enumerate(words)}
     cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start())
@@ -36,14 +36,16 @@ async def run_program(dut, words, *, irq_after=None):
     await FallingEdge(dut.clk)
     dut.rst.value = 1
     pcs = []
-    for cycle in range(MAX_CYCLES):
+    wrote = False
+    for cycle in range(max_cycles):
         await FallingEdge(dut.clk)
         pc = int(dut.pc_out.value)
         pcs.append(pc)
+        wrote |= bool(int(dut.mem_write.value))
         dut.instr_in.value = mem.get(pc, 0x00000013)  # nop outside the program
         if irq_after is not None and cycle == irq_after:
             dut.timer_irq_in.value = 1
-    return pcs
+    return pcs, wrote
 
 
 def program_with_handler(body):
@@ -59,45 +61,214 @@ def program_with_handler(body):
     return words
 
 
+def trap_program(body, cause, *, mtval=None, extra_checks=None):
+    """body() must put label "insn" on the instruction expected to trap.
+
+    The handler checks mcause == cause, mepc == insn and, if given, mtval against the
+    value mtval(a, "t1") loads into t1; extra_checks(a) may branch to "bad" too.
+    """
+    a = Asm()
+    a.la("t0", "handler")
+    a.csrw("mtvec", "t0")
+    body(a)
+    a.j("bad")  # fell through: no trap
+    a.label("handler")
+    a.csrr("t0", "mcause")
+    a.li("t1", cause)
+    a.bne("t0", "t1", "bad")
+    a.csrr("t0", "mepc")
+    a.la("t1", "insn")
+    a.bne("t0", "t1", "bad")
+    if mtval is not None:
+        a.csrr("t0", "mtval")
+        mtval(a, "t1")
+        a.bne("t0", "t1", "bad")
+    if extra_checks is not None:
+        extra_checks(a)
+    a.label("ok")
+    a.j("ok")
+    a.label("bad")
+    a.j("bad")
+    return a.assemble(), a.labels
+
+
+async def expect_ok(dut, program, **kwargs):
+    words, labels = program
+    pcs, wrote = await run_program(dut, words, **kwargs)
+    last = [hex(p) for p in pcs[-4:]]
+    assert labels["bad"] not in pcs, f"handler check failed (reached 'bad'); last PCs {last}"
+    assert labels["ok"] in pcs, f"never reached 'ok'; last PCs {last}"
+    return wrote
+
+
 @cocotb.test()
 async def test_harness_reaches_handler(dut):
     """Positive control: a plain jump to HANDLER is seen by the harness.
 
-    The expect_fail tests below would also "pass" if the instruction-memory model or
-    the PC tracing were broken; this one must genuinely pass for them to mean anything.
+    If the instruction-memory model or the PC tracing were broken, the trap tests
+    below could fail (or pass) for the wrong reason; this one must pass on its own.
     """
 
     def body(a):
         a.li("t1", HANDLER)
         a.jalr("zero", "t1", 0)
 
-    pcs = await run_program(dut, program_with_handler(body))
+    pcs, _ = await run_program(dut, program_with_handler(body))
     assert HANDLER in pcs, f"harness never saw PC=0x{HANDLER:X}; last PCs {[hex(p) for p in pcs[-4:]]}"
 
 
-@cocotb.test(expect_fail=True)
+@cocotb.test()
 async def test_ecall_enters_mtvec(dut):
-    """ECALL jumps to mtvec"""
-    words = program_with_handler(lambda a: a._emit(0x00000073))  # ecall
-    pcs = await run_program(dut, words)
-    assert HANDLER in pcs, f"never reached the trap handler; last PCs {[hex(p) for p in pcs[-4:]]}"
-
-
-@cocotb.test(expect_fail=True)
-async def test_timer_interrupt_enters_mtvec(dut):
-    """With mie.MTIE and mstatus.MIE set, timer_irq_in traps to mtvec"""
+    """ECALL: mcause 11, mepc = the ecall"""
 
     def body(a):
-        a.li("t0", 0x80)
-        a.csrs("mie", "t0")
+        a.label("insn")
+        a.ecall()
+
+    await expect_ok(dut, trap_program(body, 11))
+
+
+@cocotb.test()
+async def test_ebreak_enters_mtvec(dut):
+    """EBREAK: mcause 3, mepc = mtval = the ebreak"""
+
+    def body(a):
+        a.label("insn")
+        a.ebreak()
+
+    await expect_ok(dut, trap_program(body, 3, mtval=lambda a, r: a.la(r, "insn")))
+
+
+@cocotb.test()
+async def test_zero_word_is_illegal(dut):
+    """0x00000000 is an illegal instruction: mcause 2, mtval = the instruction word (0)"""
+
+    def body(a):
+        a.label("insn")
+        a.word(0x00000000)
+
+    await expect_ok(dut, trap_program(body, 2, mtval=lambda a, r: a.li(r, 0)))
+
+
+@cocotb.test()
+async def test_unimp_is_illegal(dut):
+    """`unimp` (csrrw x0, cycle, x0: write to a read-only CSR) is illegal, mtval = the word"""
+
+    def body(a):
+        a.label("insn")
+        a.word(0xC0001073)
+
+    await expect_ok(dut, trap_program(body, 2, mtval=lambda a, r: a.li(r, 0xC0001073)))
+
+
+@cocotb.test()
+async def test_misaligned_jalr_traps_without_link(dut):
+    """jalr to a 2-byte-aligned target: mcause 0, mtval = target, rd not written"""
+
+    def body(a):
+        a.li("s2", 0)
+        a.la("t2", "insn")
+        a.addi("t2", "t2", 6)  # insn + 6 -> bit 1 set
+        a.label("insn")
+        a.jalr("s2", "t2", 0)
+
+    def rd_untouched(a):
+        a.bne("s2", "zero", "bad")
+
+    def target(a, r):
+        a.la(r, "insn")
+        a.addi(r, r, 6)
+
+    await expect_ok(dut, trap_program(body, 0, mtval=target, extra_checks=rd_untouched))
+
+
+@cocotb.test()
+async def test_misaligned_load_traps_without_writeback(dut):
+    """lw from address 1: mcause 4, mtval = address, rd not written"""
+
+    def body(a):
+        a.li("s2", 0x55)
+        a.label("insn")
+        a.lw("s2", 1, "zero")
+
+    def rd_untouched(a):
+        a.li("t1", 0x55)
+        a.bne("s2", "t1", "bad")
+
+    await expect_ok(dut, trap_program(body, 4, mtval=lambda a, r: a.li(r, 1), extra_checks=rd_untouched))
+
+
+@cocotb.test()
+async def test_misaligned_store_traps_without_write(dut):
+    """sw to address 0x102: mcause 6, mtval = address, and no memory write is issued"""
+
+    def body(a):
+        a.li("s2", 0x100)
+        a.label("insn")
+        a.sw("s2", 2, "s2")
+
+    wrote = await expect_ok(dut, trap_program(body, 6, mtval=lambda a, r: a.li(r, 0x102)))
+    assert not wrote, "a trapping store must not assert mem_write"
+
+
+def timer_program(*, enable_mie):
+    """Enable mie.MTIE (and mstatus.MIE if enable_mie), then count down in a loop.
+
+    The handler checks mcause and that mepc lies inside the loop, records the
+    interrupt in s1, masks it (timer_irq_in stays high) and returns with mret.
+    After the loop, "ok"/"bad" depends on whether s1 matches enable_mie.
+    """
+    a = Asm()
+    a.la("t0", "handler")
+    a.csrw("mtvec", "t0")
+    a.li("s1", 0)
+    a.li("t0", 0x80)
+    a.csrs("mie", "t0")
+    if enable_mie:
         a.li("t0", 0x8)
         a.csrs("mstatus", "t0")
+    a.li("t3", 60)
+    a.label("loop")
+    a.addi("t3", "t3", -1)
+    a.label("loop_end")
+    a.bnez("t3", "loop")
+    if enable_mie:
+        a.beqz("s1", "bad")
+    else:
+        a.bnez("s1", "bad")
+    a.label("ok")
+    a.j("ok")
+    a.label("bad")
+    a.j("bad")
 
-    pcs = await run_program(dut, program_with_handler(body), irq_after=100)
-    assert HANDLER in pcs[100:], f"timer interrupt not taken; last PCs {[hex(p) for p in pcs[-4:]]}"
+    a.label("handler")
+    a.csrr("t0", "mcause")
+    a.li("t1", 0x80000007)
+    a.bne("t0", "t1", "bad")
+    a.csrr("t0", "mepc")
+    a.la("t1", "loop")
+    a.bltu("t0", "t1", "bad")
+    a.la("t1", "loop_end")
+    a.bltu("t1", "t0", "bad")
+    a.li("s1", 1)
+    a.csrw("mie", "zero")
+    a.mret()
+    return a.assemble(), a.labels
 
 
-@cocotb.test(expect_fail=True)
+@cocotb.test()
+async def test_timer_interrupt_enters_mtvec_and_returns(dut):
+    """With mie.MTIE and mstatus.MIE set, timer_irq_in traps (mcause 0x80000007) and mret resumes the loop"""
+    await expect_ok(dut, timer_program(enable_mie=True), irq_after=40, max_cycles=600)
+
+
+@cocotb.test()
+async def test_timer_interrupt_masked_by_mstatus_mie(dut):
+    """With mstatus.MIE clear, a pending enabled timer interrupt is not taken"""
+    await expect_ok(dut, timer_program(enable_mie=False), irq_after=40, max_cycles=600)
+
+
+@cocotb.test()
 async def test_mret_returns_to_mepc(dut):
     """mret jumps to the address in mepc"""
     target = 0x180
@@ -109,5 +280,5 @@ async def test_mret_returns_to_mepc(dut):
 
     words = program_with_handler(body)
     words[target // 4] = 0x0000006F  # target: j .
-    pcs = await run_program(dut, words)
+    pcs, _ = await run_program(dut, words)
     assert target in pcs, f"mret did not jump to mepc; last PCs {[hex(p) for p in pcs[-4:]]}"

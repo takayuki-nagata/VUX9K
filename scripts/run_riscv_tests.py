@@ -42,20 +42,9 @@ SUITES = ("rv32ui", "rv32mi")
 MAX_CYCLES = 200000
 
 # Known CPU gaps, "<suite>-p-<test>": reason. Keep reasons specific enough to act on.
-# NO_TRAPS: unified_cpu never raises a trap (ECALL/EBREAK/MRET/illegal/misaligned
-# decode was dropped in commit 02a105a; see AGENTS.md), so anything that needs
-# the trap path fails until that is restored.
-NO_TRAPS = "no trap support in unified_cpu (lost in 02a105a)"
 EXPECTED_FAILURES: dict[str, str] = {
-    "rv32ui-p-ma_data": "misaligned load/store neither handled in hardware nor trapped",
-    "rv32mi-p-illegal": f"needs illegal-instruction trap; {NO_TRAPS}",
-    "rv32mi-p-ma_fetch": f"needs misaligned-fetch trap; {NO_TRAPS}",
-    "rv32mi-p-ma_addr": f"needs misaligned load/store trap; {NO_TRAPS}",
-    "rv32mi-p-scall": f"needs ECALL trap; {NO_TRAPS}",
-    "rv32mi-p-sbreak": f"needs EBREAK trap; {NO_TRAPS}",
-    "rv32mi-p-shamt": f"needs illegal-instruction trap for RV32 shamt[5]=1; {NO_TRAPS}",
-    "rv32mi-p-lw-misaligned": f"needs misaligned-load trap (or hardware support); {NO_TRAPS}",
-    "rv32mi-p-lh-misaligned": f"needs misaligned-load trap (or hardware support); {NO_TRAPS}",
+    "rv32ui-p-ma_data": "misaligned load/store traps instead of being handled in hardware; "
+    "env/p has no handler to emulate them",
     "rv32mi-p-pmpaddr": "PMP CSRs (pmpcfg0/pmpaddr0) not implemented",
 }
 
@@ -169,8 +158,6 @@ def build_hex(src, name):
         "-fvisibility=hidden",
         "-nostdlib",
         "-nostartfiles",
-        "-I",
-        os.path.join(HARNESS_DIR, "env"),  # wraps env/p's riscv_test.h via #include_next
         "-I",
         os.path.join(RISCV_TESTS_DIR, "env", "p"),
         "-I",
