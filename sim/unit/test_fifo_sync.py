@@ -64,3 +64,77 @@ async def test_fifo_sync(dut):
     assert int(dut.rdata.value) == 0xAA, f"Expected 0xAA remaining in FIFO, got {hex(int(dut.rdata.value))}"
 
     dut._log.info("FIFO buffer verified successfully [PASS]")
+
+
+@cocotb.test()
+async def test_fifo_write_and_read_while_empty(dut):
+    """A write arriving together with a read on an empty FIFO is kept (the read has nothing to take)"""
+    cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
+    await FallingEdge(dut.clk)
+    dut.rst.value = 0
+    dut.we.value = 0
+    dut.re.value = 0
+    dut.wdata.value = 0
+    await FallingEdge(dut.clk)
+    dut.rst.value = 1
+    await Timer(1, unit="ns")
+    assert int(dut.empty.value) == 1
+
+    dut.wdata.value = 0x5A
+    dut.we.value = 1
+    dut.re.value = 1
+    await FallingEdge(dut.clk)
+    dut.we.value = 0
+    dut.re.value = 0
+    await Timer(1, unit="ns")
+    assert int(dut.empty.value) == 0, "the write was dropped"
+    assert int(dut.rdata.value) == 0x5A, f"expected 0x5A at the head, got {int(dut.rdata.value):#x}"
+
+    # ...and it is the only entry
+    dut.re.value = 1
+    await FallingEdge(dut.clk)
+    dut.re.value = 0
+    await Timer(1, unit="ns")
+    assert int(dut.empty.value) == 1, "expected exactly one entry"
+
+
+@cocotb.test()
+async def test_fifo_full_write_and_read(dut):
+    """When full, a write is refused alone but accepted together with a read, keeping FIFO order"""
+    cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
+    await FallingEdge(dut.clk)
+    dut.rst.value = 0
+    dut.we.value = 0
+    dut.re.value = 0
+    dut.wdata.value = 0
+    await FallingEdge(dut.clk)
+    dut.rst.value = 1
+
+    depth = 0
+    dut.we.value = 1
+    while True:
+        await Timer(1, unit="ns")
+        if int(dut.full.value):
+            break
+        dut.wdata.value = depth & 0xFF
+        await FallingEdge(dut.clk)
+        depth += 1
+    dut.wdata.value = 0xEE  # refused: full and no read
+    await FallingEdge(dut.clk)
+    dut.wdata.value = 0xDD  # accepted: a read frees the head in the same cycle
+    dut.re.value = 1
+    await FallingEdge(dut.clk)
+    dut.we.value = 0
+    await Timer(1, unit="ns")
+    assert int(dut.full.value) == 1, "a write + read on a full FIFO must leave it full"
+
+    expected = [i & 0xFF for i in range(1, depth)] + [0xDD]
+    got = []
+    for _ in range(depth):
+        await Timer(1, unit="ns")
+        got.append(int(dut.rdata.value))
+        await FallingEdge(dut.clk)
+    dut.re.value = 0
+    await Timer(1, unit="ns")
+    assert got == expected, f"order broken: first {got[:3]}..., last {got[-3:]}; expected ...{expected[-3:]}"
+    assert int(dut.empty.value) == 1

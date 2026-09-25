@@ -318,7 +318,11 @@ it would clash), caches it as `build/eqy/gold-<sha>/`, snapshots both sides into
   steps (or add `[match]` hints) rather than skipping the check.
 - A mismatch is reported per partition ("Failed to prove equivalence of
   partition unified_cpu.hack_jump_take"); details are under
-  `build/eqy/<top>/<top>/`. A partition that is truly equivalent but needs
+  `build/eqy/<top>/<top>/`.
+- Proofs are local to each partition, so a change that is only unreachable
+  because of how *another* block drives it (e.g. `fifo_sync` accepting a write
+  on an empty-and-read cycle, which `uart_controller` never produces) still
+  fails. Such a change is a behavior change as far as this workflow goes: test it. A partition that is truly equivalent but needs
   deeper induction than `--depth` (5) can also fail: raise the depth before
   concluding the refactor changed behavior.
 

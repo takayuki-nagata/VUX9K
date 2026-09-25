@@ -26,24 +26,28 @@ pub module fifo_sync #(
 
     assign rdata = mem[raddr];
 
+    // A read takes the head if there is one. A write is accepted unless the FIFO is
+    // full and nothing is read in the same cycle (when full, the slot being read is
+    // the one written; rdata still shows the old head until the edge).
+    let do_read : logic = re && count != '0;
+    let do_write: logic = we && (count != DEPTH_COUNT || do_read);
+
     always_ff (clk, rst) {
         if_reset {
             waddr = '0;
             raddr = '0;
             count = '0;
         } else {
-            if we && re {
-                if count != '0 {
-                    mem[waddr] = wdata;
-                    waddr      = waddr + 1;
-                    raddr      = raddr + 1;
-                }
-            } else if we && count != DEPTH_COUNT {
+            if do_write {
                 mem[waddr] = wdata;
                 waddr      = waddr + 1;
-                count      = count + 1;
-            } else if re && count != '0 {
+            }
+            if do_read {
                 raddr = raddr + 1;
+            }
+            if do_write && !do_read {
+                count = count + 1;
+            } else if do_read && !do_write {
                 count = count - 1;
             }
         }
