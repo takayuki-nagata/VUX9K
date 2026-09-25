@@ -291,7 +291,7 @@ COVERAGE_DIR := $(BUILD_DIR)/coverage
 coverage: veryl firmware build-hack
 	@echo "=== Measuring Verilator line/toggle coverage (RTL unit + SoC tests) ==="
 	@rm -rf $(COVERAGE_DIR) && mkdir -p $(COVERAGE_DIR)
-	COVERAGE=1 SIM=verilator $(PYTEST_SIM) "$(SIM_TESTS)::test_unit" "$(SIM_TESTS)::test_soc"; rc=$$?; \
+	HDL_COVERAGE=1 SIM=verilator $(PYTEST_SIM) "$(SIM_TESTS)::test_unit" "$(SIM_TESTS)::test_soc"; rc=$$?; \
 	verilator_coverage --write $(COVERAGE_DIR)/merged.dat --write-info $(COVERAGE_DIR)/merged.info \
 		$(BUILD_DIR)/sim/verilator-cov/*/run_*/coverage.dat && \
 	verilator_coverage --annotate $(COVERAGE_DIR)/annotated --annotate-min 1 $(COVERAGE_DIR)/merged.dat && \

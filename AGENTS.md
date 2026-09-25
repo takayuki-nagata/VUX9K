@@ -304,10 +304,13 @@ same end points for the adopted seed.
 
 ## Code coverage: `make coverage` (Verilator line + toggle)
 
-`COVERAGE=1` makes `sim_runner.py` build Verilator RTL sims with
+`HDL_COVERAGE=1` makes `sim_runner.py` build Verilator RTL sims with
 `--coverage-line --coverage-toggle` into their own `build/sim/verilator-cov/` tree
 (so normal builds are untouched); each test writes `coverage.dat` into its run
-directory. `make coverage` runs every RTL unit + SoC test that way (incl. the slow
+directory. **Not `COVERAGE`:** cocotb 2.0 still reads that (deprecated) name as
+"collect Python coverage of the testbench", which needs the `coverage` pip package —
+not in CI's dependencies, so every test failed there with "coverage module not
+available" while passing in a dev venv that happened to have it. `make coverage` runs every RTL unit + SoC test that way (incl. the slow
 hw-flow), merges them with `verilator_coverage` into `build/coverage/merged.dat`
 (+ `merged.info` for lcov) and annotates the generated `.sv` into
 `build/coverage/annotated/`. When reading the annotation:

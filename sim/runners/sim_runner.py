@@ -12,7 +12,7 @@ Layout (all under build/sim/):
     <sim>[-gls]/<toplevel>/                  one compiled simulation per toplevel,
                                              shared by every test of that toplevel
     <sim>[-gls]/<toplevel>/run_<module>/     cwd, results and logs of one test module
-    verilator-cov/...                        same, instrumented for COVERAGE=1
+    verilator-cov/...                        same, instrumented for HDL_COVERAGE=1
 
 Each test module runs in its own directory with its own results file, so any
 two tests (even of the same toplevel) can run concurrently; the compile step is
@@ -63,7 +63,7 @@ BUILD_ARGS = {
     "verilator": ["--timing", "-Wno-fatal", "-Wno-lint", "-Wno-style"],
 }
 
-# COVERAGE=1 (Verilator RTL only, see `make coverage`): line + toggle coverage.
+# HDL_COVERAGE=1 (Verilator RTL only, see `make coverage`): line + toggle coverage.
 # Instrumented builds live in their own build/sim/verilator-cov/ tree; each test
 # writes coverage.dat into its run directory when the simulation exits.
 COVERAGE_ARGS = ["--coverage-line", "--coverage-toggle"]
@@ -161,9 +161,9 @@ def run(toplevel: str, module: str, *, gls: bool = False, sim: str | None = None
     a failing cocotb test fails the calling pytest test.
     """
     sim = sim or os.environ.get("SIM", "icarus")
-    coverage = os.environ.get("COVERAGE", "") not in ("", "0")
+    coverage = os.environ.get("HDL_COVERAGE", "") not in ("", "0")
     if coverage and (sim != "verilator" or gls):
-        raise ValueError("COVERAGE=1 needs SIM=verilator and an RTL (non-GLS) build")
+        raise ValueError("HDL_COVERAGE=1 needs SIM=verilator and an RTL (non-GLS) build")
     variant = f"{sim}-gls" if gls else sim
     if coverage:
         variant += "-cov"
