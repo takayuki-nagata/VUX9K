@@ -68,6 +68,8 @@ The RTL modules in this repository were originally authored in VHDL-2008 and hav
 | `0x4000_2000` - `0x4000_200F` | 16 B | **MicroSD SPI Master** | SPI TX/RX data, CS assertion, busy status, clock divider |
 | `0x4000_3000` - `0x4000_300F` | 16 B | **GPIO Controller** | 6 onboard active-low LEDs (`0x00`=ON, `0x3F`=OFF) & user buttons (Button S2 on pin 3); offset `0xC` is a soft-reset trigger — writing `0x5A5A_A55A` pulses `cpu_soft_rst`, resetting the CPU FSM/PC/CSRs to `RESET_VECTOR` without a full FPGA reload |
 
+**Writing code into I-RAM.** Stores to I-RAM (`0x0000_0000`-`0x0000_3FFF`) are how the loaders place SD slot payloads. A store to the word holding the *very next* instruction is not supported: the store and that instruction's fetch hit the same block-RAM word in the same cycle, and the fetched word is undefined (the synthesis flow drops collision handling, see `SYNTH_GOWIN_OPTS` in the `Makefile`). Copy code into a region you are not executing from, and execute `fence.i` before jumping to it, as RISC-V requires anyway.
+
 ### MicroSD Card Sector Map (Multi-Slot MBR Gap Boot)
 The MBR gap (`LBA 64` - `LBA 2047`, ~1 MB) is partitioned into 10 fixed 32 KB program slots (64 sectors per slot), keeping FAT32/exFAT filesystems intact:
 

@@ -228,12 +228,26 @@ sim: sim-unit test-isa sim-gls-unit sim-soc-fast sim-soc-mmio sim-boot sim-hack-
 
 # ===== Synthesis / PnR / STA / Bitstream / Programming =====
 
+# synth_gowin options, shared by the SoC and the unit gate-level netlists (AGENTS.md: "Synthesis flags").
+# -nowidelut: no MUX2_LUT5..8 wide-LUT muxes. Behavior-neutral; they made the mapping (and timing)
+#   swing by hundreds of LUTs on small RTL changes and routed worse.
+# -no-rw-check: no collision emulation for BSRAM read/write to the same address in one cycle. It put
+#   the combinational fetch address (pc_out) on the critical path; the only collision is a store to
+#   the next instruction's I-RAM word, whose fetch is then undefined (not supported; see README).
+SYNTH_GOWIN_OPTS = -nowidelut -no-rw-check
+SYNTH_OPTS_STAMP := $(SYNTH_DIR)/.synth_gowin_opts
+
+# Rewritten only when SYNTH_GOWIN_OPTS changes, so new options re-synthesize soc.json
+$(SYNTH_OPTS_STAMP): FORCE
+	@mkdir -p $(SYNTH_DIR)
+	@echo "$(SYNTH_GOWIN_OPTS)" | cmp -s - $@ || echo "$(SYNTH_GOWIN_OPTS)" > $@
+
 synth-units: veryl
 	@echo "=== Synthesizing Submodules to Gowin Netlists for GLS Unit Tests ==="
 	@mkdir -p $(SYNTH_DIR)
-	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_pkg.sv $(VERYL_OUT_DIR)/soc/cpu/auto_mode_detector.sv $(VERYL_OUT_DIR)/soc/cpu/hack_translator.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_alu.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_decode.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_regfile.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_csrs.sv $(VERYL_OUT_DIR)/soc/cpu/unified_cpu.sv; synth_gowin -top unified_cpu; write_verilog -noattr $(SYNTH_DIR)/unified_cpu_syn.v"
-	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/uart/clk_timer.sv $(VERYL_OUT_DIR)/soc/uart/shift_registers.sv $(VERYL_OUT_DIR)/soc/uart/fifo_sync.sv $(VERYL_OUT_DIR)/soc/uart/uart_tx.sv $(VERYL_OUT_DIR)/soc/uart/uart_rx.sv $(VERYL_OUT_DIR)/soc/uart/uart_controller.sv; synth_gowin -top uart_controller; write_verilog -noattr $(SYNTH_DIR)/uart_controller_syn.v"
-	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_pkg.sv $(VERYL_OUT_DIR)/soc/cpu/auto_mode_detector.sv; synth_gowin -top auto_mode_detector; write_verilog -noattr $(SYNTH_DIR)/auto_mode_detector_syn.v"
+	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_pkg.sv $(VERYL_OUT_DIR)/soc/cpu/auto_mode_detector.sv $(VERYL_OUT_DIR)/soc/cpu/hack_translator.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_alu.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_decode.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_regfile.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_csrs.sv $(VERYL_OUT_DIR)/soc/cpu/unified_cpu.sv; synth_gowin -top unified_cpu $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/unified_cpu_syn.v"
+	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/uart/clk_timer.sv $(VERYL_OUT_DIR)/soc/uart/shift_registers.sv $(VERYL_OUT_DIR)/soc/uart/fifo_sync.sv $(VERYL_OUT_DIR)/soc/uart/uart_tx.sv $(VERYL_OUT_DIR)/soc/uart/uart_rx.sv $(VERYL_OUT_DIR)/soc/uart/uart_controller.sv; synth_gowin -top uart_controller $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/uart_controller_syn.v"
+	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_pkg.sv $(VERYL_OUT_DIR)/soc/cpu/auto_mode_detector.sv; synth_gowin -top auto_mode_detector $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/auto_mode_detector_syn.v"
 
 sim-gls-unit: synth-units
 	@echo "=== Running Gowin Primitive GLS Unit Tests (cocotb) ==="
@@ -296,11 +310,11 @@ SOC_RTL_SRCS = $(VERYL_OUT_DIR)/soc/cpu/rv32i_pkg.sv $(VERYL_OUT_DIR)/soc/cpu/au
                $(VERYL_OUT_DIR)/soc/uart/uart_tx.sv $(VERYL_OUT_DIR)/soc/uart/uart_rx.sv $(VERYL_OUT_DIR)/soc/uart/uart_controller.sv $(VERYL_OUT_DIR)/soc/timer_core.sv \
                $(VERYL_OUT_DIR)/soc/sdcard_spi.sv $(VERYL_OUT_DIR)/soc/gpio_controller.sv $(VERYL_OUT_DIR)/soc/soc_ram.sv $(VERYL_OUT_DIR)/soc/soc_top.sv
 
-$(SYNTH_DIR)/soc.json $(SYNTH_DIR)/soc_syn.v: $(VERYL_OUT_DIR)/.stamp $(FIRMWARE_BUILD_DIR)/firmware.hex $(SOC_RTL_SRCS)
+$(SYNTH_DIR)/soc.json $(SYNTH_DIR)/soc_syn.v: $(VERYL_OUT_DIR)/.stamp $(FIRMWARE_BUILD_DIR)/firmware.hex $(SOC_RTL_SRCS) $(SYNTH_OPTS_STAMP)
 	@mkdir -p $(SYNTH_DIR)
 	$(YOSYS) -p "\
 		read_verilog -sv $(SOC_RTL_SRCS); \
-		synth_gowin -top soc_top -json $(SYNTH_DIR)/soc.json; \
+		synth_gowin -top soc_top $(SYNTH_GOWIN_OPTS) -json $(SYNTH_DIR)/soc.json; \
 		write_verilog -noattr $(SYNTH_DIR)/soc_syn.v; \
 	"
 

@@ -245,6 +245,25 @@ hw-flow RTL 860 s (Icarus) -> ~30 s; gls-fast ~1,050 s -> ~33 s. Verilator needs
 - The runner infers the HDL language from the *last* source, so the `.vlt` is
   prepended, not appended.
 
+### Synthesis flags (`SYNTH_GOWIN_OPTS = -nowidelut -no-rw-check`)
+
+Both were measured on the same RTL (all 5 seeds, 2026-09): median slack -1.73 ns
+without them, +2.03 ns with `-nowidelut`, +4.78 ns with both.
+- `-nowidelut` keeps abc9 from packing wide muxes into MUX2_LUT5..8. Without it
+  the mapping swung by hundreds of LUTs (and several ns) on two-line RTL
+  changes, while cosmetic edits (renames, comments) changed nothing — so a
+  per-commit timing comparison was mostly noise. With it LUT counts track the
+  RTL. Behavior-neutral.
+- `-no-rw-check` drops yosys' read/write collision emulation for block RAM: ~79
+  flops, 67 of them for `i_mem`, whose comparator took the combinational fetch
+  address (`pc_out`, i.e. `next_pc`) onto the critical path. The one collision
+  this SoC can produce is a store to the next instruction's I-RAM word (the
+  fetch reads that word in the store's MEM_WAIT cycle); its fetch is now
+  undefined, documented as unsupported in README ("Writing code into I-RAM").
+  RTL simulation still shows read-before-write, so no RTL test can see this.
+Don't drop either flag to "simplify" the flow; re-measure with `make timing`
+if you change them.
+
 ### `make timing`: one comparable record per RTL commit
 
 `make timing` synthesizes, routes *every* seed (`run_pnr.py --all-seeds`: no early
