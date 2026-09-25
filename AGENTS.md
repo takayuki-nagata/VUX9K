@@ -307,10 +307,14 @@ Mixing them loses the ability to tell which half caused a regression.
 `scripts/run_eqy.py` builds the base commit's RTL from a `git archive` in a temp
 directory *outside* the repo (Veryl scans the whole project root, so a copy inside
 it would clash), caches it as `build/eqy/gold-<sha>/`, snapshots both sides into
-`build/eqy/<top>/` and runs Yosys `eqy` (sby/bitwuzla, `memory_map`). Notes:
+`build/eqy/<top>/` and runs Yosys `eqy` (sby/bitwuzla, `memory_map`), with both
+sides flattened below `<top>` (~6 min per top on 4 cores). Notes:
+- Because of the flattening, a refactor may change submodule ports or move logic
+  between submodules; only `<top>`'s own ports have to match.
 - `soc_ram` is replaced by a ports-only stub on both sides (its `$readmemh` needs
   `firmware.hex`; its RAMs are too big to prove usefully), so changes *inside*
-  `soc_ram` are not covered.
+  `soc_ram` are not covered — and neither is a change to its *ports*: the stubs'
+  interfaces must match, so such a change is its own commit, verified by tests.
 - eqy pairs up gold/gate signals by name before proving anything. When a change
   renames or restructures too much, it fails at that stage ("conflicting matches
   ... Failed to partition design") rather than with a counterexample — e.g. the

@@ -11,6 +11,9 @@ from the working tree (gate: build/veryl) is equivalent to <top> generated from
 *outside* the repository (Veryl scans the whole project root, so a second copy of
 the sources inside it would clash) and built there with the same `veryl`.
 
+Both sides are flattened below <top>, so a refactor may change submodule
+interfaces or move logic between submodules; only <top>'s own ports must match.
+
 soc_ram is always replaced by a ports-only black box on both sides: its
 $readmemh() initial block needs firmware.hex, and its RAM arrays are too large
 to prove anything about usefully. Changes inside soc_ram are therefore not
@@ -91,7 +94,10 @@ def eqy_config(top: str, gold: list[Path], gate: list[Path], depth: int) -> str:
             f"[{name}]\n"
             f"read_verilog -sv {' '.join(str(f) for f in files)}\n"
             f"blackbox {blackboxes}\n"
-            f"prep -top {top}\n"
+            f"hierarchy -top {top} -purge_lib\n"  # drop black boxes <top> doesn't instantiate
+            # Flattened, so changes to submodule interfaces (a removed port, logic moved
+            # between modules) are internal nets rather than mismatched module boundaries
+            f"prep -flatten -top {top}\n"
             "memory_map\n"
         )
 
