@@ -277,9 +277,10 @@ sim-sd-quirks: veryl firmware
 # soc_ram is a black box on both sides. Not part of test-sim (it depends on the base commit).
 EQY_BASE ?= HEAD
 EQY_TOP ?= unified_cpu
+EQY_NOMATCH ?=
 
 eqy: veryl
-	$(PYTHON) scripts/run_eqy.py --base $(EQY_BASE) --top $(EQY_TOP) --veryl $(VERYL)
+	$(PYTHON) scripts/run_eqy.py --base $(EQY_BASE) --top $(EQY_TOP) --veryl $(VERYL) $(if $(EQY_NOMATCH),--nomatch $(EQY_NOMATCH))
 
 # Line + toggle coverage of the Verilator RTL runs (unit + SoC, incl. the slow hw-flow),
 # merged and annotated onto the generated .sv under build/coverage/. Icarus-only runs
@@ -304,11 +305,11 @@ sim-soc-gls-fast: synth-top firmware
 	@echo "=== Running Fast SoC Top Boot & Execution Verification (GLS Netlist) ==="
 	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc_gls[test_soc_gls_fast]"
 
-SOC_RTL_SRCS = $(VERYL_OUT_DIR)/soc/cpu/rv32i_pkg.sv $(VERYL_OUT_DIR)/soc/cpu/auto_mode_detector.sv $(VERYL_OUT_DIR)/soc/cpu/hack_translator.sv \
+SOC_RTL_SRCS = $(VERYL_OUT_DIR)/soc/soc_pkg.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_pkg.sv $(VERYL_OUT_DIR)/soc/cpu/auto_mode_detector.sv $(VERYL_OUT_DIR)/soc/cpu/hack_translator.sv \
                $(VERYL_OUT_DIR)/soc/cpu/rv32i_alu.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_decode.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_regfile.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_csrs.sv \
                $(VERYL_OUT_DIR)/soc/cpu/unified_cpu.sv $(VERYL_OUT_DIR)/soc/uart/clk_timer.sv $(VERYL_OUT_DIR)/soc/uart/fifo_sync.sv $(VERYL_OUT_DIR)/soc/uart/shift_registers.sv \
                $(VERYL_OUT_DIR)/soc/uart/uart_tx.sv $(VERYL_OUT_DIR)/soc/uart/uart_rx.sv $(VERYL_OUT_DIR)/soc/uart/uart_controller.sv $(VERYL_OUT_DIR)/soc/timer_core.sv \
-               $(VERYL_OUT_DIR)/soc/sdcard_spi.sv $(VERYL_OUT_DIR)/soc/gpio_controller.sv $(VERYL_OUT_DIR)/soc/soc_ram.sv $(VERYL_OUT_DIR)/soc/soc_top.sv
+               $(VERYL_OUT_DIR)/soc/sdcard_spi.sv $(VERYL_OUT_DIR)/soc/gpio_controller.sv $(VERYL_OUT_DIR)/soc/soc_ram.sv $(VERYL_OUT_DIR)/soc/soc_addr_decoder.sv $(VERYL_OUT_DIR)/soc/soc_top.sv
 
 $(SYNTH_DIR)/soc.json $(SYNTH_DIR)/soc_syn.v: $(VERYL_OUT_DIR)/.stamp $(FIRMWARE_BUILD_DIR)/firmware.hex $(SOC_RTL_SRCS) $(SYNTH_OPTS_STAMP)
 	@mkdir -p $(SYNTH_DIR)

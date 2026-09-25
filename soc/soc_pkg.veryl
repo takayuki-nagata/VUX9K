@@ -1,0 +1,31 @@
+// Copyright (c) 2026 Takayuki Nagata
+// SPDX-License-Identifier: MIT
+
+// SoC-wide constants: clock-derived dividers and the data-address map (README,
+// "Memory & MMIO Register Map").
+pub package soc_pkg {
+    // Board clock (Tang Nano 9K crystal)
+    const CLK_HZ: u32 = 27000000;
+
+    // UART bit time in clocks: 27 MHz / 115200 = 234 (-0.16 % baud error)
+    const UART_BAUD: u32 = 115200;
+    const UART_CNT : u32 = CLK_HZ / UART_BAUD;
+
+    // SD SPI clock during card init must not exceed 400 kHz: half-period in clocks,
+    // rounded up (34 -> 397 kHz)
+    const SD_INIT_HZ     : u32 = 400000;
+    const SD_CLK_DIV_HALF: u32 = (CLK_HZ + 2 * SD_INIT_HZ - 1) / (2 * SD_INIT_HZ);
+
+    // RV32 data address map: region = addr[31:28], MMIO page = addr[15:12]
+    const RV_REGION_IRAM : logic<4> = 4'h0;
+    const RV_REGION_DRAM : logic<4> = 4'h2;
+    const RV_REGION_MMIO : logic<4> = 4'h4;
+    const MMIO_PAGE_UART : logic<4> = 4'h0;
+    const MMIO_PAGE_TIMER: logic<4> = 4'h1;
+    const MMIO_PAGE_SD   : logic<4> = 4'h2;
+    const MMIO_PAGE_GPIO : logic<4> = 4'h3;
+
+    // Hack data address map (16-bit word addresses): RAM below HACK_MMIO_BASE,
+    // MMIO in the 16 words from HACK_MMIO_BASE (UART in the first 4, GPIO after)
+    const HACK_MMIO_BASE: logic<16> = 16'h6000;
+}

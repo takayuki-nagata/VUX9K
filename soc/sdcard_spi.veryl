@@ -14,8 +14,8 @@ pub module sdcard_spi (
     spi_miso: input  logic    ,
     spi_cs_n: output logic    ,
 ) {
-    // 27MHz / (34 * 2) = ~400kHz for robust SD card initialization
-    const CLK_DIV_HALF: u32 = 34;
+    // SPI clock: at most 400 kHz, as SD card initialization requires
+    const CLK_DIV_HALF: u32 = soc_pkg::SD_CLK_DIV_HALF;
 
     var cs_n_reg: logic   ;
     var sclk_reg: logic   ;

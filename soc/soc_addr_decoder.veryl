@@ -1,0 +1,50 @@
+// Copyright (c) 2026 Takayuki Nagata
+// SPDX-License-Identifier: MIT
+
+// Data-address decoder, one instance each for the read (data_addr) and write
+// (data_waddr) addresses. Only the bits needed to tell the regions apart are
+// decoded, so regions repeat (README, "Address decoding and aliases"); an address
+// matching nothing selects nothing (reads 0, writes are ignored).
+pub module soc_addr_decoder (
+    addr     : input  logic<32>,
+    hack_mode: input  logic    , // 1: Hack 16-bit word addresses, 0: RV32 byte addresses
+    ram      : output logic    ,
+    uart     : output logic    ,
+    timer    : output logic    ,
+    sd       : output logic    ,
+    gpio     : output logic    ,
+) {
+    always_comb {
+        ram   = 1'b0;
+        uart  = 1'b0;
+        timer = 1'b0;
+        sd    = 1'b0;
+        gpio  = 1'b0;
+
+        if hack_mode {
+            if addr[15:4] == soc_pkg::HACK_MMIO_BASE[15:4] {
+                if addr[3:2] == 2'b00 {
+                    uart = 1'b1;
+                } else {
+                    gpio = 1'b1;
+                }
+            } else if addr[15:0] <: soc_pkg::HACK_MMIO_BASE {
+                ram = 1'b1;
+            }
+        } else {
+            let region: logic<4> = addr[31:28];
+            let page  : logic<4> = addr[15:12];
+            if region == soc_pkg::RV_REGION_IRAM || region == soc_pkg::RV_REGION_DRAM {
+                ram = 1'b1;
+            } else if region == soc_pkg::RV_REGION_MMIO {
+                switch {
+                    page == soc_pkg::MMIO_PAGE_UART : uart  = 1'b1;
+                    page == soc_pkg::MMIO_PAGE_TIMER: timer = 1'b1;
+                    page == soc_pkg::MMIO_PAGE_SD   : sd    = 1'b1;
+                    page == soc_pkg::MMIO_PAGE_GPIO : gpio  = 1'b1;
+                    default                         : {}
+                }
+            }
+        }
+    }
+}

@@ -129,10 +129,10 @@ pub module soc_top (
         active_mode : active_mode ,
     );
 
-    // Instantiate UART Controller (Veryl) - 27MHz / 115200 baud -> CNT=234
+    // Instantiate UART Controller (Veryl)
     inst uart_inst: uart_controller #(
-        CNT  : 234,
-        CSIZE: 10 ,
+        CNT  : soc_pkg::UART_CNT,
+        CSIZE: 10               ,
     ) (
         clk  : clk              ,
         rst  : rst              ,
@@ -205,77 +205,30 @@ pub module soc_top (
         gpio_btn    : btn          ,
     );
 
-    // Address Decoder Combinational Logic
+    // Address decode of the read address (loads, peripheral read latches) and of the
+    // write address (stores, peripheral write enables)
+    inst rd_decode: soc_addr_decoder (
+        addr     : data_addr   ,
+        hack_mode: !active_mode,
+        ram      : ram_sel     ,
+        uart     : uart_sel    ,
+        timer    : timer_sel   ,
+        sd       : sd_sel      ,
+        gpio     : gpio_sel    ,
+    );
+    inst wr_decode: soc_addr_decoder (
+        addr     : data_waddr  ,
+        hack_mode: !active_mode,
+        ram      : ram_wsel    ,
+        uart     : uart_wsel   ,
+        timer    : timer_wsel  ,
+        sd       : sd_wsel     ,
+        gpio     : gpio_wsel   ,
+    );
+
     always_comb {
-        // Read address decode (LOAD / peripheral read latches)
-        ram_sel   = 1'b0;
-        uart_sel  = 1'b0;
-        timer_sel = 1'b0;
-        sd_sel    = 1'b0;
-        gpio_sel  = 1'b0;
-
-        if active_mode == 1'b0 {
-            // Hack Mode
-            let is_hack_mmio: logic = data_addr[15:4] == 12'h600;
-            if is_hack_mmio {
-                if data_addr[3:2] == 2'b00 {
-                    uart_sel = 1'b1;
-                } else {
-                    gpio_sel = 1'b1;
-                }
-            } else if !data_addr[15] && (!data_addr[14] || !data_addr[13]) {
-                ram_sel = 1'b1;
-            }
-        } else {
-            // RISC-V Mode
-            if data_addr[31:28] == 4'h0 || data_addr[31:28] == 4'h2 {
-                ram_sel = 1'b1;
-            } else if data_addr[31:28] == 4'h4 {
-                case data_addr[15:12] {
-                    4'h0   : uart_sel  = 1'b1;
-                    4'h1   : timer_sel = 1'b1;
-                    4'h2   : sd_sel    = 1'b1;
-                    4'h3   : gpio_sel  = 1'b1;
-                    default: {}
-                }
-            }
-        }
-
-        // Write address decode (STORE / peripheral write enables)
-        ram_wsel   = 1'b0;
-        uart_wsel  = 1'b0;
-        timer_wsel = 1'b0;
-        sd_wsel    = 1'b0;
-        gpio_wsel  = 1'b0;
-
-        if active_mode == 1'b0 {
-            // Hack Mode
-            let is_hack_w_mmio: logic = data_waddr[15:4] == 12'h600;
-            if is_hack_w_mmio {
-                if data_waddr[3:2] == 2'b00 {
-                    uart_wsel = 1'b1;
-                } else {
-                    gpio_wsel = 1'b1;
-                }
-            } else if !data_waddr[15] && (!data_waddr[14] || !data_waddr[13]) {
-                ram_wsel = 1'b1;
-            }
-        } else {
-            // RISC-V Mode
-            if data_waddr[31:28] == 4'h0 || data_waddr[31:28] == 4'h2 {
-                ram_wsel = 1'b1;
-            } else if data_waddr[31:28] == 4'h4 {
-                case data_waddr[15:12] {
-                    4'h0   : uart_wsel  = 1'b1;
-                    4'h1   : timer_wsel = 1'b1;
-                    4'h2   : sd_wsel    = 1'b1;
-                    4'h3   : gpio_wsel  = 1'b1;
-                    default: {}
-                }
-            }
-        }
-
-        ram_we      = mem_write && ram_wsel && ((active_mode == 1'b0) || (data_waddr[31:28] == 4'h2));
+        ram_we      = mem_write && ram_wsel
+            && ((active_mode == 1'b0) || (data_waddr[31:28] == soc_pkg::RV_REGION_DRAM));
         ram_we_byte = cpu_byte_we;
         uart_we     = mem_write && uart_wsel;
         timer_we    = mem_write && timer_wsel;
