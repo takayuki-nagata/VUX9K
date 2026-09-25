@@ -53,6 +53,30 @@ into BRAM at synthesis time. Don't remove these symlinks or "clean up" the
 duplication without also fixing the underlying `$readmemh` calls (out of scope
 for a build-layout change; would require re-verifying real hardware).
 
+## Veryl constructs the toolchain rejects
+
+The generated SV must get through Icarus, Verilator and Yosys. Veryl accepts all of
+these; one of the three tools does not (found 2026-09):
+- **`return` in a `function`** — Yosys' Verilog frontend has no `return`, so Veryl
+  functions are unusable in synthesized RTL. Compute shared logic in an
+  `always_comb` into a `var` instead (e.g. `unified_cpu`'s `rv_alu_op`).
+- **An enum-typed `if … ? A : B` expression** (`state = if c ? S1 : S2`) — Icarus
+  wants an explicit cast ("This assignment requires an explicit cast"). Use an
+  `if`/`else` statement.
+- **`case` on named constants** (`case x { pkg::CONST: … }`) — Veryl emits
+  `case (x) inside`, which Icarus can't parse. Use `switch { x == pkg::CONST: … }`
+  (emits `case (1'b1)`), or enum members, which stay a plain `case`.
+- **A cast in a `case` expression** (`case x as pkg::Enum { … }`) — Yosys: "Static
+  cast with non constant expression". Assign the cast to a `var` first.
+- **An enum with an explicit base type** (`enum E: logic<12> { … }`) — Veryl emits
+  `$bits(logic [11:0])'(…)` casts that Yosys can't parse. Leaving the type out is
+  **not** a fix when the enum is cast *from* a wider value: Veryl sizes an untyped
+  enum to its largest member (CSR addresses up to `12'h344` became 10 bits), so
+  `csr_addr as E` silently drops the top bits and aliases other addresses. For
+  such decodes keep a plain `case` on literals (as `rv32i_csrs` does).
+`make sim-unit` (Icarus) and `yosys -p "read_verilog -sv …"` catch all four in
+seconds; `veryl build` alone does not.
+
 ## Veryl module resolution is directory-agnostic
 
 `veryl build`/`veryl check` scan the whole project root recursively for `.veryl`
