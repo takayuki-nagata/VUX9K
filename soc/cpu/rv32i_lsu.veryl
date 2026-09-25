@@ -1,0 +1,82 @@
+// Copyright (c) 2026 Takayuki Nagata
+// SPDX-License-Identifier: MIT
+
+// RV32I load/store data alignment (combinational). Memory is 32 bits wide with byte
+// write enables; sub-word accesses select lanes by the low two address bits.
+pub module rv32i_lsu (
+    // Store: put rs2 on the lanes the access covers (SB/SH replicate it) and enable them
+    store_f3  : input  rv32i_pkg::Funct3    ,
+    store_src : input  logic            <32>,
+    addr_low  : input  logic            <2> , // effective address [1:0]
+    store_data: output logic            <32>,
+    store_we  : output logic            <4> ,
+    // Load: take the addressed byte/halfword of the loaded word and extend it
+    load_f3  : input  rv32i_pkg::Funct3    ,
+    load_sel : input  logic            <2> , // effective address [1:0] of the load
+    load_word: input  logic            <32>,
+    load_val : output logic            <32>,
+) {
+    always_comb {
+        case store_f3 {
+            rv32i_pkg::Funct3::ADD_SUB: { // SB
+                store_data = {store_src[7:0] repeat 4};
+                case addr_low {
+                    2'b00  : store_we = 4'b0001;
+                    2'b01  : store_we = 4'b0010;
+                    2'b10  : store_we = 4'b0100;
+                    default: store_we = 4'b1000;
+                }
+            }
+            rv32i_pkg::Funct3::SLL: { // SH
+                store_data = {store_src[15:0] repeat 2};
+                if addr_low[1] == 1'b0 {
+                    store_we = 4'b0011;
+                } else {
+                    store_we = 4'b1100;
+                }
+            }
+            default: { // SW
+                store_data = store_src;
+                store_we   = 4'b1111;
+            }
+        }
+    }
+
+    always_comb {
+        case load_f3 {
+            rv32i_pkg::Funct3::ADD_SUB: { // LB
+                case load_sel {
+                    2'd0   : load_val = {load_word[7] repeat 24, load_word[7:0]};
+                    2'd1   : load_val = {load_word[15] repeat 24, load_word[15:8]};
+                    2'd2   : load_val = {load_word[23] repeat 24, load_word[23:16]};
+                    default: load_val = {load_word[31] repeat 24, load_word[31:24]};
+                }
+            }
+            rv32i_pkg::Funct3::XOR: { // LBU
+                case load_sel {
+                    2'd0   : load_val = {24'd0, load_word[7:0]};
+                    2'd1   : load_val = {24'd0, load_word[15:8]};
+                    2'd2   : load_val = {24'd0, load_word[23:16]};
+                    default: load_val = {24'd0, load_word[31:24]};
+                }
+            }
+            rv32i_pkg::Funct3::SLL: { // LH
+                if load_sel[1] == 1'b0 {
+                    load_val = {load_word[15] repeat 16, load_word[15:0]};
+                } else {
+                    load_val = {load_word[31] repeat 16, load_word[31:16]};
+                }
+            }
+            rv32i_pkg::Funct3::SRL_SRA: { // LHU
+                if load_sel[1] == 1'b0 {
+                    load_val = {16'd0, load_word[15:0]};
+                } else {
+                    load_val = {16'd0, load_word[31:16]};
+                }
+            }
+            default: { // LW
+                load_val = load_word;
+            }
+        }
+    }
+}

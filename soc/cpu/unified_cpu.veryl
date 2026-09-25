@@ -135,6 +135,9 @@ pub module unified_cpu #(
     // pc_reg is already final in HACK_WR_D (updated in the cycle before it)
     assign pc_out = if state == CpuState::FETCH || state == CpuState::HACK_WR_D ? pc_reg : next_pc;
     let rv_mem_addr: logic<32> = rf_rs1_data + rv_imm;
+    // Low bits of the effective address from a 2-bit add, so byte-lane steering and
+    // misalignment checks don't wait for the full 32-bit adder
+    let mem_addr_low: logic<2> = rf_rs1_data[1:0] + rv_imm[1:0];
     assign data_addr   = if is_riscv_mode ? rv_mem_addr : rf_rs2_data;
     assign data_waddr  = if is_riscv_mode ? r_store_addr : rf_rs2_data;
     assign data_out    = if is_riscv_mode ? r_store_data : r_data_out;
@@ -210,6 +213,21 @@ pub module unified_cpu #(
         b     : alu_operand_b,
         alu_op: alu_ctrl     ,
         result: alu_result   ,
+    );
+
+    // Load/store data alignment
+    var lsu_store_data: logic<32>;
+    var lsu_store_we  : logic<4> ;
+    inst lsu: rv32i_lsu (
+        store_f3  : rv_f3          ,
+        store_src : rf_rs2_data    ,
+        addr_low  : mem_addr_low   ,
+        store_data: lsu_store_data ,
+        store_we  : lsu_store_we   ,
+        load_f3   : r_load_f3      ,
+        load_sel  : r_load_byte_sel,
+        load_word : data_in        ,
+        load_val  : load_val       ,
     );
 
     // Control and Status Registers (CSR)
@@ -294,43 +312,6 @@ pub module unified_cpu #(
             default: hack_jump_take = 1'b0;
         }
 
-        // Sub-word Load Steering
-        case r_load_f3 {
-            rv32i_pkg::Funct3::ADD_SUB: { // LB
-                case r_load_byte_sel {
-                    2'd0   : load_val = {data_in[7] repeat 24, data_in[7:0]};
-                    2'd1   : load_val = {data_in[15] repeat 24, data_in[15:8]};
-                    2'd2   : load_val = {data_in[23] repeat 24, data_in[23:16]};
-                    default: load_val = {data_in[31] repeat 24, data_in[31:24]};
-                }
-            }
-            rv32i_pkg::Funct3::XOR: { // LBU
-                case r_load_byte_sel {
-                    2'd0   : load_val = {24'd0, data_in[7:0]};
-                    2'd1   : load_val = {24'd0, data_in[15:8]};
-                    2'd2   : load_val = {24'd0, data_in[23:16]};
-                    default: load_val = {24'd0, data_in[31:24]};
-                }
-            }
-            rv32i_pkg::Funct3::SLL: { // LH
-                if r_load_byte_sel[1] == 1'b0 {
-                    load_val = {data_in[15] repeat 16, data_in[15:0]};
-                } else {
-                    load_val = {data_in[31] repeat 16, data_in[31:16]};
-                }
-            }
-            rv32i_pkg::Funct3::SRL_SRA: { // LHU
-                if r_load_byte_sel[1] == 1'b0 {
-                    load_val = {16'd0, data_in[15:0]};
-                } else {
-                    load_val = {16'd0, data_in[31:16]};
-                }
-            }
-            default: { // LW
-                load_val = data_in;
-            }
-        }
-
         if is_riscv_mode {
             // RISC-V Mode
             rf_we2      = 1'b0;
@@ -385,32 +366,10 @@ pub module unified_cpu #(
                 }
             }
 
-            // Sub-word Store Steering (Fast 2-bit addition for byte steering)
-            let rv_mem_addr_low: logic<2> = rf_rs1_data[1:0] + rv_imm[1:0];
+            // Store data and byte enables (rv32i_lsu); a non-store drives rs2 on all lanes
             if rv_op == rv32i_pkg::Opcode::STORE {
-                case rv_f3 {
-                    rv32i_pkg::Funct3::ADD_SUB: { // SB
-                        r_data_out = {rf_rs2_data[7:0] repeat 4};
-                        case rv_mem_addr_low {
-                            2'b00  : r_mem_byte_we = 4'b0001;
-                            2'b01  : r_mem_byte_we = 4'b0010;
-                            2'b10  : r_mem_byte_we = 4'b0100;
-                            default: r_mem_byte_we = 4'b1000;
-                        }
-                    }
-                    rv32i_pkg::Funct3::SLL: { // SH
-                        r_data_out = {rf_rs2_data[15:0] repeat 2};
-                        if rv_mem_addr_low[1] == 1'b0 {
-                            r_mem_byte_we = 4'b0011;
-                        } else {
-                            r_mem_byte_we = 4'b1100;
-                        }
-                    }
-                    default: { // SW
-                        r_data_out    = rf_rs2_data;
-                        r_mem_byte_we = 4'b1111;
-                    }
-                }
+                r_data_out    = lsu_store_data;
+                r_mem_byte_we = lsu_store_we;
             } else {
                 r_data_out    = rf_rs2_data;
                 r_mem_byte_we = 4'b1111;
@@ -528,8 +487,7 @@ pub module unified_cpu #(
     // Trap evaluation (RISC-V mode, EXECUTE only, so each trap is a one-cycle pulse).
     // Priority: interrupt > illegal > misaligned fetch > ECALL/EBREAK > misaligned load/store.
     // A trapping instruction has no side effects: no register/CSR write, no memory access.
-    let exec_rv     : logic    = is_riscv_mode && state == CpuState::EXECUTE;
-    let mem_addr_low: logic<2> = rf_rs1_data[1:0] + rv_imm[1:0];
+    let exec_rv: logic = is_riscv_mode && state == CpuState::EXECUTE;
     always_comb {
         case rv_op {
             rv32i_pkg::Opcode::JAL   : fetch_misalign = rv_imm[1];
@@ -674,7 +632,7 @@ pub module unified_cpu #(
                     } else if is_riscv_mode && rv_op == rv32i_pkg::Opcode::LOAD {
                         // 1 cycle wait for synchronous D-RAM read
                         r_store_addr    = rv_mem_addr;
-                        r_load_byte_sel = rf_rs1_data[1:0] + rv_imm[1:0];
+                        r_load_byte_sel = mem_addr_low;
                         r_load_f3       = rv_f3;
                         r_load_rd       = rv_rd;
                         r_load_we       = 1'b1;
