@@ -3,40 +3,29 @@
 
 // Hack-to-RV32I Micro-Op Translator Front-End in Veryl
 //
-// NOTE on rs1/rs2: these are held CONSTANT (D=x2, A=x1) regardless of the
-// instruction being decoded. This is deliberate for timing: it lets the
-// shared register file's read-address mux resolve independently of this
-// module's (instruction-dependent) decode logic, keeping that decode logic
-// off the register-file-read -> ALU critical path. Which of {D, A/M, ZERO}
-// feeds each ALU operand is instead selected downstream (in unified_cpu)
-// via op_a_sel/op_b_sel, which mux the already-read data values.
+// It does not choose register-file addresses: unified_cpu always reads D (x2) and
+// A (x1) in Hack mode, so this instruction-dependent decode stays off the
+// register-file-read -> ALU path. Which of {D, A/M, ZERO, IMM} feeds each ALU
+// operand is selected downstream via op_a_sel/op_b_sel.
 pub module hack_translator (
-    instr_16  : input  logic           <16>,
-    rs1       : output logic           <5> , // always x2 (D)
-    rs2       : output logic           <5> , // always x1 (A)
-    rd        : output logic           <5> ,
-    imm       : output logic           <32>,
-    alu_op    : output rv32i_pkg::AluOp    ,
-    use_imm   : output logic               ,
-    use_mem   : output logic               , // 1 if ALU Y is Memory[x1]
-    we_reg_a  : output logic               , // Write to A (x1)
-    we_reg_d  : output logic               , // Write to D (x2)
-    we_mem    : output logic               , // Write to Memory[x1]
-    jump_cond : output logic           <3> ,
-    is_c_instr: output logic               ,
-    op_a_sel  : output logic           <2> , // 0: D, 1: Y (A/M), 2: ZERO
-    op_b_sel  : output logic           <2> , // 0: Y (A/M), 1: D, 2: IMM
+    instr_16 : input  logic           <16>,
+    imm      : output logic           <32>,
+    alu_op   : output rv32i_pkg::AluOp    ,
+    use_mem  : output logic               , // 1 if ALU Y is Memory[x1]
+    we_reg_a : output logic               , // Write to A (x1)
+    we_reg_d : output logic               , // Write to D (x2)
+    we_mem   : output logic               , // Write to Memory[x1]
+    jump_cond: output logic           <3> ,
+    op_a_sel : output logic           <2> , // 0: D, 1: Y (A/M), 2: ZERO
+    op_b_sel : output logic           <2> , // 0: Y (A/M), 1: D, 2: IMM
 ) {
-    var r_rd       : logic           <5> ;
     var r_imm      : logic           <32>;
     var r_alu_op   : rv32i_pkg::AluOp    ;
-    var r_use_imm  : logic               ;
     var r_use_mem  : logic               ;
     var r_we_reg_a : logic               ;
     var r_we_reg_d : logic               ;
     var r_we_mem   : logic               ;
     var r_jump_cond: logic           <3> ;
-    var r_is_c     : logic               ;
     var r_op_a_sel : logic           <2> ;
     var r_op_b_sel : logic           <2> ;
     var a_bit      : logic               ;
@@ -44,7 +33,6 @@ pub module hack_translator (
     var d_code     : logic           <3> ;
 
     always_comb {
-        r_rd       = 5'd1;
         r_op_a_sel = 2'd0; // D
         r_op_b_sel = 2'd0; // Y
         a_bit      = instr_16[12];
@@ -53,10 +41,8 @@ pub module hack_translator (
 
         if !instr_16[15] {
             // A-Instruction: 0 vvvvvvvvvvvvvvv
-            r_is_c      = 1'b0;
             r_imm       = {17'd0, instr_16[14:0]};
             r_alu_op    = rv32i_pkg::AluOp::ADD;
-            r_use_imm   = 1'b1;
             r_use_mem   = 1'b0;
             r_we_reg_a  = 1'b1;
             r_we_reg_d  = 1'b0;
@@ -66,7 +52,6 @@ pub module hack_translator (
             r_op_b_sel  = 2'd2; // IMM
         } else {
             // C-Instruction: 1xx a c1c2c3c4c5c6 d1d2d3 j1j2j3
-            r_is_c      = 1'b1;
             r_jump_cond = instr_16[2:0];
 
             r_we_reg_a = d_code[2]; // d1 = A
@@ -74,27 +59,23 @@ pub module hack_translator (
             r_we_mem   = d_code[0]; // d3 = M
 
             r_use_mem = a_bit;
-            r_use_imm = 1'b0;
             r_imm     = 32'd0;
 
             case c_code {
                 6'b101010: { // 0
                     r_alu_op   = rv32i_pkg::AluOp::ADD;
-                    r_use_imm  = 1'b1;
                     r_imm      = 32'd0;
                     r_op_a_sel = 2'd2; // ZERO
                     r_op_b_sel = 2'd2; // IMM (0)
                 }
                 6'b111111: { // 1
                     r_alu_op   = rv32i_pkg::AluOp::ADD;
-                    r_use_imm  = 1'b1;
                     r_imm      = 32'd1;
                     r_op_a_sel = 2'd2; // ZERO
                     r_op_b_sel = 2'd2; // IMM (1)
                 }
                 6'b111010: { // -1
                     r_alu_op   = rv32i_pkg::AluOp::COPY_B;
-                    r_use_imm  = 1'b1;
                     r_imm      = 32'hffff_ffff;
                     r_op_b_sel = 2'd2; // IMM (-1)
                 }
@@ -108,13 +89,11 @@ pub module hack_translator (
                 6'b001101: { // !D
                     r_alu_op   = rv32i_pkg::AluOp::XOR;
                     r_use_mem  = 1'b0;
-                    r_use_imm  = 1'b1;
                     r_imm      = 32'hffff_ffff;
                     r_op_b_sel = 2'd2; // IMM (-1)
                 }
                 6'b110001: { // !A or !M
                     r_alu_op   = rv32i_pkg::AluOp::XOR;
-                    r_use_imm  = 1'b1;
                     r_imm      = 32'hffff_ffff;
                     r_op_a_sel = 2'd1; // Y
                     r_op_b_sel = 2'd2; // IMM (-1)
@@ -137,28 +116,24 @@ pub module hack_translator (
                 }
                 6'b011111: { // D+1
                     r_alu_op   = rv32i_pkg::AluOp::ADD;
-                    r_use_imm  = 1'b1;
                     r_imm      = 32'd1;
                     r_use_mem  = 1'b0;
                     r_op_b_sel = 2'd2; // IMM (1)
                 }
                 6'b110111: { // A+1 or M+1
                     r_alu_op   = rv32i_pkg::AluOp::ADD;
-                    r_use_imm  = 1'b1;
                     r_imm      = 32'd1;
                     r_op_a_sel = 2'd1; // Y
                     r_op_b_sel = 2'd2; // IMM (1)
                 }
                 6'b001110: { // D-1
                     r_alu_op   = rv32i_pkg::AluOp::ADD;
-                    r_use_imm  = 1'b1;
                     r_imm      = 32'hffff_ffff;
                     r_use_mem  = 1'b0;
                     r_op_b_sel = 2'd2; // IMM (-1)
                 }
                 6'b110010: { // A-1 or M-1
                     r_alu_op   = rv32i_pkg::AluOp::ADD;
-                    r_use_imm  = 1'b1;
                     r_imm      = 32'hffff_ffff;
                     r_op_a_sel = 2'd1; // Y
                     r_op_b_sel = 2'd2; // IMM (-1)
@@ -190,18 +165,13 @@ pub module hack_translator (
         }
     }
 
-    assign rs1        = 5'd2; // x2 (D), constant
-    assign rs2        = 5'd1; // x1 (A), constant
-    assign rd         = r_rd;
-    assign imm        = r_imm;
-    assign alu_op     = r_alu_op;
-    assign use_imm    = r_use_imm;
-    assign use_mem    = r_use_mem;
-    assign we_reg_a   = r_we_reg_a;
-    assign we_reg_d   = r_we_reg_d;
-    assign we_mem     = r_we_mem;
-    assign jump_cond  = r_jump_cond;
-    assign is_c_instr = r_is_c;
-    assign op_a_sel   = r_op_a_sel;
-    assign op_b_sel   = r_op_b_sel;
+    assign imm       = r_imm;
+    assign alu_op    = r_alu_op;
+    assign use_mem   = r_use_mem;
+    assign we_reg_a  = r_we_reg_a;
+    assign we_reg_d  = r_we_reg_d;
+    assign we_mem    = r_we_mem;
+    assign jump_cond = r_jump_cond;
+    assign op_a_sel  = r_op_a_sel;
+    assign op_b_sel  = r_op_b_sel;
 }

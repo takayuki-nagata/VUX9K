@@ -46,20 +46,15 @@ pub module unified_cpu #(
     var ir_reg       : logic<32>; // Instruction Register
 
     // Hack Translator signals
-    var h_rs1       : logic           <5> ;
-    var h_rs2       : logic           <5> ;
-    var h_rd        : logic           <5> ;
-    var h_imm       : logic           <32>;
-    var h_alu_op    : rv32i_pkg::AluOp    ;
-    var h_use_imm   : logic               ;
-    var h_use_mem   : logic               ;
-    var h_we_reg_a  : logic               ;
-    var h_we_reg_d  : logic               ;
-    var h_we_mem    : logic               ;
-    var h_jump_cond : logic           <3> ;
-    var h_is_c_instr: logic               ;
-    var h_op_a_sel  : logic           <2> ;
-    var h_op_b_sel  : logic           <2> ;
+    var h_imm      : logic           <32>;
+    var h_alu_op   : rv32i_pkg::AluOp    ;
+    var h_use_mem  : logic               ;
+    var h_we_reg_a : logic               ;
+    var h_we_reg_d : logic               ;
+    var h_we_mem   : logic               ;
+    var h_jump_cond: logic           <3> ;
+    var h_op_a_sel : logic           <2> ;
+    var h_op_b_sel : logic           <2> ;
 
     // RV32I Decoder signals
     var rv_opcode  : logic<7> ;
@@ -94,10 +89,8 @@ pub module unified_cpu #(
     var alu_operand_b: logic           <32>;
     var alu_ctrl     : rv32i_pkg::AluOp    ;
     var alu_result   : logic           <32>;
-    var alu_zero     : logic               ;
 
     // CSR Module Signals
-    var csr_we     : logic    ;
     var csr_rdata  : logic<32>;
     var trap_entry : logic    ;
     var trap_cause : logic<32>;
@@ -116,10 +109,9 @@ pub module unified_cpu #(
     var csr_access : logic    ;
 
     // Trap / next-PC helpers
-    var fetch_misalign : logic    ;
-    var mem_misalign   : logic    ;
-    var is_branch_taken: logic    ;
-    var jalr_target    : logic<32>;
+    var fetch_misalign: logic    ;
+    var mem_misalign  : logic    ;
+    var jalr_target   : logic<32>;
 
     // Internal Helper Signals
     var load_val       : logic            <32>;
@@ -131,7 +123,6 @@ pub module unified_cpu #(
     var r_store_byte_we: logic            <4> ;
     var r_store_we     : logic                ;
     var r_hack_mem_we  : logic                ;
-    var r_mem_write    : logic                ;
     var r_mem_byte_we  : logic            <4> ;
     var r_data_out     : logic            <32>;
     var rv_branch_take : logic                ;
@@ -170,21 +161,16 @@ pub module unified_cpu #(
     assign h_instr_16 = if pc_reg[1] ? ir_reg[31:16] : ir_reg[15:0];
 
     inst hack_trans: hack_translator (
-        instr_16  : h_instr_16  ,
-        rs1       : h_rs1       ,
-        rs2       : h_rs2       ,
-        rd        : h_rd        ,
-        imm       : h_imm       ,
-        alu_op    : h_alu_op    ,
-        use_imm   : h_use_imm   ,
-        use_mem   : h_use_mem   ,
-        we_reg_a  : h_we_reg_a  ,
-        we_reg_d  : h_we_reg_d  ,
-        we_mem    : h_we_mem    ,
-        jump_cond : h_jump_cond ,
-        is_c_instr: h_is_c_instr,
-        op_a_sel  : h_op_a_sel  ,
-        op_b_sel  : h_op_b_sel  ,
+        instr_16 : h_instr_16 ,
+        imm      : h_imm      ,
+        alu_op   : h_alu_op   ,
+        use_mem  : h_use_mem  ,
+        we_reg_a : h_we_reg_a ,
+        we_reg_d : h_we_reg_d ,
+        we_mem   : h_we_mem   ,
+        jump_cond: h_jump_cond,
+        op_a_sel : h_op_a_sel ,
+        op_b_sel : h_op_b_sel ,
     );
 
     // RV32I Instruction Decoder
@@ -223,7 +209,6 @@ pub module unified_cpu #(
         b     : alu_operand_b,
         alu_op: alu_ctrl     ,
         result: alu_result   ,
-        zero  : alu_zero     ,
     );
 
     // Control and Status Registers (CSR)
@@ -255,9 +240,8 @@ pub module unified_cpu #(
 
     // Combinational Execution Datapath
     always_comb {
-        rv_op  = rv_opcode as rv32i_pkg::Opcode;
-        rv_f3  = rv_funct3 as rv32i_pkg::Funct3;
-        csr_we = 1'b0;
+        rv_op = rv_opcode as rv32i_pkg::Opcode;
+        rv_f3 = rv_funct3 as rv32i_pkg::Funct3;
 
         // Branch & Jump Condition Evaluation (Direct Comparators for Minimum Critical Path Delay)
         let rs_eq : logic = rf_rs1_data == rf_rs2_data;
@@ -495,8 +479,6 @@ pub module unified_cpu #(
                 }
             }
 
-            r_mem_write = if (rv_op == rv32i_pkg::Opcode::STORE && state == CpuState::EXECUTE) ? 1'b1 : 1'b0;
-
         } else {
             // Hack Mode: A is x1 (write port 1), D is x2 (write port 2). The register
             // file writes one port per cycle, so an instruction writing both A and D
@@ -523,11 +505,6 @@ pub module unified_cpu #(
             alu_ctrl      = h_alu_op;
             r_data_out    = alu_result;
             r_mem_byte_we = 4'b1111;
-            r_mem_write   = if (state == CpuState::EXECUTE) ?
-                (h_we_mem && !h_use_mem)
-            :
-                (if (state == CpuState::HACK_WB) ? r_hack_mem_we : 1'b0)
-            ;
         }
     }
 
@@ -631,9 +608,8 @@ pub module unified_cpu #(
     // Next PC Calculation (Shared PC-Relative Adder)
 
     always_comb {
-        is_branch_taken = (rv_op == rv32i_pkg::Opcode::BRANCH) && rv_branch_take;
-        let pc_plus_imm    : logic<32> = (pc_reg as u32 + rv_imm as u32) as u32;
-        jalr_target     = ((rv_mem_addr as u32) & 32'hffff_fffe) as u32;
+        let pc_plus_imm: logic<32> = (pc_reg as u32 + rv_imm as u32) as u32;
+        jalr_target = ((rv_mem_addr as u32) & 32'hffff_fffe) as u32;
 
         if is_riscv_mode {
             if state == CpuState::MEM_WAIT {

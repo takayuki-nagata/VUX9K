@@ -10,7 +10,6 @@ module gpio_controller (
     data_in     : input  logic<32>,
     data_out    : output logic<32>,
     we          : input  logic    ,
-    re          : input  logic    ,
     cpu_soft_rst: output logic    , // Active-High CPU reset request pulse
 
     // External Pins

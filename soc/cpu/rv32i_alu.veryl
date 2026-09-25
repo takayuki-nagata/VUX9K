@@ -7,7 +7,6 @@ pub module rv32i_alu (
     b     : input  logic           <32>,
     alu_op: input  rv32i_pkg::AluOp    ,
     result: output logic           <32>,
-    zero  : output logic               ,
 ) {
     var res_int: logic<32>;
 
@@ -41,5 +40,4 @@ pub module rv32i_alu (
     }
 
     assign result = res_int;
-    assign zero   = res_int == 32'd0;
 }

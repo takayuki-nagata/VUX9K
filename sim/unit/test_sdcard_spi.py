@@ -56,7 +56,6 @@ async def setup(dut):
     cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start())
     dut.rst.value = 0
     dut.we.value = 0
-    dut.re.value = 1
     dut.addr.value = 0
     dut.data_in.value = 0
     dut.spi_miso.value = 1

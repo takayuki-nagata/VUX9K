@@ -9,7 +9,6 @@ module timer_core (
     data_in  : input  logic<32>,
     data_out : output logic<32>,
     we       : input  logic    ,
-    re       : input  logic    ,
     timer_irq: output logic    ,
 ) {
     var mtime   : logic<64>;

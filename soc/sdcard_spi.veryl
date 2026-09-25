@@ -9,7 +9,6 @@ pub module sdcard_spi (
     data_in : input  logic<32>,
     data_out: output logic<32>,
     we      : input  logic    ,
-    re      : input  logic    ,
     spi_sclk: output logic    ,
     spi_mosi: output logic    ,
     spi_miso: input  logic    ,

@@ -4,8 +4,6 @@
 // Tang Nano 9K Top-Level SoC Wrapper in Veryl
 // Integrates CPU, RAMs, UART, Machine Timer, SD Card SPI, GPIO, and Address Decoder
 
-#[allow(unused_variable)]
-#[allow(unassign_variable)]
 pub module soc_top (
     clk  : input clock,
     rst_n: input reset, // Active-Low Hardware Reset (Button S1)
@@ -88,11 +86,8 @@ pub module soc_top (
     var uart_we    : logic   ;
     var uart_re    : logic   ;
     var timer_we   : logic   ;
-    var timer_re   : logic   ;
     var sd_we      : logic   ;
-    var sd_re      : logic   ;
     var gpio_we    : logic   ;
-    var gpio_re    : logic   ;
     var ram_we     : logic   ;
     var ram_we_byte: logic<4>;
 
@@ -181,7 +176,6 @@ pub module soc_top (
         data_in  : cpu_data_out  ,
         data_out : timer_data_out,
         we       : timer_we      ,
-        re       : timer_re      ,
         timer_irq: timer_irq     ,
     );
 
@@ -193,7 +187,6 @@ pub module soc_top (
         data_in : cpu_data_out,
         data_out: sd_data_out ,
         we      : sd_we       ,
-        re      : sd_re       ,
         spi_sclk: sd_sclk     ,
         spi_mosi: sd_mosi     ,
         spi_miso: sd_miso     ,
@@ -208,7 +201,6 @@ pub module soc_top (
         data_in     : cpu_data_out ,
         data_out    : gpio_data_out,
         we          : gpio_we      ,
-        re          : gpio_re      ,
         cpu_soft_rst: cpu_soft_rst ,
         gpio_led    : raw_led      ,
         gpio_btn    : btn          ,
@@ -292,10 +284,7 @@ pub module soc_top (
         gpio_we     = mem_write && gpio_wsel;
 
         // Pop the RX FIFO only when the CPU actually reads the data register (either mode)
-        uart_re  = mem_read_req && last_uart_sel && (last_addr_low == 4'h0);
-        timer_re = 1'b1;
-        sd_re    = 1'b1;
-        gpio_re  = 1'b1;
+        uart_re = mem_read_req && last_uart_sel && (last_addr_low == 4'h0);
     }
 
     always_ff (clk, rst) {
