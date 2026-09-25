@@ -145,6 +145,22 @@ def mmio_program() -> list[int]:
     a.andi("t1", "t1", 1)
     _expect(a, "t1", 1, 13)
 
+    # 15-17: aliasing, documented in README ("Address decoding and aliases"): D-RAM repeats
+    # every 8 KB across 0x2xxx_xxxx, and data reads of 0x0000_0000-0x0000_FFFF are I-RAM
+    # repeating every 16 KB
+    a.li("t0", DRAM + 0x2100)
+    a.li("t1", 0x0BADCAFE)
+    a.sw("t1", 0, "t0")
+    a.lw("t3", 0, "s2")  # s2 = DRAM + 0x100
+    _expect(a, "t3", 0x0BADCAFE, 15)
+    a.li("t0", 0x2400_0100)
+    a.lw("t3", 0, "t0")
+    _expect(a, "t3", 0x0BADCAFE, 16)
+    a.li("t0", 0x4000)
+    a.add("t0", "t0", "s3")  # s3 = &table
+    a.lw("t3", 0, "t0")
+    _expect(a, "t3", 0xDEADBEEF, 17)
+
     # 14: GPIO soft reset restarts the CPU at 0 (continues at after_soft_reset)
     a.li("t1", RESET_MARKER)
     a.sw("t1", 0, "s0")

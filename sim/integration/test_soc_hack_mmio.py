@@ -35,6 +35,7 @@ GPIO_SOFT_RST = 0x600C  # gpio_controller addr C: soft-reset pulse in progress
 RAM_PROBE = 0x0100
 UNMAPPED_ALIAS = 0x6900  # addr[10:0] == RAM_PROBE: a write must not land in RAM
 UNMAPPED_READ = 0x6010  # just past the MMIO window: reads as 0
+RAM_ALIAS = 0x0900  # RAM has 2K words: 0x0900 is the same word as RAM_PROBE (README)
 
 
 def _print_reg(a: Asm, addr: int):
@@ -63,7 +64,8 @@ def _store(a: Asm, addr: int, value: int):
 
 def status_gpio_program() -> list[int]:
     """Reads without any received byte: UART status, GPIO button and soft-reset status,
-    then an unmapped write (must not alias into RAM) and an unmapped read (0)."""
+    then an unmapped write (must not alias into RAM), an unmapped read (0) and a
+    write through a RAM alias (documented: 2K words repeat across 0x0000-0x5FFF)."""
     a = Asm()
     _print_reg(a, UART_STATUS)  # idle: rx_empty -> '1'
     _print_reg(a, GPIO_BTN)  # button held by the test: '1'
@@ -75,6 +77,11 @@ def status_gpio_program() -> list[int]:
     a.at(UART_DATA)
     a.c("M=D")
     _print_reg(a, UNMAPPED_READ)  # '0'
+    _store(a, RAM_ALIAS, ord("7"))
+    a.at(RAM_PROBE)  # now '7'
+    a.c("D=M")
+    a.at(UART_DATA)
+    a.c("M=D")
     _print_char(a, "\n")
     a.label("halt")
     a.at("halt")
@@ -119,9 +126,9 @@ async def test_soc_hack_mmio_status_gpio(dut):
     hack_asm.selftest()
     ser = await _start_hack(dut, status_gpio_program())
     out = (await ser.wait_for(b"\n", timeout_cycles=200_000)).decode("ascii", errors="replace")
-    assert out == "11050\n", (
-        f"expected '11050\\n' (UART status rx_empty, button, soft-reset, RAM after unmapped write, unmapped read), "
-        f"got {out!r}"
+    assert out == "110507\n", (
+        "expected '110507\\n' (UART status rx_empty, button, soft-reset, RAM after unmapped write, "
+        f"unmapped read, RAM after a write to its alias), got {out!r}"
     )
     dut._log.info("Hack-mode MMIO reads (UART status, GPIO) and unmapped accesses verified")
 

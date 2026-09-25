@@ -68,7 +68,26 @@ The RTL modules in this repository were originally authored in VHDL-2008 and hav
 | `0x4000_2000` - `0x4000_200F` | 16 B | **MicroSD SPI Master** | SPI TX/RX data, CS assertion, busy status, clock divider |
 | `0x4000_3000` - `0x4000_300F` | 16 B | **GPIO Controller** | 6 onboard active-low LEDs (`0x00`=ON, `0x3F`=OFF) & user buttons (Button S2 on pin 3); offset `0xC` is a soft-reset trigger — writing `0x5A5A_A55A` pulses `cpu_soft_rst`, resetting the CPU FSM/PC/CSRs to `RESET_VECTOR` without a full FPGA reload |
 
+**Address decoding and aliases.** Only the address bits needed to tell the regions apart are decoded, so every region repeats and nothing raises an access fault:
+- `0x2xxx_xxxx` is D-RAM repeating every 8 KB (`0x2000_2100` is the same word as `0x2000_0100`).
+- Data reads of `0x0000_0000`-`0x0000_FFFF` return I-RAM, repeating every 16 KB; data writes there go to I-RAM. Other `0x0xxx_xxxx` addresses read D-RAM aliases and ignore writes.
+- In `0x4xxx_xxxx`, bits `[15:12]` pick the peripheral and bits `[3:0]` the register; the rest are ignored.
+- Anything else reads as 0 and ignores writes.
+
 **Writing code into I-RAM.** Stores to I-RAM (`0x0000_0000`-`0x0000_3FFF`) are how the loaders place SD slot payloads. A store to the word holding the *very next* instruction is not supported: the store and that instruction's fetch hit the same block-RAM word in the same cycle, and the fetched word is undefined (the synthesis flow drops collision handling, see `SYNTH_GOWIN_OPTS` in the `Makefile`). Copy code into a region you are not executing from, and execute `fence.i` before jumping to it, as RISC-V requires anyway.
+
+### Hack Mode Address Space (16-bit word addresses)
+Hack instructions are packed two per 32-bit I-RAM word (first instruction in the low half, as `scripts/bin2hex.py` does). The data side:
+
+| Address | Component | Notes |
+|:---|:---|:---|
+| `0x0000` - `0x5FFF` | **RAM** | Only 2K words exist (the D-RAM, one Hack word per 32-bit word): addresses repeat every `0x0800`, so `0x0900` is the same word as `0x0100` |
+| `0x6000` | **UART data** | Read: received byte (pops the RX FIFO). Write: byte to send |
+| `0x6001` - `0x6003` | **UART status** | `{tx_full, rx_empty}` (bit 1, bit 0) |
+| `0x6004` - `0x600F` | **GPIO** | Register = address bits `[3:0]`: `0x6004` button (1 = pressed), `0x600C` soft reset in progress. The LED register (GPIO `0x0`) is unreachable from Hack mode, and a Hack store can't form the 32-bit soft-reset key |
+| other | unmapped | Reads 0, writes ignored |
+
+**ISA auto-detection.** The mode is latched from the first non-zero instruction word after reset (`auto_mode_detector`): RV32I if its low 7 bits are an RV32I opcode; Hack if its low half is a C-instruction or a non-zero `@n`; otherwise the CPU stays in its reset default, RV32I, and keeps looking. So a Hack program must not start with `@0`, nor with an `@n` whose `n & 0x7F` is an RV32I opcode (`0x03`, `0x13`, `0x17`, `0x23`, `0x33`, `0x37`, `0x63`, `0x67`, `0x6F`, `0x73`; e.g. `@19` or `@51`), which is detected as RV32I.
 
 ### MicroSD Card Sector Map (Multi-Slot MBR Gap Boot)
 The MBR gap (`LBA 64` - `LBA 2047`, ~1 MB) is partitioned into 10 fixed 32 KB program slots (64 sectors per slot), keeping FAT32/exFAT filesystems intact:
