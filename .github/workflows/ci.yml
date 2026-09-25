@@ -29,6 +29,9 @@ jobs:
         with:
           version: "0.11.6"
           enable-cache: true
+          # No uv.lock/requirements*.txt is tracked (the pins live in this file), so key
+          # the uv cache on the workflow itself instead of the default glob matching nothing
+          cache-dependency-glob: .github/workflows/ci.yml
 
       - name: Check No Hardcoded Absolute Paths
         run: python3 scripts/check_no_absolute_paths.py
@@ -54,11 +57,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/veryl
-          key: ${{ runner.os }}-veryl-v0.21.0
+          key: ${{ runner.os }}-veryl-v0.21.0-locked
 
       - name: Install Veryl
         if: steps.cache-veryl.outputs.cache-hit != 'true'
-        run: cargo install veryl --version 0.21.0
+        # --locked: build with Veryl's own Cargo.lock, so a cache miss can't pick up newer
+        # (possibly broken) dependency releases
+        run: cargo install veryl --version 0.21.0 --locked
 
       - name: Cache MSP430 GCC Toolchain
         id: cache-msp430-gcc
