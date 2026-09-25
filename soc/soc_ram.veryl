@@ -7,7 +7,6 @@ pub module soc_ram #(
     param D_MEM_WORDS: u32 = 2048, // 8 KB D-RAM (2048 x 32-bit words)
 ) (
     clk        : input  clock    ,
-    rst        : input  reset    ,
     active_mode: input  logic    , // 0: Hack 16-bit, 1: RISC-V 32-bit
     i_addr     : input  logic<32>,
     i_data_out : output logic<32>,

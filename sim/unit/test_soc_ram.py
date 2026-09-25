@@ -22,7 +22,6 @@ DRAM = 0x2000_0000
 
 async def setup(dut, mode=1):
     cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start())
-    dut.rst.value = 0
     dut.active_mode.value = mode
     dut.i_addr.value = 0
     dut.i_we.value = 0
@@ -34,7 +33,6 @@ async def setup(dut, mode=1):
     dut.d_we_byte.value = 0
     await ClockCycles(dut.clk, 2)
     await FallingEdge(dut.clk)
-    dut.rst.value = 1
 
 
 async def i_write(dut, word_idx, value):

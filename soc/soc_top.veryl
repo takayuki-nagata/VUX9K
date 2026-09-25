@@ -152,7 +152,6 @@ pub module soc_top (
     // Instantiate Harvard Memory (16KB I-RAM + 8KB D-RAM BSRAMs)
     inst ram_inst: soc_ram (
         clk        : clk                                  ,
-        rst        : rst                                  ,
         active_mode: active_mode                          ,
         i_addr     : instr_addr                           ,
         i_data_out : instr_data                           ,
