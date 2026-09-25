@@ -1,0 +1,125 @@
+// Copyright (c) 2026 Takayuki Nagata
+// SPDX-License-Identifier: MIT
+
+// RV32I exception/interrupt decision for the instruction in EXECUTE (combinational).
+// Priority: interrupt > illegal > misaligned fetch > ECALL/EBREAK > misaligned
+// load/store; otherwise MRET returns. A trap is a one-cycle pulse (`exec` is EXECUTE
+// in RV32 mode), and the trapping instruction must have no side effects: the CPU
+// gates register, CSR and memory writes with `trap_entry`.
+pub module rv32i_trap_unit (
+    exec       : input  logic    , // RV32 mode, EXECUTE state
+    irq        : input  logic    , // interrupt sampled in FETCH
+    irq_cause  : input  logic<32>,
+    instr      : input  logic<32>,
+    imm        : input  logic<32>, // decoded immediate of instr
+    pc         : input  logic<32>,
+    branch_take: input  logic    , // branch condition holds
+    addr_low   : input  logic<2> , // effective address [1:0] (JALR target, load/store)
+    jalr_target: input  logic<32>,
+    mem_addr   : input  logic<32>, // load/store effective address
+    trap_entry : output logic    ,
+    trap_cause : output logic<32>, // mcause
+    trap_val   : output logic<32>, // mtval
+    trap_return: output logic    , // MRET
+) {
+    let funct3   : logic<3>  = instr[14:12];
+    let rs1      : logic<5>  = instr[19:15];
+    let funct7   : logic<7>  = instr[31:25];
+    let csr_addr : logic<12> = instr[31:20];
+    let is_ecall : logic     = instr == 32'h0000_0073;
+    let is_ebreak: logic     = instr == 32'h0010_0073;
+    let is_mret  : logic     = instr == 32'h3020_0073;
+    let is_wfi   : logic     = instr == 32'h1050_0073;
+
+    var op            : rv32i_pkg::Opcode;
+    var is_illegal    : logic            ;
+    var fetch_misalign: logic            ;
+    var mem_misalign  : logic            ;
+
+    // Legality. Unimplemented CSR addresses stay legal (read 0, writes ignored); a
+    // write to a read-only CSR (addr[11:10] == 3, e.g. `unimp` = csrrw x0, cycle, x0)
+    // is illegal.
+    let csr_writes: logic = funct3[1:0] == 2'b01 || rs1 != 5'd0; // CSRRW[I], or non-zero rs1/uimm
+    let csr_ro_wr : logic = csr_addr[11:10] == 2'b11 && csr_writes;
+    always_comb {
+        op = instr[6:0] as rv32i_pkg::Opcode;
+        case op {
+            rv32i_pkg::Opcode::LUI, rv32i_pkg::Opcode::AUIPC, rv32i_pkg::Opcode::JAL: is_illegal = 1'b0;
+            rv32i_pkg::Opcode::JALR                                                 : is_illegal = funct3 != 3'b000;
+            rv32i_pkg::Opcode::BRANCH                                               : is_illegal = funct3[2:1] == 2'b01;
+            rv32i_pkg::Opcode::LOAD                                                 : is_illegal = funct3 == 3'b011
+                || funct3[2:1] == 2'b11;
+            rv32i_pkg::Opcode::STORE                                                : is_illegal = funct3[2]
+                || funct3[1:0] == 2'b11;
+            rv32i_pkg::Opcode::I_TYPE                                               : {
+                case funct3 {
+                    3'b001 : is_illegal = funct7 != 7'b000_0000; // SLLI (shamt[5] must be 0)
+                    3'b101 : is_illegal = funct7 != 7'b000_0000 && funct7 != 7'b010_0000; // SRLI/SRAI
+                    default: is_illegal = 1'b0;
+                }
+            }
+            rv32i_pkg::Opcode::R_TYPE: is_illegal = !(funct7 == 7'b000_0000
+                || (funct7 == 7'b010_0000 && (funct3 == 3'b000 || funct3 == 3'b101)));
+            rv32i_pkg::Opcode::FENCE : is_illegal = funct3[2:1] != 2'b00; // FENCE / FENCE.I (no-ops)
+            rv32i_pkg::Opcode::SYSTEM: {
+                if funct3 == 3'b000 {
+                    // ECALL / EBREAK / MRET / WFI (WFI is a no-op)
+                    is_illegal = !(is_ecall || is_ebreak || is_mret || is_wfi);
+                } else {
+                    is_illegal = funct3 == 3'b100 || csr_ro_wr;
+                }
+            }
+            default: is_illegal = 1'b1; // includes 0x0000_0000
+        }
+    }
+
+    always_comb {
+        case op {
+            rv32i_pkg::Opcode::JAL   : fetch_misalign = imm[1];
+            rv32i_pkg::Opcode::BRANCH: fetch_misalign = imm[1] && branch_take;
+            rv32i_pkg::Opcode::JALR  : fetch_misalign = addr_low[1];
+            default                  : fetch_misalign = 1'b0;
+        }
+        if op == rv32i_pkg::Opcode::LOAD || op == rv32i_pkg::Opcode::STORE {
+            case funct3[1:0] {
+                2'b01  : mem_misalign = addr_low[0]; // LH/LHU/SH
+                2'b10  : mem_misalign = addr_low != 2'b00; // LW/SW
+                default: mem_misalign = 1'b0;
+            }
+        } else {
+            mem_misalign = 1'b0;
+        }
+
+        trap_entry  = 1'b0;
+        trap_cause  = 32'd0;
+        trap_val    = 32'd0;
+        trap_return = 1'b0;
+        if exec {
+            if irq {
+                trap_entry = 1'b1;
+                trap_cause = irq_cause;
+            } else if is_illegal {
+                trap_entry = 1'b1;
+                trap_cause = 32'd2;
+                trap_val   = instr;
+            } else if fetch_misalign {
+                trap_entry = 1'b1;
+                trap_cause = 32'd0;
+                trap_val   = if op == rv32i_pkg::Opcode::JALR ? jalr_target : (pc as u32 + imm as u32) as u32;
+            } else if is_ecall {
+                trap_entry = 1'b1;
+                trap_cause = 32'd11;
+            } else if is_ebreak {
+                trap_entry = 1'b1;
+                trap_cause = 32'd3;
+                trap_val   = pc;
+            } else if mem_misalign {
+                trap_entry = 1'b1;
+                trap_cause = if op == rv32i_pkg::Opcode::LOAD ? 32'd4 : 32'd6;
+                trap_val   = mem_addr;
+            } else {
+                trap_return = is_mret;
+            }
+        }
+    }
+}

@@ -39,8 +39,8 @@ SIM_BUILD_DIR = BUILD_DIR / "sim"
 # Directories holding cocotb test modules (imported by name inside the simulator)
 TEST_MODULE_DIRS = [SIM_DIR / "unit", SIM_DIR / "integration"]
 
-_CPU = ["rv32i_pkg", "rv32i_alu", "rv32i_decode", "rv32i_regfile", "rv32i_csrs", "rv32i_lsu", "hack_translator",
-        "auto_mode_detector", "unified_cpu"]  # fmt: skip
+_CPU = ["rv32i_pkg", "rv32i_alu", "rv32i_decode", "rv32i_regfile", "rv32i_csrs", "rv32i_lsu", "rv32i_trap_unit",
+        "hack_translator", "auto_mode_detector", "unified_cpu"]  # fmt: skip
 _UART = ["clk_timer", "shift_registers", "fifo_sync", "uart_tx", "uart_rx", "uart_controller"]
 _SOC = ["timer_core", "sdcard_spi", "gpio_controller", "soc_ram", "soc_addr_decoder", "soc_top"]
 

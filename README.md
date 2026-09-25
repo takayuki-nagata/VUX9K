@@ -306,6 +306,8 @@ VUX9K/
 │   │   ├── rv32i_decode.veryl          # RV32I instruction decoder & immediate generator
 │   │   ├── rv32i_pkg.veryl             # Common type definitions and opcodes
 │   │   ├── rv32i_regfile.veryl         # Dual-port 32 x 32-bit register file (Distributed RAM)
+│   │   ├── rv32i_lsu.veryl             # Load/store byte-lane alignment (sub-word loads/stores)
+│   │   ├── rv32i_trap_unit.veryl       # Exception/interrupt decision (illegal, misaligned, ECALL/EBREAK, MRET)
 │   │   └── unified_cpu.veryl           # Multi-cycle Dual-ISA CPU Top Module (FETCH, EXECUTE, MEM_WAIT)
 │   ├── uart/                       # UART Controller & FIFOs
 │   │   ├── clk_timer.veryl             # Parameterized baud rate clock timer
