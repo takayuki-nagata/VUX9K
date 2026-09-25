@@ -318,6 +318,8 @@ VUX9K/
 │   ├── sdcard_spi.veryl            # MicroSD SPI Master controller
 │   ├── timer_core.veryl            # 64-bit mtime/mtimecmp timer core
 │   ├── soc_ram.veryl               # Harvard 16KB I-RAM + 8KB D-RAM memory
+│   ├── soc_pkg.veryl               # SoC constants: clock-derived dividers, data-address map
+│   ├── soc_addr_decoder.veryl      # Data-address decoder (one instance per read/write address)
 │   └── soc_top.veryl               # Tang Nano 9K SoC top-level wrapper
 ├── firmware/                       # Cargo workspace: bare-metal Rust boot firmware
 │   ├── Cargo.toml                  # Workspace manifest (members: boot_manager, resident_loader)
