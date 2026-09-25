@@ -15,6 +15,7 @@ async def test_clk_timer(dut):
     # 1. Reset (active-low)
     await FallingEdge(dut.clk)
     dut.rst.value = 0
+    dut.clr.value = 0
     await FallingEdge(dut.clk)
     await FallingEdge(dut.clk)
     dut.rst.value = 1
@@ -32,3 +33,29 @@ async def test_clk_timer(dut):
 
     assert alm_count == 3, f"Expected 3 alarm pulses, got {alm_count}"
     dut._log.info(f"clk_timer verified successfully: received {alm_count} pulses in {total_cycles} cycles [PASS]")
+
+
+@cocotb.test()
+async def test_clk_timer_clr_restarts_period(dut):
+    """A one-cycle clr restarts the period: the next alarm comes a full CNT edges later, none earlier"""
+    cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
+    await FallingEdge(dut.clk)
+    dut.rst.value = 0
+    dut.clr.value = 0
+    await FallingEdge(dut.clk)
+    dut.rst.value = 1
+    cnt = 434  # clk_timer's default CNT
+
+    # Get to a few cycles before an alarm is due, then restart the period
+    while int(dut.alm.value) == 0:
+        await FallingEdge(dut.clk)
+    for _ in range(cnt - 5):
+        await FallingEdge(dut.clk)
+    dut.clr.value = 1
+    await FallingEdge(dut.clk)
+    dut.clr.value = 0
+    edges = 1
+    while int(dut.alm.value) == 0:
+        await FallingEdge(dut.clk)
+        edges += 1
+    assert edges == cnt, f"alarm {edges} edges after clr, expected a full period ({cnt})"

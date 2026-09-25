@@ -38,6 +38,7 @@ pub module uart_tx #(
     ) (
         clk: clk    ,
         rst: rst    ,
+        clr: 1'b0   ,
         alm: sreg_ce,
     );
 

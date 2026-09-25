@@ -8,6 +8,7 @@ pub module clk_timer #(
 ) (
     clk: input  clock,
     rst: input  reset,
+    clr: input  logic, // synchronous restart of the period
     alm: output logic,
 ) {
     const CONST_INIT : logic<CSIZE> = CNT - 1;
@@ -17,7 +18,7 @@ pub module clk_timer #(
         if_reset {
             reg_counter = CONST_INIT;
         } else {
-            if reg_counter == '0 {
+            if clr || reg_counter == '0 {
                 reg_counter = CONST_INIT;
             } else {
                 reg_counter = reg_counter - 1;

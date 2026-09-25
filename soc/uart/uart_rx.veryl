@@ -27,7 +27,7 @@ pub module uart_rx #(
     var next_clkcnt: logic<CSIZE>      ;
     var reg_bitcnt : logic<BITCNT_SIZE>;
     var next_bitcnt: logic<BITCNT_SIZE>;
-    var ce_rst     : reset             ;
+    var timer_clr  : logic             ; // restart the bit timer at mid start bit
     var sreg_ce    : logic             ;
     var sreg_pout  : logic<DSIZE>      ;
 
@@ -35,9 +35,10 @@ pub module uart_rx #(
         CNT  : CNT  ,
         CSIZE: CSIZE,
     ) (
-        clk: clk    ,
-        rst: ce_rst ,
-        alm: sreg_ce,
+        clk: clk      ,
+        rst: rst      ,
+        clr: timer_clr,
+        alm: sreg_ce  ,
     );
 
     inst sreg_inst: shift_registers #(
@@ -69,7 +70,7 @@ pub module uart_rx #(
 
     always_comb {
         data        = sreg_pout;
-        ce_rst      = 1'b1 as reset; // Active-low: 1 = running
+        timer_clr   = 1'b0;
         next_clkcnt = reg_clkcnt;
         next_bitcnt = reg_bitcnt;
         rdy         = '0;
@@ -86,7 +87,7 @@ pub module uart_rx #(
             }
             State::WAITFORMIDBIT: {
                 if reg_clkcnt == '0 {
-                    ce_rst      = 1'b0 as reset; // Pulse active-low reset to sync clk_timer
+                    timer_clr   = 1'b1; // next bit-timer alarm lands mid data bit 0
                     next_bitcnt = '0;
                     next_state  = State::RECEIVING;
                 } else {
