@@ -34,7 +34,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 EQY_DIR = REPO_ROOT / "build" / "eqy"
-PACKAGE = Path("soc/cpu/rv32i_pkg.sv")  # must be read before the modules using it
+PACKAGE = Path("soc/cpu/rv32i_pkg.sv")  # always present; every *_pkg.sv is read before the modules
 BLACKBOX = {"soc_ram": Path("soc/soc_ram.sv")}
 
 
@@ -76,7 +76,8 @@ def snapshot(src_root: Path, dst: Path) -> list[Path]:
     if PACKAGE not in files:
         raise SystemExit(f"run_eqy.py: {src_root / PACKAGE} missing")
     out = []
-    for rel in [PACKAGE] + [f for f in files if f != PACKAGE]:
+    packages = [f for f in files if f.name.endswith("_pkg.sv")]
+    for rel in packages + [f for f in files if f not in packages]:
         target = dst / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         if rel in BLACKBOX.values():
@@ -87,7 +88,7 @@ def snapshot(src_root: Path, dst: Path) -> list[Path]:
     return out
 
 
-def eqy_config(top: str, gold: list[Path], gate: list[Path], depth: int) -> str:
+def eqy_config(top: str, gold: list[Path], gate: list[Path], depth: int, nomatch: list[str]) -> str:
     def side(name, files):
         blackboxes = " ".join(BLACKBOX)
         return (
@@ -101,10 +102,14 @@ def eqy_config(top: str, gold: list[Path], gate: list[Path], depth: int) -> str:
             "memory_map\n"
         )
 
+    # Names eqy must not use to pair up gold and gate nets, e.g. the ports of a newly
+    # extracted instance, which alias existing nets and confuse the matching
+    match = "\n[match *]\n" + "".join(f"gold-nomatch {p}\ngate-nomatch {p}\n" for p in nomatch) if nomatch else ""
     return (
         side("gold", gold)
         + "\n"
         + side("gate", gate)
+        + match
         + f"\n[strategy sby]\nuse sby\ndepth {depth}\nengine smtbmc bitwuzla\n"
     )
 
@@ -116,6 +121,12 @@ def main():
     parser.add_argument("--depth", type=int, default=5, help="sby induction depth per partition (default: 5)")
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 1)
     parser.add_argument("--veryl", default=os.environ.get("VERYL", "veryl"))
+    parser.add_argument(
+        "--nomatch",
+        nargs="*",
+        default=[],
+        help="Net-name patterns not to match between gold and gate (e.g. 'wr_decode.*' for a new instance)",
+    )
     args = parser.parse_args()
     sys.stdout.reconfigure(line_buffering=True)  # keep our lines in order with eqy's output
 
@@ -129,7 +140,7 @@ def main():
     gold = snapshot(gold_src, work / "gold")
     gate = snapshot(gate_src, work / "gate")
     config = work / f"{args.top}.eqy"
-    config.write_text(eqy_config(args.top, gold, gate, args.depth))
+    config.write_text(eqy_config(args.top, gold, gate, args.depth, args.nomatch))
 
     print(f"=== eqy: {args.top} of the working tree vs {args.base} (log: {work / args.top / 'logfile.txt'}) ===")
     result = subprocess.run(["eqy", "-f", "-j", str(args.jobs), config.name], cwd=work)
