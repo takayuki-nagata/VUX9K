@@ -77,6 +77,13 @@ these; one of the three tools does not (found 2026-09):
 `make sim-unit` (Icarus) and `yosys -p "read_verilog -sv …"` catch all four in
 seconds; `veryl build` alone does not.
 
+`$readmemh` in synthesized RTL: `soc_ram` preloads its arrays in a plain Veryl
+`initial` block, allowed by `#[allow(initial_assign)]` on each array. Veryl emits it
+without a `` `ifndef SYNTHESIS `` guard, so yosys reads the files and the firmware
+lands in the bitstream's block-RAM init (the old `embed` needed an
+`` `endif ``/`` `ifndef `` trick for that). If you ever touch it, check that the
+synthesized BRAM cells still carry non-zero `INIT_RAM_*` parameters.
+
 ## Veryl module resolution is directory-agnostic
 
 `veryl build`/`veryl check` scan the whole project root recursively for `.veryl`

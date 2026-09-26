@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: MIT
 
 // High-Speed Hex Runner Testbench for RISC-V Architectural Compliance in Veryl
+//
+// The body stays embedded SystemVerilog on purpose: it is a behavioral testbench
+// (`#` delays, `string`, $value$plusargs, event-controlled loops) run by Icarus
+// only, never synthesized, and those constructs have no Veryl equivalent. The RTL
+// itself has no embedded SV left.
 pub module tb_hex_runner () {
     embed (inline) sv{{{
         logic clk = 0;

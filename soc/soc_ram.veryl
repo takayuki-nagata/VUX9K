@@ -19,11 +19,16 @@ pub module soc_ram #(
     d_we       : input  logic    ,
     d_we_byte  : input  logic<4> ,
 ) {
-    var i_mem : logic<32> [I_MEM_WORDS];
-    var d_mem0: logic<8>  [D_MEM_WORDS];
-    var d_mem1: logic<8>  [D_MEM_WORDS];
-    var d_mem2: logic<8>  [D_MEM_WORDS];
-    var d_mem3: logic<8>  [D_MEM_WORDS];
+    #[allow(initial_assign)] // preloaded by $readmemh, also at configuration time (see the initial block)
+    var i_mem: logic<32> [I_MEM_WORDS];
+    #[allow(initial_assign)]
+    var d_mem0: logic<8> [D_MEM_WORDS];
+    #[allow(initial_assign)]
+    var d_mem1: logic<8> [D_MEM_WORDS];
+    #[allow(initial_assign)]
+    var d_mem2: logic<8> [D_MEM_WORDS];
+    #[allow(initial_assign)]
+    var d_mem3: logic<8> [D_MEM_WORDS];
 
     var i_idx  : logic<12>;
     var i_d_idx: logic<12>;
@@ -33,17 +38,17 @@ pub module soc_ram #(
     assign i_d_idx = d_addr[13:2];
     assign d_idx   = if active_mode == 1'b0 ? d_addr[10:0] : d_addr[12:2];
 
-    embed (inline) sv{{{
-    `endif
-        initial begin
-            $readmemh("firmware.hex", i_mem);
-            $readmemh("firmware_d0.hex", d_mem0);
-            $readmemh("firmware_d1.hex", d_mem1);
-            $readmemh("firmware_d2.hex", d_mem2);
-            $readmemh("firmware_d3.hex", d_mem3);
-        end
-    `ifndef SYNTHESIS
-    }}}
+    // Not simulation-only: synthesis reads these files too, which is how the Boot
+    // Manager / Resident Loader get baked into the bitstream's block RAM (hence
+    // #[allow(initial_assign)] on the arrays). The bare file names resolve against the
+    // tool's cwd (AGENTS.md, "build/").
+    initial {
+        $readmemh("firmware.hex", i_mem);
+        $readmemh("firmware_d0.hex", d_mem0);
+        $readmemh("firmware_d1.hex", d_mem1);
+        $readmemh("firmware_d2.hex", d_mem2);
+        $readmemh("firmware_d3.hex", d_mem3);
+    }
 
     always_ff (clk) {
         if i_we {
