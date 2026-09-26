@@ -124,6 +124,7 @@ def compile_testbench():
             "rv32i_csrs",
             "rv32i_lsu",
             "rv32i_trap_unit",
+            "next_pc_unit",
             "hack_translator",
             "auto_mode_detector",
             "unified_cpu",

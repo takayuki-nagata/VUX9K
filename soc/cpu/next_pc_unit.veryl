@@ -1,0 +1,94 @@
+// Copyright (c) 2026 Takayuki Nagata
+// SPDX-License-Identifier: MIT
+
+// Next-PC selection for both ISAs (combinational), with the RV32I branch condition
+// and the Hack jump condition it depends on. PCs are byte addresses; Hack
+// instructions are 2 bytes and a Hack jump goes to A * 2.
+pub module next_pc_unit (
+    riscv_mode: input logic    ,
+    mem_wait  : input logic    , // MEM_WAIT: the load/store/M-read instruction completes
+    pc        : input logic<32>,
+    pc_plus_4 : input logic<32>,
+    // RV32I
+    op         : input  rv32i_pkg::Opcode    ,
+    funct3     : input  rv32i_pkg::Funct3    ,
+    imm        : input  logic            <32>,
+    rs1        : input  logic            <32>,
+    rs2        : input  logic            <32>,
+    mem_addr   : input  logic            <32>, // rs1 + imm
+    trap_entry : input  logic                ,
+    trap_return: input  logic                ,
+    mtvec      : input  logic            <32>,
+    mepc       : input  logic            <32>,
+    branch_take: output logic                , // BRANCH condition holds (also used by the trap unit)
+    jalr_target: output logic            <32>,
+    // Hack
+    hack_jump: input  logic<3> , // j1j2j3
+    hack_comp: input  logic<32>, // ALU result: comp of the C-instruction
+    hack_a   : input  logic<32>, // A register (jump target / 2)
+    next_pc  : output logic<32>,
+) {
+    var hack_jump_take: logic;
+
+    // RV32I branch condition, straight from the register operands
+    always_comb {
+        let rs_eq : logic = rs1 == rs2;
+        let rs_lt : logic = (rs1 as i32) <: (rs2 as i32);
+        let rs_ltu: logic = (rs1 as u32) <: (rs2 as u32);
+        case funct3 {
+            rv32i_pkg::Funct3::ADD_SUB: branch_take = rs_eq; // BEQ
+            rv32i_pkg::Funct3::SLL    : branch_take = !rs_eq; // BNE
+            rv32i_pkg::Funct3::XOR    : branch_take = rs_lt; // BLT
+            rv32i_pkg::Funct3::SRL_SRA: branch_take = !rs_lt; // BGE
+            rv32i_pkg::Funct3::OR     : branch_take = rs_ltu; // BLTU
+            rv32i_pkg::Funct3::AND    : branch_take = !rs_ltu; // BGEU
+            default                   : branch_take = 1'b0;
+        }
+    }
+
+    // Hack jump condition on the 16-bit comp value
+    always_comb {
+        let h_zero: logic = hack_comp[15:0] == 16'd0;
+        let h_neg : logic = hack_comp[15];
+        case hack_jump {
+            3'b001 : hack_jump_take = (!h_zero) && (!h_neg); // JGT
+            3'b010 : hack_jump_take = h_zero; // JEQ
+            3'b011 : hack_jump_take = (!h_neg); // JGE
+            3'b100 : hack_jump_take = h_neg; // JLT
+            3'b101 : hack_jump_take = !h_zero; // JNE
+            3'b110 : hack_jump_take = h_neg || h_zero; // JLE
+            3'b111 : hack_jump_take = 1'b1; // JMP
+            default: hack_jump_take = 1'b0;
+        }
+    }
+
+    always_comb {
+        let pc_plus_imm: logic<32> = (pc as u32 + imm as u32) as u32;
+        jalr_target = ((mem_addr as u32) & 32'hffff_fffe) as u32;
+
+        if riscv_mode {
+            if mem_wait {
+                next_pc = pc_plus_4;
+            } else if trap_entry {
+                next_pc = mtvec;
+            } else if trap_return {
+                next_pc = mepc;
+            } else {
+                case op {
+                    rv32i_pkg::Opcode::BRANCH: next_pc = if branch_take ? pc_plus_imm : pc_plus_4;
+                    rv32i_pkg::Opcode::JAL   : next_pc = pc_plus_imm;
+                    rv32i_pkg::Opcode::JALR  : next_pc = jalr_target;
+                    default                  : next_pc = pc_plus_4;
+                }
+            }
+        } else {
+            if mem_wait {
+                next_pc = (pc as u32 + 2) as u32;
+            } else if hack_jump_take {
+                next_pc = ((hack_a as u32) << 1) as u32;
+            } else {
+                next_pc = (pc as u32 + 2) as u32;
+            }
+        }
+    }
+}

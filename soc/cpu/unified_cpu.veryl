@@ -120,7 +120,6 @@ pub module unified_cpu #(
     var r_mem_byte_we  : logic            <4> ;
     var r_data_out     : logic            <32>;
     var rv_branch_take : logic                ;
-    var hack_jump_take : logic                ;
     var rv_op          : rv32i_pkg::Opcode    ;
     var rv_f3          : rv32i_pkg::Funct3    ;
     var rv_alu_op      : rv32i_pkg::AluOp     ; // ALU operation of OP / OP-IMM
@@ -278,34 +277,6 @@ pub module unified_cpu #(
             default                   : rv_alu_op = rv32i_pkg::AluOp::ADD;
         }
 
-        // Branch & Jump Condition Evaluation (Direct Comparators for Minimum Critical Path Delay)
-        let rs_eq : logic = rf_rs1_data == rf_rs2_data;
-        let rs_lt : logic = (rf_rs1_data as i32) <: (rf_rs2_data as i32);
-        let rs_ltu: logic = (rf_rs1_data as u32) <: (rf_rs2_data as u32);
-        case rv_f3 {
-            rv32i_pkg::Funct3::ADD_SUB: rv_branch_take = rs_eq; // BEQ
-            rv32i_pkg::Funct3::SLL    : rv_branch_take = !rs_eq; // BNE
-            rv32i_pkg::Funct3::XOR    : rv_branch_take = rs_lt; // BLT
-            rv32i_pkg::Funct3::SRL_SRA: rv_branch_take = !rs_lt; // BGE
-            rv32i_pkg::Funct3::OR     : rv_branch_take = rs_ltu; // BLTU
-            rv32i_pkg::Funct3::AND    : rv_branch_take = !rs_ltu; // BGEU
-            default                   : rv_branch_take = 1'b0;
-        }
-
-        // Hack Jump Conditions
-        let h_zero: logic = alu_result[15:0] == 16'd0;
-        let h_neg : logic = alu_result[15];
-        case h_jump_cond {
-            3'b001 : hack_jump_take = (!h_zero) && (!h_neg); // JGT
-            3'b010 : hack_jump_take = h_zero; // JEQ
-            3'b011 : hack_jump_take = (!h_neg); // JGE
-            3'b100 : hack_jump_take = h_neg; // JLT
-            3'b101 : hack_jump_take = !h_zero; // JNE
-            3'b110 : hack_jump_take = h_neg || h_zero; // JLE
-            3'b111 : hack_jump_take = 1'b1; // JMP
-            default: hack_jump_take = 1'b0;
-        }
-
         if is_riscv_mode {
             // RISC-V Mode
             rf_we2      = 1'b0;
@@ -457,37 +428,29 @@ pub module unified_cpu #(
     );
     assign csr_access = exec_rv && rv_op == rv32i_pkg::Opcode::SYSTEM && !trap_entry;
 
-    // Next PC Calculation (Shared PC-Relative Adder)
-
-    always_comb {
-        let pc_plus_imm: logic<32> = (pc_reg as u32 + rv_imm as u32) as u32;
-        jalr_target = ((rv_mem_addr as u32) & 32'hffff_fffe) as u32;
-
-        if is_riscv_mode {
-            if state == CpuState::MEM_WAIT {
-                next_pc = pc_plus_4_reg;
-            } else if trap_entry {
-                next_pc = mtvec_out;
-            } else if trap_return {
-                next_pc = mepc_out;
-            } else {
-                case rv_op {
-                    rv32i_pkg::Opcode::BRANCH: next_pc = if rv_branch_take ? pc_plus_imm : pc_plus_4_reg;
-                    rv32i_pkg::Opcode::JAL   : next_pc = pc_plus_imm;
-                    rv32i_pkg::Opcode::JALR  : next_pc = jalr_target;
-                    default                  : next_pc = pc_plus_4_reg;
-                }
-            }
-        } else {
-            if state == CpuState::MEM_WAIT {
-                next_pc = (pc_reg as u32 + 2) as u32;
-            } else if hack_jump_take {
-                next_pc = (((rf_rs2_data as u32) << 1) as u32);
-            } else {
-                next_pc = (pc_reg as u32 + 2) as u32;
-            }
-        }
-    }
+    // Next PC (both ISAs), with the branch/jump conditions it depends on
+    inst pc_select: next_pc_unit (
+        riscv_mode : is_riscv_mode              ,
+        mem_wait   : state == CpuState::MEM_WAIT,
+        pc         : pc_reg                     ,
+        pc_plus_4  : pc_plus_4_reg              ,
+        op         : rv_op                      ,
+        funct3     : rv_f3                      ,
+        imm        : rv_imm                     ,
+        rs1        : rf_rs1_data                ,
+        rs2        : rf_rs2_data                ,
+        mem_addr   : rv_mem_addr                ,
+        trap_entry : trap_entry                 ,
+        trap_return: trap_return                ,
+        mtvec      : mtvec_out                  ,
+        mepc       : mepc_out                   ,
+        branch_take: rv_branch_take             ,
+        jalr_target: jalr_target                ,
+        hack_jump  : h_jump_cond                ,
+        hack_comp  : alu_result                 ,
+        hack_a     : rf_rs2_data                ,
+        next_pc    : next_pc                    ,
+    );
 
     // Multi-Cycle CPU State Machine & PC Update
     always_ff (clk, rst) {
