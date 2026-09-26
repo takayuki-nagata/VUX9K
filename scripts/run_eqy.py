@@ -105,10 +105,18 @@ def eqy_config(top: str, gold: list[Path], gate: list[Path], depth: int, nomatch
     # Names eqy must not use to pair up gold and gate nets, e.g. the ports of a newly
     # extracted instance, which alias existing nets and confuse the matching
     match = "\n[match *]\n" + "".join(f"gold-nomatch {p}\ngate-nomatch {p}\n" for p in nomatch) if nomatch else ""
+    # No `insbuf -chain` before partitioning: it chains a buffer between every alias
+    # name of a net so each can be a cut point, but the chain follows the netlist's
+    # connection order, which differs between gold and gate whenever a refactor adds
+    # a consumer to a net -- so one design split names the other kept together
+    # ("conflicting matches for gold bit ...", false mismatches). Without it, all
+    # names of a net stay one net on both sides.
+    options = "\n[options]\ninsbuf off\n"
     return (
         side("gold", gold)
         + "\n"
         + side("gate", gate)
+        + options
         + match
         + f"\n[strategy sby]\nuse sby\ndepth {depth}\nengine smtbmc bitwuzla\n"
     )

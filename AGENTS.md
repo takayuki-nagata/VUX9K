@@ -350,13 +350,17 @@ sides flattened below `<top>` (~6 min per top on 4 cores). Notes:
 - A mismatch is reported per partition ("Failed to prove equivalence of
   partition unified_cpu.hack_jump_take"); details are under
   `build/eqy/<top>/<top>/`.
-- Extracting logic into a new instance can make matching fail with "conflicting
-  matches for gold bit …": yosys buffers a net that now also feeds the new
-  instance's port, so names that are one net in gold become several in gate. Pass
-  `EQY_NOMATCH="<inst>.* <aliased net names>"` (e.g. R3's soc_addr_decoder:
-  `"rd_decode.* wr_decode.* cpu_inst.data_waddr cpu_inst.data_addr"`). Excluding
-  names only removes cut points — partitions grow, the proof stays sound — and put
-  the exact command in the commit message.
+- eqy runs with `[options] insbuf off`. By default eqy chains a buffer between
+  every alias name of a net before partitioning, so each name can be a cut point;
+  the chain follows the netlist's connection order, which differs between gold and
+  gate as soon as a refactor adds a consumer to a net (typically: extracting logic
+  into a new instance that reads `rf_rs1_data`/`rv_imm`). One design then split
+  names the other kept together — "conflicting matches for gold bit …" at
+  partitioning, or false mismatches in whole groups (`reg_file.rs1_data.*`,
+  `rv_decode.imm_reg.*`). With it off, all names of a net stay one net on both
+  sides; R3–R5's extractions prove equivalent with no hand-written exclusions.
+  `EQY_NOMATCH="<patterns>"` still adds `gold-/gate-nomatch` lines if ever needed
+  (excluding names only removes cut points: partitions grow, the proof stays sound).
 - Proofs are local to each partition, so a change that is only unreachable
   because of how *another* block drives it (e.g. `fifo_sync` accepting a write
   on an empty-and-read cycle, which `uart_controller` never produces) still
