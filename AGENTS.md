@@ -249,9 +249,14 @@ are easy to break without noticing:
   that instruction's increment (`rv32mi-p-instret_overflow` checks this; it passed
   vacuously while the counters read 0). CSR writes happen only for CSRRW[I] or a
   non-zero rs1/uimm (`csr_wr`), so plain `csrr` reads have no side effects.
-  Unimplemented CSR addresses read 0 and
-  ignore writes instead of trapping (firmware/Zephyr read e.g. `mhartid`); only
-  a write to a read-only CSR (`addr[11:10] == 3`, e.g. `unimp`) is illegal.
+  **Accessing a CSR that isn't implemented is illegal** (as is writing a read-only
+  one, `addr[11:10] == 3`, e.g. `unimp`). The legal set is `csr_exists` in
+  `rv32i_trap_unit` (README, "RV32 CSRs"); it covers everything Zephyr and the
+  riscv-tests env touch, checked by disassembling them. A few are legal only to
+  read 0: `mhartid` and the other machine information registers, `mstatush`, and
+  the debug trigger registers (`rv32mi-p-breakpoint` writes `tselect` without a
+  trap guard). Before adding a CSR access to firmware, add the CSR to both
+  `csr_exists` and `rv32i_csrs`.
 - **The tb is split: hardware in Veryl, stimulus in cocotb.** `sim/tb_hex_runner.veryl`
   holds the RAM (preloaded from `program.hex` in the cwd), the CPU and the `tohost`
   latch; `scripts/riscv_tests/hex_runner.py` drives clock/reset, waits for the latch

@@ -36,11 +36,24 @@ pub module rv32i_trap_unit (
     var fetch_misalign: logic            ;
     var mem_misalign  : logic            ;
 
-    // Legality. Unimplemented CSR addresses stay legal (read 0, writes ignored); a
-    // write to a read-only CSR (addr[11:10] == 3, e.g. `unimp` = csrrw x0, cycle, x0)
-    // is illegal.
+    // Legality. Accessing a CSR the CPU doesn't have is illegal, as is writing a
+    // read-only one (addr[11:10] == 3, e.g. `unimp` = csrrw x0, cycle, x0).
     let csr_writes: logic = funct3[1:0] == 2'b01 || rs1 != 5'd0; // CSRRW[I], or non-zero rs1/uimm
     let csr_ro_wr : logic = csr_addr[11:10] == 2'b11 && csr_writes;
+    var csr_exists: logic;
+    always_comb {
+        case csr_addr {
+            // Implemented machine-mode CSRs (rv32i_csrs)
+            12'h300, 12'h301, 12'h304, 12'h305, 12'h340, 12'h341, 12'h342, 12'h343, 12'h344         : csr_exists = 1'b1;
+            // Counters: mcycle/minstret (+h) and the user-level cycle/time/instret (+h)
+            12'hB00, 12'hB02, 12'hB80, 12'hB82, 12'hC00, 12'hC01, 12'hC02, 12'hC80, 12'hC81, 12'hC82: csr_exists = 1'b1;
+            // Read as 0: mstatush, the machine information registers, and the debug
+            // trigger registers (no triggers: riscv-tests' breakpoint test writes tselect
+            // unguarded and expects it to read back 0)
+            12'h310, 12'hF11, 12'hF12, 12'hF13, 12'hF14, 12'hF15, 12'h7A0, 12'h7A1, 12'h7A2, 12'h7A3: csr_exists = 1'b1;
+            default                                                                                 : csr_exists = 1'b0;
+        }
+    }
     always_comb {
         op = instr[6:0] as rv32i_pkg::Opcode;
         case op {
@@ -66,7 +79,7 @@ pub module rv32i_trap_unit (
                     // ECALL / EBREAK / MRET / WFI (WFI is a no-op)
                     is_illegal = !(is_ecall || is_ebreak || is_mret || is_wfi);
                 } else {
-                    is_illegal = funct3 == 3'b100 || csr_ro_wr;
+                    is_illegal = funct3 == 3'b100 || csr_ro_wr || !csr_exists;
                 }
             }
             default: is_illegal = 1'b1; // includes 0x0000_0000

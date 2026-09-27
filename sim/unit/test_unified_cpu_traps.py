@@ -169,6 +169,37 @@ async def test_unimp_is_illegal(dut):
     await expect_ok(dut, trap_program(body, 2, mtval=lambda a, r: a.li(r, 0xC0001073)))
 
 
+def csr_read_word(csr: int, rd: int = 5) -> int:
+    """csrrs x<rd>, csr, x0 (csrr), encoded by number for CSRs rv32_asm doesn't name"""
+    return (csr << 20) | (2 << 12) | (rd << 7) | 0x73
+
+
+@cocotb.test()
+async def test_unknown_csr_is_illegal(dut):
+    """Reading a CSR the CPU doesn't implement (mcountinhibit) is illegal, mtval = the word"""
+    word = csr_read_word(0x320)
+
+    def body(a):
+        a.label("insn")
+        a.word(word)
+
+    await expect_ok(dut, trap_program(body, 2, mtval=lambda a, r: a.li(r, word)))
+
+
+@cocotb.test()
+async def test_listed_csrs_do_not_trap(dut):
+    """The read-as-zero M-mode CSRs, the debug trigger CSRs and the counters are legal"""
+
+    def body(a):
+        for csr in (0xF11, 0xF12, 0xF13, 0xF14, 0xF15, 0x310, 0x7A0, 0x7A1, 0x7A2, 0x7A3, 0xC00, 0xC01, 0xC02):
+            a.word(csr_read_word(csr))
+        a.word((0x7A0 << 20) | (1 << 12) | 0x73)  # csrw tselect, x0: writes are ignored
+
+    words = program_with_handler(body)
+    pcs, _ = await run_program(dut, words)
+    assert HANDLER not in pcs, f"a listed CSR trapped; last PCs {[hex(p) for p in pcs[-4:]]}"
+
+
 @cocotb.test()
 async def test_misaligned_jalr_traps_without_link(dut):
     """jalr to a 2-byte-aligned target: mcause 0, mtval = target, rd not written"""
