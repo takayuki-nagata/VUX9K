@@ -275,6 +275,63 @@ async def test_soc_uart_status(dut):
     assert out.strip() == "UPASS", f"UART status check failed: {out!r} (see uart_status_program() codes)"
 
 
+def uart_rx_irq_program() -> list[int]:
+    """Enable the external interrupt (UART RX); the handler checks mcause and reads the byte."""
+    a = Asm()
+    a.la("t0", "handler")
+    a.csrw("mtvec", "t0")
+    a.li("s0", UART)
+    a.li("s1", 0)  # set to the received byte by the handler
+    a.li("t0", 0x800)  # mie.MEIE
+    a.csrs("mie", "t0")
+    a.li("t0", 0x8)  # mstatus.MIE
+    a.csrs("mstatus", "t0")
+    _puts(a, "?")
+    a.li("t3", 20000)
+    a.label("spin")
+    a.bnez("s1", "irq_taken")
+    a.addi("t3", "t3", -1)
+    a.bnez("t3", "spin")
+    _puts(a, "EIRQ-NONE\n")
+    a.label("halt1")
+    a.j("halt1")
+    a.label("irq_taken")
+    a.li("t1", ord("k"))
+    a.bne("s1", "t1", "bad_byte")
+    _puts(a, "EIRQ-OK\n")
+    a.label("halt2")
+    a.j("halt2")
+    a.label("bad_byte")
+    _puts(a, "EIRQ-BADBYTE\n")
+    a.label("halt4")
+    a.j("halt4")
+
+    a.label("handler")
+    a.csrr("t0", "mcause")
+    a.li("t1", 0x8000000B)
+    a.bne("t0", "t1", "bad_cause")
+    a.lw("s1", 0, "s0")  # reading the byte empties the RX FIFO -> the interrupt deasserts
+    a.mret()
+    a.label("bad_cause")
+    _puts(a, "EIRQ-BADCAUSE\n")
+    a.label("halt3")
+    a.j("halt3")
+
+    _putc_routine(a)
+    return a.assemble()
+
+
+@cocotb.test()
+async def test_soc_uart_rx_interrupt(dut):
+    """A received byte raises the machine external interrupt (mcause 0x8000000B) when MEIE is set"""
+    program = uart_rx_irq_program()
+    ser, _ = await start_soc(dut, during_reset=lambda soc: load_imem(soc, program))
+    await ser.wait_for(b"?", timeout_cycles=200_000)
+    ser.write(b"k")
+    out = (await ser.wait_for(b"\n", timeout_cycles=1_000_000)).decode("ascii", errors="replace")
+    assert out.strip() == "EIRQ-OK", f"UART RX interrupt not taken/handled: {out!r}"
+
+
 @cocotb.test()
 async def test_soc_mmio_map(dut):
     """Address decoder, D-RAM lanes, I-RAM data port, timer, GPIO, UART RX and soft reset"""

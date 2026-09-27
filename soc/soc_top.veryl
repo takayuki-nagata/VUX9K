@@ -120,7 +120,7 @@ pub module soc_top (
         instr_in    : instr_data  ,
         data_in     : cpu_data_in ,
         timer_irq_in: timer_irq   ,
-        ext_irq_in  : 1'b0        ,
+        ext_irq_in  : !uart_empty , // machine external interrupt: UART RX data waiting
         sw_irq_in   : 1'b0        ,
         pc_out      : instr_addr  ,
         data_addr   : data_addr   ,
