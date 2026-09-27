@@ -18,6 +18,7 @@
 //! +1 when it writes both A and D). A trap costs 2 (it is taken in EXECUTE).
 
 use crate::csr::{self, Csrs};
+use crate::periph::{self, Periph, SoftReset};
 use crate::profile::Profile;
 
 /// riscv-tests' `tohost` (scripts/riscv_tests/link.ld), IsaTest profile only.
@@ -63,6 +64,7 @@ pub struct Soc {
     pub regs: [u32; 32],
     pub pc: u32,
     pub csr: Csrs,
+    pub periph: Periph,
     /// true: RV32I, false: Hack (auto_mode_detector's is_riscv_mode).
     pub riscv_mode: bool,
     mode_latched: bool,
@@ -188,6 +190,7 @@ impl Soc {
             regs: [0; 32],
             pc: 0,
             csr: Csrs::default(),
+            periph: Periph::default(),
             riscv_mode: true,
             mode_latched: false,
             steps: 0,
@@ -202,15 +205,35 @@ impl Soc {
         soc
     }
 
-    /// Power-on/hardware reset of the CPU (memories keep their contents).
+    /// Power-on reset: CPU and peripherals (memories keep their contents).
     pub fn reset(&mut self) {
         self.regs = [0; 32];
         self.pc = 0;
         self.csr = Csrs::default();
+        self.periph = Periph::default();
         self.riscv_mode = true;
         self.mode_latched = false;
         self.cycle = 0;
         self.tohost = None;
+    }
+
+    /// cpu_soft_rst (GPIO 0xC): the FSM, PC and CSRs reset, the register file and
+    /// everything outside the CPU don't; the CPU fetches from 0 once the pulse ends.
+    fn soft_reset(&mut self, sr: SoftReset) {
+        self.pc = 0;
+        self.csr = Csrs::default();
+        self.mcycle_written = None;
+        self.cycle = sr.release;
+        match sr.mode {
+            Some(rv32) => {
+                self.riscv_mode = rv32;
+                self.mode_latched = true;
+            }
+            None => {
+                self.riscv_mode = true;
+                self.mode_latched = false;
+            }
+        }
     }
 
     // ----- memory loading (preload, like $readmemh / the loaders) ------------------
@@ -248,8 +271,9 @@ impl Soc {
         self.iram[((pc >> 2) & self.iram_mask) as usize]
     }
 
-    /// RV32 data read of the 32-bit word containing `addr` (soc_addr_decoder + soc_ram).
-    fn rv_read_word(&mut self, addr: u32) -> u32 {
+    /// RV32 data read of the 32-bit word containing `addr` (soc_addr_decoder + soc_ram),
+    /// by the instruction fetched in cycle `t`.
+    fn rv_read_word(&mut self, addr: u32, t: u64) -> u32 {
         if self.profile == Profile::IsaTest {
             return self.iram[((addr >> 2) & self.iram_mask) as usize];
         }
@@ -261,13 +285,14 @@ impl Soc {
                     self.dram[((addr >> 2) & self.dram_mask) as usize]
                 }
             }
-            4 => self.mmio_read(addr),
+            4 => self.mmio_read(addr, t),
             _ => 0,
         }
     }
 
-    /// RV32 data store: `data` is the lane-replicated store data, `be` the byte enables.
-    fn rv_write(&mut self, addr: u32, data: u32, be: u8) {
+    /// RV32 data store (in MEM_WAIT, the third cycle of the instruction fetched in `t`):
+    /// `data` is the lane-replicated store data, `be` the byte enables.
+    fn rv_write(&mut self, addr: u32, data: u32, be: u8, t: u64) {
         if self.profile == Profile::IsaTest {
             if addr == TOHOST && self.tohost.is_none() {
                 self.tohost = Some(data);
@@ -288,7 +313,7 @@ impl Soc {
                 let idx = ((addr >> 2) & self.dram_mask) as usize;
                 self.dram[idx] = merge_bytes(self.dram[idx], data, be);
             }
-            4 => self.mmio_write(addr, data),
+            4 => self.mmio_write(addr, data, t + 2),
             _ => {}
         }
     }
@@ -301,17 +326,37 @@ impl Soc {
         addr < window
     }
 
-    fn mmio_read(&mut self, _addr: u32) -> u32 {
-        0 // peripherals come with P2
+    /// MMIO read by the instruction fetched in cycle `t`. The registered peripherals
+    /// (timer, SD, GPIO) sample in its EXECUTE cycle, t + 1.
+    fn mmio_read(&mut self, addr: u32, t: u64) -> u32 {
+        match (addr >> 12) & 0xF {
+            periph::PAGE_TIMER => self.periph.timer.read(addr, t + 1),
+            periph::PAGE_GPIO => self.periph.gpio.read(addr, t + 1),
+            _ => 0,
+        }
     }
 
-    fn mmio_write(&mut self, _addr: u32, _data: u32) {}
+    /// MMIO write taking effect at the end of cycle `edge`.
+    fn mmio_write(&mut self, addr: u32, data: u32, edge: u64) {
+        match (addr >> 12) & 0xF {
+            periph::PAGE_TIMER => self.periph.timer.write(addr, data, edge),
+            periph::PAGE_GPIO => self.periph.gpio.write(addr, data, edge),
+            _ => {}
+        }
+    }
 
-    /// Hack data read of the word at address `a` (Hack decode: RAM below 0x6000).
-    fn hack_read(&mut self, a: u32) -> u32 {
+    /// Hack MMIO addresses (0x6000-0x600F) as RV32 addresses: UART in the first four
+    /// words, GPIO above; the register is addr[3:0].
+    fn hack_mmio(a16: u32) -> u32 {
+        0x4000_0000 | if a16 & 0xC == 0 { 0 } else { 0x3000 } | (a16 & 0xF)
+    }
+
+    /// Hack data read of the word at address `a` (Hack decode: RAM below 0x6000), for
+    /// the instruction fetched in cycle `t`.
+    fn hack_read(&mut self, a: u32, t: u64) -> u32 {
         let a16 = a & 0xFFFF;
         if (0x6000..0x6010).contains(&a16) {
-            self.mmio_read(0x4000_0000 | if a16 & 0xC == 0 { 0 } else { 0x3000 } | (a16 & 0xF))
+            self.mmio_read(Self::hack_mmio(a16), t)
         } else if a16 < 0x6000 {
             self.dram[(a16 & self.dram_mask) as usize]
         } else {
@@ -319,13 +364,11 @@ impl Soc {
         }
     }
 
-    fn hack_write(&mut self, a: u32, v: u32) {
+    /// Hack data write taking effect at the end of cycle `edge`.
+    fn hack_write(&mut self, a: u32, v: u32, edge: u64) {
         let a16 = a & 0xFFFF;
         if (0x6000..0x6010).contains(&a16) {
-            self.mmio_write(
-                0x4000_0000 | if a16 & 0xC == 0 { 0 } else { 0x3000 } | (a16 & 0xF),
-                v,
-            );
+            self.mmio_write(Self::hack_mmio(a16), v, edge);
         } else if a16 < 0x6000 {
             let idx = (a16 & self.dram_mask) as usize;
             self.dram[idx] = v;
@@ -334,13 +377,21 @@ impl Soc {
 
     // ----- interrupts -----------------------------------------------------------------
 
-    /// Pending interrupt lines (mip) this cycle.
+    /// Pending interrupt lines (mip) during cycle `c`.
+    fn mip_at(&self, c: u64) -> u32 {
+        if self.periph.timer.irq(c) {
+            csr::MIP_MTIP
+        } else {
+            0
+        }
+    }
+
     fn mip(&self) -> u32 {
-        0 // MTIP/MEIP come with the timer and UART in P2
+        self.mip_at(self.cycle)
     }
 
     fn mtime(&self) -> u64 {
-        self.cycle // replaced by the timer in P2
+        self.periph.timer.mtime(self.cycle)
     }
 
     // ----- execution ------------------------------------------------------------------
@@ -385,6 +436,9 @@ impl Soc {
         }
         self.cycle += r.cycles as u64;
         self.steps += 1;
+        if let Some(sr) = self.periph.gpio.take_soft_reset() {
+            self.soft_reset(sr);
+        }
         r
     }
 
@@ -484,7 +538,7 @@ impl Soc {
             }
             OP_LOAD => {
                 r.cycles = 3;
-                let word = self.rv_read_word(mem_addr);
+                let word = self.rv_read_word(mem_addr, self.cycle);
                 let sh = (mem_addr & 3) * 8;
                 let v = match f3 {
                     0 => ((word >> sh) as u8 as i8) as i32 as u32,
@@ -506,7 +560,7 @@ impl Soc {
                     ),
                     _ => (x2, 0b1111),
                 };
-                self.rv_write(mem_addr, data, be);
+                self.rv_write(mem_addr, data, be, self.cycle);
                 r.store = Some((mem_addr, data, be));
             }
             OP_IMM | OP_REG => {
@@ -619,7 +673,8 @@ impl Soc {
             // comps that never read M (hack_translator forces use_mem = 0)
             let uses_y = !matches!(comp, 0b001101 | 0b001111 | 0b011111 | 0b001110);
             let use_mem = a_bit && uses_y;
-            let y = if use_mem { self.hack_read(a) } else { a };
+            let t = self.cycle;
+            let y = if use_mem { self.hack_read(a, t) } else { a };
             let out = match comp {
                 0b101010 => 0,
                 0b111111 => 1,
@@ -643,7 +698,8 @@ impl Soc {
                 _ => d.wrapping_add(y), // hack_translator default: ADD D, Y
             };
             if dest & 1 != 0 {
-                self.hack_write(a, out);
+                // M is written in EXECUTE, or in HACK_WB when the comp read M
+                self.hack_write(a, out, if use_mem { t + 3 } else { t + 1 });
                 r.store = Some((a, out, 0b1111));
             }
             if dest & 4 != 0 {

@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 
 pub mod csr;
+pub mod periph;
 pub mod profile;
 pub mod soc;
 
