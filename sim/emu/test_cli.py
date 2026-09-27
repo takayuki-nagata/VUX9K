@@ -5,7 +5,9 @@
 
 import os
 import socket
+import struct
 import subprocess
+import sys
 import time
 
 from vux9k import REPO_ROOT, sd_image
@@ -37,11 +39,18 @@ def test_hack_demo_without_firmware():
     assert b"ALL HACK C FIRMWARE TESTS PASSED" in r.stdout
 
 
-def test_tcp_uart_session():
+def free_port():
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
-    proc = subprocess.Popen([EMU, "--tcp", str(port), "--speed", "0"], cwd=REPO_ROOT, stderr=subprocess.PIPE)
+        return s.getsockname()[1]
+
+
+def tcp_session(extra_args, dialog):
+    """Run the emulator with its UART on TCP; dialog(recv_until, send) drives it."""
+    port = free_port()
+    proc = subprocess.Popen(
+        [EMU, "--tcp", str(port), "--speed", "0", *extra_args], cwd=REPO_ROOT, stderr=subprocess.PIPE
+    )
     try:
         for _ in range(100):
             try:
@@ -52,15 +61,48 @@ def test_tcp_uart_session():
         else:
             raise AssertionError("emulator did not listen")
         with conn:
-            buf = b""
-            while not buf.endswith(b"vux> "):
-                buf += conn.recv(4096)
-            conn.sendall(b"h\r")
-            while b"Available Commands" not in buf.split(b"vux> ", 1)[1]:
-                buf += conn.recv(4096)
+            buf = bytearray()
+
+            def recv_until(token):
+                while token not in buf:
+                    chunk = conn.recv(4096)
+                    assert chunk, f"connection closed waiting for {token!r}: {bytes(buf)!r}"
+                    buf.extend(chunk)
+                out = bytes(buf[: buf.index(token) + len(token)])
+                del buf[: len(out)]
+                return out
+
+            dialog(recv_until, conn.sendall)
     finally:
         proc.wait(timeout=30)
-    assert b"host closed the UART" in proc.stderr.read()
+    return proc.stderr.read()
+
+
+def test_tcp_uart_session():
+    def dialog(recv_until, send):
+        recv_until(b"vux> ")
+        send(b"h\r")
+        recv_until(b"Available Commands")
+
+    assert b"host closed the UART" in tcp_session([], dialog)
+
+
+def test_mkimg_slot_boots_from_the_boot_manager(tmp_path):
+    payload = tmp_path / "hash.bin"
+    # lui a1, 0x40000; addi a0, zero, '#'; sb a0, 0(a1); j .
+    payload.write_bytes(struct.pack("<IIII", 0x400005B7, 0x02300513, 0x00A58023, 0x0000006F))
+    img = tmp_path / "sd.img"
+    tool = [sys.executable, os.path.join(REPO_ROOT, "tools", "vux_tool.py")]
+    subprocess.run([*tool, "mkimg", str(img), "--slot", f"1:{payload}:riscv:Hash"], check=True)
+    assert len(img.read_bytes()) == (128 + 1) * 512
+
+    def dialog(recv_until, send):
+        recv_until(b"vux> ")
+        send(b"1")
+        recv_until(b"[RL] Slot 1")
+        recv_until(b"#")
+
+    tcp_session(["--sd", str(img)], dialog)
 
 
 def test_sd_write_back(tmp_path):

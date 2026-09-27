@@ -639,6 +639,42 @@ def cmd_reset(args):
         sys.exit(1)
 
 
+def build_sd_image(slots, mbr=True):
+    """Raw SD card image (sector n at byte 512 n), as `flash-sd` would leave the card.
+
+    slots: iterable of (slot, file_or_bytes, mode, name). Sector 0 carries the 0x55AA
+    MBR signature unless mbr=False. Returns bytes, sized up to the last slot's sectors.
+    """
+    img = bytearray(512)
+    if mbr:
+        img[510:512] = b"\x55\xaa"
+    for slot, src, mode, name in slots:
+        raw, meta = build_vux9_image(src, slot=slot, name=name, mode=mode)
+        start = (64 + (slot << 6)) * 512
+        if len(img) < start + len(raw):
+            img.extend(bytes(start + len(raw) - len(img)))
+        img[start : start + len(raw)] = raw
+    return bytes(img)
+
+
+def cmd_mkimg(args):
+    slots = []
+    for spec in args.slot:
+        parts = spec.split(":", 3)
+        if len(parts) < 3 or not parts[0].isdigit() or parts[2] not in ("hack", "riscv"):
+            print(f"Invalid --slot {spec!r}: expected N:FILE:hack|riscv[:NAME]")
+            sys.exit(2)
+        slot = int(parts[0])
+        if not 0 <= slot <= 9:
+            print(f"Invalid slot {slot}: 0-9")
+            sys.exit(2)
+        slots.append((slot, parts[1], parts[2], parts[3] if len(parts) > 3 else ""))
+    img = build_sd_image(slots, mbr=not args.no_mbr)
+    with open(args.output, "wb") as f:
+        f.write(img)
+    print(f"Wrote {args.output}: {len(img) // 512} sectors, slots {sorted(s[0] for s in slots) or 'none'}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="VUX9K Host Tooling")
     parser.add_argument("--port", default="auto", help="Serial/FTDI port URL (default: auto)")
@@ -677,8 +713,23 @@ def main():
     sub_flash.add_argument("--mode", choices=["hack", "riscv"], default="hack", help="Target ISA mode")
     sub_flash.add_argument("--version", type=int, default=1, help="Version number (default: 1)")
 
+    # mkimg
+    sub_img = subparsers.add_parser("mkimg", help="Build a raw SD card image (for the emulator's --sd)")
+    sub_img.add_argument("output", help="Image file to write")
+    sub_img.add_argument(
+        "--slot",
+        action="append",
+        default=[],
+        metavar="N:FILE:MODE[:NAME]",
+        help="Put FILE in slot N (0-9) for ISA MODE (hack|riscv); repeatable",
+    )
+    sub_img.add_argument("--no-mbr", action="store_true", help="Leave sector 0 without the 0x55AA signature")
+
     args = parser.parse_args()
 
+    if args.command == "mkimg":
+        cmd_mkimg(args)
+        return
     if args.command == "reset":
         cmd_reset(args)
     elif args.command == "monitor":
