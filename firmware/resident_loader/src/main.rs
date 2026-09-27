@@ -25,6 +25,11 @@ const SD_CS: *mut u32 = 0x4000_2004 as *mut u32;
 const SD_STATUS: *const u32 = 0x4000_2008 as *const u32;
 
 const GPIO_RESET_REG: *mut u32 = 0x4000_300C as *mut u32;
+// ISA the CPU starts in after the next soft reset (gpio_controller 0x8): the loaded
+// slot's, rather than a guess from its first instruction
+const GPIO_BOOT_MODE_REG: *mut u32 = 0x4000_3008 as *mut u32;
+const BOOT_MODE_VALID: u32 = 0x100;
+const BOOT_MODE_RV32: u32 = BOOT_MODE_VALID | 1;
 const RESET_MAGIC: u32 = 0x5A5A_A55A;
 const SCRATCH_SDHC_REG: *mut u32 = 0x2000_1FF8 as *mut u32;
 const MAILBOX_REG: *mut u32 = 0x2000_1FFC as *mut u32;
@@ -131,12 +136,14 @@ fn spi_end_block() {
     spi_deselect();
 }
 
-fn load_slot_from_sd(is_sdhc: bool, slot_id: u32) -> bool {
+/// Loads a slot into I-RAM. Returns the value for GPIO_BOOT_MODE_REG (valid bit and the
+/// header's ISA, 1 = RV32 / 0 = Hack), or 0 if the slot couldn't be loaded.
+fn load_slot_from_sd(is_sdhc: bool, slot_id: u32) -> u32 {
     let start_sector = 64 + (slot_id << 6);
 
     if !spi_start_block(is_sdhc, start_sector) {
         uart_puts(b"[RL] E1\n");
-        return false;
+        return 0;
     }
 
     let mut header = [0u8; 64];
@@ -146,7 +153,7 @@ fn load_slot_from_sd(is_sdhc: bool, slot_id: u32) -> bool {
 
     let magic = (header[0] as u32) | ((header[1] as u32) << 8) | ((header[2] as u32) << 16) | ((header[3] as u32) << 24);
     let ver_flags = (header[4] as u32) | ((header[5] as u32) << 8) | ((header[6] as u32) << 16) | ((header[7] as u32) << 24);
-    let _mode = (header[8] as u32) | ((header[9] as u32) << 8) | ((header[10] as u32) << 16) | ((header[11] as u32) << 24);
+    let mode = (header[8] as u32) | ((header[9] as u32) << 8) | ((header[10] as u32) << 16) | ((header[11] as u32) << 24);
     let size = (header[12] as u32) | ((header[13] as u32) << 8) | ((header[14] as u32) << 16) | ((header[15] as u32) << 24);
     let load_addr = (header[16] as u32) | ((header[17] as u32) << 8) | ((header[18] as u32) << 16) | ((header[19] as u32) << 24);
 
@@ -154,7 +161,7 @@ fn load_slot_from_sd(is_sdhc: bool, slot_id: u32) -> bool {
         uart_puts(b"[RL] E2\n");
         skip_bytes(448);
         spi_end_block();
-        return false;
+        return 0;
     }
 
     let max_size = 14336;
@@ -162,7 +169,7 @@ fn load_slot_from_sd(is_sdhc: bool, slot_id: u32) -> bool {
         uart_puts(b"[RL] E3\n");
         skip_bytes(448);
         spi_end_block();
-        return false;
+        return 0;
     }
 
     let dest_ptr = load_addr as *mut u32;
@@ -187,7 +194,7 @@ fn load_slot_from_sd(is_sdhc: bool, slot_id: u32) -> bool {
     while copied < size as usize {
         if !spi_start_block(is_sdhc, sector) {
             uart_puts(b"[RL] E4\n");
-            return false;
+            return 0;
         }
         let chunk = if size as usize - copied > 512 { 512 } else { size as usize - copied };
         let chunk_words = (chunk + 3) / 4;
@@ -204,7 +211,7 @@ fn load_slot_from_sd(is_sdhc: bool, slot_id: u32) -> bool {
         sector += 1;
     }
 
-    true
+    BOOT_MODE_VALID | (mode & 1)
 }
 
 #[no_mangle]
@@ -236,7 +243,8 @@ pub extern "C" fn loader_main() -> ! {
             spi_transfer(0xFF);
         }
 
-        if load_slot_from_sd(is_sdhc, slot_num) {
+        let boot_mode = load_slot_from_sd(is_sdhc, slot_num);
+        if boot_mode != 0 {
             if is_slot_update {
                 unsafe {
                     core::ptr::write_volatile(MAILBOX_REG, 0x5A5A_B002);
@@ -264,6 +272,7 @@ pub extern "C" fn loader_main() -> ! {
             }
             // Trigger CPU Soft Reset to launch newly loaded slot at 0x0000_0000
             unsafe {
+                core::ptr::write_volatile(GPIO_BOOT_MODE_REG, boot_mode);
                 core::ptr::write_volatile(GPIO_RESET_REG, RESET_MAGIC);
                 loop {
                     core::arch::asm!("nop");
@@ -273,8 +282,9 @@ pub extern "C" fn loader_main() -> ! {
         uart_puts(b"[RL] Load failed, returning to Boot Manager\n");
     }
 
-    // Fallback: trigger CPU soft reset
+    // Fallback: trigger CPU soft reset (into the RV32 Boot Manager)
     unsafe {
+        core::ptr::write_volatile(GPIO_BOOT_MODE_REG, BOOT_MODE_RV32);
         core::ptr::write_volatile(GPIO_RESET_REG, RESET_MAGIC);
         loop {
             core::arch::asm!("nop");

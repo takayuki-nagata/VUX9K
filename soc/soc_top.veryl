@@ -49,8 +49,10 @@ pub module soc_top (
             }
         }
     }
-    var cpu_soft_rst: logic;
-    let rst         : reset = raw_rst as reset;
+    var cpu_soft_rst   : logic;
+    var boot_mode_valid: logic;
+    var boot_mode      : logic;
+    let rst            : reset = raw_rst as reset;
 
     // Bus Interconnect Signals
     var instr_addr: logic<32>;
@@ -115,23 +117,25 @@ pub module soc_top (
     inst cpu_inst: unified_cpu #(
         RESET_VECTOR: 32'h0000_0000,
     ) (
-        clk         : clk         ,
-        rst         : rst         ,
-        soft_rst    : cpu_soft_rst,
-        instr_in    : instr_data  ,
-        data_in     : cpu_data_in ,
-        timer_irq_in: timer_irq   ,
-        ext_irq_in  : !uart_empty , // machine external interrupt: UART RX data waiting
-        sw_irq_in   : 1'b0        ,
-        mtime_in    : mtime       ,
-        pc_out      : instr_addr  ,
-        data_addr   : data_addr   ,
-        data_waddr  : data_waddr  ,
-        data_out    : cpu_data_out,
-        mem_write   : mem_write   ,
-        mem_read_req: mem_read_req,
-        mem_byte_we : cpu_byte_we ,
-        active_mode : active_mode ,
+        clk            : clk            ,
+        rst            : rst            ,
+        soft_rst       : cpu_soft_rst   ,
+        boot_mode_valid: boot_mode_valid,
+        boot_mode      : boot_mode      ,
+        instr_in       : instr_data     ,
+        data_in        : cpu_data_in    ,
+        timer_irq_in   : timer_irq      ,
+        ext_irq_in     : !uart_empty    , // machine external interrupt: UART RX data waiting
+        sw_irq_in      : 1'b0           ,
+        mtime_in       : mtime          ,
+        pc_out         : instr_addr     ,
+        data_addr      : data_addr      ,
+        data_waddr     : data_waddr     ,
+        data_out       : cpu_data_out   ,
+        mem_write      : mem_write      ,
+        mem_read_req   : mem_read_req   ,
+        mem_byte_we    : cpu_byte_we    ,
+        active_mode    : active_mode    ,
     );
 
     // Instantiate UART Controller (Veryl)
@@ -203,15 +207,17 @@ pub module soc_top (
 
     // Instantiate GPIO Controller (Veryl)
     inst gpio_inst: gpio_controller (
-        clk         : clk          ,
-        rst         : rst          ,
-        addr        : periph_addr  ,
-        data_in     : cpu_data_out ,
-        data_out    : gpio_data_out,
-        we          : gpio_we      ,
-        cpu_soft_rst: cpu_soft_rst ,
-        gpio_led    : raw_led      ,
-        gpio_btn    : btn          ,
+        clk            : clk            ,
+        rst            : rst            ,
+        addr           : periph_addr    ,
+        data_in        : cpu_data_out   ,
+        data_out       : gpio_data_out  ,
+        we             : gpio_we        ,
+        cpu_soft_rst   : cpu_soft_rst   ,
+        boot_mode_valid: boot_mode_valid,
+        boot_mode      : boot_mode      ,
+        gpio_led       : raw_led        ,
+        gpio_btn       : btn            ,
     );
 
     // Address decode of the read address (loads, peripheral read latches) and of the

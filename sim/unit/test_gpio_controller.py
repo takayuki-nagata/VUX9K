@@ -6,7 +6,8 @@ gpio_controller unit tests: active-low LEDs, synchronized active-low button, and
 magic-value soft-reset pulse.
 
 Register map (addr[3:0]): 0x0 LEDs (6 bits, rw), 0x4 button (1 = pressed, ro),
-0xC soft reset (write 0x5A5AA55A or 0x0000A55A to pulse cpu_soft_rst; reads 1 while
+0x8 boot mode for the next soft reset (bit 8 valid, bit 0 RV32; valid clears when the
+reset pulse ends), 0xC soft reset (write 0x5A5AA55A or 0x0000A55A to pulse cpu_soft_rst; reads 1 while
 the pulse is active). Other offsets read 0. Reads are registered (one cycle).
 """
 
@@ -115,11 +116,33 @@ async def test_soft_reset_magic(dut):
 
 @cocotb.test()
 async def test_unmapped_offsets(dut):
-    """Offsets other than 0x0/0x4/0xC read 0, and writes to them change nothing"""
+    """Offsets other than 0x0/0x4/0x8/0xC read 0, and writes to them change nothing"""
     await setup(dut)
     await write(dut, 0x0, 0x11)
-    await write(dut, 0x8, 0x3F)
-    for addr in (0x1, 0x2, 0x8, 0xF):
+    await write(dut, 0x9, 0x3F)
+    for addr in (0x1, 0x2, 0x9, 0xF):
         assert await read(dut, addr) == 0, f"offset 0x{addr:X} must read 0"
-    assert await read(dut, 0x0) == 0x11, "write to offset 0x8 changed the LEDs"
+    assert await read(dut, 0x0) == 0x11, "write to offset 0x9 changed the LEDs"
     assert int(dut.cpu_soft_rst.value) == 0
+
+
+@cocotb.test()
+async def test_boot_mode_register(dut):
+    """0x8 holds the ISA for the next soft reset; it reads back, and valid clears when the pulse ends"""
+    await setup(dut)
+    assert (int(dut.boot_mode_valid.value), await read(dut, 0x8)) == (0, 0), "reset value"
+    await write(dut, 0x8, 0x100)  # valid, Hack
+    assert await read(dut, 0x8) == 0x100
+    assert (int(dut.boot_mode_valid.value), int(dut.boot_mode.value)) == (1, 0)
+    await write(dut, 0x8, 0x101)  # valid, RV32
+    assert (int(dut.boot_mode_valid.value), int(dut.boot_mode.value)) == (1, 1)
+
+    await write(dut, 0xC, MAGIC_A)
+    n = 0
+    while int(dut.cpu_soft_rst.value) == 1 and n < 64:
+        assert int(dut.boot_mode_valid.value) == 1, "valid must hold for the whole reset pulse"
+        await FallingEdge(dut.clk)
+        n += 1
+    assert n == PULSE_CYCLES
+    assert int(dut.boot_mode_valid.value) == 0, "valid must clear once the soft reset used it"
+    assert await read(dut, 0x8) == 0x001, "the mode bit itself is kept"

@@ -255,13 +255,13 @@ sim-gls-unit: synth-units
 
 sim-soc-fast: veryl firmware
 	@echo "=== Running Fast SoC Top Boot & Execution Verification (RTL) ==="
-	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_fast]"
+	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_fast]" "$(SIM_TESTS)::test_soc[test_soc_boot_mode]"
 
 # Same test on Icarus: 4-state simulation keeps X-propagation (e.g. a missing reset)
 # visible on the boot path, which 2-state Verilator would hide
 sim-soc-fast-icarus: veryl firmware
 	@echo "=== Running Fast SoC Top Boot & Execution Verification (RTL, Icarus 4-state) ==="
-	SIM=icarus $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_fast]"
+	SIM=icarus $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_fast]" "$(SIM_TESTS)::test_soc[test_soc_boot_mode]"
 
 sim-soc-mmio: veryl
 	@echo "=== Running SoC Memory Map / MMIO Peripheral Tests (RTL) ==="

@@ -3,11 +3,14 @@
 
 // First-Instruction Auto Mode Detector in Veryl
 pub module auto_mode_detector (
-    clk          : input  clock    ,
-    rst          : input  reset    ,
-    soft_rst     : input  logic    ,
-    first_instr  : input  logic<32>,
-    is_riscv_mode: output logic    ,
+    clk     : input clock,
+    rst     : input reset,
+    soft_rst: input logic,
+    // Mode given by the loader for this soft reset (gpio_controller register 0x8)
+    boot_mode_valid: input  logic    ,
+    boot_mode      : input  logic    , // 1: RV32, 0: Hack
+    first_instr    : input  logic<32>,
+    is_riscv_mode  : output logic    ,
 ) {
     var mode_latched: logic   ;
     var opcode      : logic<7>;
@@ -31,8 +34,13 @@ pub module auto_mode_detector (
             mode_latched  = 1'b0;
             is_riscv_mode = 1'b1;
         } else if soft_rst {
-            mode_latched  = 1'b0;
-            is_riscv_mode = 1'b1;
+            if boot_mode_valid {
+                mode_latched  = 1'b1;
+                is_riscv_mode = boot_mode;
+            } else {
+                mode_latched  = 1'b0;
+                is_riscv_mode = 1'b1;
+            }
         } else {
             if !mode_latched {
                 if first_instr != 32'd0 {

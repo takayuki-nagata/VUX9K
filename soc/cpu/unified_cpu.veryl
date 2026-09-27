@@ -6,23 +6,26 @@
 pub module unified_cpu #(
     param RESET_VECTOR: u32 = 32'h0000_0000,
 ) (
-    clk         : input  clock    ,
-    rst         : input  reset    ,
-    soft_rst    : input  logic    ,
-    instr_in    : input  logic<32>,
-    data_in     : input  logic<32>,
-    timer_irq_in: input  logic    ,
-    ext_irq_in  : input  logic    ,
-    sw_irq_in   : input  logic    ,
-    mtime_in    : input  logic<64>, // the timer's mtime (time CSR)
-    pc_out      : output logic<32>,
-    data_addr   : output logic<32>,
-    data_waddr  : output logic<32>,
-    data_out    : output logic<32>,
-    mem_write   : output logic    ,
-    mem_read_req: output logic    ,
-    mem_byte_we : output logic<4> ,
-    active_mode : output logic    , // 0: Hack 16-bit, 1: RISC-V 32-bit
+    clk     : input clock,
+    rst     : input reset,
+    soft_rst: input logic,
+    // ISA to start in after this soft reset, if valid (else detected from the first instruction)
+    boot_mode_valid: input  logic    ,
+    boot_mode      : input  logic    , // 1: RV32, 0: Hack
+    instr_in       : input  logic<32>,
+    data_in        : input  logic<32>,
+    timer_irq_in   : input  logic    ,
+    ext_irq_in     : input  logic    ,
+    sw_irq_in      : input  logic    ,
+    mtime_in       : input  logic<64>, // the timer's mtime (time CSR)
+    pc_out         : output logic<32>,
+    data_addr      : output logic<32>,
+    data_waddr     : output logic<32>,
+    data_out       : output logic<32>,
+    mem_write      : output logic    ,
+    mem_read_req   : output logic    ,
+    mem_byte_we    : output logic<4> ,
+    active_mode    : output logic    , // 0: Hack 16-bit, 1: RISC-V 32-bit
 ) {
     enum CpuState {
         FETCH,
@@ -148,11 +151,13 @@ pub module unified_cpu #(
     ;
 
     inst mode_detect: auto_mode_detector (
-        clk          : clk          ,
-        rst          : rst          ,
-        soft_rst     : soft_rst     ,
-        first_instr  : instr_in     ,
-        is_riscv_mode: is_riscv_mode,
+        clk            : clk            ,
+        rst            : rst            ,
+        soft_rst       : soft_rst       ,
+        boot_mode_valid: boot_mode_valid,
+        boot_mode      : boot_mode      ,
+        first_instr    : instr_in       ,
+        is_riscv_mode  : is_riscv_mode  ,
     );
 
     // Hack Translator (16-bit Front-End)

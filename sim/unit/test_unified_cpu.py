@@ -21,6 +21,8 @@ async def test_unified_cpu_hack_and_riscv(dut):
     dut.data_in.value = 0
     dut.timer_irq_in.value = 0
     dut.mtime_in.value = 0
+    dut.boot_mode_valid.value = 0
+    dut.boot_mode.value = 0
     dut.ext_irq_in.value = 0
     dut.sw_irq_in.value = 0
     dut.instr_in.value = (0x000F << 16) | 0x000F  # Hack @15 (Load 15 into A/x1)
