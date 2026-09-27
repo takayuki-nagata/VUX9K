@@ -10,6 +10,7 @@ pub module rv32i_csrs (
     csr_addr    : input  logic<12>,
     csr_wdata   : input  logic<32>,
     csr_op      : input  logic<3> ,
+    csr_wr      : input  logic    , // the CSR instruction writes (CSRRW[I], or non-zero rs1/uimm)
     csr_rdata   : output logic<32>,
     trap_entry  : input  logic    ,
     trap_cause  : input  logic<32>,
@@ -19,6 +20,8 @@ pub module rv32i_csrs (
     timer_irq_in: input  logic    ,
     ext_irq_in  : input  logic    ,
     sw_irq_in   : input  logic    ,
+    mtime_in    : input  logic<64>, // the timer's mtime, read through the time CSR
+    retire      : input  logic    , // an instruction retires this cycle (counts minstret)
     irq_pending : output logic    ,
     irq_cause   : output logic<32>,
     mtvec_out   : output logic<32>,
@@ -34,6 +37,8 @@ pub module rv32i_csrs (
     var mcause  : logic<32>;
     var mtval   : logic<32>;
     var mip     : logic<32>;
+    var mcycle  : logic<64>; // cycle counter (Zicntr), also read as cycle
+    var minstret: logic<64>; // retired-instruction counter, also read as instret
 
     var read_val : logic<32>;
     var write_val: logic<32>;
@@ -69,16 +74,23 @@ pub module rv32i_csrs (
     // CSR Read Combinational Mux
     always_comb {
         case csr_addr {
-            12'h300: read_val = mstatus | 32'h0000_1800; // MPP = M
-            12'h301: read_val = 32'h4000_0100;
-            12'h304: read_val = mie;
-            12'h305: read_val = mtvec;
-            12'h340: read_val = mscratch;
-            12'h341: read_val = mepc;
-            12'h342: read_val = mcause;
-            12'h343: read_val = mtval;
-            12'h344: read_val = mip;
-            default: read_val = 32'd0;
+            12'h300         : read_val = mstatus | 32'h0000_1800; // MPP = M
+            12'h301         : read_val = 32'h4000_0100;
+            12'h304         : read_val = mie;
+            12'h305         : read_val = mtvec;
+            12'h340         : read_val = mscratch;
+            12'h341         : read_val = mepc;
+            12'h342         : read_val = mcause;
+            12'h343         : read_val = mtval;
+            12'h344         : read_val = mip;
+            // Counters: machine-level (writable) and user-level read-only views
+            12'hB00, 12'hC00: read_val = mcycle[31:0];
+            12'hB80, 12'hC80: read_val = mcycle[63:32];
+            12'hB02, 12'hC02: read_val = minstret[31:0];
+            12'hB82, 12'hC82: read_val = minstret[63:32];
+            12'hC01         : read_val = mtime_in[31:0];
+            12'hC81         : read_val = mtime_in[63:32];
+            default         : read_val = 32'd0;
         }
     }
 
@@ -107,6 +119,8 @@ pub module rv32i_csrs (
             mepc     = 32'd0;
             mcause   = 32'd0;
             mtval    = 32'd0;
+            mcycle   = 64'd0;
+            minstret = 64'd0;
         } else if soft_rst {
             mstatus  = 32'd0;
             mie      = 32'd0;
@@ -115,7 +129,18 @@ pub module rv32i_csrs (
             mepc     = 32'd0;
             mcause   = 32'd0;
             mtval    = 32'd0;
+            mcycle   = 64'd0;
+            minstret = 64'd0;
         } else {
+            // Counters advance every cycle, except that a write to either half replaces
+            // that cycle's increment (the written value is what the next instruction reads)
+            if !(csr_wr && (csr_addr == 12'hB00 || csr_addr == 12'hB80)) {
+                mcycle = mcycle + 64'd1;
+            }
+            if !(csr_wr && (csr_addr == 12'hB02 || csr_addr == 12'hB82)) {
+                minstret = minstret + {63'd0, retire};
+            }
+
             // 1. Trap Entry Priority (Hardware Interrupt or ECALL/Exception)
             if trap_entry {
                 mepc       = trap_pc;
@@ -130,15 +155,19 @@ pub module rv32i_csrs (
                 mstatus[7] = 1'b1; // Set MPIE to 1
 
                 // 3. Explicit CSR Write Instruction Execution
-            } else if csr_op != 3'b000 {
+            } else if csr_wr {
                 case csr_addr {
-                    12'h300: mstatus  = write_val & 32'h0000_0088;
-                    12'h304: mie      = write_val & 32'h0000_0888;
-                    12'h305: mtvec    = write_val & 32'hffff_fffc;
-                    12'h340: mscratch = write_val;
-                    12'h341: mepc     = write_val & 32'hffff_fffc;
-                    12'h342: mcause   = write_val;
-                    12'h343: mtval    = write_val;
+                    12'h300: mstatus         = write_val & 32'h0000_0088;
+                    12'h304: mie             = write_val & 32'h0000_0888;
+                    12'h305: mtvec           = write_val & 32'hffff_fffc;
+                    12'h340: mscratch        = write_val;
+                    12'h341: mepc            = write_val & 32'hffff_fffc;
+                    12'h342: mcause          = write_val;
+                    12'h343: mtval           = write_val;
+                    12'hB00: mcycle[31:0]    = write_val;
+                    12'hB80: mcycle[63:32]   = write_val;
+                    12'hB02: minstret[31:0]  = write_val;
+                    12'hB82: minstret[63:32] = write_val;
                     default: {}
                 }
             }

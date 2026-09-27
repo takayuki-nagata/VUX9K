@@ -94,9 +94,10 @@ pub module soc_top (
     var ram_we     : logic   ;
     var ram_we_byte: logic<4>;
 
-    var timer_irq  : logic   ;
-    var cpu_byte_we: logic<4>;
-    var raw_led    : logic<6>;
+    var timer_irq  : logic    ;
+    var mtime      : logic<64>;
+    var cpu_byte_we: logic<4> ;
+    var raw_led    : logic<6> ;
 
     // 6x LEDs connected to Software GPIO (controlled by firmware / main.rs)
     assign led = raw_led;
@@ -122,6 +123,7 @@ pub module soc_top (
         timer_irq_in: timer_irq   ,
         ext_irq_in  : !uart_empty , // machine external interrupt: UART RX data waiting
         sw_irq_in   : 1'b0        ,
+        mtime_in    : mtime       ,
         pc_out      : instr_addr  ,
         data_addr   : data_addr   ,
         data_waddr  : data_waddr  ,
@@ -182,6 +184,7 @@ pub module soc_top (
         data_out : timer_data_out,
         we       : timer_we      ,
         timer_irq: timer_irq     ,
+        mtime_out: mtime         ,
     );
 
     // Instantiate SD Card SPI Master Controller (Veryl)

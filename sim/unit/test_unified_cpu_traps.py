@@ -28,7 +28,14 @@ async def run_program(dut, words, *, irq_after=None, irq_lines=("timer_irq_in",)
     """
     mem = {i * 4: w for i, w in enumerate(words)}
     cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start())
-    for sig, val in (("soft_rst", 0), ("data_in", 0), ("timer_irq_in", 0), ("ext_irq_in", 0), ("sw_irq_in", 0)):
+    for sig, val in (
+        ("soft_rst", 0),
+        ("data_in", 0),
+        ("timer_irq_in", 0),
+        ("ext_irq_in", 0),
+        ("sw_irq_in", 0),
+        ("mtime_in", 0),
+    ):
         getattr(dut, sig).value = val
     dut.rst.value = 0
     dut.instr_in.value = mem[0]

@@ -14,6 +14,7 @@ pub module unified_cpu #(
     timer_irq_in: input  logic    ,
     ext_irq_in  : input  logic    ,
     sw_irq_in   : input  logic    ,
+    mtime_in    : input  logic<64>, // the timer's mtime (time CSR)
     pc_out      : output logic<32>,
     data_addr   : output logic<32>,
     data_waddr  : output logic<32>,
@@ -103,6 +104,7 @@ pub module unified_cpu #(
     var r_irq      : logic    ; // interrupt sampled in FETCH, taken in EXECUTE
     var r_irq_cause: logic<32>;
     var csr_access : logic    ;
+    var rv_retire  : logic    ; // an RV32 instruction retires this cycle (minstret)
 
     // Trap / next-PC helpers
     var jalr_target: logic<32>;
@@ -225,25 +227,28 @@ pub module unified_cpu #(
 
     // Control and Status Registers (CSR)
     inst csrs_inst: rv32i_csrs (
-        clk         : clk                                    ,
-        rst         : rst                                    ,
-        soft_rst    : soft_rst                               ,
-        csr_addr    : rv_csr_addr                            ,
+        clk         : clk                                                      ,
+        rst         : rst                                                      ,
+        soft_rst    : soft_rst                                                 ,
+        csr_addr    : rv_csr_addr                                              ,
         csr_wdata   : if rv_funct3[2] ? rv_uimm : rf_rs1_data,
         csr_op      : if csr_access ? rv_funct3 : 3'b000,
-        csr_rdata   : csr_rdata                              ,
-        trap_entry  : trap_entry                             ,
-        trap_cause  : trap_cause                             ,
-        trap_pc     : pc_reg                                 ,
-        trap_val    : trap_val                               ,
-        trap_return : trap_return                            ,
-        timer_irq_in: timer_irq_in                           ,
-        ext_irq_in  : ext_irq_in                             ,
-        sw_irq_in   : sw_irq_in                              ,
-        irq_pending : irq_pending                            ,
-        irq_cause   : irq_cause                              ,
-        mtvec_out   : mtvec_out                              ,
-        mepc_out    : mepc_out                               ,
+        csr_wr      : csr_access && (rv_funct3[1:0] == 2'b01 || rv_rs1 != 5'd0),
+        csr_rdata   : csr_rdata                                                ,
+        trap_entry  : trap_entry                                               ,
+        trap_cause  : trap_cause                                               ,
+        trap_pc     : pc_reg                                                   ,
+        trap_val    : trap_val                                                 ,
+        trap_return : trap_return                                              ,
+        timer_irq_in: timer_irq_in                                             ,
+        ext_irq_in  : ext_irq_in                                               ,
+        sw_irq_in   : sw_irq_in                                                ,
+        mtime_in    : mtime_in                                                 ,
+        retire      : rv_retire                                                ,
+        irq_pending : irq_pending                                              ,
+        irq_cause   : irq_cause                                                ,
+        mtvec_out   : mtvec_out                                                ,
+        mepc_out    : mepc_out                                                 ,
     );
 
     // The cycle a Hack instruction writes its results: EXECUTE, or HACK_WB when the comp reads M
@@ -427,6 +432,10 @@ pub module unified_cpu #(
         trap_return: trap_return   ,
     );
     assign csr_access = exec_rv && rv_op == rv32i_pkg::Opcode::SYSTEM && !trap_entry;
+    // An RV32 instruction retires when it completes without trapping: in EXECUTE, or
+    // in MEM_WAIT for loads and stores (minstret)
+    let rv_mem_op: logic = rv_op == rv32i_pkg::Opcode::LOAD || rv_op == rv32i_pkg::Opcode::STORE;
+    assign rv_retire = (exec_rv && !trap_entry && !rv_mem_op) || (is_riscv_mode && state == CpuState::MEM_WAIT);
 
     // Next PC (both ISAs), with the branch/jump conditions it depends on
     inst pc_select: next_pc_unit (

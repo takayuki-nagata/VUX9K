@@ -28,6 +28,7 @@ async def test_hack_cpu_comprehensive(dut):
     dut.rst.value = 0
     dut.data_in.value = 0
     dut.timer_irq_in.value = 0
+    dut.mtime_in.value = 0
     dut.ext_irq_in.value = 0
     dut.sw_irq_in.value = 0
     dut.instr_in.value = make_hack_a(1)  # First instruction @1
@@ -222,7 +223,7 @@ async def _reset_hack(dut):
     """Clock + reset with a Hack A-instruction first, so the CPU latches Hack mode."""
     cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start())
     await FallingEdge(dut.clk)
-    for sig in ("soft_rst", "rst", "data_in", "timer_irq_in", "ext_irq_in", "sw_irq_in"):
+    for sig in ("soft_rst", "rst", "data_in", "timer_irq_in", "ext_irq_in", "sw_irq_in", "mtime_in"):
         getattr(dut, sig).value = 0
     dut.instr_in.value = make_hack_a(1)
     await ClockCycles(dut.clk, 2)

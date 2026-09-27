@@ -34,6 +34,16 @@ CSRS = {
     "mcause": 0x342,
     "mtval": 0x343,
     "mip": 0x344,
+    "mcycle": 0xB00,
+    "minstret": 0xB02,
+    "mcycleh": 0xB80,
+    "minstreth": 0xB82,
+    "cycle": 0xC00,
+    "time": 0xC01,
+    "instret": 0xC02,
+    "cycleh": 0xC80,
+    "timeh": 0xC81,
+    "instreth": 0xC82,
 }
 
 
@@ -178,6 +188,9 @@ class Asm:
 
     def bltu(self, rs1, rs2, target):
         self._branch(6, rs1, rs2, target)
+
+    def bgeu(self, rs1, rs2, target):
+        self._branch(7, rs1, rs2, target)
 
     def jal(self, rd, target):
         self._emit(lambda pc, labels: j_type(labels[target] - pc, rd))

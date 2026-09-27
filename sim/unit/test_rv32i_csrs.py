@@ -36,6 +36,7 @@ async def test_rv32i_csrs_basic(dut):
     dut.csr_addr.value = 0
     dut.csr_wdata.value = 0
     dut.csr_op.value = 0
+    dut.csr_wr.value = 0
     dut.trap_entry.value = 0
     dut.trap_cause.value = 0
     dut.trap_pc.value = 0
@@ -58,8 +59,10 @@ async def test_rv32i_csrs_basic(dut):
     dut.csr_addr.value = CSR_MTVEC
     dut.csr_wdata.value = 0x8000_0000
     dut.csr_op.value = FUNCT3_CSRRW
+    dut.csr_wr.value = 1
     await ClockCycles(dut.clk, 1)
     dut.csr_op.value = 0
+    dut.csr_wr.value = 0
     await Timer(1, unit="ns")
     assert int(dut.csr_rdata.value) == 0x8000_0000, f"Expected MTVEC=0x80000000, got {hex(int(dut.csr_rdata.value))}"
     assert int(dut.mtvec_out.value) == 0x8000_0000, "mtvec_out mismatch"
@@ -68,8 +71,10 @@ async def test_rv32i_csrs_basic(dut):
     dut.csr_addr.value = CSR_MSCRATCH
     dut.csr_wdata.value = 0x1234_5678
     dut.csr_op.value = FUNCT3_CSRRW
+    dut.csr_wr.value = 1
     await ClockCycles(dut.clk, 1)
     dut.csr_op.value = 0
+    dut.csr_wr.value = 0
     await Timer(1, unit="ns")
     assert int(dut.csr_rdata.value) == 0x1234_5678, "mscratch readback mismatch"
 
@@ -77,8 +82,10 @@ async def test_rv32i_csrs_basic(dut):
     dut.csr_addr.value = CSR_MSTATUS
     dut.csr_wdata.value = 0x0000_0008  # MIE = 1
     dut.csr_op.value = FUNCT3_CSRRS
+    dut.csr_wr.value = 1
     await ClockCycles(dut.clk, 1)
     dut.csr_op.value = 0
+    dut.csr_wr.value = 0
     await Timer(1, unit="ns")
     assert (int(dut.csr_rdata.value) & 0x8) != 0, "MIE bit not set"
 
@@ -86,8 +93,10 @@ async def test_rv32i_csrs_basic(dut):
     dut.csr_addr.value = CSR_MSTATUS
     dut.csr_wdata.value = 0x0000_0008
     dut.csr_op.value = FUNCT3_CSRRC
+    dut.csr_wr.value = 1
     await ClockCycles(dut.clk, 1)
     dut.csr_op.value = 0
+    dut.csr_wr.value = 0
     await Timer(1, unit="ns")
     assert (int(dut.csr_rdata.value) & 0x8) == 0, "MIE bit not cleared"
 
@@ -96,8 +105,10 @@ async def test_rv32i_csrs_basic(dut):
     dut.csr_addr.value = CSR_MIE
     dut.csr_wdata.value = 0x0000_0080
     dut.csr_op.value = FUNCT3_CSRRW
+    dut.csr_wr.value = 1
     await ClockCycles(dut.clk, 1)
     dut.csr_op.value = 0
+    dut.csr_wr.value = 0
 
     # Timer IRQ high, but mstatus.MIE = 0 -> irq_pending should be 0
     dut.timer_irq_in.value = 1
@@ -108,8 +119,10 @@ async def test_rv32i_csrs_basic(dut):
     dut.csr_addr.value = CSR_MSTATUS
     dut.csr_wdata.value = 0x0000_0008
     dut.csr_op.value = FUNCT3_CSRRS
+    dut.csr_wr.value = 1
     await ClockCycles(dut.clk, 1)
     dut.csr_op.value = 0
+    dut.csr_wr.value = 0
     await Timer(1, unit="ns")
     assert int(dut.irq_pending.value) == 1, "irq_pending should be 1 when MIE=1 and MTIE=1 and timer_irq_in=1"
 
@@ -167,6 +180,7 @@ async def csr_reset(dut):
         "csr_addr",
         "csr_wdata",
         "csr_op",
+        "csr_wr",
         "trap_entry",
         "trap_cause",
         "trap_pc",
@@ -186,8 +200,10 @@ async def csr_write(dut, addr, value):
     dut.csr_addr.value = addr
     dut.csr_wdata.value = value
     dut.csr_op.value = FUNCT3_CSRRW
+    dut.csr_wr.value = 1
     await ClockCycles(dut.clk, 1)
     dut.csr_op.value = 0
+    dut.csr_wr.value = 0
     await Timer(1, unit="ns")
     return int(dut.csr_rdata.value)
 
@@ -231,3 +247,68 @@ async def test_rv32i_csrs_irq_cause_priority(dut):
     dut.sw_irq_in.value = 0
     await Timer(1, unit="ns")
     assert int(dut.irq_cause.value) == 0x8000_000B
+
+
+@cocotb.test()
+async def test_rv32i_csrs_counters(dut):
+    """mcycle counts clocks, minstret counts retire pulses, time reads mtime_in; the
+    user-level cycle/time/instret CSRs are read-only views; mcycle/minstret are writable"""
+    cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start())
+    for sig in (
+        "soft_rst",
+        "csr_addr",
+        "csr_wdata",
+        "csr_op",
+        "csr_wr",
+        "trap_entry",
+        "trap_cause",
+        "trap_pc",
+        "trap_val",
+        "trap_return",
+        "timer_irq_in",
+        "ext_irq_in",
+        "sw_irq_in",
+        "retire",
+    ):
+        getattr(dut, sig).value = 0
+    dut.mtime_in.value = 0x0123_4567_89AB_CDEF
+    dut.rst.value = 0
+    await ClockCycles(dut.clk, 2)
+    dut.rst.value = 1
+
+    async def read(addr):
+        dut.csr_addr.value = addr
+        await Timer(1, unit="ns")
+        return int(dut.csr_rdata.value)
+
+    assert await read(0xC01) == 0x89AB_CDEF, "time must read mtime_in[31:0]"
+    assert await read(0xC81) == 0x0123_4567, "timeh must read mtime_in[63:32]"
+
+    c0 = await read(0xB00)
+    await ClockCycles(dut.clk, 10)
+    c1 = await read(0xB00)
+    assert c1 - c0 == 10, f"mcycle advanced {c1 - c0} in 10 clocks"
+    assert await read(0xC00) == c1, "cycle must read mcycle"
+
+    i0 = await read(0xB02)
+    dut.retire.value = 1
+    await ClockCycles(dut.clk, 3)
+    dut.retire.value = 0
+    await ClockCycles(dut.clk, 5)
+    i1 = await read(0xB02)
+    assert i1 - i0 == 3, f"minstret advanced {i1 - i0} for 3 retire pulses"
+    assert await read(0xC02) == i1, "instret must read minstret"
+
+    # Writes: mcycle high/low, minstret low; the user-level views ignore writes
+    for addr, value in ((0xB80, 0x0000_0005), (0xB00, 0xFFFF_FFF0), (0xB02, 0x0000_0100)):
+        dut.csr_addr.value = addr
+        dut.csr_wdata.value = value
+        dut.csr_op.value = FUNCT3_CSRRW
+        dut.csr_wr.value = 1
+        await ClockCycles(dut.clk, 1)
+        dut.csr_op.value = 0
+        dut.csr_wr.value = 0
+    assert await read(0xB80) == 5, "mcycleh write"
+    assert await read(0xB02) == 0x100, "minstret write (no retire pulse since)"
+    await ClockCycles(dut.clk, 20)  # mcycle low wraps from 0xFFFF_FFF0 into mcycleh
+    assert await read(0xB80) == 6, "mcycle must carry from the low into the high word"

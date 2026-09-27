@@ -332,6 +332,69 @@ async def test_soc_uart_rx_interrupt(dut):
     assert out.strip() == "EIRQ-OK", f"UART RX interrupt not taken/handled: {out!r}"
 
 
+def counters_program() -> list[int]:
+    """cycle/instret/time CSRs and a writable mcycle; 'F<code>' or 'CPASS'."""
+    a = Asm()
+    a.li("s0", DRAM + 0x100)
+    a.li("s1", TIMER)
+    # 1: instret counts retired instructions, loads/stores once each: the second csrr
+    # sees the first csrr, sw, lw and 8 nops retired
+    a.csrr("t0", "instret")
+    a.sw("t0", 0, "s0")
+    a.lw("t2", 0, "s0")
+    for _ in range(8):
+        a.nop()
+    a.csrr("t1", "instret")
+    a.sub("t3", "t1", "t0")
+    _expect(a, "t3", 11, 1)
+    # 2: cycle advances at least as fast as instret over the same kind of window
+    a.csrr("t0", "cycle")
+    for _ in range(8):
+        a.nop()
+    a.csrr("t1", "cycle")
+    a.sub("t3", "t1", "t0")
+    a.li("a1", 2)
+    a.li("t2", 9)
+    a.bltu("t3", "t2", "fail")
+    # 3: time is the timer's mtime: the CSR, read right after the MMIO register, is a few ticks ahead
+    a.lw("t0", 0, "s1")
+    a.csrr("t1", "time")
+    a.sub("t3", "t1", "t0")
+    a.li("a1", 3)
+    a.li("t2", 32)
+    a.bgeu("t3", "t2", "fail")
+    # 4: mcycle is writable and keeps counting from the written value
+    a.li("t0", 0x1000)
+    a.csrw("mcycle", "t0")
+    a.csrr("t1", "mcycle")
+    a.sub("t3", "t1", "t0")
+    a.li("a1", 4)
+    a.li("t2", 16)
+    a.bgeu("t3", "t2", "fail")
+    # 5: cycle reads the same counter
+    a.csrr("t1", "cycle")
+    a.sub("t3", "t1", "t0")
+    a.li("a1", 5)
+    a.li("t2", 32)
+    a.bgeu("t3", "t2", "fail")
+    _puts(a, "CPASS\n")
+    a.label("halt")
+    a.j("halt")
+
+    _putc_routine(a)
+    _fail_routine(a)
+    return a.assemble()
+
+
+@cocotb.test()
+async def test_soc_counters(dut):
+    """Zicntr: cycle, time (the timer's mtime), instret; mcycle writable"""
+    program = counters_program()
+    ser, _ = await start_soc(dut, during_reset=lambda soc: load_imem(soc, program))
+    out = (await ser.wait_for(b"\n", timeout_cycles=500_000)).decode("ascii", errors="replace")
+    assert out.strip() == "CPASS", f"counter check failed: {out!r} (see counters_program() codes)"
+
+
 @cocotb.test()
 async def test_soc_mmio_map(dut):
     """Address decoder, D-RAM lanes, I-RAM data port, timer, GPIO, UART RX and soft reset"""

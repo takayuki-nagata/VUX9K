@@ -302,7 +302,7 @@ VUX9K/
 │   │   ├── auto_mode_detector.veryl    # First-instruction ISA auto-detector
 │   │   ├── hack_translator.veryl       # Hack 16-bit instruction to uOp translator
 │   │   ├── rv32i_alu.veryl             # Shared 32-bit ALU
-│   │   ├── rv32i_csrs.veryl            # Machine-Mode CSRs (mstatus, mie, mtvec, mepc, mcause)
+│   │   ├── rv32i_csrs.veryl            # Machine-mode CSRs (mstatus, mie, mtvec, mepc, mcause, ...) and the cycle/time/instret counters
 │   │   ├── rv32i_decode.veryl          # RV32I instruction decoder & immediate generator
 │   │   ├── rv32i_pkg.veryl             # Common type definitions and opcodes
 │   │   ├── rv32i_regfile.veryl         # Dual-port 32 x 32-bit register file (Distributed RAM)

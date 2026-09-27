@@ -242,7 +242,14 @@ are easy to break without noticing:
   `mstatus` keeps only MIE/MPIE and reads MPP as M (`illegal`/`scall` write MPP
   and read it back to detect S/U-mode; a fully writable `mstatus` makes them take
   the S-mode path and fail), `mtvec` is direct-mode only, `misa` is read-only
-  (so `ma_fetch` skips its RVC part). Unimplemented CSR addresses read 0 and
+  (so `ma_fetch` skips its RVC part). The Zicntr counters exist: `mcycle`/`minstret`
+  (writable) with read-only `cycle`/`instret`, and `time` reads the timer's `mtime`;
+  `minstret` counts RV32 instructions that complete without trapping (loads/stores
+  in MEM_WAIT, MRET included), and a write to either half of a counter replaces
+  that instruction's increment (`rv32mi-p-instret_overflow` checks this; it passed
+  vacuously while the counters read 0). CSR writes happen only for CSRRW[I] or a
+  non-zero rs1/uimm (`csr_wr`), so plain `csrr` reads have no side effects.
+  Unimplemented CSR addresses read 0 and
   ignore writes instead of trapping (firmware/Zephyr read e.g. `mhartid`); only
   a write to a read-only CSR (`addr[11:10] == 3`, e.g. `unimp`) is illegal.
 - **The tb is split: hardware in Veryl, stimulus in cocotb.** `sim/tb_hex_runner.veryl`

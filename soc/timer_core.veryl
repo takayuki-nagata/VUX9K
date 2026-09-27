@@ -10,9 +10,12 @@ module timer_core (
     data_out : output logic<32>,
     we       : input  logic    ,
     timer_irq: output logic    ,
+    mtime_out: output logic<64>, // for the CPU's time CSR
 ) {
     var mtime   : logic<64>;
     var mtimecmp: logic<64>;
+
+    assign mtime_out = mtime;
 
     always_ff (clk, rst) {
         if_reset {
