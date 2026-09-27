@@ -23,9 +23,9 @@ from collections import namedtuple
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from vux9k import REPO_ROOT, start_soc  # noqa: E402 (puts sim/integration on sys.path)
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "integration"))
 from lockstep_programs import UART_BIT, UART_FRAME, programs  # noqa: E402
+from vux9k import REPO_ROOT, start_soc  # noqa: E402
 
 TRACE = os.environ.get("LOCKSTEP_TRACE", "")
 DIFF_DIR = os.path.join(REPO_ROOT, "build", "sim", "diff")

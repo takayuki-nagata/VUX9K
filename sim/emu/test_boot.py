@@ -9,7 +9,7 @@ Resident Loader (the emulator counterpart of sim/integration/test_soc_fast.py).
 
 import struct
 
-from vux9k import slot_image, start_soc, wait_for, press_button
+from vux9k import press_button, slot_image, start_soc, wait_for
 
 # lui a1, 0x40000; addi a0, zero, '#'; sb a0, 0(a1); j .
 HASH_PAYLOAD = struct.pack("<IIII", 0x400005B7, 0x02300513, 0x00A58023, 0x0000006F)
