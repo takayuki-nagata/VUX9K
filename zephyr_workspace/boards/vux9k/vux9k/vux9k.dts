@@ -5,70 +5,18 @@
 
 /dts-v1/;
 
-#include <mem.h>
+#include "vux9k-common.dtsi"
 
 / {
-	#address-cells = <1>;
-	#size-cells = <1>;
 	model = "VUX9K Tang Nano 9K SoC";
-	compatible = "vux9k,vux9k";
+};
 
-	chosen {
-		zephyr,console = &uart0;
-		zephyr,shell-uart = &uart0;
-		zephyr,sram = &sram0;
-		zephyr,flash = &flash0;
-	};
+/* I-RAM 0x0000-0x37FF: 0x3800-0x3FFF is the Resident Loader */
+&flash0 {
+	reg = <0x00000000 0x3800>;
+};
 
-	cpus {
-		#address-cells = <1>;
-		#size-cells = <0>;
-		timebase-frequency = <50000000>;
-
-		cpu0: cpu@0 {
-			device_type = "cpu";
-			compatible = "riscv";
-			riscv,isa = "rv32i_zicsr";
-			reg = <0>;
-			clock-frequency = <50000000>;
-
-			cpu0_intc: interrupt-controller {
-				compatible = "riscv,cpu-intc";
-				interrupt-controller;
-				#address-cells = <0>;
-				#interrupt-cells = <1>;
-			};
-		};
-	};
-
-	soc {
-		#address-cells = <1>;
-		#size-cells = <1>;
-		compatible = "simple-bus";
-		ranges;
-
-		flash0: flash@0 {
-			compatible = "soc-nv-flash";
-			reg = <0x00000000 DT_SIZE_K(256)>;
-		};
-
-		sram0: memory@20000000 {
-			compatible = "mmio-sram";
-			reg = <0x20000000 DT_SIZE_K(128)>;
-		};
-
-		uart0: uart@40000000 {
-			compatible = "vux9k,uart";
-			reg = <0x40000000 0x10>;
-			status = "okay";
-		};
-
-		timer0: timer@40001000 {
-			compatible = "sifive,clint0";
-			reg = <0x40001000 0x1000>;
-			interrupts-extended = <&cpu0_intc 3 &cpu0_intc 7>;
-			interrupt-names = "soft0", "timer0";
-			status = "okay";
-		};
-	};
+/* D-RAM 0x2000_0000-0x2000_1FF7: 0x1FF8/0x1FFC hold the Boot Manager <-> RL mailbox */
+&sram0 {
+	reg = <0x20000000 0x1FF8>;
 };

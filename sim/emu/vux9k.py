@@ -118,6 +118,23 @@ def wait_for(soc, token: bytes, timeout_cycles: int, start: int = 0) -> str:
     return out[start:end].decode("utf-8", errors="replace")
 
 
+def send_paced(soc, data: bytes, chunk: int = 16, drain_cycles: int = 50_000_000) -> None:
+    """Send data in chunks, each once the program has emptied the RX FIFO.
+
+    The FIFO holds 32 bytes; a program that only polls the UART between longer
+    computations (bc, the Boot Manager) needs a host that doesn't outrun it, as a
+    person typing does. Raises if the FIFO overflowed anyway.
+    """
+    for i in range(0, len(data), chunk):
+        soc.uart_send(data[i : i + chunk])
+        soc.run(max(0, soc.uart_send_done - soc.cycle))
+        end = soc.cycle + drain_cycles
+        while soc.uart_rx_level and soc.cycle < end:
+            soc.run(2_000)
+    if soc.uart_overrun:
+        raise RuntimeError("UART RX overrun: the program didn't keep up with the host")
+
+
 def press_button(soc, hold_ms: float = 25, after_ms: float = 15) -> None:
     """Press S2 for hold_ms and release it, then run after_ms (like test_soc_fast)."""
     soc.set_button(True)

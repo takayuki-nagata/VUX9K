@@ -1,0 +1,22 @@
+/*
+ * Copyright (c) 2026 Takayuki Nagata
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Emulator only (vux9k-emu --profile extended): NOT real hardware.
+ */
+
+/dts-v1/;
+
+#include "vux9k-common.dtsi"
+
+/ {
+	model = "VUX9K SoC, extended memory (emulator only, NOT real hardware)";
+};
+
+&flash0 {
+	reg = <0x00000000 DT_SIZE_K(512)>;
+};
+
+&sram0 {
+	reg = <0x20000000 DT_SIZE_K(256)>;
+};

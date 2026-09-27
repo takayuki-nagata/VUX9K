@@ -38,7 +38,7 @@ HACK_BUILD_DIR := $(BUILD_DIR)/hack
 ZEPHYR_BUILD_DIR ?= $(BUILD_DIR)/zephyr
 SYNTH_DIR := $(BUILD_DIR)/synth
 
-.PHONY: all emu emu-py emu-test test-isa-emu test-emu sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware sim-unit sim-boot sim-soc sim test-isa zephyr-rust-lib zephyr-bc-lib build-zephyr sim-zephyr-emu sim-zephyr-repl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
+.PHONY: all emu emu-py emu-test test-isa-emu test-emu sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware sim-unit sim-boot sim-soc sim test-isa zephyr-bc-lib build-zephyr build-zephyr-demo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
 
 all: test-ci
 
@@ -128,29 +128,36 @@ BC_APP_DIR ?= vendor/bc_clone_rs/examples/zephyr_app
 submodule-sync:
 	git submodule update --init --recursive
 
-zephyr-rust-lib:
-	cd zephyr_workspace/app/rust_demo && $(CARGO) build --release --target riscv32i-unknown-none-elf
-	$(PYTHON) scripts/elf2bin.py zephyr_workspace/app/rust_demo/target/riscv32i-unknown-none-elf/release/standalone zephyr_workspace/app/rust_demo/app.bin
-
 zephyr-bc-lib:
 	cd vendor/bc_clone_rs/crates/bc_zephyr && $(CARGO) build --release --target riscv32i-unknown-none-elf --no-default-features
 
-build-zephyr:
+# west build <board> <app dir> <build dir> [extra cmake args]; skipped without Zephyr
+define west_build
 	@if [ -d "$(ZEPHYR_BASE)" ] && [ -d "$(ZEPHYR_SDK_INSTALL_DIR)" ]; then \
-		echo "=== Building Zephyr bc_clone_rs Application (vux9k) ==="; \
 		export PATH=$(CURDIR)/$(VENV_PATH)/bin:$(ZEPHYR_SDK_INSTALL_DIR)/riscv64-zephyr-elf/bin:$(PATH) && \
 		export ZEPHYR_BASE=$(ZEPHYR_BASE) && \
 		export ZEPHYR_SDK_INSTALL_DIR=$(ZEPHYR_SDK_INSTALL_DIR) && \
 		export ZEPHYR_TOOLCHAIN_VARIANT=zephyr && \
-		west build -p auto -b vux9k $(BC_APP_DIR) -d $(ZEPHYR_BUILD_DIR) -- \
+		west build -p auto -b $(1) $(2) -d $(3) -- \
 			-DBOARD_ROOT=$(CURDIR)/zephyr_workspace \
 			-DSOC_ROOT=$(CURDIR)/zephyr_workspace \
-			-DEXTRA_ZEPHYR_MODULES=$(CURDIR)/zephyr_workspace \
-			-DRUST_TARGET=riscv32i-unknown-none-elf && \
-		$(PYTHON) scripts/elf2bin.py $(ZEPHYR_BUILD_DIR)/zephyr/zephyr.elf $(ZEPHYR_BUILD_DIR)/zephyr/zephyr.bin; \
+			-DEXTRA_ZEPHYR_MODULES=$(CURDIR)/zephyr_workspace $(4) && \
+		$(PYTHON) scripts/elf2bin.py $(3)/zephyr/zephyr.elf $(3)/zephyr/zephyr.bin; \
 	else \
-		echo "Zephyr or Zephyr SDK not found. Skipping real Zephyr build."; \
+		echo "Zephyr or Zephyr SDK not found. Skipping the Zephyr build of $(2)."; \
 	fi
+endef
+
+# bc needs ~260 KB: it runs only on the emulator's extended profile (NOT real hardware)
+build-zephyr:
+	@echo "=== Building Zephyr bc_clone_rs Application (vux9k/vux9k/ext, emulator only) ==="
+	$(call west_build,vux9k/vux9k/ext,$(BC_APP_DIR),$(ZEPHYR_BUILD_DIR),-DRUST_TARGET=riscv32i-unknown-none-elf)
+
+# The Rust demo on Zephyr for the real board; the link fails if it outgrows 14 KB / 8 KB
+ZEPHYR_DEMO_BUILD_DIR ?= $(BUILD_DIR)/zephyr-demo
+build-zephyr-demo:
+	@echo "=== Building the Zephyr Rust demo (vux9k) ==="
+	$(call west_build,vux9k,zephyr_workspace/app,$(ZEPHYR_DEMO_BUILD_DIR),)
 
 # ===== Hack 16-bit Toolchain & Firmware =====
 
@@ -205,7 +212,7 @@ sim-lockstep-slow: veryl firmware build-hack emu-py
 	LOCKSTEP_SEEDS=$(LOCKSTEP_SEEDS) LOCKSTEP_SLOW=1 SIM=verilator $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_lockstep]"
 	LOCKSTEP_SEEDS=$(LOCKSTEP_SEEDS) LOCKSTEP_SLOW=1 LOCKSTEP_TRACE=$(LOCKSTEP_TRACE_FILE) $(PYTHON) -m pytest sim/emu/test_lockstep.py
 
-test-emu: emu-py firmware build-hack
+test-emu: emu-py firmware build-hack build-zephyr build-zephyr-demo
 	@echo "=== Running firmware and demo tests on the emulator ==="
 	$(PYTHON) -m pytest sim/emu
 
@@ -229,19 +236,15 @@ sim-soc: veryl firmware sim-boot
 	@echo "=== Running SoC Top Hack Integration Tests ==="
 	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_hack]"
 
-sim-zephyr-emu: build-zephyr
-	@echo "=== Running Zephyr bc_clone_rs Python Emulator ==="
-	@if [ -f "$(ZEPHYR_BUILD_DIR)/zephyr/zephyr.bin" ]; then \
-		$(PYTHON) sim/emulator/emulator.py $(ZEPHYR_BUILD_DIR)/zephyr/zephyr.bin --steps 120000000 --until "bc> "; \
-	else \
-		$(PYTHON) sim/emulator/emulator.py $(FIRMWARE_BUILD_DIR)/firmware.bin; \
-	fi
+sim-zephyr-repl: build-zephyr emu-py
+	@echo "=== Running Zephyr bc_clone_rs self-tests & REPL on the emulator (extended profile) ==="
+	$(PYTHON) -m pytest sim/emu/test_zephyr_bc.py
 
-sim-zephyr-repl: build-zephyr
-	@echo "=== Running Zephyr bc_clone_rs Self-Tests & REPL Pytest Suite ==="
-	$(PYTHON) -m pytest sim/emulator/test_soc_bc.py
+sim-zephyr-demo-rtl: veryl firmware build-zephyr-demo
+	@echo "=== Running the Zephyr Rust demo from SD on the RTL ==="
+	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_zephyr_demo]"
 
-sim-zephyr: sim-zephyr-emu sim-zephyr-repl
+sim-zephyr: sim-zephyr-repl sim-zephyr-demo-rtl
 
 sim-hack-emu: build-hack
 	@echo "=== Running Hack Firmware on Python SoC Emulator ==="
@@ -418,7 +421,7 @@ prog-flash: $(SYNTH_DIR)/pack.fs
 # ===== Aggregate Test Targets =====
 
 # Every push/PR (CI). Long SoC runs are on Verilator (SIM_SOC); see AGENTS.md for timings.
-test-sim: check emu-test test-isa-emu firmware zephyr-rust-lib zephyr-bc-lib build-hack test-emu sim-lockstep build-zephyr sim-unit test-isa sim-gls-unit sim-soc-fast sim-soc-fast-icarus sim-soc-mmio sim-boot sim-hack-rtl sim-sd-quirks sim-hw-flow synth-top sim-soc-gls-fast
+test-sim: check emu-test test-isa-emu firmware build-zephyr-demo zephyr-bc-lib build-hack test-emu sim-lockstep build-zephyr sim-unit test-isa sim-gls-unit sim-soc-fast sim-soc-fast-icarus sim-soc-mmio sim-boot sim-hack-rtl sim-sd-quirks sim-hw-flow sim-zephyr-demo-rtl synth-top sim-soc-gls-fast
 	@echo "========================================================================"
 	@echo "  [SIM] ALL RTL, GLS NETLIST, ISA & SOC SIMULATION TESTS PASSED!        "
 	@echo "========================================================================"
@@ -439,7 +442,7 @@ test-ci: test
 
 test-hardware: test-hw
 
-test-hw: zephyr-rust-lib firmware build-hack build-hw prog-sram
+test-hw: build-zephyr-demo firmware build-hack build-hw prog-sram
 	@echo "=== Running Automated End-to-End Hardware Test Suite on Tang Nano 9K ==="
 	$(PYTHON) scripts/test_hardware.py
 	@echo "========================================================================"
@@ -451,7 +454,6 @@ test-hw: zephyr-rust-lib firmware build-hack build-hw prog-sram
 clean:
 	$(VERYL) clean
 	cd firmware && $(CARGO) clean
-	cd zephyr_workspace/app/rust_demo && $(CARGO) clean
 	cd vendor/bc_clone_rs/crates/bc_zephyr 2>/dev/null && $(CARGO) clean || true
 	$(MAKE) -C hack_demo clean
 	rm -rf $(BUILD_DIR) ./firmware.hex ./firmware_d*.hex zephyr_workspace/app/build

@@ -129,7 +129,8 @@ def run_hardware_test_suite(port="auto", baud=115200):
         # -------------------------------------------------------------
         # Test 6: Flash Slot 1: Default RISC-V App (vux_tool.flash_slot)
         # -------------------------------------------------------------
-        app_bin = os.path.join(REPO_ROOT, "zephyr_workspace", "app", "rust_demo", "app.bin")
+        # The Zephyr Rust demo (make build-zephyr-demo)
+        app_bin = os.path.join(REPO_ROOT, "build", "zephyr-demo", "zephyr", "zephyr.bin")
         if not os.path.exists(app_bin):
             app_bin = os.path.join(REPO_ROOT, "build", "firmware", "test_payload.bin")
             os.makedirs(os.path.dirname(app_bin), exist_ok=True)
@@ -138,7 +139,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
 
         test_name_flash_s1 = "6. Flash Slot 1: Default RISC-V App ('w' / vux_tool.flash_slot)"
         try:
-            meta = vux_tool.flash_slot(ser, app_bin, slot=1, name="Rust App", mode="riscv")
+            meta = vux_tool.flash_slot(ser, app_bin, slot=1, name="Zephyr Rust", mode="riscv")
             results.append(
                 (
                     test_name_flash_s1,
@@ -314,7 +315,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
             and ("[Rust App]" in out)
             and ("All Rust application tasks finished successfully!" in out)
         )
-        msg = "Executed standalone Rust application tasks" if passed else f"Failed Slot 1 execution. Output: {out!r}"
+        msg = "Executed the Zephyr Rust application tasks" if passed else f"Failed Slot 1 execution. Output: {out!r}"
         results.append((test_name_boot_s1, passed, msg))
         print_test_result(test_name_boot_s1, passed, msg)
 

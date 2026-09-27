@@ -209,6 +209,18 @@ impl Uart {
         }
     }
 
+    /// Bytes in the RX FIFO during cycle `c`.
+    pub fn rx_level(&mut self, c: u64) -> usize {
+        self.advance(c);
+        self.rx_fifo.len()
+    }
+
+    /// Sticky overrun flag during cycle `c` (as the status register would read it).
+    pub fn overrun(&mut self, c: u64) -> bool {
+        self.advance(c);
+        self.overrun
+    }
+
     /// True while the RX FIFO holds data during cycle `c` (the MEI line).
     pub fn rx_pending(&mut self, c: u64) -> bool {
         self.advance(c);

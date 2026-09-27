@@ -1,14 +1,14 @@
 # Copyright (c) 2026 Takayuki Nagata
 # SPDX-License-Identifier: Apache-2.0
 
-identifier: vux9k
-name: VUX9K RISC-V SoC (Tang Nano 9K)
+identifier: vux9k/vux9k/ext
+name: VUX9K RISC-V SoC, extended memory (emulator only)
 type: mcu
 arch: riscv
 toolchain:
   - zephyr
   - cross-compile
-ram: 8
-flash: 14
+ram: 256
+flash: 512
 supported:
   - uart

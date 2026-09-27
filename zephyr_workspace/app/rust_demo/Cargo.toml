@@ -9,11 +9,7 @@ authors = ["Takayuki Nagata"]
 license = "Apache-2.0"
 
 [lib]
-crate-type = ["staticlib", "rlib"]
-
-[[bin]]
-name = "standalone"
-path = "src/bin/standalone.rs"
+crate-type = ["staticlib"]
 
 [dependencies]
 

@@ -5,6 +5,11 @@
 """
 Tang Nano 9K Harvard Architecture ELF to Binary Image Extractor
 Extracts instruction ROM image (p_paddr < 0x20000000) from RISC-V ELF.
+
+A segment that runs in D-RAM (p_vaddr >= 0x20000000) goes into the D-RAM preload
+(firmware_d0-3.hex). If its load address is in I-RAM (p_paddr < 0x20000000, e.g. the
+.data of an XIP Zephyr image, which copies it to D-RAM at startup), it also goes into
+the ROM image at that load address: a program loaded from SD gets no D-RAM preload.
 """
 
 import struct
@@ -33,12 +38,12 @@ def elf2bin(elf_path, bin_path, dram_outdir=None):
         )
 
         if p_type == 1 and p_filesz > 0:
-            if p_paddr < 0x20000000 and p_vaddr < 0x20000000:
+            if p_paddr < 0x20000000:
                 rel_offset = p_paddr
                 if len(rom_data) < rel_offset + p_filesz:
                     rom_data.extend(b"\x00" * (rel_offset + p_filesz - len(rom_data)))
                 rom_data[rel_offset : rel_offset + p_filesz] = data[p_offset : p_offset + p_filesz]
-            elif p_vaddr >= 0x20000000:
+            if p_vaddr >= 0x20000000:
                 ram_offset = p_vaddr - 0x20000000
                 if ram_offset + p_filesz <= len(ram_data):
                     ram_data[ram_offset : ram_offset + p_filesz] = data[p_offset : p_offset + p_filesz]

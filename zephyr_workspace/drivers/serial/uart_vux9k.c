@@ -15,6 +15,8 @@
 
 #define STATUS_RX_EMPTY  (1U << 0)
 #define STATUS_TX_FULL   (1U << 1)
+#define STATUS_OVERRUN   (1U << 2) /* sticky; reading the status register clears it */
+#define STATUS_FRAME_ERR (1U << 3) /* sticky; reading the status register clears it */
 
 struct uart_vux9k_config {
 	mm_reg_t base;
@@ -50,8 +52,17 @@ static void uart_vux9k_poll_out(const struct device *dev, unsigned char out_char
 
 static int uart_vux9k_err_check(const struct device *dev)
 {
-	ARG_UNUSED(dev);
-	return 0;
+	const struct uart_vux9k_config *config = dev->config;
+	uint32_t status = sys_read32(REG_STATUS(config->base));
+	int err = 0;
+
+	if (status & STATUS_OVERRUN) {
+		err |= UART_ERROR_OVERRUN;
+	}
+	if (status & STATUS_FRAME_ERR) {
+		err |= UART_ERROR_FRAMING;
+	}
+	return err;
 }
 
 static const struct uart_driver_api uart_vux9k_driver_api = {

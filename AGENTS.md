@@ -17,7 +17,7 @@ firmware/               Cargo workspace (virtual manifest)
   resident_loader/      Resident Loader crate (package name: resident_loader)
 hack_demo/              Standalone Hack 16-bit C/asm demo app (toolchain self-test)
 zephyr_workspace/       Zephyr west module: board/SoC/driver/dts support for "vux9k"
-  app/rust_demo/        Shared Rust app core, dual-backend (see "rust_demo" below)
+  app/                  Zephyr Rust demo (C glue + rust_demo staticlib; see "Zephyr" below)
 sim/                    cocotb/pytest RTL testbenches
   unit/                 cocotb unit tests (single RTL module each)
   integration/          cocotb SoC-level integration tests + sdcard_model.py/virtual_serial.py
@@ -177,36 +177,34 @@ linker script` with no indication of *why* the cwd changed. Both members' output
 binaries land in the single shared `firmware/target/riscv32i-unknown-none-elf/
 release/{boot_manager,resident_loader}`.
 
-## `rust_demo`: two swappable backends for one shared core
+## Zephyr: two boards, and what runs on which
 
-`zephyr_workspace/app/rust_demo/src/lib.rs`'s `rust_main()` is Zephyr-agnostic
-Rust application logic that only calls `extern "C"` functions declared in
-`zephyr_ffi.rs` (`vux9k_print_str`, `vux9k_k_msleep`, ...). Two different things
-provide the concrete implementation of those C functions:
+`zephyr_workspace/boards/vux9k/` defines two HWMv2 targets sharing `vux9k-common.dtsi`
+(27 MHz, `vux9k,uart`, and the SoC timer as `andestech,machine-timer`, whose
+mtime +0x0 / mtimecmp +0x8 layout is `timer_core`'s, so Zephyr's in-tree
+`riscv_machine_timer` driver serves it):
+- `vux9k`: the real board. flash = I-RAM 0x0000-0x37FF (the Resident Loader owns
+  0x3800+), sram = D-RAM less the mailbox words at 0x1FF8/0x1FFC. The linker enforces
+  both, so an app that outgrows the board fails to link.
+- `vux9k/vux9k/ext`: 512 KB/256 KB, **emulator only** (`vux9k-emu --profile extended`).
+  bc_clone_rs (`make build-zephyr`, ~260 KB) runs only here; never present it as
+  running on hardware.
 
-- `src/bin/standalone.rs` — a `#![no_std] #![no_main]` bare-metal RV32I binary
-  with its own `_start`/UART MMIO, **no Zephyr kernel involved at all**. This is
-  what actually gets built (`make zephyr-rust-lib`) and flashed to real hardware
-  (`scripts/test_hardware.py`'s Slot 1 fallback). Its banner text ("Hello from
-  Rust running on Zephyr RTOS!", printed by the shared `rust_main()`) is
-  therefore **inaccurate** when running this path — it's boilerplate shared with
-  the Zephyr backend below, not a bug in the build.
-- `zephyr_workspace/app/src/main.c` + `CMakeLists.txt` — a real Zephyr-RTOS
-  backed implementation (`printk`, `k_msleep`) meant to link `rust_demo` as a
-  staticlib into an actual Zephyr app. **This is currently not built by anything**
-  — `make build-zephyr` builds `vendor/bc_clone_rs/examples/zephyr_app`
-  (`BC_APP_DIR` in the `Makefile`) instead, which is a *different*, working
-  example app that already correctly uses this repo's `zephyr_workspace` as a
-  west module (`BOARD_ROOT`/`SOC_ROOT`/`EXTRA_ZEPHYR_MODULES`). Don't delete
-  `zephyr_workspace/app/src/main.c` thinking it's dead code from a grep-only
-  reachability check — it's an intentional (if currently unexercised) reference
-  for wiring `rust_demo` into a real Zephyr app; confirmed by tracing the
-  `extern "C"` call graph, not just Makefile reachability.
+`zephyr_workspace/app/` is the Rust demo: Zephyr (`src/main.c`, FFI wrappers for
+`printk`/`k_msleep`/`k_uptime_get_32`) calls `rust_main()` from the `rust_demo`
+staticlib. `make build-zephyr-demo` builds it for `vux9k` into `build/zephyr-demo/`
+(cargo output included); it is what `scripts/test_hardware.py` flashes to Slot 1, and
+it is tested from SD on the emulator (`sim/emu/test_zephyr_demo.py`) and the RTL
+(`sim-zephyr-demo-rtl`). Its `prj.conf` size settings are what make it fit in 14 KB.
 
-If you actually need to test the Zephyr-backed path, you'd have to add a new
-`west build` invocation pointing at `zephyr_workspace/app` (or extend
-`vendor/bc_clone_rs/examples/zephyr_app` to link `libvux9k_rust_demo.a`) — this
-hasn't been done, don't assume it works without testing on real hardware.
+Two traps found while bringing Zephyr up on the RTL (the old Python emulator hid both):
+- **The SoC must select Zifencei.** The Zephyr SDK has no libgcc multilib for
+  `rv32i_zicsr`; GCC silently links a default one built with RV32M, and the first
+  64-bit division (`__udivdi3` -> `divu`) is an illegal instruction.
+- **XIP `.data` must be in the image.** `scripts/elf2bin.py` writes a segment that
+  runs in D-RAM but loads from I-RAM (an XIP image's `.data`) into the ROM image at its
+  load address; without that, Zephyr's startup copied zeros into `.data` (e.g. an
+  empty-but-not-self-linked `timeout_list`, so `k_msleep` never woke up).
 
 ## `make test-isa`: riscv-tests on `tb_hex_runner`
 
@@ -417,14 +415,8 @@ caused by any restructuring:
   an emulator bug, not a firmware one:** the same `build/hack/firmware.hex` on
   the RTL (`make sim-hack-rtl`, `test_soc_hack`) prints the complete report up to
   `ALL HACK C FIRMWARE TESTS PASSED (100%)!` (verified 2026-09).
-- `make sim-zephyr-repl` (`sim/emulator/test_soc_bc.py`, 3 of 4 tests) — the
-  first REPL round-trip after boot passes, but every subsequent interactive
-  `feed_input()`/`run()` round-trip returns empty output instead of the
-  expected `bc` result; likely an emulator UART/REPL-loop interaction bug
-  (input not being re-delivered, or the emulator's output buffer being cleared
-  before the SoC has actually produced it), unrelated to file layout. Confirmed
-  by reproducing on a clean `git worktree` of `main` reusing the same
-  `build/zephyr/zephyr/zephyr.bin` (2026-09).
+  (`sim/emulator/` is superseded by the Rust emulator, `sim/emu/`, where bc and the
+  Hack demo pass; it is being removed.)
 
 ## PnR seeds: `scripts/run_pnr.py` adopts one seed and records it
 
@@ -493,7 +485,7 @@ make build-hack        # hack_demo/
 make sim-hack-rtl
 make sim-hw-flow         # full UART/SD chain; longest real interaction (Verilator, ~16 s)
 make synth-top          # yosys must resolve build/veryl/soc/{cpu,uart}/*.sv
-make zephyr-rust-lib     # rust_demo standalone binary
+make build-zephyr-demo   # Zephyr Rust demo for the real board (needs Zephyr)
 python3 scripts/check_no_absolute_paths.py
 git status                # confirm no stray untracked build output
 ```

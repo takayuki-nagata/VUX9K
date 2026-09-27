@@ -135,6 +135,20 @@ impl Soc {
         self.inner.periph.uart.host_send_done()
     }
 
+    /// Bytes waiting in the RX FIFO now.
+    #[getter]
+    fn uart_rx_level(&mut self) -> usize {
+        let c = self.inner.cycle;
+        self.inner.periph.uart.rx_level(c)
+    }
+
+    /// The UART's sticky overrun flag now (a byte arrived with the RX FIFO full).
+    #[getter]
+    fn uart_overrun(&mut self) -> bool {
+        let c = self.inner.cycle;
+        self.inner.periph.uart.overrun(c)
+    }
+
     /// UART output the host has completely received.
     fn uart_received<'py>(&mut self, py: Python<'py>) -> Bound<'py, PyBytes> {
         PyBytes::new(py, self.inner.uart_received())

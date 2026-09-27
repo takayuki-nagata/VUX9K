@@ -346,7 +346,7 @@ VUX9K/
 │   └── resident_loader/                # Resident Loader (2KB at 0x0000_3800)
 ├── hack_demo/                      # Hack 16-bit C/Assembly demo app (toolchain self-test)
 ├── zephyr_workspace/               # Zephyr RTOS out-of-tree application & bc_clone_rs integration
-│   └── app/rust_demo/              # Standalone/Zephyr Rust demo app (vux9k_rust_demo)
+│   └── app/                        # Zephyr Rust demo for the real board (rust_demo staticlib)
 ├── sim/                            # cocotb & pytest testbenches (run via sim/runners/test_sim.py)
 ├── scripts/                        # Build/CI plumbing (elf2bin.py, run_riscv_tests.py, test_hardware.py, run_pnr.py, report_sta.py, ...)
 ├── tools/                          # End-user CLI: vux_tool.py (UART flashing, diagnostics, monitor)

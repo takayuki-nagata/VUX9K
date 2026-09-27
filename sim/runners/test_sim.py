@@ -60,6 +60,7 @@ SOC = [
     ("tb_soc_top", "test_soc_fast"),
     ("tb_soc_top", "test_soc_boot_mode"),
     ("tb_soc_top", "test_soc_lockstep"),
+    ("tb_soc_top", "test_soc_zephyr_demo"),
     ("tb_soc_top", "test_soc_sd_quirks"),
     pytest.param("tb_soc_top", "test_soc_hardware_flow", marks=slow),
 ]

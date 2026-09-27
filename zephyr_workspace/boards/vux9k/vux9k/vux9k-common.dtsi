@@ -1,0 +1,75 @@
+/*
+ * Copyright (c) 2026 Takayuki Nagata
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * The VUX9K SoC as soc/soc_top.veryl builds it; the board files add the memory sizes.
+ */
+
+#include <mem.h>
+
+/ {
+	#address-cells = <1>;
+	#size-cells = <1>;
+	compatible = "vux9k,vux9k";
+
+	chosen {
+		zephyr,console = &uart0;
+		zephyr,shell-uart = &uart0;
+		zephyr,sram = &sram0;
+		zephyr,flash = &flash0;
+	};
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		timebase-frequency = <27000000>;
+
+		cpu0: cpu@0 {
+			device_type = "cpu";
+			compatible = "riscv";
+			riscv,isa = "rv32i_zicsr_zifencei";
+			reg = <0>;
+			clock-frequency = <27000000>;
+
+			cpu0_intc: interrupt-controller {
+				compatible = "riscv,cpu-intc";
+				interrupt-controller;
+				#address-cells = <0>;
+				#interrupt-cells = <1>;
+			};
+		};
+	};
+
+	soc {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		compatible = "simple-bus";
+		ranges;
+
+		/* I-RAM: programs run from it in place (loaded by the Resident Loader) */
+		flash0: flash@0 {
+			compatible = "soc-nv-flash";
+		};
+
+		sram0: memory@20000000 {
+			compatible = "mmio-sram";
+		};
+
+		uart0: uart@40000000 {
+			compatible = "vux9k,uart";
+			reg = <0x40000000 0x10>;
+			status = "okay";
+		};
+
+		/*
+		 * soc/timer_core.veryl: mtime at +0x0, mtimecmp at +0x8, the same layout as
+		 * Andes' machine timer, so Zephyr's riscv_machine_timer driver serves it.
+		 */
+		mtimer: timer@40001000 {
+			compatible = "andestech,machine-timer";
+			reg = <0x40001000 0x10>;
+			interrupts-extended = <&cpu0_intc 7>;
+			status = "okay";
+		};
+	};
+};
