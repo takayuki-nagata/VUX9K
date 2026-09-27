@@ -15,8 +15,12 @@ pub module uart_controller #(
     we   : input  logic   ,
     empty: output logic   ,
     full : output logic   ,
-    txd  : output logic   ,
-    rxd  : input  logic   ,
+    // Sticky RX errors, cleared by clr_err (a new error in the same cycle wins)
+    overrun  : output logic, // a received byte was dropped: RX FIFO full
+    frame_err: output logic, // a stop bit was sampled low
+    clr_err  : input  logic,
+    txd      : output logic,
+    rxd      : input  logic,
 ) {
     var tx_wdata : logic<8>;
     var tx_we    : logic   ;
@@ -36,6 +40,7 @@ pub module uart_controller #(
     var rx_empty: logic   ;
     var rxdata  : logic<8>;
     var uart_rdy: logic   ;
+    var rx_ferr : logic   ;
 
     inst tx_fifo: fifo_sync #(
         WIDTH      : 8,
@@ -89,11 +94,12 @@ pub module uart_controller #(
         CNT  : CNT  ,
         CSIZE: CSIZE,
     ) (
-        clk : clk     ,
-        rst : rst     ,
-        data: rxdata  ,
-        rdy : uart_rdy,
-        rxd : rxd     ,
+        clk      : clk     ,
+        rst      : rst     ,
+        data     : rxdata  ,
+        rdy      : uart_rdy,
+        frame_err: rx_ferr ,
+        rxd      : rxd     ,
     );
 
     inst rx_fifo: fifo_sync #(
@@ -132,4 +138,22 @@ pub module uart_controller #(
 
     assign full  = tx_full;
     assign empty = rx_empty;
+
+    always_ff (clk, rst) {
+        if_reset {
+            overrun   = 1'b0;
+            frame_err = 1'b0;
+        } else {
+            if uart_rdy && rx_full {
+                overrun = 1'b1;
+            } else if clr_err {
+                overrun = 1'b0;
+            }
+            if uart_rdy && rx_ferr {
+                frame_err = 1'b1;
+            } else if clr_err {
+                frame_err = 1'b0;
+            }
+        }
+    }
 }

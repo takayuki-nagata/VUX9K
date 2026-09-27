@@ -20,7 +20,7 @@ import rv32_asm
 from rv32_asm import Asm
 from soc_env import load_imem, start_soc
 
-UART = 0x4000_0000  # +0 data, +4 status {tx_full, rx_empty}
+UART = 0x4000_0000  # +0 data, +4 status {frame_err, overrun, tx_full, rx_empty}
 TIMER = 0x4000_1000  # +0/+4 mtime lo/hi, +8/+C mtimecmp lo/hi
 GPIO = 0x4000_3000  # +0 LEDs, +4 button, +C soft-reset magic
 DRAM = 0x2000_0000
@@ -231,6 +231,48 @@ def timer_irq_program() -> list[int]:
 
     _putc_routine(a)
     return a.assemble()
+
+
+def uart_status_program() -> list[int]:
+    """UART register decode and the sticky RX error flags, reported as 'F<code>' or 'UPASS'."""
+    a = Asm()
+    a.li("s0", UART)
+    # Only the data register (offset 0) transmits: this must not show up on TX
+    a.li("t0", ord("Z"))
+    a.sw("t0", 4, "s0")
+    # Ask for 33 bytes and don't read them: the 33rd overruns the 32-deep RX FIFO
+    _puts(a, "?")
+    a.li("t3", 60000)  # 33 frames take ~80k cycles after the '?'; this waits ~240k
+    a.label("spin")
+    a.addi("t3", "t3", -1)
+    a.bnez("t3", "spin")
+    # 1: the first status read shows the overrun (bit 2) and a non-empty FIFO
+    a.lw("t1", 4, "s0")
+    a.andi("t1", "t1", 0xD)
+    _expect(a, "t1", 0x4, 1)
+    # 2: reading the status cleared it
+    a.lw("t1", 4, "s0")
+    a.andi("t1", "t1", 0x4)
+    _expect(a, "t1", 0, 2)
+    _puts(a, "UPASS\n")
+    a.label("halt")
+    a.j("halt")
+
+    _putc_routine(a)
+    _fail_routine(a)
+    return a.assemble()
+
+
+@cocotb.test()
+async def test_soc_uart_status(dut):
+    """TX only from the data register; RX overrun flagged in status bit 2, cleared by reading it"""
+    program = uart_status_program()
+    ser, _ = await start_soc(dut, during_reset=lambda soc: load_imem(soc, program))
+    before = await ser.wait_for(b"?", timeout_cycles=200_000)
+    assert before == b"?", f"a write to the status register was transmitted: {before!r}"
+    ser.write(bytes(range(0x40, 0x61)))  # 33 bytes
+    out = (await ser.wait_for(b"\n", timeout_cycles=1_000_000)).decode("ascii", errors="replace")
+    assert out.strip() == "UPASS", f"UART status check failed: {out!r} (see uart_status_program() codes)"
 
 
 @cocotb.test()

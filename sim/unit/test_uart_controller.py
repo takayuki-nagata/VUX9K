@@ -28,6 +28,7 @@ async def test_uart_controller(dut):
     dut.rst.value = 0
     dut.we.value = 0
     dut.re.value = 0
+    dut.clr_err.value = 0
     dut.wdata.value = 0
     dut.rxd.value = 1
 
@@ -80,3 +81,62 @@ async def test_uart_controller(dut):
     assert int(dut.empty.value) == 1, "RX FIFO should be empty after reading all bytes"
 
     dut._log.info("UART Controller full loopback test passed 100% [PASS]")
+
+
+async def send_frame(dut, byte_val: int, cnt: int, stop_bit: int = 1):
+    """Drive one 8N1 frame on rxd (bit time = cnt clocks)."""
+    for bit in [0] + [(byte_val >> i) & 1 for i in range(8)] + [stop_bit]:
+        dut.rxd.value = bit
+        for _ in range(cnt):
+            await FallingEdge(dut.clk)
+    dut.rxd.value = 1
+
+
+@cocotb.test()
+async def test_uart_controller_error_flags(dut):
+    """overrun (byte dropped on a full RX FIFO) and frame_err are sticky until clr_err"""
+    cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
+    await FallingEdge(dut.clk)
+    dut.rst.value = 0
+    dut.we.value = 0
+    dut.re.value = 0
+    dut.clr_err.value = 0
+    dut.wdata.value = 0
+    dut.rxd.value = 1
+    for _ in range(3):
+        await FallingEdge(dut.clk)
+    dut.rst.value = 1
+    for _ in range(500):
+        await FallingEdge(dut.clk)
+    cnt = int(dut.CNT.value) if hasattr(dut, "CNT") else 434
+
+    assert (int(dut.overrun.value), int(dut.frame_err.value)) == (0, 0)
+
+    # 32 bytes fill the RX FIFO; the 33rd is dropped
+    for i in range(33):
+        await send_frame(dut, i, cnt)
+    for _ in range(cnt):
+        await FallingEdge(dut.clk)
+    assert int(dut.overrun.value) == 1, "33rd byte into a 32-deep RX FIFO must flag an overrun"
+    assert int(dut.frame_err.value) == 0
+
+    dut.clr_err.value = 1
+    await FallingEdge(dut.clk)
+    dut.clr_err.value = 0
+    assert int(dut.overrun.value) == 0, "clr_err must clear overrun"
+
+    # Drain the FIFO, then a frame with a low stop bit
+    dut.re.value = 1
+    for _ in range(32):
+        await FallingEdge(dut.clk)
+    dut.re.value = 0
+    assert int(dut.empty.value) == 1
+    await send_frame(dut, 0x55, cnt, stop_bit=0)
+    for _ in range(cnt):
+        await FallingEdge(dut.clk)
+    assert int(dut.frame_err.value) == 1, "a low stop bit must flag a framing error"
+    assert int(dut.overrun.value) == 0
+    dut.clr_err.value = 1
+    await FallingEdge(dut.clk)
+    dut.clr_err.value = 0
+    assert int(dut.frame_err.value) == 0, "clr_err must clear frame_err"

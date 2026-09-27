@@ -6,7 +6,7 @@ from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, FallingEdge
 
 
-async def send_uart_byte(dut, byte_val: int, cnt: int = 234):
+async def send_uart_byte(dut, byte_val: int, cnt: int = 234, stop_bit: int = 1):
     """Helper to drive serial UART frame on rxd at 27MHz / 115200bps (CNT=234)"""
     # 1. Start bit (0)
     dut.rxd.value = 0
@@ -19,10 +19,11 @@ async def send_uart_byte(dut, byte_val: int, cnt: int = 234):
         for _ in range(cnt):
             await FallingEdge(dut.clk)
 
-    # 3. Stop bit (1)
-    dut.rxd.value = 1
+    # 3. Stop bit (1, or 0 to provoke a framing error)
+    dut.rxd.value = stop_bit
     for _ in range(cnt):
         await FallingEdge(dut.clk)
+    dut.rxd.value = 1
 
 
 @cocotb.test()
@@ -68,3 +69,48 @@ async def test_uart_rx(dut):
     dut._log.info(f"Received Byte 2 successfully: 0x{test_byte2:02X}")
 
     dut._log.info("UART RX serial frame reception test passed 100% [PASS]")
+
+
+async def reset_rx(dut):
+    cocotb.start_soon(Clock(dut.clk, 37038, unit="ps").start())
+    await FallingEdge(dut.clk)
+    dut.rst.value = 0
+    dut.rxd.value = 1
+    await ClockCycles(dut.clk, 10)
+    dut.rst.value = 1
+    await ClockCycles(dut.clk, 10)
+    return int(dut.CNT.value) if hasattr(dut, "CNT") else 434
+
+
+async def receive(dut, cycles: int):
+    """(data, frame_err) of the first rdy pulse within cycles, or None."""
+    for _ in range(cycles):
+        await FallingEdge(dut.clk)
+        if int(dut.rdy.value):
+            return int(dut.data.value), int(dut.frame_err.value)
+    return None
+
+
+@cocotb.test()
+async def test_uart_rx_rejects_short_glitch(dut):
+    """A low pulse shorter than half a bit is not a start bit: no byte is received"""
+    cnt = await reset_rx(dut)
+    dut.rxd.value = 0
+    await ClockCycles(dut.clk, cnt // 4)
+    dut.rxd.value = 1
+    assert await receive(dut, 12 * cnt) is None, "a glitch on an idle line produced a byte"
+
+    # The receiver is back in IDLE and takes the next real frame
+    cocotb.start_soon(send_uart_byte(dut, 0x5A, cnt=cnt))
+    assert await receive(dut, 12 * cnt) == (0x5A, 0)
+
+
+@cocotb.test()
+async def test_uart_rx_framing_error(dut):
+    """A stop bit sampled low is flagged with the byte (frame_err on the rdy pulse)"""
+    cnt = await reset_rx(dut)
+    cocotb.start_soon(send_uart_byte(dut, 0xC3, cnt=cnt, stop_bit=0))
+    assert await receive(dut, 12 * cnt) == (0xC3, 1)
+    await ClockCycles(dut.clk, 2 * cnt)  # line back to idle
+    cocotb.start_soon(send_uart_byte(dut, 0x3C, cnt=cnt))
+    assert await receive(dut, 12 * cnt) == (0x3C, 0)

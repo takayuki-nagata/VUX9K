@@ -63,7 +63,7 @@ The RTL modules in this repository were originally authored in VHDL-2008 and hav
 | `0x0000_0000` - `0x0000_37FF` | 14 KB | **Instruction RAM (Lower)** | Hardware `RESET_VECTOR` (`0x0000_0000`); preloaded with Rust Boot Manager (factory fallback), target region for SD slot application execution |
 | `0x0000_3800` - `0x0000_3FFF` | 2 KB | **Resident Loader (Upper I-RAM)** | Immutable resident bootloader, entered only via a software jump to `0x0000_3800` (never by hardware reset); checks Mailbox, loads SD slots into I-RAM, then triggers a CPU soft-reset (see GPIO `0x4000_300C` below) to resume execution at `RESET_VECTOR` |
 | `0x2000_0000` - `0x2000_1FFF` | 8 KB | **Data RAM** | `.data`, `.bss`, stack, and heap. Mailbox register located at `0x2000_1FFC` |
-| `0x4000_0000` - `0x4000_000F` | 16 B | **UART Controller** | Full-duplex 115200 bps TX/RX data registers & status flags |
+| `0x4000_0000` - `0x4000_000F` | 16 B | **UART Controller** | 115200 bps 8N1, 32-byte TX and RX FIFOs. `0x0` data: read pops a received byte, write sends one (only this offset transmits). `0x4` status: bit 0 `rx_empty`, bit 1 `tx_full`, bit 2 `overrun` (a byte was dropped, RX FIFO full), bit 3 `frame_err` (a stop bit was low); bits 2-3 stay set until the status register is read. Level interrupt: none (polling) |
 | `0x4000_1000` - `0x4000_100F` | 16 B | **System Timer (CLINT)** | 64-bit `mtime` (`0x0`/`0x4`) and `mtimecmp` (`0x8`/`0xC`) registers |
 | `0x4000_2000` - `0x4000_200F` | 16 B | **MicroSD SPI Master** | SPI TX/RX data (`0x0`), CS (`0x4`), busy (`0x8`); SPI clock fixed at ~400 kHz. Writes while busy are ignored (data and CS alike): wait for busy to clear first |
 | `0x4000_3000` - `0x4000_300F` | 16 B | **GPIO Controller** | 6 onboard active-low LEDs (`0x00`=ON, `0x3F`=OFF) & user buttons (Button S2 on pin 3); offset `0xC` is a soft-reset trigger — writing `0x5A5A_A55A` pulses `cpu_soft_rst`, resetting the CPU FSM/PC/CSRs to `RESET_VECTOR` without a full FPGA reload |
@@ -83,7 +83,7 @@ Hack instructions are packed two per 32-bit I-RAM word (first instruction in the
 |:---|:---|:---|
 | `0x0000` - `0x5FFF` | **RAM** | Only 2K words exist (the D-RAM, one Hack word per 32-bit word): addresses repeat every `0x0800`, so `0x0900` is the same word as `0x0100` |
 | `0x6000` | **UART data** | Read: received byte (pops the RX FIFO). Write: byte to send |
-| `0x6001` - `0x6003` | **UART status** | `{tx_full, rx_empty}` (bit 1, bit 0) |
+| `0x6001` - `0x6003` | **UART status** | Same bits as the RV32 status register; reading it clears `overrun`/`frame_err` |
 | `0x6004` - `0x600F` | **GPIO** | Register = address bits `[3:0]`: `0x6004` button (1 = pressed), `0x600C` soft reset in progress. The LED register (GPIO `0x0`) is unreachable from Hack mode, and a Hack store can't form the 32-bit soft-reset key |
 | other | unmapped | Reads 0, writes ignored |
 
