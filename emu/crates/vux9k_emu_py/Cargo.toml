@@ -6,9 +6,13 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+# Built with plain `cargo build` (no maturin) and copied to
+# build/emu/python/vux9k_emu.abi3.so by `make emu-py`.
 [lib]
 name = "vux9k_emu"
 crate-type = ["cdylib"]
 
 [dependencies]
-vux9k_emu = { path = "../vux9k_emu" }
+# Renamed: this cdylib itself is named vux9k_emu (the Python module name)
+emu_core = { package = "vux9k_emu", path = "../vux9k_emu" }
+pyo3 = { version = "0.23", features = ["extension-module", "abi3-py310"] }

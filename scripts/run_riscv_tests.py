@@ -12,6 +12,10 @@ The testbench is compiled once (build/sim/<sim>/tb_hex_runner/; the simulator is
 $SIM, default icarus); each test runs in build/riscv_tests/runs/<test>/, which holds
 its program.hex, verdict.txt and sim.log.
 
+`--backend emu` runs the same tests on the Rust emulator instead (emu/, the isa-test
+profile: the same flat 256 KB RAM and tohost), through its Python module
+(build/emu/python, `make emu-py`). The verdicts and EXPECTED_FAILURES must match.
+
 Before the suite runs, a deliberately failing test (scripts/riscv_tests/selftest_fail.S)
 must be reported as FAIL with TESTNUM=2, otherwise the harness itself is broken and the
 run aborts.
@@ -173,7 +177,32 @@ def build_hex(src, name):
     return hexf, None
 
 
+BACKEND = "rtl"
+
+
 def simulate(hexf):
+    """Returns (passed, detail line) from the selected backend."""
+    return simulate_emu(hexf) if BACKEND == "emu" else simulate_rtl(hexf)
+
+
+def simulate_emu(hexf):
+    """Run on the Rust emulator's isa-test profile (tb_hex_runner's memory and tohost)."""
+    sys.path.insert(0, os.path.join(REPO_DIR, "build", "emu", "python"))
+    import vux9k_emu  # noqa: PLC0415 (built by `make emu-py`; only this backend needs it)
+
+    with open(hexf) as f:
+        image = b"".join(int(line, 16).to_bytes(4, "little") for line in f if line.strip())
+    soc = vux9k_emu.Soc("isa-test")
+    soc.load_iram(0, image)
+    stop, code = soc.run(MAX_CYCLES)
+    if stop != "tohost":
+        return False, f"[FAIL] Simulation timeout after {MAX_CYCLES} cycles at PC={soc.pc:08x}"
+    if code == 1:
+        return True, f"[PASS] tohost=1 at cycle {soc.cycle}"
+    return False, f"[FAIL] tohost=0x{code:08x} (TESTNUM={code >> 1}) at cycle {soc.cycle}"
+
+
+def simulate_rtl(hexf):
     """Returns (passed, detail line). The first call also compiles the testbench."""
     name = os.path.basename(hexf).removesuffix(".hex")
     test_dir = Path(BUILD_DIR) / "runs" / name
@@ -260,12 +289,16 @@ def run_suite(only=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("tests", nargs="*", help="run only these tests, e.g. rv32ui-p-add")
+    parser.add_argument("--backend", choices=("rtl", "emu"), default="rtl", help="RTL (cocotb) or the Rust emulator")
     args = parser.parse_args()
+    global BACKEND
+    BACKEND = args.backend
 
     check_tools()
     os.makedirs(BUILD_DIR, exist_ok=True)
     setup_sources()
-    build_veryl()
+    if BACKEND == "rtl":
+        build_veryl()
     run_selftest()
     if not run_suite(only=set(args.tests) or None):
         sys.exit(1)
