@@ -54,6 +54,8 @@ RTL_SOURCES = (
 )
 # SoC clock wrapper (sim/tb_soc_top.sv), added only when it is the toplevel
 TB_SOC_TOP = SIM_DIR / "tb_soc_top.sv"
+# riscv-tests harness around unified_cpu (sim/tb_hex_runner.veryl), added only when it is the toplevel
+TB_HEX_RUNNER = VERYL_OUT_DIR / "sim" / "tb_hex_runner.sv"
 # Simulation models of the Gowin cells the GLS netlists instantiate (from sim/gowin_cells_sim.veryl),
 # and the copy of them GLS builds actually read (see _gowin_cells_with_net_inputs)
 GOWIN_CELLS = VERYL_OUT_DIR / "sim" / "gowin_cells_sim.sv"
@@ -115,6 +117,8 @@ def sources_for(toplevel: str, gls: bool) -> list[Path]:
         sources = list(RTL_SOURCES)
     if toplevel == "tb_soc_top":
         sources.append(TB_SOC_TOP)
+    elif toplevel == "tb_hex_runner":
+        sources.append(TB_HEX_RUNNER)
     return sources
 
 
@@ -179,11 +183,21 @@ def _stage_firmware(test_dir: Path):
             dst.symlink_to(src)
 
 
-def run(toplevel: str, module: str, *, gls: bool = False, sim: str | None = None, testcase: str | None = None):
+def run(
+    toplevel: str,
+    module: str,
+    *,
+    gls: bool = False,
+    sim: str | None = None,
+    testcase: str | None = None,
+    test_dir: Path | None = None,
+    extra_env: dict[str, str] | None = None,
+) -> Path:
     """Compile (if outdated) and run one cocotb test module against toplevel.
 
-    sim defaults to $SIM, else "icarus". Raises on missing sources; under pytest,
-    a failing cocotb test fails the calling pytest test.
+    sim defaults to $SIM, else "icarus". test_dir (the simulator's cwd) defaults to
+    run_<module> in the build directory. Raises on missing sources; under pytest,
+    a failing cocotb test fails the calling pytest test. Returns the results file.
     """
     sim = sim or os.environ.get("SIM", "icarus")
     coverage = os.environ.get("HDL_COVERAGE", "") not in ("", "0")
@@ -193,7 +207,7 @@ def run(toplevel: str, module: str, *, gls: bool = False, sim: str | None = None
     if coverage:
         variant += "-cov"
     build_dir = SIM_BUILD_DIR / variant / toplevel
-    test_dir = build_dir / f"run_{module}"
+    test_dir = test_dir or build_dir / f"run_{module}"
 
     sources = sources_for(toplevel, gls)
     paths = [Path(getattr(s, "value", s)) for s in sources]  # sources may be runner tags
@@ -232,11 +246,11 @@ def run(toplevel: str, module: str, *, gls: bool = False, sim: str | None = None
     _stage_firmware(test_dir)
     if coverage:
         (test_dir / "coverage.dat").unlink(missing_ok=True)  # never merge a stale run
-    extra_env = {}
+    extra_env = dict(extra_env or {})
     preload = _libs_to_preload()
     if preload and "LD_PRELOAD" not in os.environ:
         extra_env["LD_PRELOAD"] = preload
-    runner.test(
+    return runner.test(
         test_module=module,
         hdl_toplevel=toplevel,
         build_dir=build_dir,

@@ -240,8 +240,12 @@ are easy to break without noticing:
   (so `ma_fetch` skips its RVC part). Unimplemented CSR addresses read 0 and
   ignore writes instead of trapping (firmware/Zephyr read e.g. `mhartid`); only
   a write to a read-only CSR (`addr[11:10] == 3`, e.g. `unimp`) is illegal.
-- The tb accepts `+TRACE` (per-cycle PC/instruction log) and `+MAX_CYCLES=N`,
-  e.g. `vvp -n build/riscv_tests/tb_hex_runner.vvp +HEX_FILE=build/riscv_tests/<test>.hex +TRACE`.
+- **The tb is split: hardware in Veryl, stimulus in cocotb.** `sim/tb_hex_runner.veryl`
+  holds the RAM (preloaded from `program.hex` in the cwd), the CPU and the `tohost`
+  latch; `scripts/riscv_tests/hex_runner.py` drives clock/reset, waits for the latch
+  with one trigger (not per cycle) and writes `verdict.txt`. `run_riscv_tests.py
+  rv32ui-p-add ...` runs a subset; set `TRACE=1` in the environment for a
+  per-cycle PC/instruction log in `build/riscv_tests/runs/<test>/sim.log`.
 
 ## SoC cocotb tests: clock in HDL, never wait with `ClockCycles`
 

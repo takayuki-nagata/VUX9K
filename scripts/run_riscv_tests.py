@@ -6,8 +6,11 @@
 
 Each test is self-checking: riscv-tests' env/p writes 1 to `tohost` on PASS, or
 (failing TESTNUM << 1) | 1 on FAIL. scripts/riscv_tests/link.ld places `tohost` at
-the testbench's TOHOST_ADDR, where sim/tb_hex_runner.veryl turns the write into a
-[PASS]/[FAIL] line and exit code.
+the testbench's TOHOST_ADDR, where sim/tb_hex_runner.veryl latches the write and the
+cocotb test scripts/riscv_tests/hex_runner.py turns it into a [PASS]/[FAIL] line.
+The testbench is compiled once (build/sim/<sim>/tb_hex_runner/; the simulator is
+$SIM, default icarus); each test runs in build/riscv_tests/runs/<test>/, which holds
+its program.hex, verdict.txt and sim.log.
 
 Before the suite runs, a deliberately failing test (scripts/riscv_tests/selftest_fail.S)
 must be reported as FAIL with TESTNUM=2, otherwise the harness itself is broken and the
@@ -23,6 +26,7 @@ import re
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VENDOR_DIR = os.path.join(REPO_DIR, "vendor")
@@ -30,6 +34,12 @@ RISCV_TESTS_DIR = os.path.join(VENDOR_DIR, "riscv-tests")
 BUILD_DIR = os.path.join(REPO_DIR, "build", "riscv_tests")
 VERYL_OUT_DIR = os.path.join(REPO_DIR, "build", "veryl")
 HARNESS_DIR = os.path.join(REPO_DIR, "scripts", "riscv_tests")
+
+# The cocotb test module (hex_runner.py) is imported by name inside the simulator,
+# from the PYTHONPATH sim_runner builds out of this process's sys.path
+sys.path.insert(0, HARNESS_DIR)
+sys.path.insert(0, os.path.join(REPO_DIR, "sim", "runners"))
+import sim_runner  # noqa: E402
 
 RISCV_TESTS_REPO = "https://github.com/riscv-software-src/riscv-tests.git"
 RISCV_TESTS_COMMIT = "793a5ff2d99a6d9fbd91e84c34b9a0437e313b88"
@@ -40,6 +50,8 @@ RISCV_TEST_ENV_COMMIT = "6de71edb142be36319e380ce782c3d1830c65d68"
 SUITES = ("rv32ui", "rv32mi")
 # Every rv32ui test finishes in well under 100k cycles; the cap only bounds hangs.
 MAX_CYCLES = 200000
+# sim/tb_hex_runner.veryl's RAM (256 KB); the image must fit
+RAM_WORDS = 65536
 
 # Known CPU gaps, "<suite>-p-<test>": reason. Keep reasons specific enough to act on.
 EXPECTED_FAILURES: dict[str, str] = {
@@ -62,8 +74,6 @@ def find_tool(name):
 
 GCC_BIN = find_tool("gcc")
 OBJCOPY_BIN = find_tool("objcopy")
-IVERILOG_BIN = shutil.which("iverilog")
-VVP_BIN = shutil.which("vvp")
 
 
 def run_cmd(cmd, cwd=None):
@@ -100,8 +110,6 @@ def check_tools():
         for n, p in (
             ("RISC-V gcc", GCC_BIN),
             ("RISC-V objcopy", OBJCOPY_BIN),
-            ("iverilog", IVERILOG_BIN),
-            ("vvp", VVP_BIN),
         )
         if not p
     ]
@@ -109,33 +117,10 @@ def check_tools():
         sys.exit(f"[ERROR] Missing tools: {', '.join(missing)}")
 
 
-def compile_testbench():
+def build_veryl():
     code, _, err = run_cmd(["veryl", "build", "--out-dir", VERYL_OUT_DIR], cwd=REPO_DIR)
     if code != 0:
         sys.exit(f"[ERROR] veryl build failed: {err}")
-    cpu_dir = os.path.join(VERYL_OUT_DIR, "soc", "cpu")
-    sv_files = [
-        os.path.join(cpu_dir, f"{m}.sv")
-        for m in (
-            "rv32i_pkg",
-            "rv32i_alu",
-            "rv32i_decode",
-            "rv32i_regfile",
-            "rv32i_csrs",
-            "rv32i_lsu",
-            "rv32i_trap_unit",
-            "next_pc_unit",
-            "hack_translator",
-            "auto_mode_detector",
-            "unified_cpu",
-        )
-    ]
-    sv_files.append(os.path.join(VERYL_OUT_DIR, "sim", "tb_hex_runner.sv"))
-    vvp = os.path.join(BUILD_DIR, "tb_hex_runner.vvp")
-    code, _, err = run_cmd([IVERILOG_BIN, "-g2012", "-o", vvp] + sv_files)
-    if code != 0:
-        sys.exit(f"[ERROR] Failed to compile tb_hex_runner: {err}")
-    return vvp
 
 
 def list_tests(suite):
@@ -180,32 +165,60 @@ def build_hex(src, name):
     with open(binf, "rb") as f:
         data = f.read()
     data += b"\x00" * (-len(data) % 4)
+    if len(data) > RAM_WORDS * 4:
+        return None, f"image is {len(data)} bytes, larger than the testbench's {RAM_WORDS * 4}-byte RAM"
     with open(hexf, "w") as f:
         for i in range(0, len(data), 4):
             f.write(f"{int.from_bytes(data[i : i + 4], 'little'):08X}\n")
     return hexf, None
 
 
-def simulate(vvp, hexf):
-    """Returns (passed, detail line)."""
-    cmd = [VVP_BIN, "-n", vvp, f"+HEX_FILE={hexf}", f"+MAX_CYCLES={MAX_CYCLES}"]
-    code, out, err = run_cmd(cmd, cwd=BUILD_DIR)
-    lines = [ln for ln in out.splitlines() if ln.startswith(("[PASS]", "[FAIL]"))]
-    detail = lines[-1] if lines else (out + err).strip()
-    return code == 0 and bool(lines) and lines[-1].startswith("[PASS]"), detail
+def simulate(hexf):
+    """Returns (passed, detail line). The first call also compiles the testbench."""
+    name = os.path.basename(hexf).removesuffix(".hex")
+    test_dir = Path(BUILD_DIR) / "runs" / name
+    test_dir.mkdir(parents=True, exist_ok=True)
+    verdict = test_dir / "verdict.txt"
+    verdict.unlink(missing_ok=True)
+    program = test_dir / "program.hex"
+    program.unlink(missing_ok=True)
+    program.symlink_to(os.path.abspath(hexf))
+    log = test_dir / "sim.log"
+    try:
+        with open(log, "w") as f:
+            # The simulator's output goes to the log, not our stdout (it's noisy)
+            saved = os.dup(1), os.dup(2)
+            os.dup2(f.fileno(), 1)
+            os.dup2(f.fileno(), 2)
+            try:
+                sim_runner.run(
+                    "tb_hex_runner",
+                    "hex_runner",
+                    test_dir=test_dir,
+                    extra_env={"MAX_CYCLES": str(MAX_CYCLES)},
+                )
+            finally:
+                os.dup2(saved[0], 1)
+                os.dup2(saved[1], 2)
+    except BaseException as e:  # the cocotb runner raises SystemExit on some failures
+        return False, f"harness error ({e!r}); see {os.path.relpath(log, REPO_DIR)}"
+    if not verdict.exists():
+        return False, f"no verdict; see {os.path.relpath(log, REPO_DIR)}"
+    detail = verdict.read_text().strip()
+    return detail.startswith("[PASS]"), detail
 
 
-def run_selftest(vvp):
+def run_selftest():
     hexf, err = build_hex(os.path.join(HARNESS_DIR, "selftest_fail.S"), "selftest_fail")
     if err:
         sys.exit(f"[ERROR] Self-test build failed: {err}")
-    passed, detail = simulate(vvp, hexf)
+    passed, detail = simulate(hexf)
     if passed or "(TESTNUM=2)" not in detail:
         sys.exit(f"[ERROR] Harness self-test: expected FAIL with TESTNUM=2, got: {detail}")
     print(f"[INFO] Harness self-test OK (deliberate failure detected: {detail})")
 
 
-def run_suite(vvp, only=None):
+def run_suite(only=None):
     counts = {"PASS": 0, "FAIL": 0, "XFAIL": 0, "XPASS": 0}
     for suite in SUITES:
         for test in list_tests(suite):
@@ -214,7 +227,7 @@ def run_suite(vvp, only=None):
                 continue
             src = os.path.join(RISCV_TESTS_DIR, "isa", suite, f"{test}.S")
             hexf, err = build_hex(src, name)
-            passed, detail = (False, err) if err else simulate(vvp, hexf)
+            passed, detail = (False, err) if err else simulate(hexf)
             expected_fail = name in EXPECTED_FAILURES
             if passed and expected_fail:
                 status = "XPASS"
@@ -252,9 +265,9 @@ def main():
     check_tools()
     os.makedirs(BUILD_DIR, exist_ok=True)
     setup_sources()
-    vvp = compile_testbench()
-    run_selftest(vvp)
-    if not run_suite(vvp, only=set(args.tests) or None):
+    build_veryl()
+    run_selftest()
+    if not run_suite(only=set(args.tests) or None):
         sys.exit(1)
 
 

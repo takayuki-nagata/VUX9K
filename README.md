@@ -253,7 +253,7 @@ Short tests run on Icarus, long SoC/GLS runs on Verilator (`SIM_UNIT` / `SIM_SOC
 | Level | Command | Typical Time | Verification Scope |
 |:---|:---|:---|:---|
 | **RTL Unit Tests** | `make sim-unit` | ~10 sec | 20 cocotb modules: CPU (ALU, decoder, regfile, CSRs, mode detector, Hack ops, RV32I smoke, trap path), UART, timer, GPIO, SD SPI master, RAM |
-| **ISA Tests** | `make test-isa` | ~15 sec | riscv-tests `rv32ui`/`rv32mi` on `tb_hex_runner` (56 pass; 2 known gaps, hardware misaligned access and PMP, tracked as expected failures in `scripts/run_riscv_tests.py`) |
+| **ISA Tests** | `make test-isa` | ~1.5 min | riscv-tests `rv32ui`/`rv32mi` on `tb_hex_runner` (56 pass; 2 known gaps, hardware misaligned access and PMP, tracked as expected failures in `scripts/run_riscv_tests.py`) |
 | **GLS Unit Tests** | `make sim-gls-unit` | ~20 sec | Gowin primitive netlists (`sim/gowin_cells_sim.veryl`) of the CPU, UART controller and mode detector |
 | **SoC Boot** | `make sim-soc-fast` / `sim-soc-fast-icarus` | ~10 sec / ~3 min | Power-on reset, Boot Manager prompt, S2-button launch of an SD slot via the Resident Loader (Verilator / 4-state Icarus) |
 | **SoC MMIO** | `make sim-soc-mmio` | ~5 sec | RV32I program from I-RAM checking the memory map, D-RAM lanes, timer, GPIO, UART RX, soft reset; timer interrupt |
@@ -342,7 +342,7 @@ VUX9K/
     ├── veryl/                      # veryl build --out-dir output: generated .sv/.map for soc/, soc/cpu/, soc/uart/, sim/
     ├── firmware/                   # firmware.bin/.hex, firmware_d0-3.hex, resident_loader.bin
     ├── hack/                       # Hack 16-bit firmware.bin/.hex
-    ├── riscv_tests/                # riscv-tests ELFs/hex images and tb_hex_runner build
+    ├── riscv_tests/                # riscv-tests ELFs/hex images; runs/<test>/ (program.hex, verdict.txt, sim.log)
     ├── zephyr/                     # Zephyr `west build` output
     ├── synth/                      # soc.json, soc_syn.v, soc_pnr.json, soc_sta.json, pack.fs, unit netlists
     └── sim/                        # cocotb builds (<sim>[-gls]/<toplevel>/) and per-test run dirs/results
