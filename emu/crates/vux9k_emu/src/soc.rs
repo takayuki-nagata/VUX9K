@@ -74,7 +74,8 @@ pub struct Soc {
     dram: Vec<u32>,
     iram_mask: u32,
     dram_mask: u32,
-    tohost: Option<u32>,
+    /// IsaTest profile: the first value stored to `TOHOST`.
+    pub tohost: Option<u32>,
     /// mcycle value set by a CSR write in the current instruction (replaces the count)
     mcycle_written: Option<u64>,
 }

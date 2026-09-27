@@ -90,7 +90,8 @@ def open_port(port_name="auto", baudrate=115200, timeout=0.2):
     else:
         if serial is None:
             raise RuntimeError("pyserial is not installed!")
-        ser = serial.Serial(port_name, baudrate=baudrate, timeout=timeout)
+        # serial_for_url also takes URLs such as socket://localhost:PORT (the emulator)
+        ser = serial.serial_for_url(port_name, baudrate=baudrate, timeout=timeout)
         return ser
 
 
