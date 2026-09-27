@@ -254,7 +254,7 @@ Short tests run on Icarus, long SoC/GLS runs on Verilator (`SIM_UNIT` / `SIM_SOC
 |:---|:---|:---|:---|
 | **RTL Unit Tests** | `make sim-unit` | ~10 sec | 20 cocotb modules: CPU (ALU, decoder, regfile, CSRs, mode detector, Hack ops, RV32I smoke, trap path), UART, timer, GPIO, SD SPI master, RAM |
 | **ISA Tests** | `make test-isa` | ~15 sec | riscv-tests `rv32ui`/`rv32mi` on `tb_hex_runner` (56 pass; 2 known gaps, hardware misaligned access and PMP, tracked as expected failures in `scripts/run_riscv_tests.py`) |
-| **GLS Unit Tests** | `make sim-gls-unit` | ~20 sec | Gowin primitive netlists (`gowin_cells_sim.v`) of the CPU, UART controller and mode detector |
+| **GLS Unit Tests** | `make sim-gls-unit` | ~20 sec | Gowin primitive netlists (`sim/gowin_cells_sim.veryl`) of the CPU, UART controller and mode detector |
 | **SoC Boot** | `make sim-soc-fast` / `sim-soc-fast-icarus` | ~10 sec / ~3 min | Power-on reset, Boot Manager prompt, S2-button launch of an SD slot via the Resident Loader (Verilator / 4-state Icarus) |
 | **SoC MMIO** | `make sim-soc-mmio` | ~5 sec | RV32I program from I-RAM checking the memory map, D-RAM lanes, timer, GPIO, UART RX, soft reset; timer interrupt |
 | **Boot Manager CLI** | `make sim-boot` | ~40 sec | Every CLI command's exact output, incl. reboot via the Resident Loader |
@@ -354,4 +354,5 @@ VUX9K/
 
 This project is licensed under the **[MIT License](LICENSE)**.
 Zephyr RTOS Out-of-Tree components (`zephyr_workspace/`) are licensed under the **Apache License 2.0**.
+`sim/gowin_cells_sim.veryl` (Gowin cell models for gate-level simulation) contains portions adapted from [Yosys](https://github.com/YosysHQ/yosys) and is licensed under **MIT AND ISC**; the Yosys notice is in the file header.
 Most files include SPDX license headers.

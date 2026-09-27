@@ -21,6 +21,7 @@ serialized per build directory with a file lock.
 
 import fcntl
 import os
+import re
 import subprocess
 import sys
 from contextlib import contextmanager
@@ -53,6 +54,10 @@ RTL_SOURCES = (
 )
 # SoC clock wrapper (sim/tb_soc_top.sv), added only when it is the toplevel
 TB_SOC_TOP = SIM_DIR / "tb_soc_top.sv"
+# Simulation models of the Gowin cells the GLS netlists instantiate (from sim/gowin_cells_sim.veryl),
+# and the copy of them GLS builds actually read (see _gowin_cells_with_net_inputs)
+GOWIN_CELLS = VERYL_OUT_DIR / "sim" / "gowin_cells_sim.sv"
+GOWIN_CELLS_NETS = SIM_BUILD_DIR / "gowin_cells_sim_net_inputs.sv"
 
 # Per-simulator compile flags
 BUILD_ARGS = {
@@ -81,11 +86,31 @@ SOC_RTL_PUBLIC = [
 FIRMWARE_HEX = ["firmware.hex", "firmware_d0.hex", "firmware_d1.hex", "firmware_d2.hex", "firmware_d3.hex"]
 
 
+def _gowin_cells_with_net_inputs() -> Path:
+    """GOWIN_CELLS with every `input var` port turned into `input wire`.
+
+    Veryl declares all ports as variables (`input var logic`), and a synthesized
+    netlist connects nets to them. That is legal SystemVerilog, but Icarus coerces
+    such a port to inout and the cell's output goes X, so every Icarus GLS test
+    failed. Verilator doesn't care; the copy is used for both, to keep one source.
+    """
+    if not GOWIN_CELLS.exists():
+        return GOWIN_CELLS  # reported as missing by run()
+    if GOWIN_CELLS_NETS.exists() and GOWIN_CELLS_NETS.stat().st_mtime >= GOWIN_CELLS.stat().st_mtime:
+        return GOWIN_CELLS_NETS
+    text = re.sub(r"\binput(\s+)var(\s+)", r"input\1wire\2", GOWIN_CELLS.read_text())
+    GOWIN_CELLS_NETS.parent.mkdir(parents=True, exist_ok=True)
+    tmp = GOWIN_CELLS_NETS.with_name(f"{GOWIN_CELLS_NETS.name}.{os.getpid()}")
+    tmp.write_text(text)
+    os.replace(tmp, GOWIN_CELLS_NETS)  # atomic: GLS tests may build concurrently
+    return GOWIN_CELLS_NETS
+
+
 def sources_for(toplevel: str, gls: bool) -> list[Path]:
     """RTL sources, or Gowin cell models + the yosys netlist for toplevel (GLS)."""
     if gls:
         netlist = "soc_syn.v" if toplevel in ("soc_top", "tb_soc_top") else f"{toplevel}_syn.v"
-        sources = [SIM_DIR / "gowin_cells_sim.v", SYNTH_DIR / netlist]
+        sources = [_gowin_cells_with_net_inputs(), SYNTH_DIR / netlist]
     else:
         sources = list(RTL_SOURCES)
     if toplevel == "tb_soc_top":

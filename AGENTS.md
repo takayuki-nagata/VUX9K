@@ -84,6 +84,17 @@ lands in the bitstream's block-RAM init (the old `embed` needed an
 `` `endif ``/`` `ifndef `` trick for that). If you ever touch it, check that the
 synthesized BRAM cells still carry non-zero `INIT_RAM_*` parameters.
 
+Veryl emits every port as a variable (`input var logic`), always; there is no
+option, and `input tri logic` becomes the invalid `input var tri logic`. Connecting
+a *net* to such a port is legal SystemVerilog, but Icarus coerces the port to inout
+and drives X. Veryl-to-Veryl hierarchies never hit this (their signals are
+variables too), but a synthesized netlist connects only wires, so with
+`sim/gowin_cells_sim.veryl` every Icarus GLS test failed (Verilator was fine).
+`sim/runners/sim_runner.py` therefore gives GLS builds a copy of the generated cell
+models with `input var` rewritten to `input wire`
+(`build/sim/gowin_cells_sim_net_inputs.sv`). Keep that step if you touch the GLS
+source list.
+
 ## Veryl module resolution is directory-agnostic
 
 `veryl build`/`veryl check` scan the whole project root recursively for `.veryl`
@@ -103,17 +114,18 @@ directory conventions — `sdcard_model.py`/`virtual_serial.py` only ever get
 imported by `sim/integration/` tests, `emulator.py` only by `sim/emulator/`
 tests, so each helper lives alongside its only consumers. `sim/runners/` holds
 the pytest entry point that builds and runs all cocotb tests (see below).
-`gowin_cells_sim.v`, `tb_soc_top.sv`, and `tb_hex_runner.veryl` stay at `sim/`'s
+`gowin_cells_sim.veryl`, `tb_soc_top.sv`, and `tb_hex_runner.veryl` stay at `sim/`'s
 top level — **do not move them into a subdirectory**:
-- `sim/runners/sim_runner.py` refers to `sim/gowin_cells_sim.v` (GLS) and
-  `sim/tb_soc_top.sv` (RTL and GLS) by path.
-- `tb_hex_runner.veryl` is the one `.veryl` file inside `sim/` (everything else
-  lives under `soc/`); Veryl mirrors the source tree into `build/veryl/`, so it
-  compiles to `build/veryl/sim/tb_hex_runner.sv`, a path `scripts/run_riscv_tests.py`
-  hardcodes. Moving the `.veryl` file changes that generated path and silently
-  breaks `make test-isa` (this is the same class of landmine described
-  in "Veryl module resolution is directory-agnostic" above, but easy to miss
-  since `tb_hex_runner.veryl` looks like an ordinary test helper, not RTL source).
+- `sim/runners/sim_runner.py` refers to `sim/tb_soc_top.sv` (RTL and GLS) by path.
+- The two `.veryl` files are the only Veryl sources outside `soc/`; Veryl mirrors
+  the source tree into `build/veryl/`, so they compile to
+  `build/veryl/sim/gowin_cells_sim.sv` (the Gowin cell models for GLS, a path
+  `sim/runners/sim_runner.py` hardcodes) and `build/veryl/sim/tb_hex_runner.sv`
+  (a path `scripts/run_riscv_tests.py` hardcodes). Moving either `.veryl` file
+  changes that generated path and silently breaks GLS or `make test-isa` (this is
+  the same class of landmine described in "Veryl module resolution is
+  directory-agnostic" above, but easy to miss since they look like ordinary test
+  helpers, not RTL source).
 
 ## cocotb tests run through pytest + `cocotb_tools.runner`, not a Makefile
 
