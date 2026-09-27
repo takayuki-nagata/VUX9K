@@ -333,6 +333,7 @@ impl Soc {
         match (addr >> 12) & 0xF {
             periph::PAGE_UART => self.periph.uart.read(addr, t + 2),
             periph::PAGE_TIMER => self.periph.timer.read(addr, t + 1),
+            periph::PAGE_SD => self.periph.sd.read(addr, t + 1),
             periph::PAGE_GPIO => self.periph.gpio.read(addr, t + 1),
             _ => 0,
         }
@@ -343,6 +344,7 @@ impl Soc {
         match (addr >> 12) & 0xF {
             periph::PAGE_UART => self.periph.uart.write(addr, data, edge),
             periph::PAGE_TIMER => self.periph.timer.write(addr, data, edge),
+            periph::PAGE_SD => self.periph.sd.write(addr, data, edge),
             periph::PAGE_GPIO => self.periph.gpio.write(addr, data, edge),
             _ => {}
         }

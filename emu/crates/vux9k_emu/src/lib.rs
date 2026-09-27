@@ -8,6 +8,7 @@
 pub mod csr;
 pub mod periph;
 pub mod profile;
+pub mod sdcard;
 pub mod soc;
 
 pub use profile::Profile;

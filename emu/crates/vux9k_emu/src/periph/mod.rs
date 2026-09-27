@@ -4,10 +4,12 @@
 //! Peripherals behind the MMIO pages of soc_addr_decoder (page = addr[15:12]).
 
 pub mod gpio;
+pub mod sdspi;
 pub mod timer;
 pub mod uart;
 
 pub use gpio::{Gpio, SoftReset};
+pub use sdspi::SdSpi;
 pub use timer::Timer;
 pub use uart::Uart;
 
@@ -21,4 +23,5 @@ pub struct Periph {
     pub timer: Timer,
     pub gpio: Gpio,
     pub uart: Uart,
+    pub sd: SdSpi,
 }
