@@ -38,7 +38,7 @@ HACK_BUILD_DIR := $(BUILD_DIR)/hack
 ZEPHYR_BUILD_DIR ?= $(BUILD_DIR)/zephyr
 SYNTH_DIR := $(BUILD_DIR)/synth
 
-.PHONY: all emu emu-py emu-test test-isa-emu test-emu veryl check check-paths fmt test test-ci test-hw test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware sim-unit sim-boot sim-soc sim test-isa zephyr-rust-lib zephyr-bc-lib build-zephyr sim-zephyr-emu sim-zephyr-repl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
+.PHONY: all emu emu-py emu-test test-isa-emu test-emu sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware sim-unit sim-boot sim-soc sim test-isa zephyr-rust-lib zephyr-bc-lib build-zephyr sim-zephyr-emu sim-zephyr-repl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
 
 all: test-ci
 
@@ -191,6 +191,19 @@ sim-unit: veryl
 # The same riscv-tests on the Rust emulator (isa-test profile): must match test-isa
 test-isa-emu: emu-py
 	$(PYTHON) scripts/run_riscv_tests.py --backend emu
+
+LOCKSTEP_TRACE_FILE = $(BUILD_DIR)/sim/verilator/tb_soc_top/run_test_soc_lockstep/lockstep.trace
+
+# RTL <-> emulator lockstep: trace the programs on the RTL (Verilator), compare on the emulator
+sim-lockstep: veryl firmware build-hack emu-py
+	SIM=verilator $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_lockstep]"
+	LOCKSTEP_TRACE=$(LOCKSTEP_TRACE_FILE) $(PYTHON) -m pytest sim/emu/test_lockstep.py
+
+# The long programs, plus random ones for LOCKSTEP_SEEDS (default 101,102,103)
+LOCKSTEP_SEEDS ?= 101,102,103
+sim-lockstep-slow: veryl firmware build-hack emu-py
+	LOCKSTEP_SEEDS=$(LOCKSTEP_SEEDS) LOCKSTEP_SLOW=1 SIM=verilator $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_lockstep]"
+	LOCKSTEP_SEEDS=$(LOCKSTEP_SEEDS) LOCKSTEP_SLOW=1 LOCKSTEP_TRACE=$(LOCKSTEP_TRACE_FILE) $(PYTHON) -m pytest sim/emu/test_lockstep.py
 
 test-emu: emu-py firmware build-hack
 	@echo "=== Running firmware and demo tests on the emulator ==="
@@ -405,16 +418,16 @@ prog-flash: $(SYNTH_DIR)/pack.fs
 # ===== Aggregate Test Targets =====
 
 # Every push/PR (CI). Long SoC runs are on Verilator (SIM_SOC); see AGENTS.md for timings.
-test-sim: check emu-test test-isa-emu firmware zephyr-rust-lib zephyr-bc-lib build-hack test-emu build-zephyr sim-unit test-isa sim-gls-unit sim-soc-fast sim-soc-fast-icarus sim-soc-mmio sim-boot sim-hack-rtl sim-sd-quirks sim-hw-flow synth-top sim-soc-gls-fast
+test-sim: check emu-test test-isa-emu firmware zephyr-rust-lib zephyr-bc-lib build-hack test-emu sim-lockstep build-zephyr sim-unit test-isa sim-gls-unit sim-soc-fast sim-soc-fast-icarus sim-soc-mmio sim-boot sim-hack-rtl sim-sd-quirks sim-hw-flow synth-top sim-soc-gls-fast
 	@echo "========================================================================"
 	@echo "  [SIM] ALL RTL, GLS NETLIST, ISA & SOC SIMULATION TESTS PASSED!        "
 	@echo "========================================================================"
 
 # Nightly / on demand (CI schedule + workflow_dispatch): the gate-level flashing flow and
 # the full flow on 4-state Icarus
-test-slow: sim-gls-hw-flow sim-hw-flow-icarus
+test-slow: sim-gls-hw-flow sim-hw-flow-icarus sim-lockstep-slow
 	@echo "========================================================================"
-	@echo "  [SLOW] GLS FLASHING FLOW & ICARUS FULL-FLOW TESTS PASSED!             "
+	@echo "  [SLOW] GLS FLASHING FLOW, ICARUS FULL-FLOW & LONG LOCKSTEP PASSED!    "
 	@echo "========================================================================"
 
 test: test-sim sta

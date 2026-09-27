@@ -122,9 +122,10 @@ impl Soc {
 
     /// The host sends `data` on the UART RX line from now on, back to back
     /// (`bad_stop`: with a low stop bit, a framing error).
-    #[pyo3(signature = (data, bad_stop = false))]
-    fn uart_send(&mut self, data: &[u8], bad_stop: bool) {
-        let c = self.inner.cycle;
+    /// `at`: start no earlier than this cycle instead of now.
+    #[pyo3(signature = (data, bad_stop = false, at = None))]
+    fn uart_send(&mut self, data: &[u8], bad_stop: bool, at: Option<u64>) {
+        let c = at.unwrap_or(self.inner.cycle);
         self.inner.periph.uart.host_send(data, c, bad_stop);
     }
 
@@ -148,9 +149,11 @@ impl Soc {
 
     // ----- GPIO ---------------------------------------------------------------------
 
-    /// Press (True) or release button S2 from now on.
-    fn set_button(&mut self, pressed: bool) {
-        let c = self.inner.cycle;
+    /// Press (True) or release button S2 from now on (or from cycle `at`; one pending
+    /// change at a time).
+    #[pyo3(signature = (pressed, at = None))]
+    fn set_button(&mut self, pressed: bool, at: Option<u64>) {
+        let c = at.unwrap_or(self.inner.cycle);
         self.inner.periph.gpio.set_button(c, pressed);
     }
 

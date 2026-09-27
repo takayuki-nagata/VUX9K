@@ -84,6 +84,8 @@ SOC_RTL_PUBLIC = [
     ("soc_top", "*"),  # por_counter, active_mode, clk, ...
     ("unified_cpu", "pc_out"),  # dut.cpu_inst.pc_out
     ("soc_ram", "i_mem"),  # dut.ram_inst.i_mem[] (firmware preload)
+    ("soc_ram", "d_mem*"),  # d_mem0-3[] (test_soc_lockstep: power-on contents per program)
+    ("rv32i_regfile", "registers"),  # test_soc_lockstep zeroes the register file
 ]
 
 # soc_ram's $readmemh() calls use bare file names, resolved against the simulator's cwd
@@ -233,14 +235,17 @@ def run(
             sources = [_public_vlt(build_dir, toplevel, gls)] + sources
         # cocotb only rebuilds when a source is newer than the binary; also rebuild
         # when the compile flags changed, or a flag edit would silently not apply.
+        # tb_soc_top's lockstep trace reads RTL-internal names: RTL builds only
+        defines = {"VUX9K_RTL_TRACE": 1} if toplevel == "tb_soc_top" and not gls else {}
         stamp = build_dir / ".build_args"
-        flags = "\n".join(build_args)
+        flags = "\n".join(build_args + [f"-D{k}={v}" for k, v in defines.items()])
         flags_changed = not stamp.exists() or stamp.read_text() != flags
         runner.build(
             sources=sources,
             hdl_toplevel=toplevel,
             build_dir=build_dir,
             build_args=build_args,
+            defines=defines,
             timescale=("1ns", "1ps"),
             always=flags_changed,
         )
