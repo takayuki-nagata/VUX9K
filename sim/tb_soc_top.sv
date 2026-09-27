@@ -8,6 +8,13 @@
 // half period, which made Icarus run soc_top ~2.4x slower than with an HDL clock
 // (7.9k vs 19k cycles/s, 2026-09). Everything else is passed straight through; the
 // SoC itself is reachable from tests as `dut.soc`. See sim/integration/soc_env.py.
+//
+// This is the one hand-written SystemVerilog file in the repository, on purpose:
+// Veryl has no time-based clock outside `#[test]` modules run by its own simulator
+// ($tb::clock_gen), so the generated SV of a Veryl wrapper would need the clock from
+// cocotb again. Re-measured before keeping it (test_soc_fast, RTL, 2026-09, wall
+// time incl. compile): Verilator 8.9 s with this wrapper vs 22.7 s with a cocotb
+// Clock on bare soc_top, Icarus 230 s vs 416 s.
 
 `timescale 1ps / 1ps
 

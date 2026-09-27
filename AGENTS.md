@@ -126,6 +126,10 @@ top level — **do not move them into a subdirectory**:
   the same class of landmine described in "Veryl module resolution is
   directory-agnostic" above, but easy to miss since they look like ordinary test
   helpers, not RTL source).
+- `tb_soc_top.sv` is the one hand-written SystemVerilog file, kept on purpose: its
+  HDL clock (see "SoC cocotb tests" below) can't be written in Veryl, whose only
+  time-based clock (`$tb::clock_gen`) exists just in `#[test]` modules run by
+  Veryl's own simulator. Its header has the measurement behind keeping it.
 
 ## cocotb tests run through pytest + `cocotb_tools.runner`, not a Makefile
 
