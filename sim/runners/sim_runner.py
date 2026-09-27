@@ -56,6 +56,8 @@ RTL_SOURCES = (
 TB_SOC_TOP = SIM_DIR / "tb_soc_top.sv"
 # riscv-tests harness around unified_cpu (sim/tb_hex_runner.veryl), added only when it is the toplevel
 TB_HEX_RUNNER = VERYL_OUT_DIR / "sim" / "tb_hex_runner.sv"
+# Test wrapper for the SP/SDPB cell models (sim/tb_gowin_bram.veryl): cell models only, no RTL
+TB_GOWIN_BRAM = VERYL_OUT_DIR / "sim" / "tb_gowin_bram.sv"
 # Simulation models of the Gowin cells the GLS netlists instantiate (from sim/gowin_cells_sim.veryl),
 # and the copy of them GLS builds actually read (see _gowin_cells_with_net_inputs)
 GOWIN_CELLS = VERYL_OUT_DIR / "sim" / "gowin_cells_sim.sv"
@@ -110,6 +112,8 @@ def _gowin_cells_with_net_inputs() -> Path:
 
 def sources_for(toplevel: str, gls: bool) -> list[Path]:
     """RTL sources, or Gowin cell models + the yosys netlist for toplevel (GLS)."""
+    if toplevel == "tb_gowin_bram":
+        return [_gowin_cells_with_net_inputs(), TB_GOWIN_BRAM]
     if gls:
         netlist = "soc_syn.v" if toplevel in ("soc_top", "tb_soc_top") else f"{toplevel}_syn.v"
         sources = [_gowin_cells_with_net_inputs(), SYNTH_DIR / netlist]

@@ -1,0 +1,61 @@
+// Copyright (c) 2026 Takayuki Nagata
+// SPDX-License-Identifier: MIT
+
+// Test wrapper for the block-RAM models in sim/gowin_cells_sim.veryl that no GLS
+// netlist instantiates today (SP, SDPB), so nothing else exercises them.
+// sim/unit/test_gowin_bram.py checks where INIT_RAM_* contents land and SDPB's
+// per-port widths. The INIT values only need to be distinct per block.
+module tb_gowin_bram (
+    clk: input clock,
+
+    // SP, x32, read-only here
+    sp_ad: input  logic<14>,
+    sp_do: output logic<32>,
+
+    // SDPB: port A writes x16, port B reads x32
+    sdpb_we : input  logic    ,
+    sdpb_ada: input  logic<14>,
+    sdpb_di : input  logic<32>,
+    sdpb_adb: input  logic<14>,
+    sdpb_do : output logic<32>,
+) {
+    inst sp: SP #(
+        BIT_WIDTH  : 32                                                                          ,
+        INIT_RAM_1C: 256'h1c1c1c1c_1c1c1c1c_1c1c1c1c_1c1c1c1c_1c1c1c1c_1c1c1c1c_1c1c1c1c_c01dc01c,
+        INIT_RAM_1D: 256'h1d1d1d1d_1d1d1d1d_1d1d1d1d_1d1d1d1d_1d1d1d1d_1d1d1d1d_1d1d1d1d_c01dc01d,
+        INIT_RAM_1E: 256'h1e1e1e1e_1e1e1e1e_1e1e1e1e_1e1e1e1e_1e1e1e1e_1e1e1e1e_1e1e1e1e_c01dc01e,
+    ) (
+        DO    : sp_do ,
+        DI    : 32'h0 ,
+        BLKSEL: 3'b000,
+        AD    : sp_ad ,
+        WRE   : 1'b0  ,
+        CLK   : clk   ,
+        CE    : 1'b1  ,
+        OCE   : 1'b0  ,
+        RESET : 1'b0  ,
+    );
+
+    // One clock drives both of SDPB's ports
+    unsafe (cdc) {
+        inst sdpb: SDPB #(
+            BIT_WIDTH_0: 16                                                                          ,
+            BIT_WIDTH_1: 32                                                                          ,
+            INIT_RAM_05: 256'h05050505_05050505_05050505_05050505_05050505_05050505_05050505_5eed0005,
+        ) (
+            CLKA   : clk     ,
+            CEA    : sdpb_we ,
+            CLKB   : clk     ,
+            CEB    : 1'b1    ,
+            OCE    : 1'b0    ,
+            RESETA : 1'b0    ,
+            RESETB : 1'b0    ,
+            ADA    : sdpb_ada,
+            ADB    : sdpb_adb,
+            DI     : sdpb_di ,
+            BLKSELA: 3'b000  ,
+            BLKSELB: 3'b000  ,
+            DO     : sdpb_do ,
+        );
+    }
+}

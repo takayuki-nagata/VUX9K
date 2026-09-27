@@ -114,14 +114,15 @@ directory conventions — `sdcard_model.py`/`virtual_serial.py` only ever get
 imported by `sim/integration/` tests, `emulator.py` only by `sim/emulator/`
 tests, so each helper lives alongside its only consumers. `sim/runners/` holds
 the pytest entry point that builds and runs all cocotb tests (see below).
-`gowin_cells_sim.veryl`, `tb_soc_top.sv`, and `tb_hex_runner.veryl` stay at `sim/`'s
-top level — **do not move them into a subdirectory**:
+`gowin_cells_sim.veryl`, `tb_soc_top.sv`, `tb_hex_runner.veryl` and `tb_gowin_bram.veryl`
+stay at `sim/`'s top level — **do not move them into a subdirectory**:
 - `sim/runners/sim_runner.py` refers to `sim/tb_soc_top.sv` (RTL and GLS) by path.
-- The two `.veryl` files are the only Veryl sources outside `soc/`; Veryl mirrors
+- The `.veryl` files there are the only Veryl sources outside `soc/`; Veryl mirrors
   the source tree into `build/veryl/`, so they compile to
-  `build/veryl/sim/gowin_cells_sim.sv` (the Gowin cell models for GLS, a path
-  `sim/runners/sim_runner.py` hardcodes) and `build/veryl/sim/tb_hex_runner.sv`
-  (a path `scripts/run_riscv_tests.py` hardcodes). Moving either `.veryl` file
+  `build/veryl/sim/gowin_cells_sim.sv` (the Gowin cell models for GLS) and
+  `build/veryl/sim/tb_gowin_bram.sv` (a test wrapper for the SP/SDPB models), paths
+  `sim/runners/sim_runner.py` hardcodes, and `build/veryl/sim/tb_hex_runner.sv`
+  (a path `scripts/run_riscv_tests.py` hardcodes). Moving any of them
   changes that generated path and silently breaks GLS or `make test-isa` (this is
   the same class of landmine described in "Veryl module resolution is
   directory-agnostic" above, but easy to miss since they look like ordinary test
@@ -474,7 +475,7 @@ path- or timing-related regression the fast tests can't reach.
 Run in this order (each depends on the previous succeeding):
 ```
 make firmware        # Cargo workspace build -> build/firmware/
-make sim-unit         # broadest RTL path coverage (20 unit test modules)
+make sim-unit         # broadest RTL path coverage (21 unit test modules)
 make test-isa
 make build-hack        # hack_demo/
 make sim-hack-rtl

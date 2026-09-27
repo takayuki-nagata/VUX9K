@@ -38,6 +38,7 @@ UNIT = [
     ("gpio_controller", "test_gpio_controller"),
     ("sdcard_spi", "test_sdcard_spi"),
     ("soc_ram", "test_soc_ram"),
+    ("tb_gowin_bram", "test_gowin_bram"),  # SP/SDPB cell models (no netlist uses them)
 ]
 
 # Gate-level: netlists from `make synth-units`
