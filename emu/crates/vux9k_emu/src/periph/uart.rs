@@ -59,6 +59,8 @@ pub struct Uart {
     tx_idle_from: u64,
     /// Transmitted bytes: (byte, cycle its start bit begins).
     tx_out: Vec<(u8, u64)>,
+    /// The same bytes, alone.
+    tx_bytes: Vec<u8>,
     rx_fifo: VecDeque<u8>,
     rx_line: VecDeque<RxFrame>,
     /// Earliest start of the next byte the host may send (back-to-back frames).
@@ -76,6 +78,7 @@ impl Default for Uart {
             tx_fifo: VecDeque::new(),
             tx_idle_from: FIRST_ALARM + 1,
             tx_out: Vec::new(),
+            tx_bytes: Vec::new(),
             rx_fifo: VecDeque::new(),
             rx_line: VecDeque::new(),
             rx_line_free: 0,
@@ -126,6 +129,7 @@ impl Uart {
             let byte = self.tx_fifo.pop_front().expect("tx_pop only with data");
             let load = next_alarm(edge + 1);
             self.tx_out.push((byte, load + 1));
+            self.tx_bytes.push(byte);
             self.tx_idle_from = load + 9 * BIT + 2;
         }
         let mut pushed = None;
@@ -237,11 +241,14 @@ impl Uart {
         &self.tx_out
     }
 
-    /// Transmitted bytes whose frame has completely left the pin by cycle `c`.
+    /// Transmitted bytes (whose start bit has begun), without their times.
+    pub fn tx_bytes(&self) -> &[u8] {
+        &self.tx_bytes
+    }
+
+    /// Number of transmitted bytes whose frame has completely left the pin by cycle
+    /// `c` (the state must have been advanced to `c`).
     pub fn tx_complete_by(&self, c: u64) -> usize {
-        self.tx_out
-            .iter()
-            .take_while(|&&(_, s)| s + FRAME <= c)
-            .count()
+        self.tx_out.partition_point(|&(_, s)| s + FRAME <= c)
     }
 }

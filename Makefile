@@ -38,7 +38,7 @@ HACK_BUILD_DIR := $(BUILD_DIR)/hack
 ZEPHYR_BUILD_DIR ?= $(BUILD_DIR)/zephyr
 SYNTH_DIR := $(BUILD_DIR)/synth
 
-.PHONY: all emu emu-py emu-test test-isa-emu veryl check check-paths fmt test test-ci test-hw test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware sim-unit sim-boot sim-soc sim test-isa zephyr-rust-lib zephyr-bc-lib build-zephyr sim-zephyr-emu sim-zephyr-repl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
+.PHONY: all emu emu-py emu-test test-isa-emu test-emu veryl check check-paths fmt test test-ci test-hw test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware sim-unit sim-boot sim-soc sim test-isa zephyr-rust-lib zephyr-bc-lib build-zephyr sim-zephyr-emu sim-zephyr-repl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
 
 all: test-ci
 
@@ -191,6 +191,10 @@ sim-unit: veryl
 # The same riscv-tests on the Rust emulator (isa-test profile): must match test-isa
 test-isa-emu: emu-py
 	$(PYTHON) scripts/run_riscv_tests.py --backend emu
+
+test-emu: emu-py firmware build-hack
+	@echo "=== Running firmware and demo tests on the emulator ==="
+	$(PYTHON) -m pytest sim/emu
 
 test-isa: veryl
 	@echo "=== Running riscv-tests (rv32ui/rv32mi) on tb_hex_runner ==="
@@ -401,7 +405,7 @@ prog-flash: $(SYNTH_DIR)/pack.fs
 # ===== Aggregate Test Targets =====
 
 # Every push/PR (CI). Long SoC runs are on Verilator (SIM_SOC); see AGENTS.md for timings.
-test-sim: check emu-test test-isa-emu firmware zephyr-rust-lib zephyr-bc-lib build-hack build-zephyr sim-unit test-isa sim-gls-unit sim-soc-fast sim-soc-fast-icarus sim-soc-mmio sim-boot sim-hack-rtl sim-sd-quirks sim-hw-flow synth-top sim-soc-gls-fast
+test-sim: check emu-test test-isa-emu firmware zephyr-rust-lib zephyr-bc-lib build-hack test-emu build-zephyr sim-unit test-isa sim-gls-unit sim-soc-fast sim-soc-fast-icarus sim-soc-mmio sim-boot sim-hack-rtl sim-sd-quirks sim-hw-flow synth-top sim-soc-gls-fast
 	@echo "========================================================================"
 	@echo "  [SIM] ALL RTL, GLS NETLIST, ISA & SOC SIMULATION TESTS PASSED!        "
 	@echo "========================================================================"

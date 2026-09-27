@@ -3,10 +3,11 @@
 
 //! Python bindings of the VUX9K emulator: `import vux9k_emu` (see sim/emu/).
 
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyBytes, PyDict};
 
+use emu_core::sdcard::{Faults, SdCard};
 use emu_core::{Profile, Stop};
 
 fn parse_profile(name: &str) -> PyResult<Profile> {
@@ -52,6 +53,26 @@ impl Soc {
         self.inner.load_dram_words(&words);
     }
 
+    /// soc_ram's power-on preload, from the text of firmware.hex and firmware_d0-3.hex.
+    fn load_readmemh(
+        &mut self,
+        iram: &str,
+        d0: &str,
+        d1: &str,
+        d2: &str,
+        d3: &str,
+    ) -> PyResult<()> {
+        self.inner
+            .load_readmemh(iram, [d0, d1, d2, d3])
+            .map_err(PyValueError::new_err)
+    }
+
+    /// Write 32-bit words into I-RAM from word index `start`.
+    #[pyo3(signature = (words, start = 0))]
+    fn load_iram_words(&mut self, words: Vec<u32>, start: u32) {
+        self.inner.load_iram_words(start, &words);
+    }
+
     fn iram_word(&self, addr: u32) -> u32 {
         self.inner.iram_word(addr)
     }
@@ -88,6 +109,116 @@ impl Soc {
             Stop::Budget => ("budget", None),
             Stop::ToHost(v) => ("tohost", Some(v)),
         }
+    }
+
+    /// Run until the host has received `needle` on the UART at or after output index
+    /// `start`; returns the index just past it, or None after `max_cycles`.
+    #[pyo3(signature = (needle, max_cycles, start = 0))]
+    fn run_until_tx(&mut self, needle: &[u8], max_cycles: u64, start: usize) -> Option<usize> {
+        self.inner.run_until_tx(needle, start, max_cycles)
+    }
+
+    // ----- UART ---------------------------------------------------------------------
+
+    /// The host sends `data` on the UART RX line from now on, back to back
+    /// (`bad_stop`: with a low stop bit, a framing error).
+    #[pyo3(signature = (data, bad_stop = false))]
+    fn uart_send(&mut self, data: &[u8], bad_stop: bool) {
+        let c = self.inner.cycle;
+        self.inner.periph.uart.host_send(data, c, bad_stop);
+    }
+
+    /// Cycle by which everything sent so far has reached the RX FIFO.
+    #[getter]
+    fn uart_send_done(&self) -> u64 {
+        self.inner.periph.uart.host_send_done()
+    }
+
+    /// UART output the host has completely received.
+    fn uart_received<'py>(&mut self, py: Python<'py>) -> Bound<'py, PyBytes> {
+        PyBytes::new(py, self.inner.uart_received())
+    }
+
+    /// Every transmitted byte with the cycle its start bit began.
+    fn uart_tx_log(&mut self) -> Vec<(u8, u64)> {
+        let c = self.inner.cycle;
+        self.inner.periph.uart.advance(c);
+        self.inner.periph.uart.tx_log().to_vec()
+    }
+
+    // ----- GPIO ---------------------------------------------------------------------
+
+    /// Press (True) or release button S2 from now on.
+    fn set_button(&mut self, pressed: bool) {
+        let c = self.inner.cycle;
+        self.inner.periph.gpio.set_button(c, pressed);
+    }
+
+    /// LED register (bit set = lit).
+    #[getter]
+    fn leds(&self) -> u8 {
+        self.inner.periph.gpio.leds()
+    }
+
+    // ----- SD card ------------------------------------------------------------------
+
+    /// Insert a card holding the raw sector image `image`.
+    #[pyo3(signature = (image = b"".as_slice(), sdhc = true, strict = false, mute_cmds = vec![],
+                        never_ready = false, read_error = false, write_reject = false))]
+    #[allow(clippy::too_many_arguments)]
+    fn sd_insert(
+        &mut self,
+        image: &[u8],
+        sdhc: bool,
+        strict: bool,
+        mute_cmds: Vec<u8>,
+        never_ready: bool,
+        read_error: bool,
+        write_reject: bool,
+    ) {
+        let mut card = SdCard::new(image.to_vec());
+        card.sdhc = sdhc;
+        card.strict = strict;
+        card.faults = Faults {
+            mute_cmds,
+            never_ready,
+            read_error,
+            write_reject,
+        };
+        self.inner.periph.sd.card = Some(card);
+    }
+
+    fn sd_remove(&mut self) {
+        self.inner.periph.sd.card = None;
+    }
+
+    fn sd_image<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        Ok(PyBytes::new(py, self.card()?.image()))
+    }
+
+    fn sd_sector<'py>(&self, py: Python<'py>, lba: u32) -> PyResult<Bound<'py, PyBytes>> {
+        Ok(PyBytes::new(py, &self.card()?.sector(lba)))
+    }
+
+    fn sd_set_sector(&mut self, lba: u32, data: &[u8]) -> PyResult<()> {
+        self.card_mut()?.set_sector(lba, data);
+        Ok(())
+    }
+
+    /// (cmd, arg) of every command the card received.
+    #[getter]
+    fn sd_commands(&self) -> PyResult<Vec<(u8, u32)>> {
+        Ok(self.card()?.commands.clone())
+    }
+
+    #[getter]
+    fn sd_violations(&self) -> PyResult<Vec<String>> {
+        Ok(self.card()?.violations.clone())
+    }
+
+    #[getter]
+    fn sd_idle_clocks(&self) -> PyResult<u64> {
+        Ok(self.card()?.idle_clocks())
     }
 
     #[getter]
@@ -130,6 +261,11 @@ impl Soc {
         self.inner.csr.mtval
     }
 
+    #[getter]
+    fn mstatus(&self) -> u32 {
+        self.inner.csr.mstatus | 0x1800 // MPP reads as M
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "<vux9k_emu.Soc {} cycle={} pc={:#010x}>",
@@ -137,6 +273,26 @@ impl Soc {
             self.inner.cycle,
             self.inner.pc
         )
+    }
+}
+
+impl Soc {
+    fn card(&self) -> PyResult<&SdCard> {
+        self.inner
+            .periph
+            .sd
+            .card
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("no SD card inserted"))
+    }
+
+    fn card_mut(&mut self) -> PyResult<&mut SdCard> {
+        self.inner
+            .periph
+            .sd
+            .card
+            .as_mut()
+            .ok_or_else(|| PyRuntimeError::new_err("no SD card inserted"))
     }
 }
 

@@ -205,12 +205,15 @@ impl Soc {
         soc
     }
 
-    /// Power-on reset: CPU and peripherals (memories keep their contents).
+    /// Power-on reset: CPU and peripherals (memories keep their contents, and an SD
+    /// card stays in its socket as it is).
     pub fn reset(&mut self) {
         self.regs = [0; 32];
         self.pc = 0;
         self.csr = Csrs::default();
+        let card = self.periph.sd.card.take();
         self.periph = Periph::default();
+        self.periph.sd.card = card;
         self.riscv_mode = true;
         self.mode_latched = false;
         self.cycle = 0;
@@ -245,6 +248,31 @@ impl Soc {
             w[..chunk.len()].copy_from_slice(chunk);
             let idx = ((addr / 4) + n as u32) & self.iram_mask;
             self.iram[idx as usize] = u32::from_le_bytes(w);
+        }
+    }
+
+    /// soc_ram's preload: I-RAM from firmware.hex, D-RAM byte lanes 0-3 from
+    /// firmware_d0-3.hex (all `$readmemh` text).
+    pub fn load_readmemh(&mut self, iram: &str, dram_lanes: [&str; 4]) -> Result<(), String> {
+        let words = crate::hexfile::parse(iram)?;
+        self.load_iram_words(0, &words);
+        let mut dram = vec![0u32; self.dram.len()];
+        for (lane, text) in dram_lanes.iter().enumerate() {
+            for (i, b) in crate::hexfile::parse(text)?.into_iter().enumerate() {
+                if let Some(w) = dram.get_mut(i) {
+                    *w |= (b & 0xFF) << (8 * lane);
+                }
+            }
+        }
+        self.load_dram_words(&dram);
+        Ok(())
+    }
+
+    /// Write 32-bit words into I-RAM from word index `start`.
+    pub fn load_iram_words(&mut self, start: u32, words: &[u32]) {
+        for (n, w) in words.iter().enumerate() {
+            let idx = (start + n as u32) & self.iram_mask;
+            self.iram[idx as usize] = *w;
         }
     }
 
@@ -750,6 +778,44 @@ impl Soc {
     }
 
     /// Run until `max_cycles` more clock cycles have elapsed or the program stops.
+    /// The host sends `bytes` to the UART, starting now (back to back after anything
+    /// still being sent).
+    pub fn uart_send(&mut self, bytes: &[u8]) {
+        self.periph.uart.host_send(bytes, self.cycle, false);
+    }
+
+    /// UART output the host has completely received so far.
+    pub fn uart_received(&mut self) -> &[u8] {
+        let uart = &mut self.periph.uart;
+        uart.advance(self.cycle);
+        let n = uart.tx_complete_by(self.cycle);
+        &uart.tx_bytes()[..n]
+    }
+
+    /// Run until the host has received `needle` in the UART output at or after byte
+    /// `from`, for at most `max_cycles`. Returns the output index just past it.
+    pub fn run_until_tx(&mut self, needle: &[u8], from: usize, max_cycles: u64) -> Option<usize> {
+        let end = self.cycle.saturating_add(max_cycles);
+        let mut searched = from;
+        loop {
+            let got = self.uart_received();
+            if got.len() > searched {
+                let start = searched.saturating_sub(needle.len()).max(from);
+                if let Some(p) = got[start..]
+                    .windows(needle.len().max(1))
+                    .position(|w| w == needle)
+                {
+                    return Some(start + p + needle.len());
+                }
+                searched = got.len();
+            }
+            if self.cycle >= end {
+                return None;
+            }
+            self.step();
+        }
+    }
+
     pub fn run(&mut self, max_cycles: u64) -> Stop {
         let end = self.cycle.saturating_add(max_cycles);
         while self.cycle < end {

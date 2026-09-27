@@ -23,7 +23,7 @@ select = ["E", "F", "I", "B", "ASYNC", "RUF006"]
 [tool.pytest.ini_options]
 # cocotb testbenches run through sim/runners/test_sim.py; sim/unit and
 # sim/integration hold cocotb (not pytest) modules and must not be collected.
-testpaths = ["sim/runners", "sim/emulator"]
+testpaths = ["sim/runners", "sim/emulator", "sim/emu"]
 cache_dir = "build/pytest_cache"
 addopts = "--strict-markers"
 markers = [
