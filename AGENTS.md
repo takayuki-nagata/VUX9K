@@ -412,9 +412,6 @@ caused by any restructuring:
   before the SoC has actually produced it), unrelated to file layout. Confirmed
   by reproducing on a clean `git worktree` of `main` reusing the same
   `build/zephyr/zephyr/zephyr.bin` (2026-09).
-- `make sta` — nextpnr timing closure at 30 MHz fails for every seed in
-  `PNR_SEEDS` (-4.1 to -4.7 ns after the trap path was restored, 2026-09); this is
-  the timing-closure work of step 3, not a build-system bug.
 
 ## PnR seeds: `scripts/run_pnr.py` adopts one seed and records it
 

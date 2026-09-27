@@ -64,8 +64,8 @@ The RTL modules in this repository were originally authored in VHDL-2008 and hav
 | `0x0000_3800` - `0x0000_3FFF` | 2 KB | **Resident Loader (Upper I-RAM)** | Immutable resident bootloader, entered only via a software jump to `0x0000_3800` (never by hardware reset); checks Mailbox, loads SD slots into I-RAM, then triggers a CPU soft-reset (see GPIO `0x4000_300C` below) to resume execution at `RESET_VECTOR` |
 | `0x2000_0000` - `0x2000_1FFF` | 8 KB | **Data RAM** | `.data`, `.bss`, stack, and heap. Mailbox register located at `0x2000_1FFC` |
 | `0x4000_0000` - `0x4000_000F` | 16 B | **UART Controller** | Full-duplex 115200 bps TX/RX data registers & status flags |
-| `0x4000_1000` - `0x4000_101F` | 32 B | **System Timer (CLINT)** | 64-bit `mtime` and `mtimecmp` registers |
-| `0x4000_2000` - `0x4000_200F` | 16 B | **MicroSD SPI Master** | SPI TX/RX data, CS assertion, busy status, clock divider |
+| `0x4000_1000` - `0x4000_100F` | 16 B | **System Timer (CLINT)** | 64-bit `mtime` (`0x0`/`0x4`) and `mtimecmp` (`0x8`/`0xC`) registers |
+| `0x4000_2000` - `0x4000_200F` | 16 B | **MicroSD SPI Master** | SPI TX/RX data (`0x0`), CS (`0x4`), busy (`0x8`); SPI clock fixed at ~400 kHz. Writes while busy are ignored (data and CS alike): wait for busy to clear first |
 | `0x4000_3000` - `0x4000_300F` | 16 B | **GPIO Controller** | 6 onboard active-low LEDs (`0x00`=ON, `0x3F`=OFF) & user buttons (Button S2 on pin 3); offset `0xC` is a soft-reset trigger — writing `0x5A5A_A55A` pulses `cpu_soft_rst`, resetting the CPU FSM/PC/CSRs to `RESET_VECTOR` without a full FPGA reload |
 
 **Address decoding and aliases.** Only the address bits needed to tell the regions apart are decoded, so every region repeats and nothing raises an access fault:
