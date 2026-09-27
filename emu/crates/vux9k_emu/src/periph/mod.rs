@@ -5,9 +5,11 @@
 
 pub mod gpio;
 pub mod timer;
+pub mod uart;
 
 pub use gpio::{Gpio, SoftReset};
 pub use timer::Timer;
+pub use uart::Uart;
 
 pub const PAGE_UART: u32 = 0x0;
 pub const PAGE_TIMER: u32 = 0x1;
@@ -18,4 +20,5 @@ pub const PAGE_GPIO: u32 = 0x3;
 pub struct Periph {
     pub timer: Timer,
     pub gpio: Gpio,
+    pub uart: Uart,
 }

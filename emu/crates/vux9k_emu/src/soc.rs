@@ -327,9 +327,11 @@ impl Soc {
     }
 
     /// MMIO read by the instruction fetched in cycle `t`. The registered peripherals
-    /// (timer, SD, GPIO) sample in its EXECUTE cycle, t + 1.
+    /// (timer, SD, GPIO) sample in its EXECUTE cycle, t + 1; the UART is read
+    /// combinationally in MEM_WAIT, t + 2.
     fn mmio_read(&mut self, addr: u32, t: u64) -> u32 {
         match (addr >> 12) & 0xF {
+            periph::PAGE_UART => self.periph.uart.read(addr, t + 2),
             periph::PAGE_TIMER => self.periph.timer.read(addr, t + 1),
             periph::PAGE_GPIO => self.periph.gpio.read(addr, t + 1),
             _ => 0,
@@ -339,6 +341,7 @@ impl Soc {
     /// MMIO write taking effect at the end of cycle `edge`.
     fn mmio_write(&mut self, addr: u32, data: u32, edge: u64) {
         match (addr >> 12) & 0xF {
+            periph::PAGE_UART => self.periph.uart.write(addr, data, edge),
             periph::PAGE_TIMER => self.periph.timer.write(addr, data, edge),
             periph::PAGE_GPIO => self.periph.gpio.write(addr, data, edge),
             _ => {}
@@ -378,15 +381,18 @@ impl Soc {
     // ----- interrupts -----------------------------------------------------------------
 
     /// Pending interrupt lines (mip) during cycle `c`.
-    fn mip_at(&self, c: u64) -> u32 {
+    fn mip_at(&mut self, c: u64) -> u32 {
+        let mut mip = 0;
         if self.periph.timer.irq(c) {
-            csr::MIP_MTIP
-        } else {
-            0
+            mip |= csr::MIP_MTIP;
         }
+        if self.periph.uart.rx_pending(c) {
+            mip |= csr::MIP_MEIP;
+        }
+        mip
     }
 
-    fn mip(&self) -> u32 {
+    fn mip(&mut self) -> u32 {
         self.mip_at(self.cycle)
     }
 
@@ -423,7 +429,8 @@ impl Soc {
         };
         if self.riscv_mode {
             // The interrupt is sampled in FETCH (unified_cpu r_irq)
-            let irq = self.csr.pending_interrupt(self.mip());
+            let mip = self.mip();
+            let irq = self.csr.pending_interrupt(mip);
             self.step_rv(word, irq, &mut r);
         } else {
             self.step_hack(word, &mut r);
