@@ -74,8 +74,16 @@ these; one of the three tools does not (found 2026-09):
   enum to its largest member (CSR addresses up to `12'h344` became 10 bits), so
   `csr_addr as E` silently drops the top bits and aliases other addresses. For
   such decodes keep a plain `case` on literals (as `rv32i_csrs` does).
-`make sim-unit` (Icarus) and `yosys -p "read_verilog -sv …"` catch all four in
-seconds; `veryl build` alone does not.
+- **A signed comparison through `as i32`** (`(a as i32) <: (b as i32)`) — Veryl emits
+  `int'(a) < int'(b)`; Icarus and Verilator compare signed, Yosys treats `int'()` as
+  a resize and compares **unsigned**. Nothing fails: the RTL tests pass, and `make eqy`
+  reads both sides with Yosys, so it can't see it either. BLT/BGE were built this way
+  and the bitstream took the wrong branch whenever the operand signs differed (found
+  2026-09 by the Zephyr demo on the board; reproduced in GLS). Write signed compares
+  out (`if a[31] != b[31] ? a[31] : a <: b`, as `next_pc_unit`/`rv32i_alu` do);
+  `test_rv32i_branches` runs on the netlist too (`make sim-gls-unit`).
+`make sim-unit` (Icarus) and `yosys -p "read_verilog -sv …"` catch the first five in
+seconds; `veryl build` alone does not. Only a GLS test catches the last one.
 
 `$readmemh` in synthesized RTL: `soc_ram` preloads its arrays in a plain Veryl
 `initial` block, allowed by `#[allow(initial_assign)]` on each array. Veryl emits it

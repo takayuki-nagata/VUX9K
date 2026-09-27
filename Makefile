@@ -38,7 +38,7 @@ HACK_BUILD_DIR := $(BUILD_DIR)/hack
 ZEPHYR_BUILD_DIR ?= $(BUILD_DIR)/zephyr
 SYNTH_DIR := $(BUILD_DIR)/synth
 
-.PHONY: all emu emu-py emu-test test-isa-emu test-emu sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware sim-unit sim-boot sim-soc sim test-isa zephyr-bc-lib build-zephyr build-zephyr-demo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
+.PHONY: all emu emu-py emu-test test-isa-emu test-emu sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware sim-unit sim-boot sim-soc sim test-isa zephyr-bc-lib build-zephyr build-zephyr-demo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-demo-gls sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
 
 all: test-ci
 
@@ -244,6 +244,10 @@ sim-zephyr-demo-rtl: veryl firmware build-zephyr-demo
 	@echo "=== Running the Zephyr Rust demo from SD on the RTL ==="
 	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_zephyr_demo]"
 
+sim-zephyr-demo-gls: synth-top firmware build-zephyr-demo
+	@echo "=== Running the Zephyr Rust demo from SD on the GLS netlist ==="
+	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc_gls[test_soc_zephyr_demo]"
+
 sim-zephyr: sim-zephyr-repl sim-zephyr-demo-rtl
 
 sim-hack-emu: build-hack
@@ -428,7 +432,7 @@ test-sim: check emu-test test-isa-emu firmware build-zephyr-demo zephyr-bc-lib b
 
 # Nightly / on demand (CI schedule + workflow_dispatch): the gate-level flashing flow and
 # the full flow on 4-state Icarus
-test-slow: sim-gls-hw-flow sim-hw-flow-icarus sim-lockstep-slow
+test-slow: sim-gls-hw-flow sim-hw-flow-icarus sim-lockstep-slow sim-zephyr-demo-gls
 	@echo "========================================================================"
 	@echo "  [SLOW] GLS FLASHING FLOW, ICARUS FULL-FLOW & LONG LOCKSTEP PASSED!    "
 	@echo "========================================================================"

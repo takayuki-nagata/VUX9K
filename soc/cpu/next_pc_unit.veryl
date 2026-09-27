@@ -32,8 +32,12 @@ pub module next_pc_unit (
 
     // RV32I branch condition, straight from the register operands
     always_comb {
-        let rs_eq : logic = rs1 == rs2;
-        let rs_lt : logic = (rs1 as i32) <: (rs2 as i32);
+        let rs_eq: logic = rs1 == rs2;
+        // Signed: with different signs rs1 is less iff it is the negative one; with the
+        // same sign the unsigned comparison is right. Not `(rs1 as i32) <: (rs2 as i32)`:
+        // Veryl emits int'() casts, which Yosys reads as a plain resize, so the netlist
+        // compared unsigned while every simulator compared signed (AGENTS.md).
+        let rs_lt : logic = if rs1[31] != rs2[31] ? rs1[31] : (rs1 <: rs2);
         let rs_ltu: logic = (rs1 as u32) <: (rs2 as u32);
         case funct3 {
             rv32i_pkg::Funct3::ADD_SUB: branch_take = rs_eq; // BEQ

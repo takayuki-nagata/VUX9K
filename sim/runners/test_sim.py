@@ -28,6 +28,7 @@ UNIT = [
     ("unified_cpu", "test_hack_cpu_ops"),
     ("unified_cpu", "test_rv32i_smoke"),
     ("unified_cpu", "test_unified_cpu_traps"),
+    ("unified_cpu", "test_rv32i_branches"),
     ("clk_timer", "test_clk_timer"),
     ("shift_registers", "test_shift_registers"),
     ("fifo_sync", "test_fifo_sync"),
@@ -47,6 +48,7 @@ UNIT_GLS = [
     ("unified_cpu", "test_hack_cpu_ops"),
     ("unified_cpu", "test_rv32i_smoke"),
     ("unified_cpu", "test_unified_cpu_traps"),
+    ("unified_cpu", "test_rv32i_branches"),
     ("uart_controller", "test_uart_controller"),
     ("auto_mode_detector", "test_auto_mode_detector"),
 ]
@@ -69,6 +71,7 @@ SOC = [
 SOC_GLS = [
     ("tb_soc_top", "test_soc_gls_fast"),
     pytest.param("tb_soc_top", "test_soc_hardware_flow", marks=slow),
+    pytest.param("tb_soc_top", "test_soc_zephyr_demo", marks=slow),
 ]
 
 
