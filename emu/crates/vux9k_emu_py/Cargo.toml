@@ -1,0 +1,14 @@
+[package]
+name = "vux9k_emu_py"
+description = "Python bindings of the VUX9K emulator (pyo3, abi3)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+name = "vux9k_emu"
+crate-type = ["cdylib"]
+
+[dependencies]
+vux9k_emu = { path = "../vux9k_emu" }

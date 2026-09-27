@@ -1,0 +1,12 @@
+# VUX9K instruction-set emulator: a host-only workspace, separate from firmware/
+# (which builds only for riscv32i-unknown-none-elf). Build output goes to
+# build/emu/target (CARGO_TARGET_DIR, see the Makefile).
+[workspace]
+resolver = "2"
+members = ["crates/vux9k_emu", "crates/vux9k_emu_cli", "crates/vux9k_emu_py"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Takayuki Nagata"]
