@@ -181,7 +181,8 @@ impl Soc {
 
     /// Insert a card holding the raw sector image `image`.
     #[pyo3(signature = (image = b"".as_slice(), sdhc = true, strict = false, mute_cmds = vec![],
-                        never_ready = false, read_error = false, write_reject = false))]
+                        never_ready = false, read_error = false, write_reject = false,
+                        bad_sectors = vec![]))]
     #[allow(clippy::too_many_arguments)]
     fn sd_insert(
         &mut self,
@@ -192,6 +193,7 @@ impl Soc {
         never_ready: bool,
         read_error: bool,
         write_reject: bool,
+        bad_sectors: Vec<u32>,
     ) {
         let mut card = SdCard::new(image.to_vec());
         card.sdhc = sdhc;
@@ -200,6 +202,7 @@ impl Soc {
             mute_cmds,
             never_ready,
             read_error,
+            bad_sectors,
             write_reject,
         };
         self.inner.periph.sd.card = Some(card);

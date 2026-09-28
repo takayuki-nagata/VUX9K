@@ -26,7 +26,8 @@ byte addresses); strict=True applies the card type's addressing exactly and reco
 SCLK cycles with CS high before the first command (SD spec power-up sequence).
 
 Faults (for firmware error paths): mute_cmds (never answered), never_ready (ACMD41
-keeps answering 01), read_error (CMD17 sends data error token 08), write_reject
+keeps answering 01), read_error (CMD17 sends data error token 08), bad_sectors
+(the same, for those sectors only), write_reject
 (data response 0B, block not written).
 """
 
@@ -43,6 +44,7 @@ class SdCardProtocol:
         mute_cmds=(),
         never_ready=False,
         read_error=False,
+        bad_sectors=(),
         write_reject=False,
     ):
         self.sdhc = sdhc
@@ -50,6 +52,7 @@ class SdCardProtocol:
         self.mute_cmds = set(mute_cmds)
         self.never_ready = never_ready
         self.read_error = read_error
+        self.bad_sectors = set(bad_sectors)
         self.write_reject = write_reject
         self.sectors = {}  # lba -> bytes(512)
         self.commands = []  # (cmd, arg) log
@@ -157,7 +160,7 @@ class SdCardProtocol:
             r += b"\xff\x00"
         elif cmd == 17:  # READ_SINGLE_BLOCK
             lba = self._addr_lba(cmd, arg)
-            if self.read_error:
+            if self.read_error or lba in self.bad_sectors:
                 r += b"\xff\x00\xff\x08"
             else:
                 r += b"\xff\x00\xff\xfe" + self.get_sector(lba) + b"\x12\x34"

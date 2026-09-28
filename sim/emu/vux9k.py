@@ -141,3 +141,67 @@ def press_button(soc, hold_ms: float = 25, after_ms: float = 15) -> None:
     soc.run(ms(hold_ms))
     soc.set_button(False)
     soc.run(ms(after_ms))
+
+
+class EmuClock:
+    """Stand-in for the `time` module in emulated time (27 MHz cycles), for host
+    code such as tools/vux_tool.py: sleep() runs the SoC, time() reads its clock.
+    Install with monkeypatch.setattr(vux_tool, "time", EmuClock(soc))."""
+
+    def __init__(self, soc):
+        self.soc = soc
+
+    def time(self) -> float:
+        return self.soc.cycle / CLK_HZ
+
+    monotonic = time
+
+    def sleep(self, seconds: float) -> None:
+        self.soc.run(max(1, int(seconds * CLK_HZ)))
+
+
+class EmuSerial:
+    """A pyserial-like port on the emulator's UART (what vux_tool.py uses of it).
+
+    write() puts bytes on the RX line back to back at 115200 baud, as a USB-UART
+    does; read(n) runs the SoC until something arrives or `timeout` seconds of
+    emulated time pass, and returns what the host has completely received.
+    """
+
+    def __init__(self, soc, timeout: float = 0.2):
+        self.soc = soc
+        self.timeout = timeout
+        self._pos = len(soc.uart_received())
+        self.log = bytearray()  # everything read, for diagnostics
+
+    def _available(self) -> int:
+        return len(self.soc.uart_received()) - self._pos
+
+    @property
+    def in_waiting(self) -> int:
+        return self._available()
+
+    def write(self, data: bytes) -> int:
+        self.soc.uart_send(bytes(data))
+        return len(data)
+
+    def flush(self) -> None:
+        self.soc.run(max(0, self.soc.uart_send_done - self.soc.cycle))
+
+    def read(self, size: int = 1) -> bytes:
+        end = self.soc.cycle + int((self.timeout or 0) * CLK_HZ)
+        while self._available() == 0 and self.soc.cycle < end:
+            self.soc.run(UART_FRAME)
+        got = self.soc.uart_received()[self._pos : self._pos + size]
+        self._pos += len(got)
+        self.log += got
+        return bytes(got)
+
+    def reset_input_buffer(self) -> None:
+        self._pos = len(self.soc.uart_received())
+
+    def reset_output_buffer(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass

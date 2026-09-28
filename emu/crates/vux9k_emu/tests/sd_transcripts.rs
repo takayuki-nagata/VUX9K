@@ -33,6 +33,9 @@ fn replay(path: &PathBuf) {
                 match opt.split_once('=') {
                     Some(("sdhc", v)) => c.sdhc = v == "1",
                     Some(("strict", v)) => c.strict = v == "1",
+                    Some(("bad", v)) => {
+                        c.faults.bad_sectors = v.split(',').map(|x| x.parse().unwrap()).collect()
+                    }
                     Some(("mute", v)) => {
                         c.faults.mute_cmds = v.split(',').map(|x| x.parse().unwrap()).collect()
                     }

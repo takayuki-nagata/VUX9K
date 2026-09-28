@@ -11,6 +11,8 @@
 //! - CMD24 FF 00, then data token FE, 512 bytes and 2 CRC bytes; data response 05 and a
 //!   busy byte 3F. After that the card listens for a new command only once CS has
 //!   gone high (the Python model loses byte alignment there until CS rises).
+//! - Faults (`Faults`): unanswered commands, ACMD41 never ready, CMD17 error token
+//!   (always or for given sectors), CMD24 data rejected.
 //! - Answers are sent whatever CS does; a partial command, a wait for a data token or
 //!   a partial data block is dropped when CS goes high.
 //!
@@ -37,6 +39,8 @@ pub struct Faults {
     pub never_ready: bool,
     /// CMD17 answers with the data error token 08 instead of a block.
     pub read_error: bool,
+    /// Sectors whose CMD17 gets the data error token 08 (others read normally).
+    pub bad_sectors: Vec<u32>,
     /// CMD24's data response is 0B (CRC error): the block is not written.
     pub write_reject: bool,
 }
@@ -240,7 +244,7 @@ impl SdCard {
             17 => {
                 let lba = self.lba(cmd, arg);
                 let r = &mut self.resp;
-                if self.faults.read_error {
+                if self.faults.read_error || self.faults.bad_sectors.contains(&lba) {
                     r.extend([0xFF, 0x00, 0xFF, 0x08]);
                 } else {
                     r.extend([0xFF, 0x00, 0xFF, 0xFE]);
