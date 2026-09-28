@@ -7,6 +7,8 @@ const UART_BASE: usize = 0x4000_0000;
 const UART_DATA: *mut u8 = UART_BASE as *mut u8;
 const UART_STATUS: *const u32 = (UART_BASE + 0x4) as *const u32;
 
+use fw_common::fmt::Sink;
+
 pub struct Uart;
 
 impl Uart {
@@ -37,53 +39,24 @@ impl Uart {
     }
 
     pub fn print_str(s: &str) {
-        for b in s.bytes() {
-            Self::write_byte(b);
-        }
+        Uart.put_str(s);
     }
 
     pub fn print_hex(val: u32) {
-        const HEX_CHARS: &[u8; 16] = b"0123456789ABCDEF";
-        for shift in (0..8).rev() {
-            let nibble = ((val >> (shift * 4)) & 0xF) as usize;
-            Self::write_byte(HEX_CHARS[nibble]);
-        }
+        Uart.put_hex(val);
     }
 
     pub fn print_hex_byte(val: u8) {
-        const HEX_CHARS: &[u8; 16] = b"0123456789ABCDEF";
-        Self::write_byte(HEX_CHARS[(val >> 4) as usize]);
-        Self::write_byte(HEX_CHARS[(val & 0xF) as usize]);
+        Uart.put_hex_byte(val);
     }
 
-    pub fn print_dec(mut val: u32) {
-        if val == 0 {
-            Self::write_byte(b'0');
-            return;
-        }
-        const POWERS: [u32; 10] = [
-            1_000_000_000,
-            100_000_000,
-            10_000_000,
-            1_000_000,
-            100_000,
-            10_000,
-            1_000,
-            100,
-            10,
-            1,
-        ];
-        let mut started = false;
-        for &p in POWERS.iter() {
-            let mut digit = 0u8;
-            while val >= p {
-                val -= p;
-                digit += 1;
-            }
-            if digit > 0 || started || p == 1 {
-                started = true;
-                Self::write_byte(b'0' + digit);
-            }
-        }
+    pub fn print_dec(val: u32) {
+        Uart.put_dec(val);
+    }
+}
+
+impl Sink for Uart {
+    fn put(&mut self, b: u8) {
+        Uart::write_byte(b);
     }
 }

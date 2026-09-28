@@ -15,19 +15,17 @@ mod sdcard;
 mod timer;
 mod uart;
 
+use fw_common::header::{FIRST_SECTOR_PAYLOAD, HEADER_LEN};
+use fw_common::mailbox::{self, SLOT_UPDATED_BOOT_MAGIC};
+use fw_common::update::{precheck, Precheck};
+use fw_common::{crc32_update, mul_u32, slot_sector, SlotHeader};
 use gpio::Gpio;
 use sdcard::SdCard;
 use timer::Timer;
 use uart::Uart;
 
-const VUX_MAGIC: u32 = 0x56555839; // "VUX9"
 const MAILBOX_REG: *mut u32 = 0x2000_1FFC as *mut u32;
 const RESIDENT_LOADER_ENTRY: usize = 0x0000_3800;
-
-#[inline(always)]
-fn slot_sector(slot: u32) -> u32 {
-    64 + (slot << 6)
-}
 
 fn print_banner() {
     Uart::print_str("\n");
@@ -134,43 +132,14 @@ fn dump_sector_0() {
 }
 
 const BOOT_MGR_VERSION: u32 = 10;
-const SLOT_UPDATE_MAGIC: u32 = 0xA55A_0000;
-const SLOT_UPDATED_BOOT_MAGIC: u32 = 0x5A5A_B002;
-
-#[allow(dead_code)]
-#[repr(C)]
-struct SlotInfo {
-    header_version: u16,
-    flags: u16,
-    mode: u32,
-    size: u32,
-    load_addr: u32,
-    entry_point: u32,
-    crc32: u32,
-    version: u32,
-    name: [u8; 32],
-}
-
-fn crc32_update(data: &[u8], mut crc: u32) -> u32 {
-    for &b in data {
-        crc ^= b as u32;
-        for _ in 0..8 {
-            crc = if (crc & 1) != 0 {
-                (crc >> 1) ^ 0xEDB8_8320
-            } else {
-                crc >> 1
-            };
-        }
-    }
-    crc
-}
-
 #[inline(never)]
 fn check_boot_manager_update() {
     // 0. Update boot check: if newly loaded from an update, skip checks and clear mailbox
     let mailbox = unsafe { core::ptr::read_volatile(MAILBOX_REG) };
     if mailbox == SLOT_UPDATED_BOOT_MAGIC {
-        unsafe { core::ptr::write_volatile(MAILBOX_REG, 0); }
+        unsafe {
+            core::ptr::write_volatile(MAILBOX_REG, 0);
+        }
         Uart::print_str("\n[UPDATE] Booted newly updated Boot Manager!\n\n");
         return;
     }
@@ -188,36 +157,34 @@ fn check_boot_manager_update() {
         None => return, // No SD card or no valid VUX9 header in Slot 0
     };
 
-    // 3. Pre-Verification:
-    // - Mode must be 1 (RISC-V 32-bit ISA)
-    if info.mode != 1 {
-        return;
-    }
-    // - Size must be <= 14 KB (14336 bytes, Lower I-RAM limit)
-    if info.size == 0 || info.size > 14 * 1024 {
-        Uart::print_str("\n[UPDATE] Slot 0 image size invalid (");
-        Uart::print_dec(info.size);
-        Uart::print_str(" bytes > 14KB limit). Bypassing.\n\n");
-        return;
-    }
-    // - Version must be strictly greater than current Boot Manager version
-    if info.version <= BOOT_MGR_VERSION {
-        return;
-    }
-
-    // - Entry instruction opcode sanity check (first 4 bytes of payload at offset 64)
+    // 3. Pre-Verification: RV32 image, size within lower I-RAM, newer version, and a
+    // plausible entry instruction (first 4 bytes of payload at offset 64)
     let entry_instr = u32::from_le_bytes([sec_buf[64], sec_buf[65], sec_buf[66], sec_buf[67]]);
-    if entry_instr == 0x0000_0000 || entry_instr == 0xFFFF_FFFF {
-        Uart::print_str("\n[UPDATE] Slot 0 entry instruction invalid (0x");
-        Uart::print_hex(entry_instr);
-        Uart::print_str("). Bypassing.\n\n");
-        return;
+    match precheck(&info, BOOT_MGR_VERSION, entry_instr) {
+        Precheck::Candidate => {}
+        Precheck::NotRiscv | Precheck::NotNewer => return,
+        Precheck::BadSize(size) => {
+            Uart::print_str("\n[UPDATE] Slot 0 image size invalid (");
+            Uart::print_dec(size);
+            Uart::print_str(" bytes > 14KB limit). Bypassing.\n\n");
+            return;
+        }
+        Precheck::BadEntry(instr) => {
+            Uart::print_str("\n[UPDATE] Slot 0 entry instruction invalid (0x");
+            Uart::print_hex(instr);
+            Uart::print_str("). Bypassing.\n\n");
+            return;
+        }
     }
 
     // 4. Verify Payload CRC32 Checksum
     let mut calc_crc: u32 = 0xFFFF_FFFF;
-    let first_chunk_len = if (info.size as usize) < 448 { info.size as usize } else { 448 };
-    calc_crc = crc32_update(&sec_buf[64..64 + first_chunk_len], calc_crc);
+    let first_chunk_len = if (info.size as usize) < FIRST_SECTOR_PAYLOAD {
+        info.size as usize
+    } else {
+        FIRST_SECTOR_PAYLOAD
+    };
+    calc_crc = crc32_update(&sec_buf[HEADER_LEN..HEADER_LEN + first_chunk_len], calc_crc);
 
     let mut remaining = (info.size as usize) - first_chunk_len;
     let mut next_sec = slot_sector(0) + 1;
@@ -252,57 +219,25 @@ fn check_boot_manager_update() {
     Uart::print_str("). Auto-updating Lower I-RAM via Resident Loader...\n\n");
     Timer::delay_ms(10);
 
-    let sdhc_bit = if SdCard::is_sdhc() { 0x100 } else { 0 };
     unsafe {
-        core::ptr::write_volatile(0x2000_1FFC as *mut u32, SLOT_UPDATE_MAGIC | sdhc_bit);
+        core::ptr::write_volatile(MAILBOX_REG, mailbox::update(SdCard::is_sdhc()));
         core::arch::asm!("jr {0}", in(reg) 0x0000_3800usize, options(noreturn));
     }
 }
 
-fn read_slot_info(slot: u32, buf: &mut [u8; 512]) -> Option<SlotInfo> {
-    let sector = slot_sector(slot);
-    if !SdCard::ensure_init() || !SdCard::read_block(sector, buf) {
+fn read_slot_info(slot: u32, buf: &mut [u8; 512]) -> Option<SlotHeader> {
+    if !SdCard::ensure_init() || !SdCard::read_block(slot_sector(slot), buf) {
         return None;
     }
-    let magic = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
-    if magic != VUX_MAGIC {
-        return None;
-    }
-    let header_version = u16::from_le_bytes([buf[4], buf[5]]);
-    let flags = u16::from_le_bytes([buf[6], buf[7]]);
-    if header_version != 3 || (flags & 1) == 0 {
-        return None;
-    }
-    let mode = u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]);
-    let size = u32::from_le_bytes([buf[12], buf[13], buf[14], buf[15]]);
-    let load_addr = u32::from_le_bytes([buf[16], buf[17], buf[18], buf[19]]);
-    let entry_point = u32::from_le_bytes([buf[20], buf[21], buf[22], buf[23]]);
-    let crc32 = u32::from_le_bytes([buf[24], buf[25], buf[26], buf[27]]);
-    let version = u32::from_le_bytes([buf[28], buf[29], buf[30], buf[31]]);
-    let mut name = [0u8; 32];
-    name.copy_from_slice(&buf[32..64]);
-    Some(SlotInfo {
-        header_version,
-        flags,
-        mode,
-        size,
-        load_addr,
-        entry_point,
-        crc32,
-        version,
-        name,
-    })
+    SlotHeader::parse(buf)
 }
 
-fn print_slot_name(name: &[u8; 32]) {
-    let mut len = 0;
-    while len < 32 && name[len] != 0 && name[len] >= 0x20 && name[len] <= 0x7E {
-        len += 1;
-    }
+fn print_slot_name(info: &SlotHeader) {
+    let len = info.name_len();
     if len == 0 {
         Uart::print_str("(unnamed)");
     } else {
-        for &b in &name[..len] {
+        for &b in &info.name[..len] {
             Uart::write_byte(b);
         }
     }
@@ -320,7 +255,7 @@ fn list_slots() {
         Uart::print_str("): ");
         if let Some(info) = read_slot_info(slot, &mut buf) {
             Uart::print_str("\"");
-            print_slot_name(&info.name);
+            print_slot_name(&info);
             Uart::print_str("\" [");
             if info.mode == 0 {
                 Uart::print_str("Hack 16b, ");
@@ -357,7 +292,7 @@ fn inspect_slot(slot: u32) {
     if let Some(info) = read_slot_info(slot, &mut buf) {
         Uart::print_str("  Magic: 0x56555839 (\"VUX9\" Valid Header) [OK]\n");
         Uart::print_str("  Name:  \"");
-        print_slot_name(&info.name);
+        print_slot_name(&info);
         Uart::print_str("\"\n");
         Uart::print_str("  Mode:  ");
         if info.mode == 0 {
@@ -388,24 +323,10 @@ fn boot_slot(slot: u32) -> ! {
     Uart::print_str(" via Resident Loader...\n\n");
     Timer::delay_ms(10);
     SdCard::ensure_init();
-    let sdhc_bit = if SdCard::is_sdhc() { 0x100 } else { 0 };
     unsafe {
-        core::ptr::write_volatile(MAILBOX_REG, slot | sdhc_bit);
+        core::ptr::write_volatile(MAILBOX_REG, mailbox::launch(slot, SdCard::is_sdhc()));
         core::arch::asm!("jr {0}", in(reg) RESIDENT_LOADER_ENTRY, options(noreturn));
     }
-}
-
-#[inline(never)]
-pub fn mul_u32(mut a: u32, mut b: u32) -> u32 {
-    let mut res = 0u32;
-    while b != 0 {
-        if (b & 1) != 0 {
-            res = res.wrapping_add(a);
-        }
-        a <<= 1;
-        b >>= 1;
-    }
-    res
 }
 
 #[inline(never)]

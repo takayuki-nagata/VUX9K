@@ -2,11 +2,11 @@
 # SPDX-License-Identifier: MIT
 
 [package]
-name = "boot_manager"
+name = "fw_common"
 version = "0.1.0"
 edition = "2021"
 authors = ["Takayuki Nagata"]
 license = "MIT"
+description = "Hardware-independent Boot Manager logic, tested on the host"
 
 [dependencies]
-fw_common = { path = "../fw_common" }

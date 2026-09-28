@@ -38,7 +38,7 @@ HACK_BUILD_DIR := $(BUILD_DIR)/hack
 ZEPHYR_BUILD_DIR ?= $(BUILD_DIR)/zephyr
 SYNTH_DIR := $(BUILD_DIR)/synth
 
-.PHONY: all emu emu-py emu-test test-isa-emu test-emu sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware sim-unit sim-boot sim-soc sim test-isa zephyr-bc-lib build-zephyr build-zephyr-demo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-demo-gls sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
+.PHONY: all emu emu-py emu-test test-isa-emu test-emu test-fw-host firmware-size sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware sim-unit sim-boot sim-soc sim test-isa zephyr-bc-lib build-zephyr build-zephyr-demo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-demo-gls sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
 
 all: test-ci
 
@@ -100,6 +100,22 @@ $(FIRMWARE_BUILD_DIR)/firmware.hex: $(FIRMWARE_SRCS) $(LOADER_SRCS)
 	ln -sf $(CURDIR)/$(FIRMWARE_BUILD_DIR)/firmware_d0.hex $(CURDIR)/$(FIRMWARE_BUILD_DIR)/firmware_d1.hex $(CURDIR)/$(FIRMWARE_BUILD_DIR)/firmware_d2.hex $(CURDIR)/$(FIRMWARE_BUILD_DIR)/firmware_d3.hex .
 
 firmware: $(FIRMWARE_BUILD_DIR)/firmware.hex
+
+# Host tests of the firmware's hardware-independent logic (firmware/fw_common)
+HOST_TARGET ?= $(shell rustc -vV | sed -n 's/^host: //p')
+test-fw-host:
+	cd firmware && $(CARGO) test -p fw_common --target $(HOST_TARGET)
+
+# Size budgets: the Boot Manager fills lower I-RAM below the Resident Loader
+# (0x0000-0x37FF), the Resident Loader its 2 KB above it (0x3800-0x3FFF)
+BM_MAX_BYTES = 14336
+RL_MAX_BYTES = 2048
+firmware-size: firmware
+	@bm=$$(stat -c %s $(FIRMWARE_BUILD_DIR)/firmware.bin); \
+	rl=$$(( $$(stat -c %s $(FIRMWARE_BUILD_DIR)/resident_loader.bin) - 0x3800 )); \
+	echo "Boot Manager    $$bm / $(BM_MAX_BYTES) bytes"; \
+	echo "Resident Loader $$rl / $(RL_MAX_BYTES) bytes"; \
+	[ $$bm -le $(BM_MAX_BYTES) ] && [ $$rl -le $(RL_MAX_BYTES) ] || { echo "firmware over its size budget"; exit 1; }
 
 # ===== Emulator (emu/: host-only Rust workspace, toolchain pinned by emu/rust-toolchain.toml) =====
 
@@ -425,7 +441,7 @@ prog-flash: $(SYNTH_DIR)/pack.fs
 # ===== Aggregate Test Targets =====
 
 # Every push/PR (CI). Long SoC runs are on Verilator (SIM_SOC); see AGENTS.md for timings.
-test-sim: check emu-test test-isa-emu firmware build-zephyr-demo zephyr-bc-lib build-hack test-emu sim-lockstep build-zephyr sim-unit test-isa sim-gls-unit sim-soc-fast sim-soc-fast-icarus sim-soc-mmio sim-boot sim-hack-rtl sim-sd-quirks sim-hw-flow sim-zephyr-demo-rtl synth-top sim-soc-gls-fast
+test-sim: check emu-test test-isa-emu firmware test-fw-host firmware-size build-zephyr-demo zephyr-bc-lib build-hack test-emu sim-lockstep build-zephyr sim-unit test-isa sim-gls-unit sim-soc-fast sim-soc-fast-icarus sim-soc-mmio sim-boot sim-hack-rtl sim-sd-quirks sim-hw-flow sim-zephyr-demo-rtl synth-top sim-soc-gls-fast
 	@echo "========================================================================"
 	@echo "  [SIM] ALL RTL, GLS NETLIST, ISA & SOC SIMULATION TESTS PASSED!        "
 	@echo "========================================================================"

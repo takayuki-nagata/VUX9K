@@ -15,6 +15,7 @@ soc/                    Veryl RTL: soc_top + peripherals directly here,
 firmware/               Cargo workspace (virtual manifest)
   boot_manager/         Boot Manager crate (package name: boot_manager)
   resident_loader/      Resident Loader crate (package name: resident_loader)
+  fw_common/            Boot Manager logic without MMIO, host-tested (make test-fw-host)
 hack_demo/              Standalone Hack 16-bit C/asm demo app (toolchain self-test)
 zephyr_workspace/       Zephyr west module: board/SoC/driver/dts support for "vux9k"
   app/                  Zephyr Rust demo (C glue + rust_demo staticlib; see "Zephyr" below)
@@ -174,7 +175,11 @@ root) needed an extra `dirname()` after the move to `sim/<subdir>/<file>.py`
 
 ## Cargo workspace gotcha: rustflags paths are workspace-root-relative
 
-`firmware/` is a Cargo workspace (`boot_manager` + `resident_loader` members).
+`firmware/` is a Cargo workspace (`boot_manager` + `resident_loader` members, plus
+`fw_common`: the Boot Manager's hardware-independent logic, no MMIO, tested on the host
+with `cargo test -p fw_common --target <host triple>` — `make test-fw-host`. The Resident
+Loader doesn't use it: it has ~130 bytes left of its 2 KB, which `make firmware-size`
+enforces along with the Boot Manager's 14 KB).
 **When you build a member from within its own directory (`cd firmware/boot_manager
 && cargo build`), rustc/the linker still runs with cwd = the workspace root
 (`firmware/`), not the member directory.** This means each member's
