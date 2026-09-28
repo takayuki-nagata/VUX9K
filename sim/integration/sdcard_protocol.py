@@ -11,7 +11,8 @@ emulator's card (emu/crates/vux9k_emu/src/sdcard.rs) implements the same rules, 
 the transcripts in sim/sd_transcripts/ hold both to identical MISO bytes.
 
 Answers (the model's behavior, not a full SD implementation):
-- CMD0 FF 01; CMD8 FF 01 00 00 01 AA; CMD55 FF 01 (00 once ready); ACMD41 FF 00;
+- CMD0 FF 01; CMD8 FF 01 00 00 01 AA; CMD55 FF 01 (00 once ready); ACMD41 and
+  CMD1 (MMC) FF 00;
   CMD58 FF 00 + OCR (C0 SDHC | 80 SDSC) FF 80 00; CMD16 FF 00; others: no answer.
 - CMD17 FF 00 FF FE, 512 data bytes, CRC 12 34.
 - CMD24 FF 00, then data token FE, 512 bytes + 2 CRC; data response 05 and a busy
@@ -151,7 +152,7 @@ class SdCardProtocol:
             r += b"\xff\x01\x00\x00\x01\xaa"
         elif cmd == 55:  # APP_CMD
             r += b"\xff\x00" if self._ready else b"\xff\x01"
-        elif cmd == 41:  # SD_SEND_OP_COND
+        elif cmd in (1, 41):  # SEND_OP_COND (CMD1, MMC) / SD_SEND_OP_COND (ACMD41)
             self._ready = not self.never_ready
             r += b"\xff\x00" if self._ready else b"\xff\x01"
         elif cmd == 58:  # READ_OCR: powered up, CCS for SDHC

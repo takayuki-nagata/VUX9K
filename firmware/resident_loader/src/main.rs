@@ -275,7 +275,7 @@ pub extern "C" fn loader_main() -> ! {
                 core::ptr::write_volatile(GPIO_BOOT_MODE_REG, boot_mode);
                 core::ptr::write_volatile(GPIO_RESET_REG, RESET_MAGIC);
                 loop {
-                    core::arch::asm!("nop");
+                    core::arch::asm!("nop"); // cov:exclude(the soft reset stops the CPU first)
                 }
             }
         }
@@ -287,7 +287,7 @@ pub extern "C" fn loader_main() -> ! {
         core::ptr::write_volatile(GPIO_BOOT_MODE_REG, BOOT_MODE_RV32);
         core::ptr::write_volatile(GPIO_RESET_REG, RESET_MAGIC);
         loop {
-            core::arch::asm!("nop");
+            core::arch::asm!("nop"); // cov:exclude(the soft reset stops the CPU first)
         }
     }
 }

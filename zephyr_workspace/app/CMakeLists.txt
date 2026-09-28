@@ -13,7 +13,8 @@ set(RUST_TARGET_DIR ${CMAKE_BINARY_DIR}/rust_demo)
 set(RUST_LIB ${RUST_TARGET_DIR}/${RUST_TARGET}/release/libvux9k_rust_demo.a)
 
 add_custom_target(rust_demo_staticlib
-    COMMAND ${CMAKE_COMMAND} -E env CARGO_TARGET_DIR=${RUST_TARGET_DIR}
+    # Line tables only (for make coverage-fw): no code change, nothing in zephyr.bin
+    COMMAND ${CMAKE_COMMAND} -E env CARGO_TARGET_DIR=${RUST_TARGET_DIR} CARGO_PROFILE_RELEASE_DEBUG=line-tables-only
             cargo build --release --target ${RUST_TARGET}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/rust_demo
     BYPRODUCTS ${RUST_LIB}

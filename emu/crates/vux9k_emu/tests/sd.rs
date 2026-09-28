@@ -134,10 +134,10 @@ fn initialization_sequence_and_ocr() {
     h.deselect();
     assert_eq!(h.cmd(16, 512), 0x00);
     h.deselect();
-    assert_eq!(h.cmd(1, 0), 0xFF, "unknown commands get no answer");
+    assert_eq!(h.cmd(13, 0), 0xFF, "unknown commands get no answer");
     h.deselect();
     let cmds: Vec<u8> = h.card().commands.iter().map(|c| c.0).collect();
-    assert_eq!(cmds, [0, 8, 55, 41, 58, 55, 8, 16, 1]);
+    assert_eq!(cmds, [0, 8, 55, 41, 58, 55, 8, 16, 13]);
     assert_eq!(h.card().idle_clocks(), 17 * 8);
 }
 

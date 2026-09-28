@@ -47,7 +47,7 @@ int main(void)
 
 	printk("\n[Zephyr Kernel] Rust application returned. Entering sleep loop.\n");
 
-	while (1) {
+	while (1) { /* cov:exclude(k_sleep(K_FOREVER) never returns to loop) */
 		k_sleep(K_FOREVER);
 	}
 

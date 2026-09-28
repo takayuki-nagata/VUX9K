@@ -38,7 +38,7 @@ HACK_BUILD_DIR := $(BUILD_DIR)/hack
 ZEPHYR_BUILD_DIR ?= $(BUILD_DIR)/zephyr
 SYNTH_DIR := $(BUILD_DIR)/synth
 
-.PHONY: all emu emu-py emu-test test-isa-emu test-emu test-fw-host firmware-size sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware sim-unit sim-boot sim-soc sim test-isa zephyr-bc-lib build-zephyr build-zephyr-demo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-demo-gls sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
+.PHONY: all emu emu-py emu-test test-isa-emu test-emu test-fw-host firmware-size coverage-fw sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware sim-unit sim-boot sim-soc sim test-isa zephyr-bc-lib build-zephyr build-zephyr-demo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-demo-gls sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
 
 all: test-ci
 
@@ -100,6 +100,30 @@ $(FIRMWARE_BUILD_DIR)/firmware.hex: $(FIRMWARE_SRCS) $(LOADER_SRCS)
 	ln -sf $(CURDIR)/$(FIRMWARE_BUILD_DIR)/firmware_d0.hex $(CURDIR)/$(FIRMWARE_BUILD_DIR)/firmware_d1.hex $(CURDIR)/$(FIRMWARE_BUILD_DIR)/firmware_d2.hex $(CURDIR)/$(FIRMWARE_BUILD_DIR)/firmware_d3.hex .
 
 firmware: $(FIRMWARE_BUILD_DIR)/firmware.hex
+
+# Line coverage of the firmware and demos from the emulator tests (sim/emu): see
+# scripts/coverage_fw.py. Minimums in coverage/thresholds.toml; report in build/coverage/fw/
+FW_COV_DIR = $(BUILD_DIR)/coverage/fw
+FW_TARGET = firmware/target/riscv32i-unknown-none-elf
+coverage-fw: emu-py firmware build-hack build-zephyr-demo build-zephyr
+	rm -rf $(FW_COV_DIR) && mkdir -p $(FW_COV_DIR)
+	cd firmware/boot_manager && $(CARGO) build --profile coverage
+	cd firmware/resident_loader && $(CARGO) build --profile coverage
+	$(PYTHON) scripts/elf2bin.py $(FW_TARGET)/coverage/boot_manager $(FW_COV_DIR)/boot_manager.bin > /dev/null
+	$(PYTHON) scripts/elf2bin.py $(FW_TARGET)/coverage/resident_loader $(FW_COV_DIR)/resident_loader.bin > /dev/null
+	cmp $(FW_COV_DIR)/boot_manager.bin $(FIRMWARE_BUILD_DIR)/firmware.bin
+	cmp -i 0x3800 $(FW_COV_DIR)/resident_loader.bin $(FIRMWARE_BUILD_DIR)/resident_loader.bin
+	@# The Hack demo's assembly, made the way hack_demo/Makefile made the binary
+	if command -v msp430-gcc >/dev/null 2>&1 && [ -f $(VENV_PATH)/bin/hcc ]; then \
+		$(VENV_PATH)/bin/hcc -S hack_demo/src/main.c -o $(FW_COV_DIR)/hack_demo.asm; \
+	else cp hack_demo/src/main.asm $(FW_COV_DIR)/hack_demo.asm; fi
+	VUX9K_COV_DIR=$(FW_COV_DIR)/hits $(PYTHON) -m pytest -q sim/emu
+	$(PYTHON) scripts/coverage_fw.py --hits $(FW_COV_DIR)/hits \
+		--elf boot_manager=$(FW_TARGET)/coverage/boot_manager=firmware/boot_manager/,firmware/fw_common/ \
+		--elf resident_loader=$(FW_TARGET)/coverage/resident_loader=firmware/resident_loader/ \
+		--elf zephyr_demo=$(ZEPHYR_DEMO_BUILD_DIR)/zephyr/zephyr.elf=zephyr_workspace/app/ \
+		--hack hack_demo=$(FW_COV_DIR)/hack_demo.asm=$(HACK_BUILD_DIR)/firmware.bin \
+		--lcov $(FW_COV_DIR)/fw.info --summary $(FW_COV_DIR)/summary.md --thresholds coverage/thresholds.toml
 
 # Host tests of the firmware's hardware-independent logic (firmware/fw_common)
 HOST_TARGET ?= $(shell rustc -vV | sed -n 's/^host: //p')
@@ -441,7 +465,7 @@ prog-flash: $(SYNTH_DIR)/pack.fs
 # ===== Aggregate Test Targets =====
 
 # Every push/PR (CI). Long SoC runs are on Verilator (SIM_SOC); see AGENTS.md for timings.
-test-sim: check emu-test test-isa-emu firmware test-fw-host firmware-size build-zephyr-demo zephyr-bc-lib build-hack test-emu sim-lockstep build-zephyr sim-unit test-isa sim-gls-unit sim-soc-fast sim-soc-fast-icarus sim-soc-mmio sim-boot sim-hack-rtl sim-sd-quirks sim-hw-flow sim-zephyr-demo-rtl synth-top sim-soc-gls-fast
+test-sim: check emu-test test-isa-emu firmware test-fw-host firmware-size build-zephyr-demo zephyr-bc-lib build-hack test-emu coverage-fw sim-lockstep build-zephyr sim-unit test-isa sim-gls-unit sim-soc-fast sim-soc-fast-icarus sim-soc-mmio sim-boot sim-hack-rtl sim-sd-quirks sim-hw-flow sim-zephyr-demo-rtl synth-top sim-soc-gls-fast
 	@echo "========================================================================"
 	@echo "  [SIM] ALL RTL, GLS NETLIST, ISA & SOC SIMULATION TESTS PASSED!        "
 	@echo "========================================================================"

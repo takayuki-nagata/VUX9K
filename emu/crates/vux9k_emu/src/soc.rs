@@ -17,6 +17,8 @@
 //! its cost (RV: 2, +1 MEM_WAIT for loads/stores; Hack: 2, +2 when the comp reads M,
 //! +1 when it writes both A and D). A trap costs 2 (it is taken in EXECUTE).
 
+use std::collections::HashSet;
+
 use crate::csr::{self, Csrs};
 use crate::periph::{self, Periph, SoftReset};
 use crate::profile::Profile;
@@ -78,6 +80,8 @@ pub struct Soc {
     pub tohost: Option<u32>,
     /// mcycle value set by a CSR write in the current instruction (replaces the count)
     mcycle_written: Option<u64>,
+    /// Executed instructions for coverage (`cov_key`), when enabled.
+    pub cov: Option<HashSet<u64>>,
 }
 
 // ----- RV32I field helpers --------------------------------------------------------
@@ -201,6 +205,7 @@ impl Soc {
             dram_mask: (dram_words - 1) as u32,
             tohost: None,
             mcycle_written: None,
+            cov: None,
         };
         soc.reset();
         soc
@@ -474,6 +479,9 @@ impl Soc {
         }
         self.cycle += r.cycles as u64;
         self.steps += 1;
+        if let Some(cov) = self.cov.as_mut() {
+            cov.insert(cov_key(r.riscv, r.pc, r.instr));
+        }
         if let Some(sr) = self.periph.gpio.take_soft_reset() {
             self.soft_reset(sr);
         }
@@ -838,4 +846,11 @@ fn merge_bytes(old: u32, data: u32, be: u8) -> u32 {
         }
     }
     (old & !mask) | (data & mask)
+}
+
+/// Coverage key of an executed instruction: bits 63-33 the PC, bit 32 the ISA
+/// (1 = RV32), bits 31-0 the instruction word (Hack: 16 bits). The word is part of
+/// the key so that code later loaded over the same addresses stays apart.
+pub fn cov_key(riscv: bool, pc: u32, instr: u32) -> u64 {
+    ((pc as u64) << 33) | ((riscv as u64) << 32) | instr as u64
 }

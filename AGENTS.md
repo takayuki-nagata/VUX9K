@@ -372,6 +372,26 @@ hw-flow), merges them with `verilator_coverage` into `build/coverage/merged.dat`
   load/ALU/misaligned-fetch lines in `unified_cpu` that riscv-tests exercise
   therefore show as `%` — cross-check against `test-isa` before calling them holes.
 
+## Firmware coverage: `make coverage-fw` (emulator runs, source lines)
+
+The emulator tests in `sim/emu/` run with `VUX9K_COV_DIR` set, so every SoC made by
+`vux9k.start_soc()` records each executed (PC, ISA, instruction word).
+`scripts/coverage_fw.py` credits a hit to an image only where that image holds the same
+word at that PC (code loaded from SD over the Boot Manager's addresses stays apart).
+RV32 hits map to lines through the DWARF of the firmware's `coverage` cargo profile,
+whose code the target first `cmp`s against the release image; Hack hits map to the
+demo's assembly, checked instruction by instruction against the binary. Output:
+`build/coverage/fw/{fw.info,summary.md}`; minimums in `coverage/thresholds.toml`
+(runs in `test-sim`). Rules:
+- A line that can't run by design gets `cov:exclude(reason)` in a comment on that line
+  (e.g. the `nop` after the Resident Loader's soft-reset store). Don't use it for code
+  that is merely untested — add the test.
+- Raise a threshold when coverage rises; never lower one to get a run through.
+- The Hack demo in CI is assembled from the committed `hack_demo/src/main.asm` (`hcc`
+  isn't installed there). After changing `main.c`, regenerate it with `hcc -S`.
+- Not measured yet: the host crates (emulator core, `fw_common` on its own) — that needs
+  cargo-llvm-cov in the CI image.
+
 ## Step 3 commit rule: refactors are proven with `make eqy`, timing changes are tested
 
 Keep every RTL commit one of two kinds, never both:

@@ -218,13 +218,20 @@ def bad_sector():
     return h.finish()
 
 
+def mute_cmd55():
+    """CMD55 unanswered: the Boot Manager's CMD1 fallback"""
+    h = Recorder("mute_cmd55", mute_cmds=[55])
+    h.init()
+    return h.finish()
+
+
 def mute_cmd0():
     h = Recorder("mute_cmd0", mute_cmds=[0])
     h.init()
     return h.finish()
 
 
-SCENARIOS = {f.__name__: f for f in (sdhc_read_write, sdsc_strict, faults, bad_sector, mute_cmd0)}
+SCENARIOS = {f.__name__: f for f in (sdhc_read_write, sdsc_strict, faults, bad_sector, mute_cmd55, mute_cmd0)}
 
 
 @pytest.mark.parametrize("name", SCENARIOS)

@@ -5,7 +5,8 @@
 //! card is given the MOSI byte and the CS level and returns the MISO byte.
 //!
 //! It answers like sim/integration/sdcard_model.py (the model the RTL tests use):
-//! - CMD0 FF 01; CMD8 FF 01 00 00 01 AA; CMD55 FF 01 (00 once ready); ACMD41 FF 00;
+//! - CMD0 FF 01; CMD8 FF 01 00 00 01 AA; CMD55 FF 01 (00 once ready); ACMD41 and
+//!   CMD1 FF 00;
 //!   CMD58 FF 00 + OCR (C0|80) FF 80 00; CMD16 FF 00; other commands no answer.
 //! - CMD17 FF 00 FF FE, 512 data bytes, CRC 12 34.
 //! - CMD24 FF 00, then data token FE, 512 bytes and 2 CRC bytes; data response 05 and a
@@ -228,7 +229,8 @@ impl SdCard {
             }
             8 => r.extend([0xFF, 0x01, 0x00, 0x00, 0x01, 0xAA]),
             55 => r.extend([0xFF, if self.ready { 0x00 } else { 0x01 }]),
-            41 => {
+            // CMD1 (SEND_OP_COND, MMC): initialization without CMD55/ACMD41
+            1 | 41 => {
                 self.ready = !self.faults.never_ready;
                 r.extend([0xFF, if self.ready { 0x00 } else { 0x01 }]);
             }

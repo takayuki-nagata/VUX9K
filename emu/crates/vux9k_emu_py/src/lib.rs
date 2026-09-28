@@ -281,6 +281,21 @@ impl Soc {
         self.inner.csr.mtval
     }
 
+    // ----- coverage -----------------------------------------------------------------
+
+    /// Start recording executed instructions (see `cov_keys`).
+    fn cov_enable(&mut self) {
+        self.inner.cov.get_or_insert_with(Default::default);
+    }
+
+    /// Executed instructions so far as keys: PC << 33 | RV32 << 32 | instruction word.
+    fn cov_keys(&self) -> Vec<u64> {
+        self.inner
+            .cov
+            .as_ref()
+            .map_or_else(Vec::new, |c| c.iter().copied().collect())
+    }
+
     #[getter]
     fn mstatus(&self) -> u32 {
         self.inner.csr.mstatus | 0x1800 // MPP reads as M

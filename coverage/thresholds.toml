@@ -1,0 +1,11 @@
+# Coverage minimums (percent). Raise them as tests are added; never lower one to make
+# a failing run pass.
+#
+# Firmware lines, from the emulator tests (make coverage-fw, scripts/coverage_fw.py).
+# Lines that can't run by design carry a `cov:exclude(reason)` comment instead.
+# hack_demo: the rest is its [FAIL] reporting, reached only if a self-test fails.
+[line]
+boot_manager = 100.0
+resident_loader = 100.0
+zephyr_demo = 100.0
+hack_demo = 90.0

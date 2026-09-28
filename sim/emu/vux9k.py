@@ -89,6 +89,37 @@ def preload_firmware(soc) -> None:
     soc.load_readmemh(*texts)
 
 
+# Firmware coverage (make coverage-fw): with VUX9K_COV_DIR set, every SoC created
+# through start_soc() records the instructions it executes, and the union is written
+# to <dir>/<pid>.cov (hex keys, one per line) when the process exits.
+_COV_DIR = os.environ.get("VUX9K_COV_DIR")
+_cov_socs = []
+
+
+def _write_coverage():
+    keys = set()
+    for soc in _cov_socs:
+        keys.update(soc.cov_keys())
+    os.makedirs(_COV_DIR, exist_ok=True)
+    with open(os.path.join(_COV_DIR, f"{os.getpid()}.cov"), "w") as f:
+        f.writelines(f"{k:x}\n" for k in sorted(keys))
+
+
+if _COV_DIR:
+    import atexit
+
+    atexit.register(_write_coverage)
+
+
+def new_soc(profile="real"):
+    """A Soc that records coverage when VUX9K_COV_DIR is set."""
+    soc = Soc(profile)
+    if _COV_DIR:
+        soc.cov_enable()
+        _cov_socs.append(soc)
+    return soc
+
+
 def start_soc(*, profile="real", sd_sectors=None, mbr=True, sd_card=None, card=True, imem_words=None):
     """A SoC right after power-on reset, like soc_env.start_soc() on the RTL.
 
@@ -97,7 +128,7 @@ def start_soc(*, profile="real", sd_sectors=None, mbr=True, sd_card=None, card=T
     card: False leaves the socket empty.
     imem_words: 32-bit words written over I-RAM from word 0 after the preload.
     """
-    soc = Soc(profile)
+    soc = new_soc(profile)
     preload_firmware(soc)
     if imem_words is not None:
         soc.load_iram_words(list(imem_words))

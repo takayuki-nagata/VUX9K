@@ -66,7 +66,7 @@ impl SdCard {
         Self::transfer(crc);
 
         if cmd == 12 {
-            Self::transfer(0xFF);
+            Self::transfer(0xFF); // cov:exclude(the Boot Manager never sends CMD12)
         }
 
         // Wait for R1 response (while card is busy, it outputs 0xFF)

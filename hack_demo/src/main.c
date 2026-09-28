@@ -5,12 +5,12 @@
 
 #include "uart.c"
 
-int factorial(int n) {
+static int factorial(int n) {
     if (n <= 1) return 1;
     return n * factorial(n - 1);
 }
 
-int fibonacci(int n) {
+static int fibonacci(int n) {
     int a = 0;
     int b = 1;
     for (int i = 0; i < n; i++) {
@@ -21,7 +21,7 @@ int fibonacci(int n) {
     return a;
 }
 
-int array_sum(const int *arr, int len) {
+static int array_sum(const int *arr, int len) {
     int sum = 0;
     for (int i = 0; i < len; i++) {
         sum += arr[i];
