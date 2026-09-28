@@ -266,11 +266,7 @@ sim-boot: veryl firmware
 	@echo "=== Running Hardware Boot Manager & Bridge Cocotb Tests ==="
 	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_boot]"
 
-sim-soc: veryl firmware sim-boot
-	@echo "=== Running Python Software Emulator Unit Tests ==="
-	$(PYTHON) -m pytest sim/emulator/test_emulator.py
-	@echo "=== Running Python Software Emulator ==="
-	$(PYTHON) sim/emulator/emulator.py $(FIRMWARE_BUILD_DIR)/firmware.bin
+sim-soc: veryl firmware sim-boot test-emu
 	@echo "=== Running SoC Top RISC-V Integration Tests ==="
 	SIM=$(SIM_UNIT) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_rv32i]"
 	@echo "=== Running SoC Top Hack Integration Tests ==="
@@ -290,13 +286,13 @@ sim-zephyr-demo-gls: synth-top firmware build-zephyr-demo
 
 sim-zephyr: sim-zephyr-repl sim-zephyr-demo-rtl
 
-sim-hack-emu: build-hack
-	@echo "=== Running Hack Firmware on Python SoC Emulator ==="
-	$(PYTHON) sim/emulator/emulator.py $(HACK_BUILD_DIR)/firmware.bin
+sim-hack-emu: emu build-hack
+	@echo "=== Running the Hack demo on the emulator (vux9k-emu) ==="
+	$(EMU_TARGET_DIR)/release/vux9k-emu --no-firmware --no-card --hex $(HACK_BUILD_DIR)/firmware.hex --until "(100%)!"
 
-sim-hack-pytest: build-hack
-	@echo "=== Running Hack Firmware Pytest Test Suite ==="
-	$(PYTHON) -m pytest sim/emulator/test_hack_firmware.py
+sim-hack-pytest: emu-py build-hack
+	@echo "=== Running the Hack demo tests on the emulator ==="
+	$(PYTHON) -m pytest sim/emu/test_hack_demo.py
 
 sim-hack-rtl: veryl build-hack
 	@echo "=== Running Hack 16-bit SoC RTL Simulation ==="

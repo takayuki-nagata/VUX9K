@@ -199,6 +199,42 @@ Connecting any terminal (115200 bps 8N1) presents the interactive `vux>` prompt:
 
 ---
 
+## Emulator (`vux9k-emu`)
+
+`emu/` is a cycle-accurate emulator of the SoC in Rust: both ISAs, the CSRs and traps,
+the memories with the real address aliasing, and every peripheral down to the UART's
+bit timing and the SD SPI master's transfer time, with a byte-level SD card. It is
+checked instruction by instruction against the RTL (`make sim-lockstep`: every fetch
+cycle, register write, bus write, trap and UART byte must match), and runs the
+riscv-tests with the same results as the RTL (`make test-isa-emu`).
+
+```bash
+make emu                                   # build/emu/target/release/vux9k-emu
+# Power on like the board (firmware.hex preload) with an SD card image, UART on this terminal
+python3 tools/vux_tool.py mkimg sd.img --slot 1:build/zephyr-demo/zephyr/zephyr.bin:riscv:Demo
+build/emu/target/release/vux9k-emu --sd sd.img --stdio
+# ... or on TCP, for vux_tool.py (--port socket://localhost:4000) or a terminal program
+build/emu/target/release/vux9k-emu --sd sd.img --sd-write-back --tcp 4000
+# Run a program directly from address 0, stop when it prints a text
+build/emu/target/release/vux9k-emu --no-firmware --no-card --hex build/hack/firmware.hex --until "(100%)!"
+```
+
+Interactive modes run at the board's 27 MHz, so the firmware's timeouts behave as on
+hardware; `--trace FILE` logs every instruction. Profiles: `real` (default: 16 KB
+I-RAM, 8 KB D-RAM, as the board) and `extended` (512 KB / 256 KB, same MMIO) —
+**the extended profile is not real hardware**; it exists for programs too big for the
+board, such as bc. Python tests drive the emulator through the `vux9k_emu` module
+(`make emu-py`; helpers in `sim/emu/vux9k.py`).
+
+### Zephyr boards
+
+`zephyr_workspace/boards/vux9k/` has two targets: `vux9k`, the real board (27 MHz, the
+SoC timer as `andestech,machine-timer`, 14 KB of I-RAM below the Resident Loader and
+8 KB of D-RAM, which the link enforces), and `vux9k/vux9k/ext`, the extended profile
+for the emulator only. `make build-zephyr-demo` builds the Rust demo
+(`zephyr_workspace/app/`, Zephyr + a Rust staticlib) for the real board; `make
+build-zephyr` builds bc_clone_rs for `ext`.
+
 ## Quickstart & Build Guide
 
 ### Prerequisites
@@ -265,7 +301,7 @@ Short tests run on Icarus, long SoC/GLS runs on Verilator (`SIM_UNIT` / `SIM_SOC
 
 | Level | Command | Typical Time | Verification Scope |
 |:---|:---|:---|:---|
-| **RTL Unit Tests** | `make sim-unit` | ~10 sec | 21 cocotb modules: CPU (ALU, decoder, regfile, CSRs, mode detector, Hack ops, RV32I smoke, trap path), UART, timer, GPIO, SD SPI master, RAM, and the SP/SDPB block-RAM cell models |
+| **RTL Unit Tests** | `make sim-unit` | ~10 sec | 22 cocotb modules: CPU (ALU, decoder, regfile, CSRs, mode detector, Hack ops, RV32I smoke, branches, trap path), UART, timer, GPIO, SD SPI master, RAM, and the SP/SDPB block-RAM cell models |
 | **ISA Tests** | `make test-isa` | ~1.5 min | riscv-tests `rv32ui`/`rv32mi` on `tb_hex_runner` (56 pass; 2 known gaps, hardware misaligned access and PMP, tracked as expected failures in `scripts/run_riscv_tests.py`) |
 | **GLS Unit Tests** | `make sim-gls-unit` | ~20 sec | Gowin primitive netlists (`sim/gowin_cells_sim.veryl`) of the CPU, UART controller and mode detector |
 | **SoC Boot** | `make sim-soc-fast` / `sim-soc-fast-icarus` | ~10 sec / ~3 min | Power-on reset, Boot Manager prompt, S2-button launch of an SD slot via the Resident Loader (Verilator / 4-state Icarus) |
@@ -277,6 +313,12 @@ Short tests run on Icarus, long SoC/GLS runs on Verilator (`SIM_UNIT` / `SIM_SOC
 | **GLS SoC Boot** | `make sim-soc-gls-fast` | ~1.5 min | Full Gowin netlist boots to the Boot Manager prompt (Safe Mode) |
 | *slow* **GLS End-to-End** | `make sim-gls-hw-flow` | ~3-6 min | The end-to-end flow on the full Gowin netlist |
 | *slow* **Icarus End-to-End** | `make sim-hw-flow-icarus` | ~15 min | The end-to-end flow on 4-state Icarus |
+| **Emulator** | `make emu-test` / `test-isa-emu` | ~10 sec | Rust unit tests of the emulator; riscv-tests on it (same results as `test-isa`) |
+| **Firmware on the Emulator** | `make test-emu` | ~30 sec | Boot Manager CLI and error paths, flashing through `vux_tool.py`, Resident Loader E1-E4, self-update, Hack demo, Zephyr demo from SD, bc (extended profile), SD transcripts |
+| **Firmware Host Tests** | `make test-fw-host` / `firmware-size` | ~5 sec | `firmware/fw_common` on the host; Boot Manager ≤ 14 KB, Resident Loader ≤ 2 KB |
+| **Firmware Coverage** | `make coverage-fw` | ~40 sec | Source-line coverage of the firmware and demos from the emulator tests, against `coverage/thresholds.toml` (report in `build/coverage/fw/`) |
+| **RTL ↔ Emulator Lockstep** | `make sim-lockstep` | ~40 sec | Random RV32I, traps/interrupts, Hack demo and the firmware on RTL and emulator, compared cycle by cycle (*slow*: `sim-lockstep-slow`, more programs) |
+| **Zephyr Demo** | `make sim-zephyr-demo-rtl` | ~45 sec | The Zephyr Rust demo booted from SD on the RTL (*slow*: `sim-zephyr-demo-gls` on the netlist) |
 | **Static Timing (STA)**| `make sta` | ~15 sec | Exhaustive post-PnR timing analysis, Fmax verification, and critical path breakdown (`build/synth/soc_sta.json`) |
 | **Real Hardware** | `make test-hw` | ~60 sec | Automated physical hardware execution on Tang Nano 9K via `scripts/test_hardware.py` (15 tests) |
 
@@ -295,7 +337,7 @@ Short tests run on Icarus, long SoC/GLS runs on Verilator (`SIM_UNIT` / `SIM_SOC
 11. **Negative Test: CRC32 Corrupted Payload Rejection** (Slot 0, `crc_override`: rejects a corrupted image before it's accepted)
 12. **Negative Test: Invalid Magic Header Rejection** (Slot 3, `magic_override`: rejects a header without `VUX9` magic)
 13. **Boot Manager Self-Update & Version Rollback** (Flashes Slot 0 with a newer `version`, verifies in-place I-RAM update, then rolls back to the original version)
-14. **Boot Slot 1: Rust App Execution & Return** (`1` / `vux_tool.boot_slot`: Standalone Rust app execution and clean return to Boot Manager)
+14. **Boot Slot 1: Zephyr Rust App Execution** (`1` / `vux_tool.boot_slot`: the Zephyr Rust demo, `make build-zephyr-demo`)
 15. **Boot Slot 2: Hack 16-bit Firmware Execution** (`2` / `vux_tool.boot_slot`: Hack C firmware execution and test pass)
 
 > [!NOTE]
@@ -343,11 +385,16 @@ VUX9K/
 │   │   ├── Cargo.toml
 │   │   ├── bootstrap/                  # Assembly start.s & linker script link.x
 │   │   └── src/                        # MicroSD SPI driver, UART CLI, catalog manager, flasher
-│   └── resident_loader/                # Resident Loader (2KB at 0x0000_3800)
+│   ├── resident_loader/                # Resident Loader (2KB at 0x0000_3800)
+│   └── fw_common/                      # Boot Manager logic without MMIO, tested on the host
 ├── hack_demo/                      # Hack 16-bit C/Assembly demo app (toolchain self-test)
 ├── zephyr_workspace/               # Zephyr RTOS out-of-tree application & bc_clone_rs integration
 │   └── app/                        # Zephyr Rust demo for the real board (rust_demo staticlib)
+├── emu/                            # Rust emulator: core, CLI (vux9k-emu), Python module (vux9k_emu)
 ├── sim/                            # cocotb & pytest testbenches (run via sim/runners/test_sim.py)
+│   ├── emu/                        # pytest tests on the emulator (firmware, demos, lockstep compare)
+│   └── sd_transcripts/             # SD card exchanges both card models must reproduce
+├── coverage/                       # thresholds.toml: minimum coverage per image
 ├── scripts/                        # Build/CI plumbing (elf2bin.py, run_riscv_tests.py, test_hardware.py, run_pnr.py, report_sta.py, ...)
 ├── tools/                          # End-user CLI: vux_tool.py (UART flashing, diagnostics, monitor)
 ├── vendor/                         # bc_clone_rs (git submodule); riscv-tests (fetched on demand by run_riscv_tests.py, gitignored)
@@ -358,6 +405,8 @@ VUX9K/
     ├── riscv_tests/                # riscv-tests ELFs/hex images; runs/<test>/ (program.hex, verdict.txt, sim.log)
     ├── zephyr/                     # Zephyr `west build` output
     ├── synth/                      # soc.json, soc_syn.v, soc_pnr.json, soc_sta.json, pack.fs, unit netlists
+    ├── emu/                        # emulator build (cargo target) and the Python module
+    ├── coverage/                   # coverage reports (fw/: firmware lines from the emulator)
     └── sim/                        # cocotb builds (<sim>[-gls]/<toplevel>/) and per-test run dirs/results
 ```
 

@@ -18,7 +18,7 @@ from soc_env import load_imem, read_hex_words, start_soc
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 HACK_HEX = os.path.join(REPO_ROOT, "build", "hack", "firmware.hex")
 
-# Same report the Python emulator test (sim/emulator/test_hack_firmware.py) expects
+# Same report the emulator test (sim/emu/test_hack_demo.py) expects
 EXPECTED_LINES = [
     "VUX9K SoC Hack 16-bit C Firmware Test",
     "Factorial(6) = 720 ... [PASS]",

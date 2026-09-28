@@ -22,7 +22,10 @@ zephyr_workspace/       Zephyr west module: board/SoC/driver/dts support for "vu
 sim/                    cocotb/pytest RTL testbenches
   unit/                 cocotb unit tests (single RTL module each)
   integration/          cocotb SoC-level integration tests + sdcard_model.py/virtual_serial.py
-  emulator/             pytest Python-emulator tests + emulator.py
+  emu/                  pytest tests on the Rust emulator + vux9k.py helpers
+  sd_transcripts/       SD exchanges both card models must reproduce
+emu/                    Rust emulator (core, CLI vux9k-emu, pyo3 module vux9k_emu)
+coverage/               thresholds.toml (make coverage-fw)
 scripts/                Build/CI plumbing only (elf2bin.py, run_riscv_tests.py, ...)
 tools/                  End-user CLI: vux_tool.py (UART flashing/diagnostics/monitor)
 vendor/                 bc_clone_rs submodule; riscv-tests (fetched on demand)
@@ -115,14 +118,14 @@ never breaks Veryl itself; only external tooling that hardcodes paths to the
 
 ## `sim/` is split by test kind, not by module under test
 
-`sim/unit/`, `sim/integration/`, `sim/emulator/` hold, respectively: cocotb tests
-against a single RTL module, cocotb tests against the full `soc_top`, and pytest
-tests against the Python software emulator (`emulator.py`). This split (done in
-a 2026-09 `sim/` reorg pass) tracks *which helper module a test needs*, not
-directory conventions — `sdcard_model.py`/`virtual_serial.py` only ever get
-imported by `sim/integration/` tests, `emulator.py` only by `sim/emulator/`
-tests, so each helper lives alongside its only consumers. `sim/runners/` holds
-the pytest entry point that builds and runs all cocotb tests (see below).
+`sim/unit/`, `sim/integration/`, `sim/emu/` hold, respectively: cocotb tests against a
+single RTL module, cocotb tests against the full `soc_top`, and pytest tests against
+the Rust emulator. The split tracks *which helper a test needs*: `sdcard_model.py`/
+`virtual_serial.py`/`soc_env.py` are for `sim/integration/` (cocotb), `vux9k.py` for
+`sim/emu/`. Pure-Python helpers both sides share (`rv32_asm.py`, `sdcard_protocol.py`,
+`lockstep_programs.py`) live in `sim/integration/`; `sim/emu/vux9k.py` puts that
+directory on `sys.path`. `sim/runners/` holds the pytest entry point that builds and
+runs all cocotb tests (see below).
 `gowin_cells_sim.veryl`, `tb_soc_top.sv`, `tb_hex_runner.veryl` and `tb_gowin_bram.veryl`
 stay at `sim/`'s top level — **do not move them into a subdirectory**:
 - `sim/runners/sim_runner.py` refers to `sim/tb_soc_top.sv` (RTL and GLS) by path.
@@ -162,12 +165,11 @@ module under it, so any tests can run concurrently. Non-obvious bits:
   file"); the runner adds it. Don't set `PYTHONHOME` — it trips cocotb's
   "unexpected sys.executable" check.
 - `pyproject.toml` restricts pytest's `testpaths` to `sim/runners` and
-  `sim/emulator`: `sim/unit`/`sim/integration` contain cocotb modules named
+  `sim/emu`: `sim/unit`/`sim/integration` contain cocotb modules named
   `test_*.py` that pytest must never collect directly.
 
-The pytest-based files in `sim/emulator/` rely on pytest's *implicit* same-directory
-`sys.path` insertion (no `conftest.py`/`pytest.ini` backs this) to find
-`emulator.py` — keep any new pytest-based emulator test in that same directory.
+The tests in `sim/emu/` import `vux9k` (same directory, pytest's implicit `sys.path`
+insertion), which finds the `vux9k_emu` module in `build/emu/python/` (`make emu-py`).
 Any test file that computes `REPO_ROOT` via `dirname(dirname(__file__))` (used
 to reach `build/`/`tools/` from a `sim/<file>.py` that's one level below repo
 root) needed an extra `dirname()` after the move to `sim/<subdir>/<file>.py`
@@ -439,17 +441,21 @@ sides flattened below `<top>` (~6 min per top on 4 cores). Notes:
   deeper induction than `--depth` (5) can also fail: raise the depth before
   concluding the refactor changed behavior.
 
-## Known pre-existing (structure-independent) failures
+## The emulator must follow the RTL
 
-Confirmed present on `main` too (reproduced in a clean `git worktree`), not
-caused by any restructuring:
-- `make sim-hack-pytest` (`sim/emulator/test_hack_firmware.py`, 5 tests) — the
-  Python software emulator doesn't reach the firmware's PASS banners. **This is
-  an emulator bug, not a firmware one:** the same `build/hack/firmware.hex` on
-  the RTL (`make sim-hack-rtl`, `test_soc_hack`) prints the complete report up to
-  `ALL HACK C FIRMWARE TESTS PASSED (100%)!` (verified 2026-09).
-  (`sim/emulator/` is superseded by the Rust emulator, `sim/emu/`, where bc and the
-  Hack demo pass; it is being removed.)
+`emu/` models the SoC cycle for cycle, and `make sim-lockstep` (in `test-sim`) proves it
+against the RTL: tb_soc_top.sv writes a trace in RTL builds (`VUX9K_RTL_TRACE`) and
+`sim/emu/test_lockstep.py` compares every instruction and UART byte. So:
+- **An RTL change that alters behavior needs the matching emulator change in the same
+  piece of work**, and a lockstep program that exercises it if none does yet
+  (`sim/integration/lockstep_programs.py`). A red lockstep is a finding, not noise.
+- The extended profile (and the `vux9k/vux9k/ext` Zephyr board) is emulator-only.
+  Nothing that only runs there may be presented as running on the board.
+- The SD card exists twice (Python for cocotb, Rust for the emulator); changes go to
+  both, and `sim/sd_transcripts/` (regenerated with `SD_TRANSCRIPTS_UPDATE=1 pytest
+  sim/emu/test_sd_transcripts.py`) must stay green on both sides.
+- Firmware bugs the tests expose are pinned as `xfail(strict=True)` with the reason
+  until they are fixed, so the fix shows up as an XPASS.
 
 ## PnR seeds: `scripts/run_pnr.py` adopts one seed and records it
 
@@ -512,7 +518,7 @@ path- or timing-related regression the fast tests can't reach.
 Run in this order (each depends on the previous succeeding):
 ```
 make firmware        # Cargo workspace build -> build/firmware/
-make sim-unit         # broadest RTL path coverage (21 unit test modules)
+make sim-unit         # broadest RTL path coverage (22 unit test modules)
 make test-isa
 make build-hack        # hack_demo/
 make sim-hack-rtl
