@@ -212,10 +212,10 @@ root) needed an extra `dirname()` after the move to `sim/<subdir>/<file>.py`
 ## Cargo workspace gotcha: rustflags paths are workspace-root-relative
 
 `firmware/` is a Cargo workspace (`boot_manager` + `resident_loader` members, plus
-`fw_common`: the Boot Manager's hardware-independent logic, no MMIO, tested on the host
+`fw_common`: the firmware's hardware-independent logic, no MMIO, tested on the host
 with `cargo test -p fw_common --target <host triple>` — `make test-fw-host`. The Resident
-Loader doesn't use it: it has ~130 bytes left of its 2 KB, which `make firmware-size`
-enforces along with the Boot Manager's 14 KB).
+Loader takes only constants and `crc32_update` from it: it has ~100 bytes left of its
+2 KB, which `make firmware-size` enforces along with the Boot Manager's 14 KB).
 **When you build a member from within its own directory (`cd firmware/boot_manager
 && cargo build`), rustc/the linker still runs with cwd = the workspace root
 (`firmware/`), not the member directory.** This means each member's
@@ -274,6 +274,26 @@ CI artifact was tested on the board, never a local build. Keep in sync:
 - The distribution is for applications: no Resident Loader image, no firmware hex for the
   emulator (applications start there with `--no-firmware --load IMAGE --mode riscv|hack`,
   the same image and mode as `vux_tool.py flash-sd`), no SD images.
+
+## Firmware rules (Boot Manager, Resident Loader, `fw_common`)
+
+- **Addresses come from `fw_common::map`** (MMIO, mailbox, RL entry, mtime rate);
+  logic that needs no MMIO goes into `fw_common` behind a trait and gets a host test
+  (`upload` is the `w` exchange over `Host`/`Disk`; a 10/13-sector upload bug hid in
+  the Boot Manager until it moved there). The emulator's SD card is lenient about
+  SDSC/SDHC addressing unless `strict=True`: use strict for anything card-type related.
+- **Raise `BOOT_MGR_VERSION` with every Boot Manager change**: boards install a slot-0
+  image only if its header version is greater. Tests read it from `main.rs`
+  (`sim/emu/bm_env.py`, `scripts/test_hardware.py`); don't hard-code it.
+- **The Resident Loader reads a slot twice** (check pass with CRC32, then load pass),
+  because lower I-RAM holds the running Boot Manager until the load pass overwrites
+  it: errors E1-E5 return to it intact, only a load-pass failure (E6) stops. Keep new
+  checks in the first pass. For size, watch what the compiler links in: a
+  zero-initialized buffer that is then fully overwritten cost a 152-byte `memset`
+  (the header buffer is `MaybeUninit` for that reason).
+- **Mailbox requests are marked** (`0xB007_xxxx` launch, `0xA55A_xxxx` update); any
+  other value makes the RL restart the Boot Manager. Keep slot in bits 7:0 and SDHC in
+  bit 8: older RLs in flashed bitstreams read those.
 
 ## `make test-isa`: riscv-tests on `tb_hex_runner`
 

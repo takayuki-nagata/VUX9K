@@ -79,8 +79,8 @@ The RTL modules in this repository were originally authored in VHDL-2008 and hav
 | Address Range | Size | Component | Description |
 |:---|:---|:---|:---|
 | `0x0000_0000` - `0x0000_37FF` | 14 KB | **Instruction RAM (Lower)** | Hardware `RESET_VECTOR` (`0x0000_0000`); preloaded with Rust Boot Manager (factory fallback), target region for SD slot application execution |
-| `0x0000_3800` - `0x0000_3FFF` | 2 KB | **Resident Loader (Upper I-RAM)** | Immutable resident bootloader, entered only via a software jump to `0x0000_3800` (never by hardware reset); checks Mailbox, loads SD slots into I-RAM, then triggers a CPU soft-reset (see GPIO `0x4000_300C` below) to resume execution at `RESET_VECTOR` |
-| `0x2000_0000` - `0x2000_1FFF` | 8 KB | **Data RAM** | `.data`, `.bss`, stack, and heap. Mailbox register located at `0x2000_1FFC` |
+| `0x0000_3800` - `0x0000_3FFF` | 2 KB | **Resident Loader (Upper I-RAM)** | Immutable resident bootloader, entered only via a software jump to `0x0000_3800` (never by hardware reset); checks the mailbox, reads the requested SD slot once to verify it (CRC32) and again into I-RAM, then triggers a CPU soft-reset (see GPIO `0x4000_300C` below) to resume execution at `RESET_VECTOR` |
+| `0x2000_0000` - `0x2000_1FFF` | 8 KB | **Data RAM** | `.data`, `.bss`, stack, and heap. The last 8 bytes (`0x2000_1FF8`-`0x2000_1FFF`) belong to the loaders: the mailbox is at `0x2000_1FFC` |
 | `0x4000_0000` - `0x4000_000F` | 16 B | **UART Controller** | 115200 bps 8N1, 32-byte TX and RX FIFOs. `0x0` data: read pops a received byte, write sends one (only this offset transmits). `0x4` status: bit 0 `rx_empty`, bit 1 `tx_full`, bit 2 `overrun` (a byte was dropped, RX FIFO full), bit 3 `frame_err` (a stop bit was low); bits 2-3 stay set until the status register is read. While the RX FIFO holds data, the machine external interrupt is pending (`mip.MEIP`, level; taken when `mie.MEIE` and `mstatus.MIE` are set; reading the bytes clears it) |
 | `0x4000_1000` - `0x4000_100F` | 16 B | **System Timer (CLINT)** | 64-bit `mtime` (`0x0`/`0x4`) and `mtimecmp` (`0x8`/`0xC`) registers |
 | `0x4000_2000` - `0x4000_200F` | 16 B | **MicroSD SPI Master** | SPI TX/RX data (`0x0`), CS (`0x4`), busy (`0x8`); SPI clock fixed at ~400 kHz. Writes while busy are ignored (data and CS alike): wait for busy to clear first |
@@ -205,15 +205,44 @@ Connecting any terminal (115200 bps 8N1) presents the interactive `vux>` prompt:
 | List Catalog | `l` | Inspects Slots 0–9 headers and prints catalog (Slot, Name, ISA, Size) |
 | Launch App | `1` - `9` | Launches application in Slot 1–9 via Resident Loader Mailbox |
 | Write SD Slot | `w` | Receives binary stream over UART and flashes to designated slot (0–9) |
-| Inspect Slot | `s` | Parses Slot 0 Boot Manager Header |
+| Inspect Slot | `s`, `s0`-`s9` | Parses a slot's header (Slot 0 when no digit follows within 50 ms) |
 | Dump MBR | `d` | Reads and dumps 512-byte Sector 0 formatted table with `0x55AA` signature check |
 | SD Init | `i` | Forces full re-initialization of MicroSD card (`force_init`) |
-| Diag | `t` | Runs self-diagnostics (LED pattern, Button S2 state, CLINT 10ms timing, SD SPI) |
+| Diag | `t` | Self-diagnostics: sweeps the LEDs (check by eye), shows Button S2's state, checks 10 ms of `mtime` against `mcycle` (PASS within 1/64), and initializes the SD card |
 | Knight Rider | `k` | Plays Knight Rider LED sweep animation on 6 onboard LEDs |
-| Reboot | `r` | Jumps back to the Resident Loader (`0x0000_3800`), which re-loads Slot 0 and soft-resets the CPU to `RESET_VECTOR` |
+| Reboot | `r` | Asks the Resident Loader (`0x0000_3800`) to load Slot 0; with no valid image there it restarts the Boot Manager already in I-RAM |
 
 > [!TIP]
 > **Physical Button S2 Boot:** Pressing physical Button S2 (active-low pin 3) on the Tang Nano 9K at the Boot Manager prompt immediately launches Slot 1 without requiring UART commands!
+
+An exception in the Boot Manager (it enables no interrupts) prints
+`[TRAP] mcause=0x… mepc=0x… mtval=0x…` and stops with LEDs 1/3/5 and 0/2/4 blinking in turn;
+reset the board.
+
+### 3. Resident Loader and the mailbox
+
+The Boot Manager asks the Resident Loader for a slot through the word at `0x2000_1FFC`
+(`fw_common::mailbox`): bits 31:16 are `0xB007` to launch slot `N` (bits 7:0) or `0xA55A`
+to install slot 0 as the new Boot Manager (self-update), bit 8 is set for an SDHC card.
+The loader clears the word and takes any other value (0 included) as nothing to load: it
+restarts the Boot Manager.
+
+It reads the slot twice. The first read checks the header and every sector and computes
+the payload's CRC32 without writing I-RAM, so on these errors the Boot Manager, still
+intact in lower I-RAM, comes back to its prompt:
+
+| Error | Meaning |
+|:---|:---|
+| `[RL] E1` | The slot's first sector can't be read |
+| `[RL] E2` | No VUX9 v3 header (magic or header version) |
+| `[RL] E3` | Payload size 0 or over 14,336 bytes |
+| `[RL] E4` | A later sector of the slot can't be read |
+| `[RL] E5` | The payload doesn't match the header's CRC32 |
+
+The second read loads the payload at the header's load address. Should it fail although
+the first succeeded (`[RL] E6: reload the bitstream`), part of the Boot Manager is
+already overwritten: the loader stops, and only reloading the bitstream (or a power
+cycle) brings the Boot Manager back.
 
 ---
 
@@ -347,7 +376,7 @@ Short tests run on Icarus, long SoC/GLS runs on Verilator (`SIM_UNIT` / `SIM_SOC
 | *slow* **GLS End-to-End** | `make sim-gls-hw-flow` | ~3-6 min | The end-to-end flow on the full Gowin netlist |
 | *slow* **Icarus End-to-End** | `make sim-hw-flow-icarus` | ~15 min | The end-to-end flow on 4-state Icarus |
 | **Emulator** | `make emu-test` / `test-isa-emu` | ~10 sec | Rust unit tests of the emulator; riscv-tests on it (same results as `test-isa`) |
-| **Firmware on the Emulator** | `make test-emu` | ~30 sec | Boot Manager CLI and error paths, flashing through `vux_tool.py`, Resident Loader E1-E4, self-update, Hack demo, Zephyr demo from SD, bc (extended profile), SD transcripts |
+| **Firmware on the Emulator** | `make test-emu` | ~30 sec | Boot Manager CLI and error paths, flashing through `vux_tool.py`, Resident Loader E1-E6, self-update, Hack demo, Zephyr demo from SD, bc (extended profile), SD transcripts |
 | **Firmware Host Tests** | `make test-fw-host` / `firmware-size` | ~5 sec | `firmware/fw_common` on the host; Boot Manager ≤ 14 KB, Resident Loader ≤ 2 KB |
 | **Firmware Coverage** | `make coverage-fw` | ~40 sec | Source-line coverage of the firmware and demos from the emulator tests, against `coverage/thresholds.toml` (report in `build/coverage/fw/`) |
 | **RTL ↔ Emulator Lockstep** | `make sim-lockstep` | ~40 sec | Random RV32I, traps/interrupts, Hack demo and the firmware on RTL and emulator, compared cycle by cycle (*slow*: `sim-lockstep-slow`, more programs) |

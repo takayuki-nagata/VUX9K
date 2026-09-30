@@ -160,11 +160,9 @@ and refuses an image larger than the 14 KB a slot application may have.
 - `--profile extended` gives 512 KB / 256 KB for the `vux9k/vux9k/ext` Zephyr board.
   **Nothing that needs it runs on the board.**
 
-Started this way, an application doesn't go through the Resident Loader as it does on
-the board. What differs:
-- The data RAM starts zeroed, as the Resident Loader leaves it; only the loaders' word
-  at `0x2000_1FF8` (the card type) differs, and applications don't use it.
-- The SD card is empty (a card image can be given with `--sd IMAGE`).
+Started this way, an application finds what the Resident Loader leaves on the board: its
+image at address 0, the CPU in the ISA of `--mode`, and the data RAM zeroed. The
+difference is the SD card, which is empty (a card image can be given with `--sd IMAGE`).
 
 **From Python.** `emu/vux9k_emu.abi3.so` is the emulator as a Python module (CPython 3.10
 or later, Linux x86_64). Put `emu/` on `sys.path`:
@@ -192,7 +190,10 @@ Useful methods of `Soc`: `load_app(image, mode)` (`mode` `"riscv"` or `"hack"`, 
 
 ## 5. Running on the board
 
-Write the application to a free slot (1-9) and start it:
+Write the application to a free slot (1-9) and start it. The Resident Loader reads the
+slot once to check it (including the payload's CRC32, which `flash-sd` writes into the
+header) before loading it; its errors are listed in the README
+([Resident Loader and the mailbox](../README.md#3-resident-loader-and-the-mailbox)):
 
 ```sh
 python3 tools/vux_tool.py flash-sd build/zephyr/zephyr.bin --mode riscv --slot 3 --name "my app"
