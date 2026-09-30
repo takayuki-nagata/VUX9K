@@ -9,7 +9,7 @@ Boot Manager, which must come back to its prompt.
 
 import pytest
 from bm_env import BANNER, BOOT_CYCLES, HASH_PAYLOAD, PROMPT, boot, cmd
-from vux9k import slot_image, slot_lba, vux_tool, wait_for
+from vux9k import sd_image, slot_image, slot_lba, vux_tool, wait_for
 
 
 def launch(soc, slot=1, back_to_prompt=True):
@@ -60,6 +60,33 @@ def test_e4_returns_to_a_working_boot_manager():
     slot1, _ = slot_image(payload, slot=1, mode="riscv")
     soc, _ = boot(sd_sectors=slot1, sd_card={"bad_sectors": [slot_lba(1) + 1]})
     launch(soc)
+
+
+@pytest.mark.xfail(strict=True, reason="firmware bug (step 6): the RL doesn't check the payload's CRC32")
+def test_e5_crc_mismatch_returns_to_the_boot_manager():
+    raw, meta = vux_tool.build_vux9_image(HASH_PAYLOAD, slot=1, mode="riscv", crc_override=0xDEADBEEF)
+    soc, _ = boot(sd_sectors={slot_lba(1): raw[:512]})
+    assert "[RL] E5" in launch(soc)[1]
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="firmware bug (step 6): 'r' on an SDSC card sends mailbox 0, which the RL takes for "
+    "'an app returns to slot 0' and reads with a stale card type from an earlier launch",
+)
+def test_reboot_after_swapping_to_an_sdsc_card():
+    # A launch on an SDHC card leaves the RL's saved card type at SDHC (E2: nothing to load)
+    raw, _ = vux_tool.build_vux9_image(HASH_PAYLOAD, slot=1, mode="riscv", magic_override=0x12345678)
+    soc, _ = boot(sd_sectors={slot_lba(1): raw[:512]})
+    assert "[RL] E2" in launch(soc)[1]
+    # Swap in an SDSC card whose slot 0 prints '#', and have the Boot Manager find it
+    slot0, _ = slot_image(HASH_PAYLOAD, slot=0, mode="riscv")
+    soc.sd_remove()
+    soc.sd_insert(sd_image(slot0), sdhc=False, strict=True)  # strict: no guessing the addressing
+    cmd(soc, "i", timeout_cycles=BOOT_CYCLES)
+    mark = len(soc.uart_received())
+    cmd(soc, "r", until=b"[RL] Slot 0")
+    wait_for(soc, b"#", 60_000_000, start=mark)
 
 
 @pytest.mark.parametrize("sdhc", [True, False], ids=["sdhc", "sdsc"])

@@ -7,6 +7,7 @@ take. No card or unreadable sectors, SD v1 and CMD1-only cards, the catalog's
 Hack/unnamed/system slots, and every error of the 'w' protocol.
 """
 
+import pytest
 from bm_env import BOOT_CYCLES, HASH_PAYLOAD, PROMPT, boot, cmd
 from vux9k import UART_BIT, ms, slot_image, slot_lba, start_soc, vux_tool, wait_for
 
@@ -125,3 +126,17 @@ def test_card_that_never_becomes_ready():
     soc = start_soc(sd_card={"never_ready": True})
     wait_for(soc, PROMPT, 8 * BOOT_CYCLES)  # each init attempt spends ~63M cycles
     assert "[SD] Init Failed / No Card!" in cmd(soc, "i", timeout_cycles=4 * BOOT_CYCLES)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="firmware bug (step 6): mtvec stays 0, so an exception silently restarts the Boot Manager",
+)
+def test_exception_is_reported():
+    soc, _ = boot()
+    soc.run(ms(1))
+    pc = soc.pc  # the next instruction of the Boot Manager's idle loop
+    soc.load_iram_words([0], start=pc // 4)  # all-zero word: illegal instruction
+    out = wait_for(soc, b"[TRAP]", ms(10), start=len(soc.uart_received()))
+    out += wait_for(soc, b"\n", ms(10), start=len(soc.uart_received()))
+    assert f"mcause=0x00000002 mepc=0x{pc:08X}" in out, out
