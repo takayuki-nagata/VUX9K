@@ -591,7 +591,7 @@ def cmd_flash_sd(args):
     ser = open_port(args.port, baudrate=args.baud, timeout=0.1)
     try:
         _, meta = build_vux9_image(args.file, slot=slot, name=name, mode=mode, version=version)
-        print("=== Preparing VUX9 v2 Slot Boot Image ===")
+        print("=== Preparing VUX9 v3 Slot Boot Image ===")
         print(f"  File: {args.file} ({meta['size_bytes']} bytes payload)")
         print(f"  Slot: {slot} (Sector {meta['start_sector']}, LBA {meta['start_sector']})")
         print(f"  Name: {meta['name']!r}")

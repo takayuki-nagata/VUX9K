@@ -1,0 +1,5 @@
+# vux_tool.py: pip install -r tools/requirements.txt
+pyserial>=3.5
+# Optional: FTDI ports (ftdi://...) need pyftdi.
+# pyftdi>=0.55
+# `vux_tool.py reset` runs openFPGALoader (not a Python package), found on PATH.

@@ -27,6 +27,20 @@ sys.path.insert(0, REPO_ROOT)
 
 import tools.vux_tool as vux_tool  # noqa: E402 (needs REPO_ROOT on sys.path)
 
+# What the suite flashes: the local build outputs, or with --dist DIR a `make dist` tree
+FILES = {
+    "pack_fs": os.path.join(REPO_ROOT, "build", "synth", "pack.fs"),
+    "boot_manager": os.path.join(REPO_ROOT, "build", "firmware", "firmware.bin"),
+    "zephyr_demo": os.path.join(REPO_ROOT, "build", "zephyr-demo", "zephyr", "zephyr.bin"),
+    "hack_demo": os.path.join(REPO_ROOT, "build", "hack", "firmware.bin"),
+}
+DIST_FILES = {
+    "pack_fs": "bitstream/pack.fs",
+    "boot_manager": "boot-manager.bin",
+    "zephyr_demo": "demos/zephyr-demo.bin",
+    "hack_demo": "demos/hack-demo.bin",
+}
+
 
 def print_banner(title):
     print("\n" + "=" * 70)
@@ -91,7 +105,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
         # -------------------------------------------------------------
         # Test 4: Flash Slot 0: Boot Manager (vux_tool.flash_slot)
         # -------------------------------------------------------------
-        boot_mgr_bin = os.path.join(REPO_ROOT, "build", "firmware", "firmware.bin")
+        boot_mgr_bin = FILES["boot_manager"]
         test_name_flash_s0 = "4. Flash Slot 0: Boot Manager ('w' / vux_tool.flash_slot)"
         try:
             meta = vux_tool.flash_slot(ser, boot_mgr_bin, slot=0, name="Boot Manager", mode="riscv", version=10)
@@ -130,7 +144,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
         # Test 6: Flash Slot 1: Default RISC-V App (vux_tool.flash_slot)
         # -------------------------------------------------------------
         # The Zephyr Rust demo (make build-zephyr-demo)
-        app_bin = os.path.join(REPO_ROOT, "build", "zephyr-demo", "zephyr", "zephyr.bin")
+        app_bin = FILES["zephyr_demo"]
         if not os.path.exists(app_bin):
             app_bin = os.path.join(REPO_ROOT, "build", "firmware", "test_payload.bin")
             os.makedirs(os.path.dirname(app_bin), exist_ok=True)
@@ -172,7 +186,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
         # -------------------------------------------------------------
         # Test 8: Flash Slot 2: Hack 16-bit Firmware (vux_tool.flash_slot)
         # -------------------------------------------------------------
-        hack_bin = os.path.join(REPO_ROOT, "build", "hack", "firmware.bin")
+        hack_bin = FILES["hack_demo"]
         if not os.path.exists(hack_bin):
             os.makedirs(os.path.join(REPO_ROOT, "build", "hack"), exist_ok=True)
             with open(hack_bin, "wb") as f:
@@ -321,7 +335,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
 
         # Reset board via openFPGALoader to return cleanly to Boot Manager (known issue: app return SDHC reload)
         ser.close()
-        pack_fs = os.path.join(REPO_ROOT, "build", "synth", "pack.fs")
+        pack_fs = FILES["pack_fs"]
         loader_bin = shutil.which("openFPGALoader") or os.path.expanduser("~/.local/oss-cad-suite/bin/openFPGALoader")
         subprocess.run(
             [loader_bin, "-b", "tangnano9k", pack_fs], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
@@ -360,7 +374,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
 
         # Reload bitstream via openFPGALoader to return cleanly to Boot Manager
         ser.close()
-        pack_fs = os.path.join(REPO_ROOT, "build", "synth", "pack.fs")
+        pack_fs = FILES["pack_fs"]
         loader_bin = shutil.which("openFPGALoader") or os.path.expanduser("~/.local/oss-cad-suite/bin/openFPGALoader")
         subprocess.run(
             [loader_bin, "-b", "tangnano9k", pack_fs], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
@@ -399,7 +413,14 @@ def main():
     parser = argparse.ArgumentParser(description="VUX9K Automated Hardware Test Suite")
     parser.add_argument("--port", default="auto", help="Serial/FTDI port URL (default: auto)")
     parser.add_argument("--baud", type=int, default=115200, help="UART baud rate (default: 115200)")
+    parser.add_argument("--dist", metavar="DIR", help="flash the files of a `make dist` tree instead of build/")
     args = parser.parse_args()
+
+    if args.dist:
+        for key, rel in DIST_FILES.items():
+            FILES[key] = os.path.join(args.dist, rel)
+            if not os.path.isfile(FILES[key]):
+                sys.exit(f"{FILES[key]} missing: not a `make dist` tree?")
 
     success = run_hardware_test_suite(port=args.port, baud=args.baud)
     if not success:
