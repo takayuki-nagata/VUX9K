@@ -122,8 +122,12 @@ fn multiplies() {
 
 #[test]
 fn mailbox_words() {
-    assert_eq!(mailbox::launch(3, false), 3);
-    assert_eq!(mailbox::launch(9, true), 0x109);
+    // Every request is marked: 0 (slot 0 on an SDSC card, before) must not be one
+    assert_eq!(mailbox::launch(0, false), 0xB007_0000);
+    assert_eq!(mailbox::launch(3, false), 0xB007_0003);
+    assert_eq!(mailbox::launch(9, true), 0xB007_0109);
+    // An old Resident Loader reads the slot from bits 7:0 and SDHC from bit 8 as well
+    assert_eq!(mailbox::launch(9, true) & 0x1FF, 0x109);
     assert_eq!(mailbox::update(true), 0xA55A_0100);
     assert_eq!(mailbox::update(false), mailbox::SLOT_UPDATE_MAGIC);
 }

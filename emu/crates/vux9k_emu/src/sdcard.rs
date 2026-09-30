@@ -42,6 +42,9 @@ pub struct Faults {
     pub read_error: bool,
     /// Sectors whose CMD17 gets the data error token 08 (others read normally).
     pub bad_sectors: Vec<u32>,
+    /// (sector, n): the sector reads normally n times, then gets the error token (a
+    /// card that fails between two reads of the same data).
+    pub fail_after: Vec<(u32, u32)>,
     /// CMD24's data response is 0B (CRC error): the block is not written.
     pub write_reject: bool,
 }
@@ -77,6 +80,8 @@ pub struct SdCard {
     idle_clocks: u64,
     /// (cmd, arg) of every command received.
     pub commands: Vec<(u8, u32)>,
+    /// Good CMD17 reads so far, per sector (for `Faults::fail_after`).
+    reads: std::collections::HashMap<u32, u32>,
     /// Protocol problems (strict mode).
     pub violations: Vec<String>,
 }
@@ -95,6 +100,7 @@ impl SdCard {
             first_cmd_seen: false,
             idle_clocks: 0,
             commands: Vec::new(),
+            reads: std::collections::HashMap::new(),
             violations: Vec::new(),
         }
     }
@@ -246,9 +252,16 @@ impl SdCard {
             17 => {
                 let lba = self.lba(cmd, arg);
                 let r = &mut self.resp;
-                if self.faults.read_error || self.faults.bad_sectors.contains(&lba) {
+                let reads = self.reads.entry(lba).or_insert(0);
+                let worn = self
+                    .faults
+                    .fail_after
+                    .iter()
+                    .any(|&(s, n)| s == lba && *reads >= n);
+                if self.faults.read_error || self.faults.bad_sectors.contains(&lba) || worn {
                     r.extend([0xFF, 0x00, 0xFF, 0x08]);
                 } else {
+                    *reads += 1;
                     r.extend([0xFF, 0x00, 0xFF, 0xFE]);
                     let data = self.sector(lba);
                     self.resp.extend(data);

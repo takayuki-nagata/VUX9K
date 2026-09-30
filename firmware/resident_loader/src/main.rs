@@ -20,9 +20,11 @@ global_asm!(
     "#
 );
 
-use fw_common::header::{HEADER_VERSION, VUX_MAGIC};
-use fw_common::mailbox::{SLOT_UPDATED_BOOT_MAGIC, SLOT_UPDATE_MAGIC};
+use fw_common::crc32_update;
+use fw_common::header::{HEADER_LEN, HEADER_VERSION, SECTOR, VUX_MAGIC};
+use fw_common::mailbox::{self, SLOT_UPDATED_BOOT_MAGIC, SLOT_UPDATE_MAGIC};
 use fw_common::map;
+use fw_common::update::MAX_IMAGE;
 
 const SD_DATA: *mut u32 = map::SD_DATA as *mut u32;
 const SD_CS: *mut u32 = map::SD_CS as *mut u32;
@@ -35,7 +37,6 @@ const GPIO_BOOT_MODE_REG: *mut u32 = map::GPIO_BOOT_MODE as *mut u32;
 const BOOT_MODE_VALID: u32 = map::BOOT_MODE_VALID;
 const BOOT_MODE_RV32: u32 = BOOT_MODE_VALID | 1;
 const RESET_MAGIC: u32 = map::SOFT_RESET_KEY;
-const SCRATCH_SDHC_REG: *mut u32 = map::LOADER_WORDS as *mut u32;
 const MAILBOX_REG: *mut u32 = map::MAILBOX as *mut u32;
 
 const UART_DATA: *mut u8 = map::UART_DATA as *mut u8;
@@ -102,15 +103,6 @@ fn sd_send_cmd(cmd: u8, arg: u32, crc: u8) -> u8 {
 }
 
 #[inline(never)]
-fn read_word() -> u32 {
-    let b0 = spi_transfer(0xFF) as u32;
-    let b1 = spi_transfer(0xFF) as u32;
-    let b2 = spi_transfer(0xFF) as u32;
-    let b3 = spi_transfer(0xFF) as u32;
-    b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)
-}
-
-#[inline(never)]
 fn skip_bytes(n: usize) {
     for _ in 0..n {
         spi_transfer(0xFF);
@@ -138,101 +130,89 @@ fn spi_end_block() {
     spi_deselect();
 }
 
-/// Loads a slot into I-RAM. Returns the value for GPIO_BOOT_MODE_REG (valid bit and the
-/// header's ISA, 1 = RV32 / 0 = Hack), or 0 if the slot couldn't be loaded.
-fn load_slot_from_sd(is_sdhc: bool, slot_id: u32) -> u32 {
-    let start_sector = 64 + (slot_id << 6);
+fn le32(b: &[u8], at: usize) -> u32 {
+    u32::from_le_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]])
+}
 
-    if !spi_start_block(is_sdhc, start_sector) {
-        uart_puts(b"[RL] E1\n");
-        return 0;
+/// One pass over a slot: check its header, stream its payload through CRC32, and with
+/// `write`, store it into I-RAM at the header's load address. Returns the value for
+/// GPIO_BOOT_MODE_REG (valid bit and the header's ISA, 1 = RV32 / 0 = Hack), or the
+/// error number 1-5 (E1 header sector unreadable, E2 bad header, E3 bad size, E4
+/// later sector unreadable, E5 CRC mismatch).
+fn pass(is_sdhc: bool, slot_id: u32, write: bool) -> Result<u32, u8> {
+    let mut sector = 64 + (slot_id << 6);
+    if !spi_start_block(is_sdhc, sector) {
+        return Err(1);
     }
-
-    let mut header = [0u8; 64];
-    for b in header.iter_mut() {
-        *b = spi_transfer(0xFF);
+    // Every byte is read below; zero-filling it first would link in a 152-byte memset
+    let mut raw = core::mem::MaybeUninit::<[u8; HEADER_LEN]>::uninit();
+    let p = raw.as_mut_ptr() as *mut u8;
+    for n in 0..HEADER_LEN {
+        unsafe { p.add(n).write(spi_transfer(0xFF)) };
     }
-
-    let magic = (header[0] as u32)
-        | ((header[1] as u32) << 8)
-        | ((header[2] as u32) << 16)
-        | ((header[3] as u32) << 24);
-    let ver_flags = (header[4] as u32)
-        | ((header[5] as u32) << 8)
-        | ((header[6] as u32) << 16)
-        | ((header[7] as u32) << 24);
-    let mode = (header[8] as u32)
-        | ((header[9] as u32) << 8)
-        | ((header[10] as u32) << 16)
-        | ((header[11] as u32) << 24);
-    let size = (header[12] as u32)
-        | ((header[13] as u32) << 8)
-        | ((header[14] as u32) << 16)
-        | ((header[15] as u32) << 24);
-    let load_addr = (header[16] as u32)
-        | ((header[17] as u32) << 8)
-        | ((header[18] as u32) << 16)
-        | ((header[19] as u32) << 24);
-
-    if magic != VUX_MAGIC || (ver_flags & 0xFFFF) != HEADER_VERSION as u32 {
-        uart_puts(b"[RL] E2\n");
-        skip_bytes(448);
-        spi_end_block();
-        return 0;
-    }
-
-    let max_size = 14336;
-    if size == 0 || size > max_size {
-        uart_puts(b"[RL] E3\n");
-        skip_bytes(448);
-        spi_end_block();
-        return 0;
-    }
-
-    let dest_ptr = load_addr as *mut u32;
-    let mut word_idx = 0usize;
-
-    let chunk0 = if size > 448 { 448 } else { size as usize };
-    let chunk0_words = (chunk0 + 3) / 4;
-    for _ in 0..chunk0_words {
-        let w = read_word();
-        unsafe {
-            core::ptr::write_volatile(dest_ptr.add(word_idx), w);
-        }
-        word_idx += 1;
-    }
-
-    skip_bytes(448 - chunk0_words * 4);
-    spi_end_block();
-
-    let mut copied = chunk0;
-    let mut sector = start_sector + 1;
-
-    while copied < size as usize {
-        if !spi_start_block(is_sdhc, sector) {
-            uart_puts(b"[RL] E4\n");
-            return 0;
-        }
-        let chunk = if size as usize - copied > 512 {
-            512
+    let header = unsafe { raw.assume_init() };
+    let size = le32(&header, 12) as usize;
+    let err =
+        if le32(&header, 0) != VUX_MAGIC || (le32(&header, 4) & 0xFFFF) != HEADER_VERSION as u32 {
+            2
+        } else if size == 0 || size > MAX_IMAGE as usize {
+            3
         } else {
-            size as usize - copied
+            0
         };
-        let chunk_words = (chunk + 3) / 4;
-        for _ in 0..chunk_words {
-            let w = read_word();
-            unsafe {
-                core::ptr::write_volatile(dest_ptr.add(word_idx), w);
-            }
-            word_idx += 1;
-        }
-        skip_bytes(512 - chunk_words * 4);
+    if err != 0 {
+        skip_bytes(SECTOR - HEADER_LEN);
         spi_end_block();
-        copied += chunk;
-        sector += 1;
+        return Err(err);
     }
 
-    BOOT_MODE_VALID | (mode & 1)
+    let mut dest = le32(&header, 16) as *mut u32;
+    let mut crc = 0xFFFF_FFFF;
+    let mut remaining = size;
+    let mut offset = HEADER_LEN; // bytes of this sector already read
+    loop {
+        // The sector's share of the payload, read in whole words (the slot is padded)
+        let chunk = if remaining < SECTOR - offset {
+            remaining
+        } else {
+            SECTOR - offset
+        };
+        let mut word = 0u32;
+        for n in 0..(chunk + 3) & !3 {
+            let b = spi_transfer(0xFF);
+            if n < chunk {
+                crc = crc32_update(&[b], crc);
+            }
+            word = (word >> 8) | ((b as u32) << 24);
+            if n & 3 == 3 && write {
+                unsafe {
+                    core::ptr::write_volatile(dest, word);
+                    dest = dest.add(1);
+                }
+            }
+        }
+        skip_bytes(SECTOR - offset - ((chunk + 3) & !3));
+        spi_end_block();
+        remaining -= chunk;
+        if remaining == 0 {
+            break;
+        }
+        sector += 1;
+        offset = 0;
+        if !spi_start_block(is_sdhc, sector) {
+            return Err(4);
+        }
+    }
+    if crc ^ 0xFFFF_FFFF != le32(&header, 24) {
+        return Err(5);
+    }
+    Ok(BOOT_MODE_VALID | (le32(&header, 8) & 1))
+}
+
+fn report(err: u8) {
+    uart_puts(b"[RL] E");
+    uart_putc(b'0' + err);
+    uart_putc(b'\n');
 }
 
 #[no_mangle]
@@ -244,20 +224,14 @@ pub extern "C" fn loader_main() -> ! {
 
     uart_puts(b"\n[RL] Boot\n");
 
-    let is_slot_update = (target & 0xFFFF_0000) == SLOT_UPDATE_MAGIC;
-    let raw_is_sdhc = (target & 0x100) != 0;
-    let is_sdhc = if target == 0 {
-        // App returning to Slot 0: restore saved SDHC flag
-        unsafe { core::ptr::read_volatile(SCRATCH_SDHC_REG) != 0 }
-    } else {
-        unsafe {
-            core::ptr::write_volatile(SCRATCH_SDHC_REG, if raw_is_sdhc { 1 } else { 0 });
-        }
-        raw_is_sdhc
-    };
+    // Only a marked request loads anything; any other value (0 included) restarts
+    // the Boot Manager below
+    let kind = target & mailbox::KIND_MASK;
+    let is_slot_update = kind == SLOT_UPDATE_MAGIC;
+    let is_sdhc = (target & mailbox::SDHC) != 0;
     let slot_num = if is_slot_update { 0 } else { target & 0xFF };
 
-    if is_slot_update || slot_num <= 9 {
+    if (is_slot_update || kind == mailbox::LAUNCH_MAGIC) && slot_num <= 9 {
         uart_puts(b"\n[RL] Slot ");
         uart_putc(b'0' + slot_num as u8);
         uart_puts(b"\n");
@@ -268,39 +242,49 @@ pub extern "C" fn loader_main() -> ! {
             spi_transfer(0xFF);
         }
 
-        let boot_mode = load_slot_from_sd(is_sdhc, slot_num);
-        if boot_mode != 0 {
-            if is_slot_update {
+        // First read the whole slot without touching I-RAM, which still holds the Boot
+        // Manager: any error returns to it intact. Then load it for real.
+        match pass(is_sdhc, slot_num, false) {
+            Err(e) => report(e),
+            Ok(_) => {
+                let Ok(boot_mode) = pass(is_sdhc, slot_num, true) else {
+                    // Read once, failed the second time: lower I-RAM is half
+                    // overwritten, so there is no Boot Manager to return to. Stop.
+                    uart_puts(b"[RL] E6: reload the bitstream\n");
+                    #[allow(clippy::empty_loop)]
+                    loop {}
+                };
+                if is_slot_update {
+                    unsafe {
+                        core::ptr::write_volatile(MAILBOX_REG, SLOT_UPDATED_BOOT_MAGIC);
+                    }
+                }
+                // cpu_soft_rst only resets CPU-internal state (PC, pipeline
+                // registers) -- it never clears D-RAM (soc_ram.veryl's memory
+                // array has no reset path at all, only synthesis-time INIT
+                // values loaded by a full bitstream reconfiguration). RISC-V
+                // programs zero their own .bss in their own start.s regardless
+                // of what's left over, but the Hack 16-bit firmware toolchain
+                // has no equivalent step and implicitly assumes RAM starts
+                // zeroed. Clear D-RAM here so every newly-launched slot gets a
+                // clean start, regardless of ISA or how many soft-resets
+                // preceded it. Leave the loaders' words (0x2000_1FF8-0x2000_1FFF)
+                // untouched: the mailbox carries state across this very reset.
                 unsafe {
-                    core::ptr::write_volatile(MAILBOX_REG, SLOT_UPDATED_BOOT_MAGIC);
+                    let mut p = map::DRAM_BASE as *mut u32;
+                    let end = map::LOADER_WORDS as *mut u32;
+                    while p < end {
+                        core::ptr::write_volatile(p, 0);
+                        p = p.add(1);
+                    }
                 }
-            }
-            // cpu_soft_rst only resets CPU-internal state (PC, pipeline
-            // registers) -- it never clears D-RAM (soc_ram.veryl's memory
-            // array has no reset path at all, only synthesis-time INIT
-            // values loaded by a full bitstream reconfiguration). RISC-V
-            // programs zero their own .bss in their own start.s regardless
-            // of what's left over, but the Hack 16-bit firmware toolchain
-            // has no equivalent step and implicitly assumes RAM starts
-            // zeroed. Clear D-RAM here so every newly-launched slot gets a
-            // clean start, regardless of ISA or how many soft-resets
-            // preceded it. Leave the reserved scratch/mailbox words
-            // (0x2000_1FF8-0x2000_1FFF) untouched -- they carry state
-            // across this very reset.
-            unsafe {
-                let mut p = map::DRAM_BASE as *mut u32;
-                let end = map::LOADER_WORDS as *mut u32;
-                while p < end {
-                    core::ptr::write_volatile(p, 0);
-                    p = p.add(1);
-                }
-            }
-            // Trigger CPU Soft Reset to launch newly loaded slot at 0x0000_0000
-            unsafe {
-                core::ptr::write_volatile(GPIO_BOOT_MODE_REG, boot_mode);
-                core::ptr::write_volatile(GPIO_RESET_REG, RESET_MAGIC);
-                loop {
-                    core::arch::asm!("nop"); // cov:exclude(the soft reset stops the CPU first)
+                // Trigger CPU Soft Reset to launch newly loaded slot at 0x0000_0000
+                unsafe {
+                    core::ptr::write_volatile(GPIO_BOOT_MODE_REG, boot_mode);
+                    core::ptr::write_volatile(GPIO_RESET_REG, RESET_MAGIC);
+                    loop {
+                        core::arch::asm!("nop"); // cov:exclude(the soft reset stops the CPU first)
+                    }
                 }
             }
         }
