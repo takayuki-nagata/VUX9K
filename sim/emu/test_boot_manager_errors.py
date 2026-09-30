@@ -8,11 +8,11 @@ Hack/unnamed/system slots, and every error of the 'w' protocol.
 """
 
 from bm_env import BOOT_CYCLES, HASH_PAYLOAD, PROMPT, boot, cmd
-from vux9k import ms, slot_image, slot_lba, start_soc, vux_tool, wait_for
+from vux9k import UART_BIT, ms, slot_image, slot_lba, start_soc, vux_tool, wait_for
 
 
 def send(soc, data: bytes):
-    soc.run(50 * 234)
+    soc.run(50 * UART_BIT)
     soc.uart_send(data)
 
 

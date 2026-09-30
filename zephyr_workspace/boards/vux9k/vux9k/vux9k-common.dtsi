@@ -22,14 +22,14 @@
 	cpus {
 		#address-cells = <1>;
 		#size-cells = <0>;
-		timebase-frequency = <27000000>;
+		timebase-frequency = <18000000>;
 
 		cpu0: cpu@0 {
 			device_type = "cpu";
 			compatible = "riscv";
 			riscv,isa = "rv32i_zicsr_zifencei";
 			reg = <0>;
-			clock-frequency = <27000000>;
+			clock-frequency = <18000000>;
 
 			cpu0_intc: interrupt-controller {
 				compatible = "riscv,cpu-intc";

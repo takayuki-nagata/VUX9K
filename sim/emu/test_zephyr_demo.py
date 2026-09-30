@@ -43,7 +43,7 @@ def test_boots_from_sd_slot_1(demo_bin):
     assert soc.riscv_mode
     assert "Zephyr RTOS Booting on VUX9K SoC!" in out
     assert "[Rust Task] Task iteration 5 completed [OK]" in out
-    # k_msleep runs on the machine timer at 27 MHz: 100 ms of mtime, give or take a tick
+    # k_msleep runs on the machine timer at 18 MHz: 100 ms of mtime, give or take a tick
     m = re.search(r"k_msleep\(100\) took (\d+) ms", out)
     assert m, out
     assert 100 <= int(m.group(1)) <= 110, out

@@ -29,8 +29,8 @@ import tools.vux_tool as vux_tool  # noqa: E402
 
 Soc = vux9k_emu.Soc
 
-CLK_HZ = 27_000_000
-UART_BIT = 234  # clocks per bit at 115200 baud
+CLK_HZ = 18_000_000
+UART_BIT = 156  # clocks per bit at 115200 baud
 UART_FRAME = 10 * UART_BIT
 SECTOR = 512
 
@@ -175,7 +175,7 @@ def press_button(soc, hold_ms: float = 25, after_ms: float = 15) -> None:
 
 
 class EmuClock:
-    """Stand-in for the `time` module in emulated time (27 MHz cycles), for host
+    """Stand-in for the `time` module in emulated time (18 MHz cycles), for host
     code such as tools/vux_tool.py: sleep() runs the SoC, time() reads its clock.
     Install with monkeypatch.setattr(vux_tool, "time", EmuClock(soc))."""
 

@@ -7,7 +7,7 @@ sdcard_spi (SPI master for the MicroSD card) unit tests.
 Register map (addr[3:0]): 0x0 write = start an 8-bit transfer, read = last received
 byte; 0x4 chip select (bit 0 = cs_n); 0x8 busy (ro). SPI mode 0: SCLK idles low,
 MISO is sampled on the rising edge (through a 2-flop synchronizer), MOSI shifts on
-the falling edge, MSB first. SCLK half-period = CLK_DIV_HALF (34) system clocks.
+the falling edge, MSB first. SCLK half-period = CLK_DIV_HALF (23) system clocks.
 Writes are only accepted while not busy -- including chip-select writes.
 """
 
@@ -15,7 +15,7 @@ import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, FallingEdge, RisingEdge
 
-CLK_DIV_HALF = 34
+CLK_DIV_HALF = 23  # soc_pkg::SD_CLK_DIV_HALF at 18 MHz
 BYTE_CYCLES = 8 * 2 * CLK_DIV_HALF
 
 
@@ -122,7 +122,7 @@ async def test_full_duplex_byte(dut):
 
 @cocotb.test()
 async def test_sclk_divider(dut):
-    """SCLK period is 2 * CLK_DIV_HALF system clocks (~400 kHz at 27 MHz)"""
+    """SCLK period is 2 * CLK_DIV_HALF system clocks (~391 kHz at 18 MHz)"""
     slave = await setup(dut)
     slave.load(0x00)
     await write(dut, 0x0, 0x55)

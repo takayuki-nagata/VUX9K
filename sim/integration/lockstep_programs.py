@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from rv32_asm import Asm, b_type, i_type, r_type
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-UART_BIT = 234
+UART_BIT = 156  # soc_pkg::UART_CNT: 18 MHz / 115200
 UART_FRAME = 10 * UART_BIT
 
 

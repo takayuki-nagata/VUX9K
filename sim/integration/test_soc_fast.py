@@ -41,9 +41,9 @@ async def test_soc_fast_boot(dut):
     # -------------------------------------------------------------------------
     dut._log.info("Testing S2 button launch for Slot 1...")
     dut.btn.value = 0  # Button S2 pressed
-    await wait_cycles(27000 * 25)  # 25ms debounce
+    await wait_cycles(18000 * 25)  # 25ms debounce
     dut.btn.value = 1  # Release button
-    await wait_cycles(27000 * 15)
+    await wait_cycles(18000 * 15)
 
     # Wait for Resident Loader "[RL] Slot 1" confirmation
     rl_buf = await ser.wait_for(b"[RL] Slot 1", timeout_cycles=2000000)

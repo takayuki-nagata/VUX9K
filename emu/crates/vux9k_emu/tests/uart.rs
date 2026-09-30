@@ -17,17 +17,17 @@ fn tx_waits_for_the_bit_timer_then_paces_one_frame_per_byte() {
     u.write(DATA, 0x41, 6);
     u.write(DATA, 0x42, 9);
     u.advance(10_000);
-    // uart_tx leaves RST at the alarm in cycle 233: pop at 234, load at 467
-    assert_eq!(u.tx_log(), &[(0x41, 468), (0x42, 468 + FRAME)]);
-    assert_eq!(u.tx_complete_by(468 + FRAME), 1);
+    // uart_tx leaves RST at the alarm in cycle 155: pop at 156, load at 311
+    assert_eq!(u.tx_log(), &[(0x41, 312), (0x42, 312 + FRAME)]);
+    assert_eq!(u.tx_complete_by(312 + FRAME), 1);
 }
 
 #[test]
 fn tx_from_idle_starts_at_the_next_alarm() {
     let mut u = Uart::default();
-    u.write(DATA, 0x55, 1000); // pop at 1001, load at the alarm in 1169
+    u.write(DATA, 0x55, 1000); // pop at 1001, load at the alarm in 1091
     u.advance(2000);
-    assert_eq!(u.tx_log(), &[(0x55, 1170)]);
+    assert_eq!(u.tx_log(), &[(0x55, 1092)]);
 }
 
 #[test]
@@ -37,25 +37,25 @@ fn only_register_0_transmits_and_a_full_fifo_drops_writes() {
     for i in 0..(FIFO_DEPTH as u64 + 3) {
         u.write(DATA, i as u32, 10 + i);
     }
-    // One byte leaves the FIFO at 234; everything written before that beyond 32 is lost
+    // One byte leaves the FIFO at 156; everything written before that beyond 32 is lost
     assert_eq!(u.read(STATUS, 100) & 2, 2, "tx_full");
-    u.advance(234 + 34 * FRAME);
+    u.advance(156 + 34 * FRAME);
     let sent: Vec<u8> = u.tx_log().iter().map(|&(b, _)| b).collect();
     assert_eq!(sent, (0..FIFO_DEPTH as u8).collect::<Vec<_>>());
 }
 
 #[test]
-fn rx_byte_is_readable_2227_cycles_after_its_start_bit() {
+fn rx_byte_is_readable_1486_cycles_after_its_start_bit() {
     let mut u = Uart::default();
     u.host_send(&[0x5A, 0xA5], 100, false);
-    assert!(!u.rx_pending(100 + 2226));
-    assert!(u.rx_pending(100 + 2227));
-    assert_eq!(u.read(STATUS, 100 + 2227), 0, "data, no errors");
+    assert!(!u.rx_pending(100 + 1485));
+    assert!(u.rx_pending(100 + 1486));
+    assert_eq!(u.read(STATUS, 100 + 1486), 0, "data, no errors");
     assert_eq!(u.read(DATA, 3000), 0x5A);
     assert!(!u.rx_pending(3001), "popped at the end of the read cycle");
     assert_eq!(u.read(DATA, 3001), 0, "empty reads 0");
-    assert_eq!(u.host_send_done(), 100 + FRAME + 2227);
-    assert_eq!(u.read(DATA, 100 + FRAME + 2227), 0xA5);
+    assert_eq!(u.host_send_done(), 100 + FRAME + 1486);
+    assert_eq!(u.read(DATA, 100 + FRAME + 1486), 0xA5);
 }
 
 #[test]
@@ -129,7 +129,7 @@ fn cpu_store_reaches_tx_at_its_mem_wait_edge() {
     // sw fetched in cycle 4: MEM_WAIT edge 6
     let mut soc = load(&[lui(1, 0x40000), addi(2, 0, 0x41), sw(2, 1, 0), J_SELF]);
     soc.run(3000);
-    assert_eq!(soc.periph.uart.tx_log(), &[(0x41, 468)]);
+    assert_eq!(soc.periph.uart.tx_log(), &[(0x41, 312)]);
 }
 
 #[test]
@@ -149,7 +149,7 @@ fn rx_data_raises_the_external_interrupt_until_read() {
     words.extend([lui(3, 0x40000), lw(4, 3, 0), lw(5, 3, 4), J_SELF]);
     let mut soc = load(&words);
     soc.periph.uart.host_send(&[0x7E], 0, false);
-    soc.run(2000);
+    soc.run(1000); // the byte is pushed at 1485
     assert_eq!(soc.pc, 0x1C, "nothing received yet");
     soc.run(3000);
     assert_eq!(soc.csr.mcause, 0x8000_000B);

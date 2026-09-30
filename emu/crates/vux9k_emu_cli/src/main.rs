@@ -11,7 +11,7 @@
 //!
 //! The UART is connected to stdout (batch), the terminal (`--stdio`), or a TCP
 //! client (`--tcp PORT`, e.g. `vux_tool.py --port socket://localhost:PORT`).
-//! Interactive modes run at the board's speed (27 MHz, `--speed`), so the firmware's
+//! Interactive modes run at the board's speed (18 MHz, `--speed`), so the firmware's
 //! timeouts behave as on hardware; batch mode runs as fast as it can.
 
 use std::io::{Read, Write};
@@ -280,7 +280,7 @@ fn main() -> ExitCode {
         .unwrap_or(if interactive { u64::MAX } else { 100_000_000 });
     let speed = if interactive { o.speed } else { 0.0 };
     // Slices of 1 ms of board time between host I/O and pacing
-    const SLICE: u64 = 27_000;
+    const SLICE: u64 = 18_000;
     let start = Instant::now();
     let mut sent = 0usize;
     let mut found = false;
@@ -330,7 +330,7 @@ fn main() -> ExitCode {
             break;
         }
         if speed > 0.0 {
-            let due = Duration::from_secs_f64(soc.cycle as f64 / 27_000_000.0 / speed);
+            let due = Duration::from_secs_f64(soc.cycle as f64 / 18_000_000.0 / speed);
             if let Some(wait) = due.checked_sub(start.elapsed()) {
                 std::thread::sleep(wait);
             }

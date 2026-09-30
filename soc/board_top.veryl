@@ -1,0 +1,76 @@
+// Copyright (c) 2026 Takayuki Nagata
+// SPDX-License-Identifier: MIT
+
+// Tang Nano 9K board top: the SoC clocked from the on-chip PLL.
+//
+// The 27 MHz crystal goes through an rPLL down to soc_pkg::CLK_HZ (18 MHz):
+// 27 * (FBDIV_SEL + 1) / (IDIV_SEL + 1) = 27 * 2 / 3, VCO = 18 * ODIV_SEL = 864 MHz.
+// The SoC is held in reset until the PLL locks. The bitstream at 27 MHz failed on
+// the board on every placement tried although nextpnr's STA passed with 33-39 MHz
+// Fmax; the same placements passed at 24 MHz and below (README, "Clock").
+//
+// Only synthesis uses this module; simulations drive soc_top's clock directly at
+// CLK_HZ (sim/tb_soc_top.sv). The GLS netlist is of board_top, with a pass-through
+// rPLL model (sim/gowin_cells_sim.veryl).
+pub module board_top (
+    clk  : input 'osc  clock, // 27 MHz crystal oscillator
+    rst_n: input 'core reset, // Active-Low Hardware Reset (Button S1)
+    btn  : input 'core logic, // Active-Low User Button (Button S2)
+
+    uart_rx: input  'core logic,
+    uart_tx: output 'core logic,
+
+    led: output 'core logic<6>,
+
+    sd_sclk: output 'core logic,
+    sd_mosi: output 'core logic,
+    sd_miso: input  'core logic,
+    sd_cs_n: output 'core logic,
+) {
+    var soc_clk : 'core clock;
+    var pll_lock: 'core logic;
+    var soc_rst : 'core reset;
+
+    // The PLL is where the crystal's domain becomes the SoC's: its CLKOUT is the SoC
+    // clock, and LOCK is only used to hold the SoC in (asynchronous) reset.
+    unsafe (cdc) {
+        inst u_pll: $sv::rPLL #(
+            FCLKIN   : "27"      ,
+            IDIV_SEL : 2         ,
+            FBDIV_SEL: 1         ,
+            ODIV_SEL : 48        ,
+            DEVICE   : "GW1NR-9C",
+        ) (
+            CLKIN   : clk     ,
+            CLKFB   : 1'b0    ,
+            RESET   : 1'b0    ,
+            RESET_P : 1'b0    ,
+            FBDSEL  : 6'd0    ,
+            IDSEL   : 6'd0    ,
+            ODSEL   : 6'd0    ,
+            PSDA    : 4'd0    ,
+            DUTYDA  : 4'd0    ,
+            FDLY    : 4'd0    ,
+            CLKOUT  : soc_clk ,
+            LOCK    : pll_lock,
+            CLKOUTP : _       ,
+            CLKOUTD : _       ,
+            CLKOUTD3: _       ,
+        );
+    }
+
+    assign soc_rst = rst_n & pll_lock;
+
+    inst soc: soc_top (
+        clk    : soc_clk,
+        rst_n  : soc_rst,
+        btn             ,
+        uart_rx         ,
+        uart_tx         ,
+        led             ,
+        sd_sclk         ,
+        sd_mosi         ,
+        sd_miso         ,
+        sd_cs_n         ,
+    );
+}

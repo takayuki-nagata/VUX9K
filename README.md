@@ -38,6 +38,24 @@ The SoC features a multi-cycle Unified CPU core capable of seamlessly executing 
  [Reset/Boot]        [Stack/Data]        [USB-UART]         [mtime/cmp]      [MicroSD]
 ```
 
+### Clock
+
+The SoC runs at **18 MHz** (`soc_pkg::CLK_HZ`): `board_top` feeds the board's 27 MHz
+crystal through the GW1NR-9's rPLL (27 x 2 / 3) and holds the SoC in reset until the
+PLL locks. Everything clock-derived follows from it: UART 156 clocks per bit, SD SPI
+391 kHz during init, `mtime` 18 ticks per microsecond (the firmware's delays, the
+Zephyr board's timebase), and the emulator's cycle timing. Simulations drive
+`soc_top` at 18 MHz directly; only synthesis goes through `board_top`.
+
+Why not 27 MHz: nextpnr's STA passed every placement tried at 27 MHz (post-route Fmax
+33-39 MHz), yet all of them failed on the board: wrong `add`/`sub`/shift results, or
+no output at all. Placed and routed once and then only the PLL divider changed (identical
+placement and routing), the same five placements passed a CPU self-test at 24, 20.25 and
+18 MHz and failed at 27 MHz. The open-source timing model is therefore optimistic
+here by more than a third, so `make sta` checks the 18 MHz clock against a 27 MHz
+target (`STA_FREQ` in the `Makefile`, 1.5x). A passing STA is still not proof that a
+bitstream works; test it on the board.
+
 ---
 
 ## Lineage & Original Projects
@@ -47,7 +65,7 @@ The RTL modules in this repository were originally authored in VHDL-2008 and hav
 - **CPU Core (`unified_cpu`)**: Ported from [`takayuki-nagata/hack_cpu`](https://github.com/takayuki-nagata/hack_cpu)
   - Unified datapath supporting both **RISC-V RV32I** (32-bit) and **Nand2Tetris Hack** (16-bit) execution with dynamic ISA auto-detection.
 - **UART Controller (`uart_controller`)**: Ported from [`takayuki-nagata/uart_controller`](https://github.com/takayuki-nagata/uart_controller)
-  - Parameterized baud rate clock timer (27.0 MHz -> 115200 bps), 8N1 serial framing, and dual 32-entry synchronous TX/RX FIFOs.
+  - Parameterized baud rate clock timer (18.0 MHz -> 115200 bps), 8N1 serial framing, and dual 32-entry synchronous TX/RX FIFOs.
 - **Arbitrary-Precision Math Engine & REPL (`vendor/bc_clone_rs`)**: Submodule from [`takayuki-nagata/bc_clone_rs`](https://github.com/takayuki-nagata/bc_clone_rs)
   - Embedded `bc_core` arbitrary-precision arithmetic engine with 10/10 math test suite running atop Zephyr RTOS.
 - **Hack Toolchain & C Firmware (`hack_demo`)**: Powered by [`takayuki-nagata/hack_tools`](https://github.com/takayuki-nagata/hack_tools) (`has` assembler & `m2h` transpiler)
@@ -219,7 +237,7 @@ build/emu/target/release/vux9k-emu --sd sd.img --sd-write-back --tcp 4000
 build/emu/target/release/vux9k-emu --no-firmware --no-card --hex build/hack/firmware.hex --until "(100%)!"
 ```
 
-Interactive modes run at the board's 27 MHz, so the firmware's timeouts behave as on
+Interactive modes run at the SoC's 18 MHz, so the firmware's timeouts behave as on
 hardware; `--trace FILE` logs every instruction. Profiles: `real` (default: 16 KB
 I-RAM, 8 KB D-RAM, as the board) and `extended` (512 KB / 256 KB, same MMIO) —
 **the extended profile is not real hardware**; it exists for programs too big for the
@@ -228,7 +246,7 @@ board, such as bc. Python tests drive the emulator through the `vux9k_emu` modul
 
 ### Zephyr boards
 
-`zephyr_workspace/boards/vux9k/` has two targets: `vux9k`, the real board (27 MHz, the
+`zephyr_workspace/boards/vux9k/` has two targets: `vux9k`, the real board (18 MHz, the
 SoC timer as `andestech,machine-timer`, 14 KB of I-RAM below the Resident Loader and
 8 KB of D-RAM, which the link enforces), and `vux9k/vux9k/ext`, the extended profile
 for the emulator only. `make build-zephyr-demo` builds the Rust demo
@@ -284,7 +302,7 @@ make test-ci
 # 2. Simulation-Only Verification Suite (RTL, Arch Compliance & GLS Netlists)
 make test-sim
 
-# 3. Static Timing Analysis (STA) & Physical Timing Closure (30.0 MHz target, 10% margin over the 27.0 MHz physical oscillator, strict check)
+# 3. Static Timing Analysis (STA): 27.0 MHz target for the 18 MHz SoC clock (1.5x, see "Clock"), strict check
 make sta
 
 # 4. End-to-End Virtual Hardware Simulation Flow (RTL & GLS on-demand)

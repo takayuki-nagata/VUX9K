@@ -117,7 +117,7 @@ async def test_boot_manager_cli(dut):
     expect_lines(resp, dump_rows(mbr), "sector 0 dump")
     expect_lines(resp, ["[SD] Sector 0 Read Successful. Signature: 55 AA [PASS]"], "sector 0 dump")
 
-    # t: hardware diagnostics; the timer must count ~270,000 ticks in 10 ms at 27 MHz
+    # t: hardware diagnostics; the timer must count ~180,000 ticks in 10 ms at 18 MHz
     resp = await cmd(ser, "t", timeout_cycles=20_000_000)
     expect_lines(
         resp,
@@ -132,7 +132,7 @@ async def test_boot_manager_cli(dut):
     m = re.search(r" 3\. Timer \(mtime\): 10ms = (\d+) ticks", resp)
     assert m, f"diagnostics: no timer line in {resp!r}"
     ticks = int(m.group(1))
-    assert 265_000 <= ticks <= 275_000, f"10 ms measured as {ticks} ticks, expected ~270,000"
+    assert 175_000 <= ticks <= 185_000, f"10 ms measured as {ticks} ticks, expected ~180,000"
 
     # k: Knight Rider LED animation
     resp = await cmd(ser, "k", timeout_cycles=20_000_000)

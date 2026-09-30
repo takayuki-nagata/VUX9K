@@ -4,15 +4,15 @@
 // SoC-wide constants: clock-derived dividers and the data-address map (README,
 // "Memory & MMIO Register Map").
 pub package soc_pkg {
-    // Board clock (Tang Nano 9K crystal)
-    const CLK_HZ: u32 = 27000000;
+    // SoC clock: board_top's PLL output from the 27 MHz crystal (README, "Clock")
+    const CLK_HZ: u32 = 18000000;
 
-    // UART bit time in clocks: 27 MHz / 115200 = 234 (-0.16 % baud error)
+    // UART bit time in clocks: 18 MHz / 115200 = 156 (+0.16 % baud error)
     const UART_BAUD: u32 = 115200;
     const UART_CNT : u32 = CLK_HZ / UART_BAUD;
 
     // SD SPI clock during card init must not exceed 400 kHz: half-period in clocks,
-    // rounded up (34 -> 397 kHz)
+    // rounded up (23 -> 391 kHz)
     const SD_INIT_HZ     : u32 = 400000;
     const SD_CLK_DIV_HALF: u32 = (CLK_HZ + 2 * SD_INIT_HZ - 1) / (2 * SD_INIT_HZ);
 

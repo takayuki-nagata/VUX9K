@@ -32,7 +32,7 @@ fn print_banner() {
     Uart::print_str("====================================================\n");
     Uart::print_str("  VUX9K Dual-ISA RISC-V / Hack SoC Boot Manager (v1)\n");
     Uart::print_str("  Board: Sipeed Tang Nano 9K (Gowin GW1NR-9)\n");
-    Uart::print_str("  Clock: 27.0 MHz | UART: 115200 bps | SPI: 400 kHz\n");
+    Uart::print_str("  Clock: 18.0 MHz | UART: 115200 bps | SPI: 400 kHz\n");
     Uart::print_str("====================================================\n\n");
 }
 
@@ -85,7 +85,7 @@ fn run_diagnostics() {
     let diff = (t1.wrapping_sub(t0)) as u32;
     Uart::print_str("10ms = ");
     Uart::print_dec(diff);
-    Uart::print_str(" ticks (270,000 expected) [PASS]\n");
+    Uart::print_str(" ticks (180,000 expected) [PASS]\n");
 
     // 4. MicroSD Card Init
     Uart::print_str(" 4. MicroSD SPI Card: ");
@@ -333,7 +333,7 @@ fn boot_slot(slot: u32) -> ! {
 fn read_uart_byte_timeout(timeout_ms: u32) -> Option<u8> {
     const MTIME_LOW: *const u32 = 0x4000_1000 as *const u32;
     let start_time = unsafe { core::ptr::read_volatile(MTIME_LOW) };
-    let limit_ticks = mul_u32(timeout_ms, 27_000);
+    let limit_ticks = mul_u32(timeout_ms, 18_000);
     while (unsafe { core::ptr::read_volatile(MTIME_LOW) }).wrapping_sub(start_time) < limit_ticks {
         if let Some(b) = Uart::read_byte() {
             return Some(b);

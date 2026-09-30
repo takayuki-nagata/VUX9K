@@ -38,7 +38,7 @@ AUTONAME_SUFFIX = re.compile(r"_(LUT\d|MUX2|DFF\w*|ALU|RAM16\w*|DO|DI|DPB|SPX9)(
 
 
 def cell_counts(soc_json):
-    top = json.load(open(soc_json))["modules"]["soc_top"]
+    top = json.load(open(soc_json))["modules"]["board_top"]
     types = {}
     for cell in top["cells"].values():
         types[cell["type"]] = types.get(cell["type"], 0) + 1

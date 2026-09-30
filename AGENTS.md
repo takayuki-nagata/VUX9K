@@ -9,7 +9,7 @@ pass (branch `refactor/build-layout-cleanup`).
 ## Directory map
 
 ```
-soc/                    Veryl RTL: soc_top + peripherals directly here,
+soc/                    Veryl RTL: board_top (PLL), soc_top + peripherals directly here,
   cpu/                  CPU core submodules
   uart/                 UART controller submodules
 firmware/               Cargo workspace (virtual manifest)
@@ -107,6 +107,34 @@ models with `input var` rewritten to `input wire`
 (`build/sim/gowin_cells_sim_net_inputs.sv`). Keep that step if you touch the GLS
 source list.
 
+## The SoC clock: 18 MHz behind a PLL, and a passing STA is not proof
+
+The board's crystal is 27 MHz; the SoC runs at 18 MHz (`soc_pkg::CLK_HZ`) from the rPLL in
+`soc/board_top.veryl`, the synthesis top (README, "Clock"). Found 2026-09: the 27 MHz
+bitstreams passed nextpnr's STA on every seed (post-route Fmax 33-39 MHz) and failed on
+the board on every seed; with the placement and routing held fixed and only the PLL
+divider changed, the same placements passed a CPU self-test at 24 MHz and below. GLS and
+eqy can't see this (zero-delay models, and both sides of eqy come from Yosys). So:
+- **Don't raise the clock on the strength of STA.** `STA_FREQ` (27 MHz, 1.5x) is a
+  guard band, not a guarantee; a faster clock needs the same fixed-placement test on the
+  board across several seeds.
+- **`CLK_HZ` has copies that must change with it**, none derived from `soc_pkg`
+  automatically: the emulator (`uart::BIT`, `sdspi::HALF_PERIOD`, the CLI's real-time
+  pacing), the Boot Manager (`timer.rs` ticks per us/ms, `read_uart_byte_timeout`, the
+  `t` banner and expected tick count), the Resident Loader's 10 us CS delay, Zephyr
+  (`timebase-frequency`/`clock-frequency` in `vux9k-common.dtsi`,
+  `SYS_CLOCK_HW_CYCLES_PER_SEC`), and the test constants (`tb_soc_top.sv`'s half period,
+  `soc_env.py`, `virtual_serial.py`, `lockstep_programs.UART_BIT`, `sim/emu/vux9k.py`,
+  `test_sdcard_spi.CLK_DIV_HALF`, the tick windows in `test_soc_boot.py` and
+  `test_boot_manager.py`). `make sim-lockstep` catches an emulator that disagrees with
+  the RTL; the rest only shows up as timeouts or wrong tick counts.
+- **Simulations bypass the PLL.** RTL tests instantiate `soc_top` and drive it at 18 MHz.
+  The GLS netlist is `board_top`'s: `tb_soc_top.sv` wraps it when `sim_runner.py`
+  defines `VUX9K_GLS`, and `sim/gowin_cells_sim.veryl`'s `rPLL` passes CLKIN straight
+  through with LOCK = 1, so the testbench clock is the SoC clock there too. That model
+  declares only the parameters `board_top` sets; setting another one makes GLS fail to
+  elaborate until the model declares it.
+
 ## Veryl module resolution is directory-agnostic
 
 `veryl build`/`veryl check` scan the whole project root recursively for `.veryl`
@@ -195,7 +223,7 @@ release/{boot_manager,resident_loader}`.
 ## Zephyr: two boards, and what runs on which
 
 `zephyr_workspace/boards/vux9k/` defines two HWMv2 targets sharing `vux9k-common.dtsi`
-(27 MHz, `vux9k,uart`, and the SoC timer as `andestech,machine-timer`, whose
+(18 MHz, `vux9k,uart`, and the SoC timer as `andestech,machine-timer`, whose
 mtime +0x0 / mtimecmp +0x8 layout is `timer_core`'s, so Zephyr's in-tree
 `riscv_machine_timer` driver serves it):
 - `vux9k`: the real board. flash = I-RAM 0x0000-0x37FF (the Resident Loader owns
@@ -283,7 +311,8 @@ Simulation speed of the long `soc_top` tests is dominated by per-clock Python/VP
 work, not by the design, so two rules keep them fast (measured 2026-09 on Icarus
 RTL, `sim-soc-fast`: 491 s -> 194 s):
 - **The clock comes from `sim/tb_soc_top.sv`**, a pass-through wrapper that
-  generates 27 MHz in HDL; the SoC is `dut.soc` inside it. Driving the clock
+  generates the 18 MHz SoC clock in HDL; the SoC is `dut.soc` inside it (`soc_top`
+  in RTL builds, the `board_top` netlist in GLS builds, see "The SoC clock"). Driving the clock
   with `cocotb.clock.Clock` costs a VPI write + callback every half period and
   alone made Icarus ~2.4x slower (7.9k vs 19k cycles/s). Run SoC tests with
   toplevel `tb_soc_top` (RTL and GLS; see `SOC`/`SOC_GLS` in `sim/runners/test_sim.py`)

@@ -81,7 +81,7 @@ fn spi_deselect() {
 
 fn sd_send_cmd(cmd: u8, arg: u32, crc: u8) -> u8 {
     spi_set_cs(true);
-    delay_ticks(270);
+    delay_ticks(180); // 10 us at 18 MHz
 
     spi_transfer(0x40 | cmd);
     spi_transfer((arg >> 24) as u8);

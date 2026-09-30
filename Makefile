@@ -393,13 +393,13 @@ SOC_RTL_SRCS = $(VERYL_OUT_DIR)/soc/soc_pkg.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_pk
                $(VERYL_OUT_DIR)/soc/cpu/rv32i_alu.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_decode.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_regfile.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_csrs.sv \
                $(VERYL_OUT_DIR)/soc/cpu/rv32i_lsu.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_trap_unit.sv $(VERYL_OUT_DIR)/soc/cpu/next_pc_unit.sv $(VERYL_OUT_DIR)/soc/cpu/unified_cpu.sv $(VERYL_OUT_DIR)/soc/uart/clk_timer.sv $(VERYL_OUT_DIR)/soc/uart/fifo_sync.sv $(VERYL_OUT_DIR)/soc/uart/shift_registers.sv \
                $(VERYL_OUT_DIR)/soc/uart/uart_tx.sv $(VERYL_OUT_DIR)/soc/uart/uart_rx.sv $(VERYL_OUT_DIR)/soc/uart/uart_controller.sv $(VERYL_OUT_DIR)/soc/timer_core.sv \
-               $(VERYL_OUT_DIR)/soc/sdcard_spi.sv $(VERYL_OUT_DIR)/soc/gpio_controller.sv $(VERYL_OUT_DIR)/soc/soc_ram.sv $(VERYL_OUT_DIR)/soc/soc_addr_decoder.sv $(VERYL_OUT_DIR)/soc/soc_top.sv
+               $(VERYL_OUT_DIR)/soc/sdcard_spi.sv $(VERYL_OUT_DIR)/soc/gpio_controller.sv $(VERYL_OUT_DIR)/soc/soc_ram.sv $(VERYL_OUT_DIR)/soc/soc_addr_decoder.sv $(VERYL_OUT_DIR)/soc/soc_top.sv $(VERYL_OUT_DIR)/soc/board_top.sv
 
 $(SYNTH_DIR)/soc.json $(SYNTH_DIR)/soc_syn.v: $(VERYL_OUT_DIR)/.stamp $(FIRMWARE_BUILD_DIR)/firmware.hex $(SOC_RTL_SRCS) $(SYNTH_OPTS_STAMP)
 	@mkdir -p $(SYNTH_DIR)
 	$(YOSYS) -p "\
 		read_verilog -sv $(SOC_RTL_SRCS); \
-		synth_gowin -top soc_top $(SYNTH_GOWIN_OPTS) -json $(SYNTH_DIR)/soc.json; \
+		synth_gowin -top board_top $(SYNTH_GOWIN_OPTS) -json $(SYNTH_DIR)/soc.json; \
 		write_verilog -noattr $(SYNTH_DIR)/soc_syn.v; \
 	"
 
@@ -411,18 +411,23 @@ sim-gls: sim-gls-unit sim-soc-gls-fast
 # (else the best finished one) and recorded in pnr_seed.json. A seed finishing below
 # PNR_ABORT_SLACK stops the rest (PNR_ABORT_SLACK=none: keep going); `make timing` routes every seed.
 PNR_SEEDS ?= 2 3 5 7 11
+# STA target for the SoC clock (board_top's PLL output, soc_pkg::CLK_HZ = 18 MHz): 1.5x.
+# nextpnr's delays proved optimistic on the board: placements with a 33-39 MHz STA Fmax
+# failed at 27 MHz and passed at 24 MHz (README, "Clock"). nextpnr applies --freq to the
+# PLL output net as well; the 27 MHz crystal net itself only feeds the PLL.
+STA_FREQ ?= 27.0
 PNR_ABORT_SLACK ?= -1.5
 PNR_SEEDS_STAMP := $(SYNTH_DIR)/.pnr_seeds
 
 FORCE:
 
-# Rewritten only when PNR_SEEDS changes, so a different seed list re-runs PnR
+# Rewritten only when PNR_SEEDS or STA_FREQ changes, so a different seed list or target re-runs PnR
 $(PNR_SEEDS_STAMP): FORCE
 	@mkdir -p $(SYNTH_DIR)
-	@echo "$(PNR_SEEDS)" | cmp -s - $@ || echo "$(PNR_SEEDS)" > $@
+	@echo "$(PNR_SEEDS) @ $(STA_FREQ)" | cmp -s - $@ || echo "$(PNR_SEEDS) @ $(STA_FREQ)" > $@
 
 PNR_ARGS = --device GW1NR-LV9QN88PC6/I5 --vopt family=GW1N-9C --vopt cst=$(CST_FILE) --json $(SYNTH_DIR)/soc.json \
-	--write $(SYNTH_DIR)/soc_pnr.json --report $(SYNTH_DIR)/soc_sta.json --freq 30.0 --seeds $(PNR_SEEDS) \
+	--write $(SYNTH_DIR)/soc_pnr.json --report $(SYNTH_DIR)/soc_sta.json --freq $(STA_FREQ) --seeds $(PNR_SEEDS) \
 	--seed-dir $(SYNTH_DIR)/pnr --seed-info $(SYNTH_DIR)/pnr_seed.json
 
 $(SYNTH_DIR)/soc_pnr.json $(SYNTH_DIR)/soc_sta.json $(SYNTH_DIR)/pnr_seed.json &: $(SYNTH_DIR)/soc.json $(CST_FILE) $(PNR_SEEDS_STAMP)
@@ -432,15 +437,15 @@ pnr: $(SYNTH_DIR)/soc_pnr.json
 	@echo "=== Routed with nextpnr seed $$($(PYTHON) -c 'import json,sys; print(json.load(open(sys.argv[1]))["seed"])' $(SYNTH_DIR)/pnr_seed.json) ==="
 
 sta: $(SYNTH_DIR)/soc_sta.json
-	@echo "=== Generating Static Timing Analysis (STA) Report (Target: 30.0 MHz, 10% Safety Margin) ==="
-	$(PYTHON) scripts/report_sta.py $(SYNTH_DIR)/soc_sta.json --freq 30.0 --seed-info $(SYNTH_DIR)/pnr_seed.json --netlist $(SYNTH_DIR)/soc_pnr.json --strict
+	@echo "=== Generating Static Timing Analysis (STA) Report (Target: $(STA_FREQ) MHz, 1.5x the 18 MHz SoC clock) ==="
+	$(PYTHON) scripts/report_sta.py $(SYNTH_DIR)/soc_sta.json --freq $(STA_FREQ) --seed-info $(SYNTH_DIR)/pnr_seed.json --netlist $(SYNTH_DIR)/soc_pnr.json --strict
 
 # Area + timing record for one RTL commit of the timing work: always routes every seed
 # (--all-seeds: no early stop, not even on closure), then prints cell counts, per-seed slack and the worst path's end points and
 # appends a row to build/timing/history.tsv. Leaves soc_pnr/soc_sta/pnr_seed.json consistent.
 timing: $(SYNTH_DIR)/soc.json $(CST_FILE) $(PNR_SEEDS_STAMP)
 	$(PYTHON) scripts/run_pnr.py $(PNR_ARGS) --all-seeds
-	$(PYTHON) scripts/timing_summary.py --synth-dir $(SYNTH_DIR) --seeds $(PNR_SEEDS) --freq 30.0 \
+	$(PYTHON) scripts/timing_summary.py --synth-dir $(SYNTH_DIR) --seeds $(PNR_SEEDS) --freq $(STA_FREQ) \
 		--history $(BUILD_DIR)/timing/history.tsv
 
 $(SYNTH_DIR)/pack.fs: $(SYNTH_DIR)/soc_pnr.json

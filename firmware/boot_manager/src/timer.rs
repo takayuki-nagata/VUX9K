@@ -29,10 +29,10 @@ impl Timer {
     }
 
     pub fn delay_us(us: u32) {
-        Self::delay_ticks(us * 27);
+        Self::delay_ticks(us * 18);
     }
 
     pub fn delay_ms(ms: u32) {
-        Self::delay_ticks(ms * 27_000);
+        Self::delay_ticks(ms * 18_000);
     }
 }

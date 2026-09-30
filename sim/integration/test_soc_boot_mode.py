@@ -42,7 +42,7 @@ async def test_soc_boot_hack_slot_starting_with_at0(dut):
     await ser.wait_for(b"vux> ", timeout_cycles=3000000)
 
     dut.btn.value = 0  # S2 launches Slot 1
-    await wait_cycles(27000 * 25)
+    await wait_cycles(18000 * 25)
     dut.btn.value = 1
     out = await ser.wait_for(b"[RL] Slot 1", timeout_cycles=2000000)
     if b"H" not in out.split(b"[RL] Slot 1", 1)[1]:

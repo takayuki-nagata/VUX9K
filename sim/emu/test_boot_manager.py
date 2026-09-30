@@ -72,7 +72,7 @@ def test_every_cli_command():
         "diagnostics",
     )
     m = re.search(r" 3\. Timer \(mtime\): 10ms = (\d+) ticks", resp)
-    assert m and 265_000 <= int(m.group(1)) <= 275_000, resp
+    assert m and 175_000 <= int(m.group(1)) <= 185_000, resp
 
     expect_lines(cmd(soc, "k"), ["[LED] Running Knight Rider...", "[LED] Done."], "knight rider")
     expect_lines(cmd(soc, "i"), ["[SD] Initializing...", "[SD] Card Ready! [OK]"], "sd init")

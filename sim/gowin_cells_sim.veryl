@@ -21,11 +21,12 @@
 // SPDX-License-Identifier: MIT AND ISC
 
 // Simulation models of the Gowin GW1N primitives that synth_gowin's netlists
-// instantiate, for gate-level simulation (sim/runners/sim_runner.py): LUTs,
-// wide-LUT muxes, ALU, flip-flops, buffers, distributed RAM (RAM16SDP4) and block
-// RAMs (DPB, SPX9, SP, SDPB). Module, port and parameter names must match the cells
-// synth_gowin emits, which is why they break Veryl's usual naming. Flip-flops power
-// up to their GSR value (initial blocks). Simulation only: nothing here is synthesized.
+// instantiate, for gate-level simulation (sim/runners/sim_runner.py): LUTs, wide-LUT
+// muxes, ALU, flip-flops, buffers, distributed RAM (RAM16SDP4), block RAMs (DPB,
+// SPX9, SP, SDPB) and the PLL (rPLL, board_top's clock). Module, port and parameter
+// names must match the cells synth_gowin emits, which is why they break Veryl's
+// usual naming. Flip-flops power up to their GSR value (initial blocks). Simulation
+// only: nothing here is synthesized.
 //
 // Why not Yosys' own models: in share/yosys/gowin/, cells_sim.v has the LUT/FF/ALU/
 // RAM16SDP4/SP/SPX9 cells, but cells_xtra_gw1n.v declares DPB and SDPB as port-only
@@ -543,6 +544,40 @@ module IOBUF (
 module GSR (
     GSRI: input logic,
 ) {}
+
+// PLL: a pass-through. The testbench already drives CLKIN at the SoC clock
+// (sim/tb_soc_top.sv), so frequency synthesis is not modeled, and LOCK is always 1.
+// Only the parameters board_top sets are declared (the netlist passes just those);
+// strings are ASCII bit vectors, as in DPB.
+module rPLL #(
+    param FCLKIN   : bit<48> = 48'h31_30_30_2E_30   , // "100.0"
+    param IDIV_SEL : i32     = 0                    ,
+    param FBDIV_SEL: i32     = 0                    ,
+    param ODIV_SEL : i32     = 8                    ,
+    param DEVICE   : bit<64> = 64'h47_57_31_4E_2D_31, // "GW1N-1"
+) (
+    CLKIN   : input  logic   ,
+    CLKFB   : input  logic   ,
+    RESET   : input  logic   ,
+    RESET_P : input  logic   ,
+    FBDSEL  : input  logic<6>,
+    IDSEL   : input  logic<6>,
+    ODSEL   : input  logic<6>,
+    PSDA    : input  logic<4>,
+    DUTYDA  : input  logic<4>,
+    FDLY    : input  logic<4>,
+    CLKOUT  : output logic   ,
+    LOCK    : output logic   ,
+    CLKOUTP : output logic   ,
+    CLKOUTD : output logic   ,
+    CLKOUTD3: output logic   ,
+) {
+    assign CLKOUT   = CLKIN;
+    assign LOCK     = 1'b1;
+    assign CLKOUTP  = CLKIN;
+    assign CLKOUTD  = 1'b0;
+    assign CLKOUTD3 = 1'b0;
+}
 
 // Distributed RAM: 16 x 4 bits, asynchronous read, synchronous write
 module RAM16SDP4 #(

@@ -235,8 +235,11 @@ def run(
             sources = [_public_vlt(build_dir, toplevel, gls)] + sources
         # cocotb only rebuilds when a source is newer than the binary; also rebuild
         # when the compile flags changed, or a flag edit would silently not apply.
-        # tb_soc_top's lockstep trace reads RTL-internal names: RTL builds only
-        defines = {"VUX9K_RTL_TRACE": 1} if toplevel == "tb_soc_top" and not gls else {}
+        # tb_soc_top's lockstep trace reads RTL-internal names: RTL builds only. GLS
+        # builds wrap the netlist's top, board_top (soc_top behind the rPLL), instead.
+        defines = {}
+        if toplevel == "tb_soc_top":
+            defines = {"VUX9K_GLS": 1} if gls else {"VUX9K_RTL_TRACE": 1}
         stamp = build_dir / ".build_args"
         flags = "\n".join(build_args + [f"-D{k}={v}" for k, v in defines.items()])
         flags_changed = not stamp.exists() or stamp.read_text() != flags

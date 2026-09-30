@@ -17,7 +17,7 @@ import cocotb
 from cocotb.simtime import get_sim_time
 from cocotb.triggers import Event, FallingEdge, First, RisingEdge, Timer
 
-DEFAULT_CLK_PERIOD_PS = 37038  # 27.0 MHz, matches the SoC testbenches' Clock()
+DEFAULT_CLK_PERIOD_PS = 55556  # 18.0 MHz, matches the SoC testbenches' clock
 
 
 def _get_bit(val):
@@ -31,7 +31,7 @@ class VirtualSerialBridge:
     def __init__(
         self,
         dut,
-        baud_cycles=234,
+        baud_cycles=156,
         rx_pin="uart_tx",
         tx_pin="uart_rx",
         clk_pin="clk",

@@ -7,15 +7,15 @@
 //! shift register; 0x4 CS_n (bit 0, resets to 1 = deselected); 0x8 busy. Writes
 //! while busy are ignored (both the data and the CS register).
 //!
-//! A transfer written at the end of cycle `w` keeps busy set in cycles w+1..=w+544:
-//! 16 SCLK half periods of SD_CLK_DIV_HALF = 34 clocks. MISO bit i (MSB first) is
-//! shifted in at the end of cycle w + 34 (2i + 1), a rising SCLK edge. Reads return
+//! A transfer written at the end of cycle `w` keeps busy set in cycles w+1..=w+368:
+//! 16 SCLK half periods of SD_CLK_DIV_HALF = 23 clocks. MISO bit i (MSB first) is
+//! shifted in at the end of cycle w + 23 (2i + 1), a rising SCLK edge. Reads return
 //! the state during the cycle the address is presented (data_out is registered).
 
 use crate::sdcard::SdCard;
 
-/// soc_pkg::SD_CLK_DIV_HALF: ceil(27 MHz / (2 * 400 kHz)).
-pub const HALF_PERIOD: u64 = 34;
+/// soc_pkg::SD_CLK_DIV_HALF: ceil(18 MHz / (2 * 400 kHz)).
+pub const HALF_PERIOD: u64 = 23;
 pub const TRANSFER: u64 = 16 * HALF_PERIOD;
 
 #[derive(Clone, Debug)]
@@ -53,7 +53,7 @@ impl SdSpi {
         let Some((w, prev, miso)) = self.xfer else {
             return 0xFF;
         };
-        // Rising edges at the end of cycles w + 34 (2i + 1) before cycle c
+        // Rising edges at the end of cycles w + HALF_PERIOD (2i + 1) before cycle c
         let elapsed = c.saturating_sub(w + 1);
         let n = if elapsed < HALF_PERIOD {
             0

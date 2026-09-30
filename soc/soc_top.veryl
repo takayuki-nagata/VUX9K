@@ -26,7 +26,7 @@ pub module soc_top (
     var active_mode: logic;
 
     // Power-on Reset & Synchronizer (Active-Low: 0 = Reset, 1 = Running)
-    // 16-bit counter: 2^15 = 32,768 cycles (~1.21ms at 27MHz), fully debouncing external rst_n button
+    // 16-bit counter: 2^15 = 32,768 cycles (~1.82 ms at 18 MHz), fully debouncing external rst_n button
     var por_counter: logic<16>;
     var rst_sync   : logic<2> ;
     var raw_rst    : logic    ;

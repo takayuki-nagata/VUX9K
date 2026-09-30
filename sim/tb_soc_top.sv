@@ -1,11 +1,12 @@
 // Copyright (c) 2026 Takayuki Nagata
 // SPDX-License-Identifier: MIT
 
-// cocotb testbench wrapper for soc_top (RTL or the synthesized GLS netlist).
+// cocotb testbench wrapper for soc_top (RTL), or for the synthesized GLS netlist of
+// board_top (soc_top behind the rPLL, whose GLS model passes the clock through).
 //
-// The only thing it adds is the 27 MHz board clock, generated in HDL. Driving the
-// clock from cocotb (cocotb.clock.Clock) costs a VPI write plus a callback on every
-// half period, which made Icarus run soc_top ~2.4x slower than with an HDL clock
+// The only thing it adds is the SoC clock (soc_pkg::CLK_HZ, 18 MHz), generated in
+// HDL. Driving the clock from cocotb (cocotb.clock.Clock) costs a VPI write plus a
+// callback on every half period, which made Icarus run soc_top ~2.4x slower than with an HDL clock
 // (7.9k vs 19k cycles/s, 2026-09). Everything else is passed straight through; the
 // SoC itself is reachable from tests as `dut.soc`. See sim/integration/soc_env.py.
 //
@@ -19,7 +20,7 @@
 `timescale 1ps / 1ps
 
 module tb_soc_top #(
-    parameter int HALF_PERIOD_PS = 18519  // 37.038 ns period = 27.0 MHz
+    parameter int HALF_PERIOD_PS = 27778  // 55.556 ns period = 18.0 MHz
 ) (
     input  logic       rst_n,
     input  logic       btn,
@@ -36,7 +37,11 @@ module tb_soc_top #(
     logic clk = 1'b0;
     always #(HALF_PERIOD_PS) clk = ~clk;
 
+`ifdef VUX9K_GLS
+    board_top soc (
+`else
     soc_top soc (
+`endif
         .clk    (clk),
         .rst_n  (rst_n),
         .btn    (btn),

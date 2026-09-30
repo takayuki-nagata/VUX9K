@@ -12,7 +12,7 @@
 //! - address decode and memories: soc/soc_addr_decoder.veryl, soc/soc_ram.veryl,
 //!   soc/soc_top.veryl; the IsaTest profile follows sim/tb_hex_runner.veryl.
 //!
-//! Timing: `cycle` counts 27 MHz clocks since reset release. An instruction starts
+//! Timing: `cycle` counts SoC clocks (18 MHz) since reset release. An instruction starts
 //! with its FETCH cycle; `Soc::step` executes one instruction and advances `cycle` by
 //! its cost (RV: 2, +1 MEM_WAIT for loads/stores; Hack: 2, +2 when the comp reads M,
 //! +1 when it writes both A and D). A trap costs 2 (it is taken in EXECUTE).

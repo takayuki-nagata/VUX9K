@@ -25,8 +25,8 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 import tools.vux_tool as vux_tool  # noqa: E402 (needs REPO_ROOT on sys.path)
 
-CLK_PERIOD_PS = 37038  # 27.0 MHz board clock
-UART_BAUD_CYCLES = 234  # 27.0 MHz / 115200 baud
+CLK_PERIOD_PS = 55556  # 18.0 MHz SoC clock (tb_soc_top.sv: 2 x 27778 ps)
+UART_BAUD_CYCLES = 156  # 18.0 MHz / 115200 baud
 POR_DONE = 1 << 15  # soc_top.por_counter value that ends the ~1.2 ms power-on reset
 
 

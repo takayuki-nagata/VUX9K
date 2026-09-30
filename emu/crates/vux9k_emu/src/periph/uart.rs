@@ -2,18 +2,19 @@
 // SPDX-License-Identifier: MIT
 
 //! UART, soc/uart/uart_controller.veryl + uart_tx/uart_rx/fifo_sync/clk_timer, as
-//! soc_top wires it: 115200 8N1 at 27 MHz (234 clocks per bit), 32-byte TX and RX
+//! soc_top wires it: 115200 8N1 at 18 MHz (156 clocks per bit), 32-byte TX and RX
 //! FIFOs, TX only from register 0x0, status {frame_err, overrun, tx_full, rx_empty}
 //! whose error bits are cleared by reading the status register, and the machine
 //! external interrupt while the RX FIFO holds data.
 //!
 //! Timing (all derived from the RTL, and proven against it by the lockstep tests):
-//! - The TX bit timer free-runs from reset: its alarm fires in cycles 233 + 234n.
+//! - The TX bit timer free-runs from reset: its alarm fires in cycles 155 + 156n (BIT - 1 + BIT n).
 //!   uart_tx leaves RST at the first alarm; a byte popped from the FIFO while it is
 //!   idle is loaded at the next alarm, its start bit begins the cycle after, and the
 //!   transmitter is idle again 9 bit times + 2 cycles after the load.
 //! - A byte whose start bit begins in cycle s is pushed into the RX FIFO at the end of
-//!   cycle s + 2226 (the middle of its stop bit), or dropped with `overrun` if the
+//!   cycle s + 1485 (the middle of its stop bit: 2 synchronizer stages and the
+//!   IDLE cycle, BIT/2 to mid start bit, then 9 bit times), or dropped with `overrun` if the
 //!   FIFO is full then.
 //! - The CPU reads the data/status in its MEM_WAIT cycle (combinational); the pop and
 //!   the flag clear happen at the end of that cycle.
@@ -24,15 +25,15 @@
 
 use std::collections::VecDeque;
 
-/// Clocks per bit: soc_pkg::UART_CNT = 27_000_000 / 115_200.
-pub const BIT: u64 = 234;
+/// Clocks per bit: soc_pkg::UART_CNT = 18_000_000 / 115_200.
+pub const BIT: u64 = 156;
 /// Clocks per 8N1 frame (start, 8 data, stop).
 pub const FRAME: u64 = 10 * BIT;
 pub const FIFO_DEPTH: usize = 32;
 /// First TX bit-timer alarm (clk_timer counts down from CNT - 1 after reset).
 const FIRST_ALARM: u64 = BIT - 1;
 /// Start of the start bit -> RX FIFO push edge (see the module docs).
-const RX_PUSH_DELAY: u64 = 2226;
+const RX_PUSH_DELAY: u64 = 3 + BIT / 2 + 9 * BIT;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CpuOp {
