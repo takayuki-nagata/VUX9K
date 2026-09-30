@@ -7,7 +7,8 @@
 //! build/firmware/firmware.hex and firmware_d0-3.hex (`--firmware DIR`), so the
 //! Resident Loader and Boot Manager start, with an SD card from `--sd`.
 //! `--load`/`--hex` put a program at address 0 instead (over the preload, or alone
-//! with `--no-firmware`).
+//! with `--no-firmware`); `--load FILE --mode riscv|hack` starts an application image
+//! (a slot's payload) in its ISA, as the Resident Loader does on the board.
 //!
 //! The UART is connected to stdout (batch), the terminal (`--stdio`), or a TCP
 //! client (`--tcp PORT`, e.g. `vux_tool.py --port socket://localhost:PORT`).
@@ -21,7 +22,7 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 
 use vux9k_emu::sdcard::SdCard;
-use vux9k_emu::{hexfile, Profile, Soc, Stop};
+use vux9k_emu::{hexfile, Isa, Profile, Soc, Stop};
 
 const USAGE: &str = "\
 usage: vux9k-emu [options]
@@ -30,6 +31,9 @@ usage: vux9k-emu [options]
   --firmware DIR      preload firmware.hex + firmware_d0-3.hex from DIR (default build/firmware)
   --no-firmware       start with empty memories
   --load FILE         raw binary into I-RAM at address 0
+  --mode riscv|hack   with --load: FILE is an application image as vux_tool.py flash-sd
+                      writes it (hack: big-endian 16-bit instructions), started in that
+                      ISA like the Resident Loader starts a slot (max 14 KB on real)
   --hex FILE          $readmemh words into I-RAM from word 0 (e.g. build/hack/firmware.hex)
   --sd IMAGE          raw SD image (sector n at byte 512 n); changes are kept in memory
   --sd-write-back     write the SD image back to IMAGE on exit
@@ -47,6 +51,7 @@ struct Opts {
     profile: Profile,
     firmware: Option<String>,
     load: Option<String>,
+    mode: Option<Isa>,
     hex: Option<String>,
     sd: Option<String>,
     sd_write_back: bool,
@@ -65,6 +70,7 @@ fn parse_args() -> Result<Opts, String> {
         profile: Profile::Real,
         firmware: Some("build/firmware".into()),
         load: None,
+        mode: None,
         hex: None,
         sd: None,
         sd_write_back: false,
@@ -92,6 +98,13 @@ fn parse_args() -> Result<Opts, String> {
             "--firmware" => o.firmware = Some(val("--firmware")?),
             "--no-firmware" => o.firmware = None,
             "--load" => o.load = Some(val("--load")?),
+            "--mode" => {
+                o.mode = Some(match val("--mode")?.as_str() {
+                    "riscv" => Isa::Rv32,
+                    "hack" => Isa::Hack,
+                    m => return Err(format!("unknown mode {m:?} (riscv or hack)")),
+                })
+            }
             "--hex" => o.hex = Some(val("--hex")?),
             "--sd" => o.sd = Some(val("--sd")?),
             "--sd-write-back" => o.sd_write_back = true,
@@ -126,6 +139,9 @@ fn parse_args() -> Result<Opts, String> {
     if o.stdio && o.tcp.is_some() {
         return Err("--stdio and --tcp are exclusive".into());
     }
+    if o.mode.is_some() && o.load.is_none() {
+        return Err("--mode needs --load".into());
+    }
     if o.sd_write_back && o.sd.is_none() {
         return Err("--sd-write-back needs --sd".into());
     }
@@ -147,7 +163,12 @@ fn setup(o: &Opts) -> Result<Soc, String> {
     }
     if let Some(path) = &o.load {
         let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
-        soc.load_iram(0, &bytes);
+        match o.mode {
+            Some(isa) => soc
+                .load_app(&bytes, isa)
+                .map_err(|e| format!("{path}: {e}"))?,
+            None => soc.load_iram(0, &bytes),
+        }
     }
     if let Some(path) = &o.hex {
         soc.load_iram_words(0, &hexfile::parse(&read_text(path)?)?);

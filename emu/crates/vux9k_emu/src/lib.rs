@@ -13,4 +13,4 @@ pub mod sdcard;
 pub mod soc;
 
 pub use profile::Profile;
-pub use soc::{Retire, Soc, Stop};
+pub use soc::{Isa, Retire, Soc, Stop};

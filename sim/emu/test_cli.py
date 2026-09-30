@@ -39,6 +39,30 @@ def test_hack_demo_without_firmware():
     assert b"ALL HACK C FIRMWARE TESTS PASSED" in r.stdout
 
 
+def test_hack_bin_with_mode():
+    # The image vux_tool.py flash-sd --mode hack writes, as an application developer runs it
+    r = run("--no-firmware", "--no-card", "--load", "build/hack/firmware.bin", "--mode", "hack", "--until", "(100%)!")
+    assert r.returncode == 0, r.stderr
+    assert b"ALL HACK C FIRMWARE TESTS PASSED" in r.stdout
+
+
+def test_load_without_mode_is_raw_words():
+    # Without --mode the file is little-endian words and the ISA a guess: a Hack .bin garbles
+    r = run(
+        "--no-firmware", "--no-card", "--load", "build/hack/firmware.bin", "--until", "(100%)!", "--cycles", "2000000"
+    )
+    assert r.returncode == 1
+    assert b"ALL HACK C FIRMWARE TESTS PASSED" not in r.stdout
+
+
+def test_mode_rejects_an_image_too_big_for_the_board(tmp_path):
+    big = tmp_path / "big.bin"
+    big.write_bytes(b"\x13\x00\x00\x00" * (14 * 1024 // 4 + 1))
+    r = run("--no-firmware", "--load", str(big), "--mode", "riscv")
+    assert r.returncode != 0
+    assert b"fits on the board" in r.stderr
+
+
 def free_port():
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))

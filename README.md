@@ -233,8 +233,10 @@ python3 tools/vux_tool.py mkimg sd.img --slot 1:build/zephyr-demo/zephyr/zephyr.
 build/emu/target/release/vux9k-emu --sd sd.img --stdio
 # ... or on TCP, for vux_tool.py (--port socket://localhost:4000) or a terminal program
 build/emu/target/release/vux9k-emu --sd sd.img --sd-write-back --tcp 4000
-# Run a program directly from address 0, stop when it prints a text
-build/emu/target/release/vux9k-emu --no-firmware --no-card --hex build/hack/firmware.hex --until "(100%)!"
+# Start an application image (a slot's payload, as flash-sd writes it) in its ISA, as the
+# Resident Loader does; stop when it prints a text
+build/emu/target/release/vux9k-emu --no-firmware --load build/hack/firmware.bin --mode hack --until "(100%)!"
+build/emu/target/release/vux9k-emu --no-firmware --load build/zephyr-demo/zephyr/zephyr.bin --mode riscv --stdio
 ```
 
 Interactive modes run at the SoC's 18 MHz, so the firmware's timeouts behave as on

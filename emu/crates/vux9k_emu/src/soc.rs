@@ -26,6 +26,16 @@ use crate::profile::Profile;
 /// riscv-tests' `tohost` (scripts/riscv_tests/link.ld), IsaTest profile only.
 pub const TOHOST: u32 = 0xF000_0000;
 
+/// The ISA of an application image (a VUX9 slot header's mode).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Isa {
+    Rv32,
+    Hack,
+}
+
+/// Largest application on the board: lower I-RAM below the Resident Loader (its E3 limit).
+pub const MAX_APP_BYTES: usize = 14 * 1024;
+
 /// Why `Soc::run` returned.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stop {
@@ -255,6 +265,53 @@ impl Soc {
             let idx = ((addr / 4) + n as u32) & self.iram_mask;
             self.iram[idx as usize] = u32::from_le_bytes(w);
         }
+    }
+
+    /// Start an application image the way the Resident Loader starts a slot: the bytes
+    /// as the slot holds them (RV32: little-endian words; Hack: big-endian 16-bit
+    /// instructions, two per word with the first in the low half, as vux_tool.py
+    /// packs them) at address 0, and the CPU in `isa` from the first fetch (the RL's
+    /// GPIO 0x8 write before its soft reset) instead of guessing it from the code.
+    /// Call it after `reset`, which drops the ISA again.
+    pub fn load_app(&mut self, bytes: &[u8], isa: Isa) -> Result<(), String> {
+        let max = match self.profile {
+            Profile::Real => MAX_APP_BYTES,
+            p => p.iram_bytes(),
+        };
+        if bytes.is_empty() || bytes.len() > max {
+            let fits = if self.profile.is_real() {
+                " (what fits on the board)"
+            } else {
+                ""
+            };
+            return Err(format!(
+                "application image of {} bytes: must be 1 to {max} bytes{fits}",
+                bytes.len()
+            ));
+        }
+        match isa {
+            Isa::Rv32 => self.load_iram(0, bytes),
+            Isa::Hack => {
+                if !bytes.len().is_multiple_of(2) {
+                    return Err(format!(
+                        "Hack image of {} bytes: 16-bit instructions need an even length",
+                        bytes.len()
+                    ));
+                }
+                let instrs: Vec<u32> = bytes
+                    .chunks(2)
+                    .map(|c| u16::from_be_bytes([c[0], c[1]]) as u32)
+                    .collect();
+                let words: Vec<u32> = instrs
+                    .chunks(2)
+                    .map(|p| p[0] | p.get(1).map_or(0, |i| i << 16))
+                    .collect();
+                self.load_iram_words(0, &words);
+            }
+        }
+        self.riscv_mode = isa == Isa::Rv32;
+        self.mode_latched = true;
+        Ok(())
     }
 
     /// soc_ram's preload: I-RAM from firmware.hex, D-RAM byte lanes 0-3 from

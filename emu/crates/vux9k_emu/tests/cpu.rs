@@ -4,7 +4,7 @@
 //! CPU core: RV32I and Hack semantics, cycle costs, traps, CSRs and the real-profile
 //! memory decode, each checked against what the RTL does (see src/soc.rs).
 
-use vux9k_emu::{Profile, Soc};
+use vux9k_emu::{Isa, Profile, Soc};
 
 // ----- RV32I encoders -------------------------------------------------------------
 fn r(f7: u32, rs2: u32, rs1: u32, f3: u32, rd: u32) -> u32 {
@@ -331,4 +331,67 @@ fn isa_detection_skips_zero_words() {
     soc.step();
     assert!(soc.riscv_mode);
     assert_eq!(soc.csr.mcause, 2);
+}
+
+// ----- application images (load_app, vux9k-emu --load --mode) -------------------------
+/// Hack instructions as a slot/`hcc -r` image: big-endian 16-bit words.
+fn hack_image(instrs: &[u16]) -> Vec<u8> {
+    instrs.iter().flat_map(|i| i.to_be_bytes()).collect()
+}
+
+#[test]
+fn load_app_starts_hack_in_hack_mode() {
+    // @19, D=A, @100, M=D: @19 (0x0013) looks like RV32 OP-IMM to the detector
+    let prog = [
+        19,
+        c(0b010, 0b110000, false, 0),
+        100,
+        c(0b001, 0b001100, false, 0),
+    ];
+
+    let mut soc = Soc::new(Profile::Real);
+    soc.load_app(&hack_image(&prog), Isa::Hack).unwrap();
+    assert_eq!(
+        soc.iram_word(0),
+        (c(0b010, 0b110000, false, 0) as u32) << 16 | 19
+    );
+    run_n(&mut soc, 4);
+    assert!(!soc.riscv_mode);
+    assert_eq!(soc.dram_word_index(100), 19);
+
+    // The same words left to the ISA detector run as RV32
+    let mut soc = load(Profile::Real, &hack(&prog));
+    soc.step();
+    assert!(soc.riscv_mode, "@19 is detected as RV32I");
+}
+
+#[test]
+fn load_app_starts_rv32_in_rv32_mode() {
+    let prog: Vec<u8> = [addi(1, 0, 5), addi(1, 1, 1)]
+        .iter()
+        .flat_map(|w| w.to_le_bytes())
+        .collect();
+    let mut soc = Soc::new(Profile::Real);
+    soc.load_app(&prog, Isa::Rv32).unwrap();
+    run_n(&mut soc, 2);
+    assert!(soc.riscv_mode);
+    assert_eq!(soc.regs[1], 6);
+}
+
+#[test]
+fn load_app_rejects_what_the_board_cannot_load() {
+    let mut soc = Soc::new(Profile::Real);
+    assert!(soc
+        .load_app(&[0x40, 0x00, 0x13], Isa::Hack)
+        .unwrap_err()
+        .contains("even length"));
+    assert!(soc.load_app(&[], Isa::Rv32).is_err());
+    assert!(soc.load_app(&vec![0x13; 14 * 1024], Isa::Rv32).is_ok());
+    assert!(soc
+        .load_app(&vec![0x13; 14 * 1024 + 4], Isa::Rv32)
+        .unwrap_err()
+        .contains("fits on the board"));
+    // Not real hardware: up to the profile's I-RAM
+    let mut soc = Soc::new(Profile::EXTENDED);
+    assert!(soc.load_app(&vec![0x13; 256 * 1024], Isa::Rv32).is_ok());
 }

@@ -8,7 +8,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
 
 use emu_core::sdcard::{Faults, SdCard};
-use emu_core::{Profile, Stop};
+use emu_core::{Isa, Profile, Stop};
 
 fn parse_profile(name: &str) -> PyResult<Profile> {
     match name {
@@ -46,6 +46,26 @@ impl Soc {
     /// Load bytes into I-RAM at byte address `addr`.
     fn load_iram(&mut self, addr: u32, data: &[u8]) {
         self.inner.load_iram(addr, data);
+    }
+
+    /// Start an application image as the Resident Loader starts a slot: `data` as
+    /// `vux_tool.py flash-sd` writes it, `mode` "riscv" or "hack" (the slot's ISA; a
+    /// Hack image is big-endian 16-bit instructions). The CPU runs it in that ISA from
+    /// the first fetch; call this after `reset()`, which drops the ISA again.
+    #[pyo3(signature = (data, mode = "riscv"))]
+    fn load_app(&mut self, data: &[u8], mode: &str) -> PyResult<()> {
+        let isa = match mode {
+            "riscv" => Isa::Rv32,
+            "hack" => Isa::Hack,
+            m => {
+                return Err(PyValueError::new_err(format!(
+                    "unknown mode {m:?} (riscv or hack)"
+                )))
+            }
+        };
+        self.inner
+            .load_app(data, isa)
+            .map_err(PyValueError::new_err)
     }
 
     /// Load 32-bit words into D-RAM from word 0.

@@ -308,7 +308,7 @@ sim-zephyr: sim-zephyr-repl sim-zephyr-demo-rtl
 
 sim-hack-emu: emu build-hack
 	@echo "=== Running the Hack demo on the emulator (vux9k-emu) ==="
-	$(EMU_TARGET_DIR)/release/vux9k-emu --no-firmware --no-card --hex $(HACK_BUILD_DIR)/firmware.hex --until "(100%)!"
+	$(EMU_TARGET_DIR)/release/vux9k-emu --no-firmware --no-card --load $(HACK_BUILD_DIR)/firmware.bin --mode hack --until "(100%)!"
 
 sim-hack-pytest: emu-py build-hack
 	@echo "=== Running the Hack demo tests on the emulator ==="
