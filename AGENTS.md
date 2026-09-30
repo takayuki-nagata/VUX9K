@@ -250,10 +250,13 @@ Two traps found while bringing Zephyr up on the RTL (the old Python emulator hid
 - **The SoC must select Zifencei.** The Zephyr SDK has no libgcc multilib for
   `rv32i_zicsr`; GCC silently links a default one built with RV32M, and the first
   64-bit division (`__udivdi3` -> `divu`) is an illegal instruction.
-- **XIP `.data` must be in the image.** `scripts/elf2bin.py` writes a segment that
-  runs in D-RAM but loads from I-RAM (an XIP image's `.data`) into the ROM image at its
-  load address; without that, Zephyr's startup copied zeros into `.data` (e.g. an
-  empty-but-not-self-linked `timeout_list`, so `k_msleep` never woke up).
+- **XIP `.data` must be in the image.** An XIP image's `.data` runs in D-RAM but loads
+  from I-RAM; the slot image must carry it at its load address, or Zephyr's startup
+  copies zeros into `.data` (e.g. an empty-but-not-self-linked `timeout_list`, so
+  `k_msleep` never woke up). Zephyr's own `zephyr.bin` (objcopy by LMA) always did;
+  the bug was the Makefile overwriting it with an older `scripts/elf2bin.py` that
+  dropped such segments. Use `zephyr.bin` as `west build` writes it (byte-identical to
+  today's elf2bin output on both boards, checked 2026-09); elf2bin is for the firmware.
 
 ## `make test-isa`: riscv-tests on `tb_hex_runner`
 

@@ -202,8 +202,7 @@ define west_build
 		west build -p auto -b $(1) $(2) -d $(3) -- \
 			-DBOARD_ROOT=$(CURDIR)/zephyr_workspace \
 			-DSOC_ROOT=$(CURDIR)/zephyr_workspace \
-			-DEXTRA_ZEPHYR_MODULES=$(CURDIR)/zephyr_workspace $(4) && \
-		$(PYTHON) scripts/elf2bin.py $(3)/zephyr/zephyr.elf $(3)/zephyr/zephyr.bin; \
+			-DEXTRA_ZEPHYR_MODULES=$(CURDIR)/zephyr_workspace $(4); \
 	else \
 		echo "Zephyr or Zephyr SDK not found. Skipping the Zephyr build of $(2)."; \
 	fi
