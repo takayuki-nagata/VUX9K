@@ -272,7 +272,8 @@ CI artifact was tested on the board, never a local build. Keep in sync:
 - MANIFEST's tool pins are parsed from `ci.yml`; `make_dist.py` fails if a pattern stops
   matching, so update `PINS` when ci.yml changes shape.
 - The distribution is for applications: no Resident Loader image, no firmware hex for the
-  emulator (applications start there with `--no-firmware --load/--hex`), no SD images.
+  emulator (applications start there with `--no-firmware --load IMAGE --mode riscv|hack`,
+  the same image and mode as `vux_tool.py flash-sd`), no SD images.
 
 ## `make test-isa`: riscv-tests on `tb_hex_runner`
 

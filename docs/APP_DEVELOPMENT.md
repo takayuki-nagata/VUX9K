@@ -99,7 +99,7 @@ west build -b vux9k $ZEPHYR_BASE/samples/hello_world -- \
     -DEXTRA_ZEPHYR_MODULES=$PWD/vux9k-zephyr-bsp
 ```
 
-`build/zephyr/zephyr.bin` is the image for a slot (`--mode riscv`) and for the emulator.
+`build/zephyr/zephyr.bin` is the image for a slot and for the emulator (`--mode riscv`).
 Use it as `west build` writes it: it carries the initial values of `.data`, which the
 image copies from instruction RAM to data RAM at startup.
 
@@ -131,8 +131,7 @@ and MSP430 GCC with `msp430-gcc` on `PATH`.
 writes to the UART at Hack address 24576):
 
 ```sh
-hcc -r hack/main.c -o app.bin                     # the image for a slot (--mode hack)
-python3 tools/bin2hex.py --hack app.bin app.hex    # the form the emulator loads
+hcc -r hack/main.c -o app.bin    # the image for a slot and for the emulator (--mode hack)
 ```
 
 Hack mode sees the UART at `0x6000`-`0x6003`, the GPIO at `0x6004`-`0x600F` and 2K words
@@ -142,12 +141,15 @@ of RAM ([Hack Mode Address Space](../README.md#hack-mode-address-space-16-bit-wo
 
 `emu/vux9k-emu` models the SoC cycle for cycle: both ISAs, the memories and every
 peripheral, with the UART's and SD card's real timing. Start an application directly,
-without the Boot Manager:
+without the Boot Manager, from the same image and `--mode` you give `vux_tool.py flash-sd`:
 
 ```sh
-emu/vux9k-emu --no-firmware --load build/zephyr/zephyr.bin --stdio   # RV32 image
-emu/vux9k-emu --no-firmware --hex app.hex --stdio                    # Hack image
+emu/vux9k-emu --no-firmware --load build/zephyr/zephyr.bin --mode riscv --stdio
+emu/vux9k-emu --no-firmware --load app.bin --mode hack --stdio
 ```
+
+`--mode` starts the CPU in that ISA, as the Resident Loader does with the slot header's,
+and refuses an image larger than the 14 KB a slot application may have.
 
 - `--stdio` connects the UART to the terminal (input goes line by line); `--tcp PORT`
   serves it on `localhost:PORT` instead, for a terminal program.
@@ -160,9 +162,6 @@ emu/vux9k-emu --no-firmware --hex app.hex --stdio                    # Hack imag
 
 Started this way, an application doesn't go through the Resident Loader as it does on
 the board. What differs:
-- The CPU picks the ISA from the first instruction (on the board, the slot header sets
-  it). A Hack program must not begin with `@0`, or with `@n` where `n & 0x7F` is an RV32I
-  opcode ([ISA selection](../README.md#hack-mode-address-space-16-bit-word-addresses)).
 - The data RAM starts zeroed, as the Resident Loader leaves it; only the loaders' word
   at `0x2000_1FF8` (the card type) differs, and applications don't use it.
 - The SD card is empty (a card image can be given with `--sd IMAGE`).
@@ -177,14 +176,15 @@ import vux9k_emu
 
 soc = vux9k_emu.Soc("real")
 with open("demos/zephyr-demo.bin", "rb") as f:
-    soc.load_iram(0, f.read())
+    soc.load_app(f.read(), "riscv")
 end = soc.run_until_tx(b"All Rust application tasks finished successfully!", 40_000_000)
 assert end is not None, soc.uart_received()
 print(f"demo finished after {soc.cycle} cycles ({soc.cycle / 18e6:.2f} s at 18 MHz)")
 ```
 
-Useful methods of `Soc`: `load_iram(addr, bytes)`, `load_iram_words(words)` (a Hack image
-as 32-bit words, one line of `app.hex` each), `run(max_cycles)`,
+Useful methods of `Soc`: `load_app(image, mode)` (`mode` `"riscv"` or `"hack"`, as
+`--load --mode`), `reset()` (power-on reset; load the image again after it),
+`run(max_cycles)`,
 `run_until_tx(needle, max_cycles)` (returns the output position after `needle`, or
 `None`), `uart_send(bytes)`, `uart_received()` (output so far),
 `set_button(pressed)`, and the properties `leds`, `cycle`, `pc`, `regs`,

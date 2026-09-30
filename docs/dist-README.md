@@ -9,9 +9,8 @@ files' hashes. Source: https://github.com/takayuki-nagata/VUX9K
 |---|---|
 | `bitstream/pack.fs` | FPGA bitstream (the Boot Manager and Resident Loader are inside) |
 | `boot-manager.bin` | Boot Manager image, to update it from the SD card's slot 0 |
-| `demos/` | Zephyr demo (RV32, `.bin`) and Hack demo (`.bin` for the board, `.hex` for the emulator) |
+| `demos/` | Zephyr demo (RV32) and Hack demo images, for the board and the emulator alike |
 | `tools/vux_tool.py` | Writes applications to the SD card and starts them, over the serial port |
-| `tools/bin2hex.py` | Converts a Hack `.bin` into the emulator's `.hex` |
 | `zephyr/vux9k-zephyr-bsp.tar.gz` | Zephyr board support (module) with a Rust application template |
 | `hack/` | Hack demo's C source, a template for Hack applications |
 | `emu/vux9k-emu`, `emu/vux9k_emu.abi3.so` | The emulator: command line and Python module (Linux x86_64) |
@@ -32,8 +31,8 @@ python3 tools/vux_tool.py boot --slot 1
 On the emulator:
 
 ```sh
-emu/vux9k-emu --no-firmware --load demos/zephyr-demo.bin --stdio
-emu/vux9k-emu --no-firmware --hex demos/hack-demo.hex --stdio
+emu/vux9k-emu --no-firmware --load demos/zephyr-demo.bin --mode riscv --stdio
+emu/vux9k-emu --no-firmware --load demos/hack-demo.bin --mode hack --stdio
 ```
 
 (Ctrl-C stops the emulator.) Then read `docs/APP_DEVELOPMENT.md` to build your own

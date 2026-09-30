@@ -31,10 +31,8 @@ REQUIRED = [
     "boot-manager.bin",
     "demos/zephyr-demo.bin",
     "demos/hack-demo.bin",
-    "demos/hack-demo.hex",
     "tools/vux_tool.py",
     "tools/requirements.txt",
-    "tools/bin2hex.py",
     "hack/main.c",
     "hack/uart.c",
     "hack/uart.h",
@@ -50,10 +48,21 @@ CLI_RUNS = [
         "--no-firmware",
         "--load",
         "demos/zephyr-demo.bin",
+        "--mode",
+        "riscv",
         "--until",
         "All Rust application tasks finished successfully!",
     ],
-    ["emu/vux9k-emu", "--no-firmware", "--hex", "demos/hack-demo.hex", "--until", "ALL HACK C FIRMWARE TESTS PASSED"],
+    [
+        "emu/vux9k-emu",
+        "--no-firmware",
+        "--load",
+        "demos/hack-demo.bin",
+        "--mode",
+        "hack",
+        "--until",
+        "ALL HACK C FIRMWARE TESTS PASSED",
+    ],
 ]
 
 # docs/APP_DEVELOPMENT.md's Python example; keep the two in sync
@@ -64,7 +73,7 @@ import vux9k_emu
 
 soc = vux9k_emu.Soc("real")
 with open("demos/zephyr-demo.bin", "rb") as f:
-    soc.load_iram(0, f.read())
+    soc.load_app(f.read(), "riscv")
 end = soc.run_until_tx(b"All Rust application tasks finished successfully!", 40_000_000)
 assert end is not None, soc.uart_received()
 print(f"demo finished after {soc.cycle} cycles ({soc.cycle / 18e6:.2f} s at 18 MHz)")
@@ -126,7 +135,7 @@ def run_demos(dist):
             r = subprocess.run(cmd, cwd=copy, env=env, capture_output=True, text=True, timeout=300)
             if r.returncode != 0:
                 fail(f"{' '.join(cmd)} exited {r.returncode}:\n{r.stdout[-2000:]}{r.stderr[-2000:]}")
-            print(f"ok: {' '.join(cmd[:4])}")
+            print(f"ok: {' '.join(cmd[:6])}")
         r = subprocess.run(
             [sys.executable, "-I", "-c", PY_EXAMPLE], cwd=copy, env=env, capture_output=True, text=True, timeout=300
         )

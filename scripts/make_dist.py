@@ -36,10 +36,8 @@ FILES = {
     "boot-manager.bin": "build/firmware/firmware.bin",
     "demos/zephyr-demo.bin": "build/zephyr-demo/zephyr/zephyr.bin",
     "demos/hack-demo.bin": "build/hack/firmware.bin",
-    "demos/hack-demo.hex": "build/hack/firmware.hex",
     "tools/vux_tool.py": "tools/vux_tool.py",
     "tools/requirements.txt": "tools/requirements.txt",
-    "tools/bin2hex.py": "scripts/bin2hex.py",
     "hack/main.c": "hack_demo/src/main.c",
     "hack/uart.c": "hack_demo/src/uart.c",
     "hack/uart.h": "hack_demo/src/uart.h",
@@ -49,7 +47,7 @@ FILES = {
 # docs/APP_DEVELOPMENT.md links the repository's README as ../README.md; in the dist that
 # path is the dist's own README, so those links go to the README of the source commit
 REPO_URL = "https://github.com/takayuki-nagata/VUX9K"
-EXECUTABLE = {"emu/vux9k-emu", "tools/vux_tool.py", "tools/bin2hex.py"}
+EXECUTABLE = {"emu/vux9k-emu", "tools/vux_tool.py"}
 BSP_ARCHIVE = "zephyr/vux9k-zephyr-bsp.tar.gz"
 BSP_PREFIX = "vux9k-zephyr-bsp"
 
