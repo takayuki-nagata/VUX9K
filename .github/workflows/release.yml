@@ -1,0 +1,110 @@
+# Copyright (c) 2026 Takayuki Nagata
+# SPDX-License-Identifier: MIT
+
+# Publishes the dist CI built for a tagged commit, and only if it is what was tested on
+# the board: the annotated tag's message carries pack.fs's SHA-256 from that test, and
+# scripts/release_check.py compares it with the CI artifact. Nothing is rebuilt here.
+# docs/RELEASING.md has the procedure.
+name: Release
+
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Annotated tag to release (v*)
+        required: true
+      dry_run:
+        description: Verify and build the assets without publishing
+        type: boolean
+        default: true
+
+permissions:
+  contents: write   # gh release create
+  actions: read     # gh run list/download of ci.yml's artifact
+
+jobs:
+  release:
+    name: Verify & Publish
+    runs-on: ubuntu-22.04
+    env:
+      TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout the tagged commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+          fetch-depth: 0
+
+      - name: Resolve the tag
+        run: |
+          # checkout may have fetched the tag as a lightweight ref; get the tag object
+          git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+          if [ "$(git cat-file -t "refs/tags/$TAG")" != tag ]; then
+            echo "::error::$TAG is not an annotated tag (its message carries the board-test results)"
+            exit 1
+          fi
+          SHA=$(git rev-parse "refs/tags/$TAG^{commit}")
+          if ! git merge-base --is-ancestor "$SHA" origin/main; then
+            echo "::error::$TAG ($SHA) is not on main"
+            exit 1
+          fi
+          git tag -l --format='%(contents)' "$TAG" > "$RUNNER_TEMP/tag-message.txt"
+          echo "SHA=$SHA" >> "$GITHUB_ENV"
+
+      - name: Fetch CI's dist of the tagged commit
+        run: |
+          RUN=$(gh run list --workflow ci.yml --commit "$SHA" --event push --status success \
+                --json databaseId --jq '.[0].databaseId')
+          if [ -z "$RUN" ]; then
+            echo "::error::no successful CI run on a push of $SHA"
+            exit 1
+          fi
+          if ! gh run download "$RUN" --name "vux9k-dist-$SHA" --dir "$RUNNER_TEMP/artifact"; then
+            echo "::error::CI run $RUN has no vux9k-dist-$SHA artifact (kept 90 days): re-run CI and test the new dist on the board (docs/RELEASING.md)"
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/x"
+          tar -xzf "$RUNNER_TEMP/artifact/vux9k-dist.tar.gz" -C "$RUNNER_TEMP/x"
+
+      - name: Verify against the tag
+        run: python3 scripts/release_check.py verify "$RUNNER_TEMP/x/dist" "$RUNNER_TEMP/tag-message.txt" --commit "$SHA"
+
+      - name: Build the release assets
+        run: |
+          X=$RUNNER_TEMP/x
+          mv "$X/dist" "$X/vux9k-$TAG"
+          mkdir -p assets
+          tar -C "$X" -czf "assets/vux9k-$TAG-linux-x86_64.tar.gz" "vux9k-$TAG"
+          cp "$X/vux9k-$TAG/bitstream/pack.fs" "assets/vux9k-$TAG-pack.fs"
+          cp "$X/vux9k-$TAG/zephyr/vux9k-zephyr-bsp.tar.gz" "assets/vux9k-zephyr-bsp-$TAG.tar.gz"
+          (cd assets && sha256sum -- * > SHA256SUMS)
+          {
+            echo "Built by CI from $SHA and tested on a Tang Nano 9K:"
+            echo
+            echo '```'
+            sed '1{/^v/d}' "$RUNNER_TEMP/tag-message.txt"
+            echo '```'
+            echo
+            echo 'Getting started: `docs/APP_DEVELOPMENT.md` in the archive. Tool versions: `MANIFEST.json`.'
+          } > notes.md
+          cat notes.md
+          ls -l assets
+
+      - name: Keep the assets (dry run)
+        if: env.DRY_RUN == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-dry-run-${{ env.TAG }}
+          path: |
+            assets/
+            notes.md
+          retention-days: 7
+
+      - name: Publish the release
+        if: env.DRY_RUN != 'true'
+        run: gh release create "$TAG" --verify-tag --title "$TAG" --notes-file notes.md assets/*

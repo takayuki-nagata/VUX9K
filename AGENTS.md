@@ -258,6 +258,22 @@ Two traps found while bringing Zephyr up on the RTL (the old Python emulator hid
   dropped such segments. Use `zephyr.bin` as `west build` writes it (byte-identical to
   today's elf2bin output on both boards, checked 2026-09); elf2bin is for the firmware.
 
+## Distribution and releases: `make dist`, tags vouch for a board test
+
+`make dist` (`scripts/make_dist.py`) assembles `build/dist/`, what an application
+developer gets (docs/APP_DEVELOPMENT.md is its guide); `make check-dist` copies it away
+from the repo and runs the demos with the shipped emulator and Python module, then
+`release_check.py selftest`. CI runs both after `make sta` and, on pushes, uploads the tree
+as `vux9k-dist-<sha>`. `release.yml` publishes that artifact for an annotated `v*` tag only
+if the tag message's `pack.fs sha256` matches it (docs/RELEASING.md): tag the commit whose
+CI artifact was tested on the board, never a local build. Keep in sync:
+- The dist's contents live in `make_dist.py`'s `FILES`, `check_dist.py`'s `REQUIRED` and
+  docs/APP_DEVELOPMENT.md; the docs' Python example is `check_dist.PY_EXAMPLE`, verbatim.
+- MANIFEST's tool pins are parsed from `ci.yml`; `make_dist.py` fails if a pattern stops
+  matching, so update `PINS` when ci.yml changes shape.
+- The distribution is for applications: no Resident Loader image, no firmware hex for the
+  emulator (applications start there with `--no-firmware --load/--hex`), no SD images.
+
 ## `make test-isa`: riscv-tests on `tb_hex_runner`
 
 `scripts/run_riscv_tests.py` builds riscv-tests (`rv32ui`/`rv32mi`, `env/p`, both

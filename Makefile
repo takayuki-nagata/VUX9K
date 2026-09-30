@@ -38,7 +38,7 @@ HACK_BUILD_DIR := $(BUILD_DIR)/hack
 ZEPHYR_BUILD_DIR ?= $(BUILD_DIR)/zephyr
 SYNTH_DIR := $(BUILD_DIR)/synth
 
-.PHONY: all emu emu-py emu-test test-isa-emu test-emu test-fw-host firmware-size coverage-fw sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hw-dist test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware hwtest hw-smoke sim-unit sim-boot sim-soc sim test-isa zephyr-bc-lib build-zephyr build-zephyr-demo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-demo-gls sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
+.PHONY: all emu emu-py emu-test test-isa-emu test-emu test-fw-host firmware-size coverage-fw sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hw-dist dist check-dist test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware hwtest hw-smoke sim-unit sim-boot sim-soc sim test-isa zephyr-bc-lib build-zephyr build-zephyr-demo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-demo-gls sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
 
 all: test-ci
 
@@ -513,6 +513,15 @@ test-hw: build-zephyr-demo firmware build-hack build-hw prog-sram
 	@echo "========================================================================"
 	@echo "  [HW] ALL REAL TANG NANO 9K HARDWARE & SD CARD TESTS PASSED 100%!     "
 	@echo "========================================================================"
+
+# The application-developer distribution (docs/APP_DEVELOPMENT.md) in build/dist/;
+# check-dist runs its demos on its own emulator, away from the repository
+dist: bitstream firmware emu-py build-hack build-zephyr-demo
+	$(PYTHON) scripts/make_dist.py --out $(BUILD_DIR)/dist
+
+check-dist:
+	$(PYTHON) scripts/check_dist.py $(BUILD_DIR)/dist
+	$(PYTHON) scripts/release_check.py selftest $(BUILD_DIR)/dist
 
 # test-hw on a `make dist` tree (e.g. CI's vux9k-dist-<sha> artifact): nothing is rebuilt
 DIST ?= $(BUILD_DIR)/dist

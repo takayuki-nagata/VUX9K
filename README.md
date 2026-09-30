@@ -253,6 +253,16 @@ for the emulator only. `make build-zephyr-demo` builds the Rust demo
 (`zephyr_workspace/app/`, Zephyr + a Rust staticlib) for the real board; `make
 build-zephyr` builds bc_clone_rs for `ext`.
 
+## Application Development & Releases
+
+To write applications for the board without building the SoC, use a
+[release](https://github.com/takayuki-nagata/VUX9K/releases): the bitstream, the Boot
+Manager update image, the demos, `vux_tool.py`, the Zephyr board support package and the
+emulator, with [`docs/APP_DEVELOPMENT.md`](docs/APP_DEVELOPMENT.md) as the guide. `make
+dist` builds the same tree into `build/dist/` (`make check-dist` runs its demos on its
+own emulator); CI uploads it for every push to `main`, and a release publishes one of
+those after it has been tested on the board ([`docs/RELEASING.md`](docs/RELEASING.md)).
+
 ## Quickstart & Build Guide
 
 ### Prerequisites
@@ -429,8 +439,9 @@ VUX9K/
 │   ├── fw_common/                      # Boot Manager logic without MMIO, tested on the host
 │   └── hw_test/                        # Board self-test for make hw-smoke (replaces the Boot Manager in BRAM)
 ├── hack_demo/                      # Hack 16-bit C/Assembly demo app (toolchain self-test)
-├── zephyr_workspace/               # Zephyr RTOS out-of-tree application & bc_clone_rs integration
+├── zephyr_workspace/               # Zephyr module: vux9k boards, SoC, UART driver, dts (Apache-2.0, own README)
 │   └── app/                        # Zephyr Rust demo for the real board (rust_demo staticlib)
+├── docs/                           # APP_DEVELOPMENT.md (application developers), RELEASING.md
 ├── emu/                            # Rust emulator: core, CLI (vux9k-emu), Python module (vux9k_emu)
 ├── sim/                            # cocotb & pytest testbenches (run via sim/runners/test_sim.py)
 │   ├── emu/                        # pytest tests on the emulator (firmware, demos, lockstep compare)
@@ -448,6 +459,7 @@ VUX9K/
     ├── synth/                      # soc.json, soc_syn.v, soc_pnr.json, soc_sta.json, pack.fs, unit netlists
     ├── emu/                        # emulator build (cargo target) and the Python module
     ├── coverage/                   # coverage reports (fw/: firmware lines from the emulator)
+    ├── dist/                       # make dist: the release tree (docs/APP_DEVELOPMENT.md)
     └── sim/                        # cocotb builds (<sim>[-gls]/<toplevel>/) and per-test run dirs/results
 ```
 
@@ -456,6 +468,6 @@ VUX9K/
 ## License
 
 This project is licensed under the **[MIT License](LICENSE)**.
-Zephyr RTOS Out-of-Tree components (`zephyr_workspace/`) are licensed under the **Apache License 2.0**.
+Zephyr RTOS Out-of-Tree components (`zephyr_workspace/`) are licensed under the **Apache License 2.0** ([`zephyr_workspace/LICENSE`](zephyr_workspace/LICENSE)).
 `sim/gowin_cells_sim.veryl` (Gowin cell models for gate-level simulation) contains portions adapted from [Yosys](https://github.com/YosysHQ/yosys) and is licensed under **MIT AND ISC**; the Yosys notice is in the file header.
 Most files include SPDX license headers.

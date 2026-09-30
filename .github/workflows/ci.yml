@@ -133,6 +133,26 @@ jobs:
           export PATH=$PWD/.venv/bin:$HOME/.cargo/bin:$HOME/.local/bin:$HOME/.local/msp430-gcc/bin:$HOME/.local/zephyr-sdk-0.16.8/riscv64-zephyr-elf/bin:$PATH
           make sta
 
+      - name: Build & Check the Application-Developer Distribution (make dist)
+        run: |
+          export PATH=$PWD/.venv/bin:$HOME/.cargo/bin:$HOME/.local/bin:$HOME/.local/msp430-gcc/bin:$HOME/.local/zephyr-sdk-0.16.8/riscv64-zephyr-elf/bin:$PATH
+          export ZEPHYR_BASE=$HOME/zephyrproject/zephyr
+          export ZEPHYR_SDK_INSTALL_DIR=$HOME/.local/zephyr-sdk-0.16.8
+          make dist check-dist
+          # One tarball: upload-artifact's zip would drop the emulator's executable bit
+          tar -C build -czf build/vux9k-dist.tar.gz dist
+
+      # A release candidate per push; release.yml publishes it once a tag vouches for it
+      # (docs/RELEASING.md)
+      - name: Upload the Distribution
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: vux9k-dist-${{ github.sha }}
+          path: build/vux9k-dist.tar.gz
+          retention-days: 90
+          if-no-files-found: error
+
       - name: Check Submodule Cleanliness
         run: |
           if [ -n "$(git status --porcelain vendor/bc_clone_rs)" ]; then
