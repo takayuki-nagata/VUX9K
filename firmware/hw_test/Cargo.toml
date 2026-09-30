@@ -1,0 +1,13 @@
+# Copyright (c) 2026 Takayuki Nagata
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "hw_test"
+version = "0.1.0"
+edition = "2021"
+authors = ["Takayuki Nagata"]
+license = "MIT"
+description = "Board self-test run from block RAM in place of the Boot Manager (make hw-smoke)"
+
+[dependencies]
+fw_common = { path = "../fw_common" }

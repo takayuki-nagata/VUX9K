@@ -38,7 +38,7 @@ HACK_BUILD_DIR := $(BUILD_DIR)/hack
 ZEPHYR_BUILD_DIR ?= $(BUILD_DIR)/zephyr
 SYNTH_DIR := $(BUILD_DIR)/synth
 
-.PHONY: all emu emu-py emu-test test-isa-emu test-emu test-fw-host firmware-size coverage-fw sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware sim-unit sim-boot sim-soc sim test-isa zephyr-bc-lib build-zephyr build-zephyr-demo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-demo-gls sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
+.PHONY: all emu emu-py emu-test test-isa-emu test-emu test-fw-host firmware-size coverage-fw sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware hwtest hw-smoke sim-unit sim-boot sim-soc sim test-isa zephyr-bc-lib build-zephyr build-zephyr-demo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-demo-gls sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
 
 all: test-ci
 
@@ -100,6 +100,27 @@ $(FIRMWARE_BUILD_DIR)/firmware.hex: $(FIRMWARE_SRCS) $(LOADER_SRCS)
 	ln -sf $(CURDIR)/$(FIRMWARE_BUILD_DIR)/firmware_d0.hex $(CURDIR)/$(FIRMWARE_BUILD_DIR)/firmware_d1.hex $(CURDIR)/$(FIRMWARE_BUILD_DIR)/firmware_d2.hex $(CURDIR)/$(FIRMWARE_BUILD_DIR)/firmware_d3.hex .
 
 firmware: $(FIRMWARE_BUILD_DIR)/firmware.hex
+
+# Board self-test (firmware/hw_test), an I-RAM image in place of the Boot Manager for
+# `make hw-smoke`; its D-RAM preload (elf2bin's firmware_d*.hex) goes to its own
+# directory and must stay all zero (scripts/hw_smoke.py checks it)
+HWTEST_DIR = $(FIRMWARE_BUILD_DIR)/hw_test
+HWTEST_SRCS = $(wildcard firmware/hw_test/src/*) firmware/hw_test/Cargo.toml $(wildcard firmware/fw_common/src/*.rs) \
+	firmware/boot_manager/bootstrap/link.x
+
+$(HWTEST_DIR)/hw_test.hex: $(HWTEST_SRCS)
+	@mkdir -p $(HWTEST_DIR)
+	cd firmware/hw_test && $(CARGO) build --release
+	$(PYTHON) scripts/elf2bin.py firmware/target/riscv32i-unknown-none-elf/release/hw_test $(HWTEST_DIR)/hw_test.bin $(HWTEST_DIR)
+	$(PYTHON) scripts/merge_firmware_hex.py $(HWTEST_DIR)/hw_test.bin "" $(HWTEST_DIR)/hw_test.hex
+
+hwtest: $(HWTEST_DIR)/hw_test.hex
+
+# Real board: run hw_test on every routed seed's placement (build/synth/pnr/seed_*; `make
+# timing` routes them all), with only the block-RAM contents changed. See scripts/hw_smoke.py.
+hw-smoke: hwtest firmware
+	$(PYTHON) scripts/hw_smoke.py --hex $(HWTEST_DIR)/hw_test.hex --base-hex $(FIRMWARE_BUILD_DIR)/firmware.hex \
+		--seed-dir $(SYNTH_DIR)/pnr --out $(BUILD_DIR)/hw_smoke
 
 # Line coverage of the firmware and demos from the emulator tests (sim/emu): see
 # scripts/coverage_fw.py. Minimums in coverage/thresholds.toml; report in build/coverage/fw/
@@ -252,7 +273,7 @@ sim-lockstep-slow: veryl firmware build-hack emu-py
 	LOCKSTEP_SEEDS=$(LOCKSTEP_SEEDS) LOCKSTEP_SLOW=1 SIM=verilator $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_lockstep]"
 	LOCKSTEP_SEEDS=$(LOCKSTEP_SEEDS) LOCKSTEP_SLOW=1 LOCKSTEP_TRACE=$(LOCKSTEP_TRACE_FILE) $(PYTHON) -m pytest sim/emu/test_lockstep.py
 
-test-emu: emu-py firmware build-hack build-zephyr build-zephyr-demo
+test-emu: emu-py firmware hwtest build-hack build-zephyr build-zephyr-demo
 	@echo "=== Running firmware and demo tests on the emulator ==="
 	$(PYTHON) -m pytest sim/emu
 

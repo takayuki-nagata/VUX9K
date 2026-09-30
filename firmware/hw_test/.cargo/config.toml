@@ -1,0 +1,12 @@
+# Copyright (c) 2026 Takayuki Nagata
+# SPDX-License-Identifier: MIT
+
+[build]
+target = "riscv32i-unknown-none-elf"
+
+# Same memory layout as the Boot Manager (it replaces it in firmware.hex). The path is
+# relative to the workspace root (AGENTS.md, "Cargo workspace gotcha").
+[target.riscv32i-unknown-none-elf]
+rustflags = [
+    "-C", "link-arg=-Tboot_manager/bootstrap/link.x",
+]

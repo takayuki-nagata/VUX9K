@@ -16,6 +16,7 @@ firmware/               Cargo workspace (virtual manifest)
   boot_manager/         Boot Manager crate (package name: boot_manager)
   resident_loader/      Resident Loader crate (package name: resident_loader)
   fw_common/            Boot Manager logic without MMIO, host-tested (make test-fw-host)
+  hw_test/              Board self-test in place of the Boot Manager (make hw-smoke)
 hack_demo/              Standalone Hack 16-bit C/asm demo app (toolchain self-test)
 zephyr_workspace/       Zephyr west module: board/SoC/driver/dts support for "vux9k"
   app/                  Zephyr Rust demo (C glue + rust_demo staticlib; see "Zephyr" below)
@@ -117,7 +118,12 @@ divider changed, the same placements passed a CPU self-test at 24 MHz and below.
 eqy can't see this (zero-delay models, and both sides of eqy come from Yosys). So:
 - **Don't raise the clock on the strength of STA.** `STA_FREQ` (27 MHz, 1.5x) is a
   guard band, not a guarantee; a faster clock needs the same fixed-placement test on the
-  board across several seeds.
+  board across several seeds. `make timing` then `make hw-smoke` is that test at the
+  current clock: `hw_test` on each routed seed with only the block-RAM contents
+  replaced (`scripts/hw_smoke.py`; it refuses to patch when the routed netlist doesn't
+  hold `firmware.hex` under the known I-RAM mapping). Run it after RTL changes, before
+  flashing a new bitstream. If you change `hw_test`'s tests, take the new checksums
+  from the emulator (`sim/emu/test_hw_test.py` prints them on failure).
 - **`CLK_HZ` has copies that must change with it**, none derived from `soc_pkg`
   automatically: the emulator (`uart::BIT`, `sdspi::HALF_PERIOD`, the CLI's real-time
   pacing), the Boot Manager (`timer.rs` ticks per us/ms, `read_uart_byte_timeout`, the

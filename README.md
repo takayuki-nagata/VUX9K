@@ -311,6 +311,9 @@ make sim-gls-hw-flow
 
 # 5. Hardware Target: Synthesize, Flash SRAM & Run Automated Real-Board Test Suite on Tang Nano 9K
 make test-hw
+
+# 6. Hardware Target: CPU self-test on every routed seed's placement (after `make timing`)
+make hw-smoke
 ```
 
 ### Test Suite Architecture
@@ -361,6 +364,25 @@ Short tests run on Icarus, long SoC/GLS runs on Verilator (`SIM_UNIT` / `SIM_SOC
 > [!NOTE]
 > Between steps 13→14 and 14→15, `test_hardware.py` reloads the SRAM bitstream via `openFPGALoader` as a recovery workaround for a known app-return SDHC re-init issue.
 
+### Board Smoke Test of Routed Seeds (`make hw-smoke`)
+
+A passing STA does not prove a bitstream works (see "Clock"), so check the placement
+itself on the board before adopting a seed. `make timing` routes every seed into
+`build/synth/pnr/seed_<N>/`; `make hw-smoke` (`scripts/hw_smoke.py`) then, for each
+seed, replaces only the I-RAM block RAMs' initial contents with `firmware/hw_test`,
+packs, loads the result into SRAM and reads the verdict. The placement and routing
+stay exactly those of the seed; the SD card and the boot chain are not involved.
+
+`hw_test` runs eleven instruction-pattern checksums (add, sub, logic, slt, shifts,
+branches, dependent sub/branch loops, back-to-back dependencies, loads/stores of every
+width, all registers) against the values the emulator computes, one line each, then
+`RESULT PASS|FAIL <passed>/<total> <failure mask>`, repeated every 2 s: the host's
+USB-UART bridge can drop output after a pause or right after programming, and the
+repeated line alone carries the verdict. Its LEDs: 0x01 from the first instruction, the test number while
+it runs, 0x15/0x2A alternating on PASS, the first failing test number blinking on
+FAIL, 0x2A steady on a trap. `sim/emu/test_hw_test.py` keeps it passing on the
+emulator.
+
 ---
 
 ## Directory Structure
@@ -404,7 +426,8 @@ VUX9K/
 │   │   ├── bootstrap/                  # Assembly start.s & linker script link.x
 │   │   └── src/                        # MicroSD SPI driver, UART CLI, catalog manager, flasher
 │   ├── resident_loader/                # Resident Loader (2KB at 0x0000_3800)
-│   └── fw_common/                      # Boot Manager logic without MMIO, tested on the host
+│   ├── fw_common/                      # Boot Manager logic without MMIO, tested on the host
+│   └── hw_test/                        # Board self-test for make hw-smoke (replaces the Boot Manager in BRAM)
 ├── hack_demo/                      # Hack 16-bit C/Assembly demo app (toolchain self-test)
 ├── zephyr_workspace/               # Zephyr RTOS out-of-tree application & bc_clone_rs integration
 │   └── app/                        # Zephyr Rust demo for the real board (rust_demo staticlib)
