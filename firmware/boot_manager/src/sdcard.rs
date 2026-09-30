@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: MIT
 
 use crate::timer::Timer;
+use fw_common::header::SECTOR;
+use fw_common::map;
 
-const SD_BASE: usize = 0x4000_2000;
-const SD_DATA: *mut u32 = SD_BASE as *mut u32;
-const SD_CS: *mut u32 = (SD_BASE + 0x4) as *mut u32;
-const SD_STATUS: *const u32 = (SD_BASE + 0x8) as *const u32;
+const SD_DATA: *mut u32 = map::SD_DATA as *mut u32;
+const SD_CS: *mut u32 = map::SD_CS as *mut u32;
+const SD_STATUS: *const u32 = map::SD_STATUS as *const u32;
 
 static mut IS_SDHC: bool = false;
 static mut IS_INITIALIZED: bool = false;
@@ -14,15 +15,10 @@ static mut IS_INITIALIZED: bool = false;
 pub struct SdCard;
 
 impl SdCard {
-    pub fn set_cs(active: bool) {
+    fn set_cs(active: bool) {
         unsafe {
             core::ptr::write_volatile(SD_CS, if active { 0 } else { 1 });
         }
-    }
-
-    #[allow(dead_code)]
-    pub fn is_initialized() -> bool {
-        unsafe { IS_INITIALIZED }
     }
 
     pub fn ensure_init() -> bool {
@@ -40,21 +36,21 @@ impl SdCard {
         Self::init()
     }
 
-    pub fn transfer(byte: u8) -> u8 {
+    fn transfer(byte: u8) -> u8 {
         unsafe {
-            while (core::ptr::read_volatile(SD_STATUS) & 0x1) != 0 {}
+            while (core::ptr::read_volatile(SD_STATUS) & map::SD_BUSY) != 0 {}
             core::ptr::write_volatile(SD_DATA, byte as u32);
-            while (core::ptr::read_volatile(SD_STATUS) & 0x1) != 0 {}
+            while (core::ptr::read_volatile(SD_STATUS) & map::SD_BUSY) != 0 {}
             (core::ptr::read_volatile(SD_DATA) & 0xFF) as u8
         }
     }
 
-    pub fn deselect() {
+    fn deselect() {
         Self::set_cs(false);
         Self::transfer(0xFF);
     }
 
-    pub fn send_cmd(cmd: u8, arg: u32, crc: u8) -> u8 {
+    fn send_cmd(cmd: u8, arg: u32, crc: u8) -> u8 {
         Self::set_cs(true);
         Timer::delay_us(10);
 
@@ -64,10 +60,6 @@ impl SdCard {
         Self::transfer((arg >> 8) as u8);
         Self::transfer(arg as u8);
         Self::transfer(crc);
-
-        if cmd == 12 {
-            Self::transfer(0xFF); // cov:exclude(the Boot Manager never sends CMD12)
-        }
 
         // Wait for R1 response (while card is busy, it outputs 0xFF)
         for _ in 0..200 {
@@ -79,10 +71,8 @@ impl SdCard {
         0xFF
     }
 
-    pub fn init() -> bool {
-        unsafe {
-            IS_INITIALIZED = false;
-        }
+    /// Callers clear IS_INITIALIZED first.
+    fn init() -> bool {
         Self::deselect();
         for _ in 0..16 {
             Self::transfer(0xFF);
@@ -176,9 +166,18 @@ impl SdCard {
         unsafe { IS_SDHC }
     }
 
-    pub fn read_block(sector_num: u32, buf: &mut [u8; 512]) -> bool {
+    fn address(sector_num: u32) -> u32 {
+        // SDHC/SDXC take block numbers, SDSC byte addresses
+        if Self::is_sdhc() {
+            sector_num
+        } else {
+            sector_num << 9
+        }
+    }
+
+    pub fn read_block(sector_num: u32, buf: &mut [u8; SECTOR]) -> bool {
         crate::gpio::Gpio::toggle_led(5);
-        let addr = unsafe { if IS_SDHC { sector_num } else { sector_num << 9 } };
+        let addr = Self::address(sector_num);
 
         let r1 = Self::send_cmd(17, addr, 0xFF);
         if r1 != 0x00 {
@@ -199,8 +198,8 @@ impl SdCard {
             return false;
         }
 
-        for i in 0..512 {
-            buf[i] = Self::transfer(0xFF);
+        for b in buf.iter_mut() {
+            *b = Self::transfer(0xFF);
         }
 
         Self::transfer(0xFF);
@@ -210,9 +209,9 @@ impl SdCard {
         true
     }
 
-    pub fn write_block(sector_num: u32, buf: &[u8; 512]) -> bool {
+    pub fn write_block(sector_num: u32, buf: &[u8; SECTOR]) -> bool {
         crate::gpio::Gpio::toggle_led(5);
-        let addr = unsafe { if IS_SDHC { sector_num } else { sector_num << 9 } };
+        let addr = Self::address(sector_num);
 
         let r1 = Self::send_cmd(24, addr, 0xFF);
         if r1 != 0x00 {
@@ -223,8 +222,8 @@ impl SdCard {
         Self::transfer(0xFF);
         Self::transfer(0xFE);
 
-        for i in 0..512 {
-            Self::transfer(buf[i]);
+        for &b in buf.iter() {
+            Self::transfer(b);
         }
 
         Self::transfer(0xFF);
@@ -275,8 +274,8 @@ impl SdCard {
         }
 
         let mut matches = true;
-        for i in 0..512 {
-            if Self::transfer(0xFF) != buf[i] {
+        for &b in buf.iter() {
+            if Self::transfer(0xFF) != b {
                 matches = false;
             }
         }

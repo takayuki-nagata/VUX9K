@@ -1,26 +1,18 @@
 // Copyright (c) 2026 Takayuki Nagata
 // SPDX-License-Identifier: MIT
 
-// MMIO Machine Timer Driver (mtime / mtimecmp)
+// MMIO Machine Timer Driver (mtime, low word)
 
-const TIMER_BASE: usize = 0x4000_1000;
-const MTIME_LOW: *const u32 = TIMER_BASE as *const u32;
+use fw_common::map;
+
+const MTIME_LO: *const u32 = map::MTIME_LO as *const u32;
 
 pub struct Timer;
 
 impl Timer {
     #[inline(always)]
-    pub fn get_mtime() -> u64 {
-        unsafe {
-            core::ptr::read_volatile(MTIME_LOW) as u64
-        }
-    }
-
-    #[inline(always)]
     pub fn get_mtime32() -> u32 {
-        unsafe {
-            core::ptr::read_volatile(MTIME_LOW)
-        }
+        unsafe { core::ptr::read_volatile(MTIME_LO) }
     }
 
     pub fn delay_ticks(ticks: u32) {
@@ -29,10 +21,10 @@ impl Timer {
     }
 
     pub fn delay_us(us: u32) {
-        Self::delay_ticks(us * 18);
+        Self::delay_ticks(us * map::TICKS_PER_US);
     }
 
     pub fn delay_ms(ms: u32) {
-        Self::delay_ticks(ms * 18_000);
+        Self::delay_ticks(ms * map::TICKS_PER_MS);
     }
 }

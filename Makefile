@@ -65,6 +65,7 @@ check: check-paths
 	$(VERYL) check
 	$(RUFF) format --check
 	$(RUFF) check
+	cd firmware && $(CARGO) fmt --check
 
 fmt:
 	$(VERYL) fmt

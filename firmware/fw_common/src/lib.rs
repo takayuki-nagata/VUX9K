@@ -1,20 +1,25 @@
 // Copyright (c) 2026 Takayuki Nagata
 // SPDX-License-Identifier: MIT
 
-//! The Boot Manager's hardware-independent logic: the SD slot layout and VUX9 boot
-//! header, CRC32, the self-update checks, the Boot Manager -> Resident Loader
-//! mailbox, and number formatting. No MMIO here, so all of it is tested on the host:
-//! `cargo test -p fw_common --target x86_64-unknown-linux-gnu` (make test-fw-host).
+//! The firmware's hardware-independent logic: the SoC's address map, the SD slot
+//! layout and VUX9 boot header, CRC32, the self-update checks, the `w` upload
+//! exchange, the Boot Manager -> Resident Loader mailbox, and number formatting. No
+//! MMIO here (the drivers pass themselves in as traits), so all of it is tested on
+//! the host: `cargo test -p fw_common --target x86_64-unknown-linux-gnu`
+//! (make test-fw-host).
 //!
-//! The Resident Loader keeps its own copies of the few pieces it needs: it must fit
-//! in 2 KB (make firmware-size).
+//! The Resident Loader must fit in 2 KB (make firmware-size): it takes only
+//! constants from here (`map`, `mailbox`), and keeps its own small loops.
 
 #![no_std]
 
 pub mod fmt;
 pub mod header;
 pub mod mailbox;
+pub mod map;
+pub mod slot;
 pub mod update;
+pub mod upload;
 
 pub use header::{slot_sector, SlotHeader};
 

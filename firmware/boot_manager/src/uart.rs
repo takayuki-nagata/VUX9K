@@ -3,11 +3,11 @@
 
 // MMIO UART Driver with standard formatting and non-blocking RX
 
-const UART_BASE: usize = 0x4000_0000;
-const UART_DATA: *mut u8 = UART_BASE as *mut u8;
-const UART_STATUS: *const u32 = (UART_BASE + 0x4) as *const u32;
-
 use fw_common::fmt::Sink;
+use fw_common::map;
+
+const UART_DATA: *mut u8 = map::UART_DATA as *mut u8;
+const UART_STATUS: *const u32 = map::UART_STATUS as *const u32;
 
 pub struct Uart;
 
@@ -15,18 +15,14 @@ impl Uart {
     #[inline(always)]
     pub fn write_byte(c: u8) {
         unsafe {
-            // Wait while TX FIFO is full (bit 1 of status)
-            while (core::ptr::read_volatile(UART_STATUS) & 0x2) != 0 {}
+            while (core::ptr::read_volatile(UART_STATUS) & map::UART_TX_FULL) != 0 {}
             core::ptr::write_volatile(UART_DATA, c);
         }
     }
 
     #[inline(always)]
     pub fn has_rx_data() -> bool {
-        unsafe {
-            // RX FIFO empty is bit 0 of status (1 = empty, 0 = has data)
-            (core::ptr::read_volatile(UART_STATUS) & 0x1) == 0
-        }
+        unsafe { (core::ptr::read_volatile(UART_STATUS) & map::UART_RX_EMPTY) == 0 }
     }
 
     #[inline(always)]

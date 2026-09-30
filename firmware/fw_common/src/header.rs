@@ -7,8 +7,9 @@
 pub const VUX_MAGIC: u32 = 0x5655_5839; // "VUX9"
 pub const HEADER_VERSION: u16 = 3;
 pub const HEADER_LEN: usize = 64;
+pub const SECTOR: usize = 512;
 /// Payload bytes in a slot's first sector, after the header.
-pub const FIRST_SECTOR_PAYLOAD: usize = 512 - HEADER_LEN;
+pub const FIRST_SECTOR_PAYLOAD: usize = SECTOR - HEADER_LEN;
 pub const FLAG_VALID: u16 = 1;
 
 /// First SD sector (LBA) of slot 0-9: 64 sectors (32 KB) each from LBA 64.

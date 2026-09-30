@@ -24,23 +24,21 @@ use core::panic::PanicInfo;
 use core::ptr::{read_volatile, write_volatile};
 
 use fw_common::fmt::Sink;
+use fw_common::map::{self, TICKS_PER_MS};
 
 global_asm!(include_str!("start.s"));
 
-const UART_DATA: *mut u32 = 0x4000_0000 as *mut u32;
-const UART_STATUS: *const u32 = 0x4000_0004 as *const u32;
-const MTIME_LOW: *const u32 = 0x4000_1000 as *const u32;
-const GPIO_LED: *mut u32 = 0x4000_3000 as *mut u32;
-
-/// mtime ticks per millisecond (soc_pkg::CLK_HZ = 18 MHz)
-const TICKS_PER_MS: u32 = 18_000;
+const UART_DATA: *mut u32 = map::UART_DATA as *mut u32;
+const UART_STATUS: *const u32 = map::UART_STATUS as *const u32;
+const MTIME_LOW: *const u32 = map::MTIME_LO as *const u32;
+const GPIO_LED: *mut u32 = map::GPIO_LED as *mut u32;
 
 struct Uart;
 
 impl Sink for Uart {
     fn put(&mut self, b: u8) {
         unsafe {
-            while read_volatile(UART_STATUS) & 0x2 != 0 {}
+            while read_volatile(UART_STATUS) & map::UART_TX_FULL != 0 {}
             write_volatile(UART_DATA, b as u32);
         }
     }

@@ -20,26 +20,28 @@ global_asm!(
     "#
 );
 
-const SD_DATA: *mut u32 = 0x4000_2000 as *mut u32;
-const SD_CS: *mut u32 = 0x4000_2004 as *mut u32;
-const SD_STATUS: *const u32 = 0x4000_2008 as *const u32;
+use fw_common::header::{HEADER_VERSION, VUX_MAGIC};
+use fw_common::mailbox::{SLOT_UPDATED_BOOT_MAGIC, SLOT_UPDATE_MAGIC};
+use fw_common::map;
 
-const GPIO_RESET_REG: *mut u32 = 0x4000_300C as *mut u32;
+const SD_DATA: *mut u32 = map::SD_DATA as *mut u32;
+const SD_CS: *mut u32 = map::SD_CS as *mut u32;
+const SD_STATUS: *const u32 = map::SD_STATUS as *const u32;
+
+const GPIO_RESET_REG: *mut u32 = map::GPIO_SOFT_RESET as *mut u32;
 // ISA the CPU starts in after the next soft reset (gpio_controller 0x8): the loaded
 // slot's, rather than a guess from its first instruction
-const GPIO_BOOT_MODE_REG: *mut u32 = 0x4000_3008 as *mut u32;
-const BOOT_MODE_VALID: u32 = 0x100;
+const GPIO_BOOT_MODE_REG: *mut u32 = map::GPIO_BOOT_MODE as *mut u32;
+const BOOT_MODE_VALID: u32 = map::BOOT_MODE_VALID;
 const BOOT_MODE_RV32: u32 = BOOT_MODE_VALID | 1;
-const RESET_MAGIC: u32 = 0x5A5A_A55A;
-const SCRATCH_SDHC_REG: *mut u32 = 0x2000_1FF8 as *mut u32;
-const MAILBOX_REG: *mut u32 = 0x2000_1FFC as *mut u32;
+const RESET_MAGIC: u32 = map::SOFT_RESET_KEY;
+const SCRATCH_SDHC_REG: *mut u32 = map::LOADER_WORDS as *mut u32;
+const MAILBOX_REG: *mut u32 = map::MAILBOX as *mut u32;
 
-const UART_DATA: *mut u8 = 0x4000_0000 as *mut u8;
-const UART_STATUS: *const u32 = 0x4000_0004 as *const u32;
+const UART_DATA: *mut u8 = map::UART_DATA as *mut u8;
+const UART_STATUS: *const u32 = map::UART_STATUS as *const u32;
 
-const MTIME_LOW: *const u32 = 0x4000_1000 as *const u32;
-
-const VUX_MAGIC: u32 = 0x56555839; // "VUX9"
+const MTIME_LOW: *const u32 = map::MTIME_LO as *const u32;
 
 fn uart_putc(c: u8) {
     unsafe {
@@ -81,7 +83,7 @@ fn spi_deselect() {
 
 fn sd_send_cmd(cmd: u8, arg: u32, crc: u8) -> u8 {
     spi_set_cs(true);
-    delay_ticks(180); // 10 us at 18 MHz
+    delay_ticks(10 * map::TICKS_PER_US);
 
     spi_transfer(0x40 | cmd);
     spi_transfer((arg >> 24) as u8);
@@ -151,13 +153,28 @@ fn load_slot_from_sd(is_sdhc: bool, slot_id: u32) -> u32 {
         *b = spi_transfer(0xFF);
     }
 
-    let magic = (header[0] as u32) | ((header[1] as u32) << 8) | ((header[2] as u32) << 16) | ((header[3] as u32) << 24);
-    let ver_flags = (header[4] as u32) | ((header[5] as u32) << 8) | ((header[6] as u32) << 16) | ((header[7] as u32) << 24);
-    let mode = (header[8] as u32) | ((header[9] as u32) << 8) | ((header[10] as u32) << 16) | ((header[11] as u32) << 24);
-    let size = (header[12] as u32) | ((header[13] as u32) << 8) | ((header[14] as u32) << 16) | ((header[15] as u32) << 24);
-    let load_addr = (header[16] as u32) | ((header[17] as u32) << 8) | ((header[18] as u32) << 16) | ((header[19] as u32) << 24);
+    let magic = (header[0] as u32)
+        | ((header[1] as u32) << 8)
+        | ((header[2] as u32) << 16)
+        | ((header[3] as u32) << 24);
+    let ver_flags = (header[4] as u32)
+        | ((header[5] as u32) << 8)
+        | ((header[6] as u32) << 16)
+        | ((header[7] as u32) << 24);
+    let mode = (header[8] as u32)
+        | ((header[9] as u32) << 8)
+        | ((header[10] as u32) << 16)
+        | ((header[11] as u32) << 24);
+    let size = (header[12] as u32)
+        | ((header[13] as u32) << 8)
+        | ((header[14] as u32) << 16)
+        | ((header[15] as u32) << 24);
+    let load_addr = (header[16] as u32)
+        | ((header[17] as u32) << 8)
+        | ((header[18] as u32) << 16)
+        | ((header[19] as u32) << 24);
 
-    if magic != VUX_MAGIC || (ver_flags & 0xFFFF) != 3 {
+    if magic != VUX_MAGIC || (ver_flags & 0xFFFF) != HEADER_VERSION as u32 {
         uart_puts(b"[RL] E2\n");
         skip_bytes(448);
         spi_end_block();
@@ -196,7 +213,11 @@ fn load_slot_from_sd(is_sdhc: bool, slot_id: u32) -> u32 {
             uart_puts(b"[RL] E4\n");
             return 0;
         }
-        let chunk = if size as usize - copied > 512 { 512 } else { size as usize - copied };
+        let chunk = if size as usize - copied > 512 {
+            512
+        } else {
+            size as usize - copied
+        };
         let chunk_words = (chunk + 3) / 4;
         for _ in 0..chunk_words {
             let w = read_word();
@@ -217,17 +238,21 @@ fn load_slot_from_sd(is_sdhc: bool, slot_id: u32) -> u32 {
 #[no_mangle]
 pub extern "C" fn loader_main() -> ! {
     let target = unsafe { core::ptr::read_volatile(MAILBOX_REG) };
-    unsafe { core::ptr::write_volatile(MAILBOX_REG, 0); }
+    unsafe {
+        core::ptr::write_volatile(MAILBOX_REG, 0);
+    }
 
     uart_puts(b"\n[RL] Boot\n");
 
-    let is_slot_update = (target & 0xFFFF_0000) == 0xA55A_0000;
+    let is_slot_update = (target & 0xFFFF_0000) == SLOT_UPDATE_MAGIC;
     let raw_is_sdhc = (target & 0x100) != 0;
     let is_sdhc = if target == 0 {
         // App returning to Slot 0: restore saved SDHC flag
         unsafe { core::ptr::read_volatile(SCRATCH_SDHC_REG) != 0 }
     } else {
-        unsafe { core::ptr::write_volatile(SCRATCH_SDHC_REG, if raw_is_sdhc { 1 } else { 0 }); }
+        unsafe {
+            core::ptr::write_volatile(SCRATCH_SDHC_REG, if raw_is_sdhc { 1 } else { 0 });
+        }
         raw_is_sdhc
     };
     let slot_num = if is_slot_update { 0 } else { target & 0xFF };
@@ -247,7 +272,7 @@ pub extern "C" fn loader_main() -> ! {
         if boot_mode != 0 {
             if is_slot_update {
                 unsafe {
-                    core::ptr::write_volatile(MAILBOX_REG, 0x5A5A_B002);
+                    core::ptr::write_volatile(MAILBOX_REG, SLOT_UPDATED_BOOT_MAGIC);
                 }
             }
             // cpu_soft_rst only resets CPU-internal state (PC, pipeline
@@ -263,8 +288,8 @@ pub extern "C" fn loader_main() -> ! {
             // (0x2000_1FF8-0x2000_1FFF) untouched -- they carry state
             // across this very reset.
             unsafe {
-                let mut p = 0x2000_0000 as *mut u32;
-                let end = 0x2000_1FF8 as *mut u32;
+                let mut p = map::DRAM_BASE as *mut u32;
+                let end = map::LOADER_WORDS as *mut u32;
                 while p < end {
                     core::ptr::write_volatile(p, 0);
                     p = p.add(1);

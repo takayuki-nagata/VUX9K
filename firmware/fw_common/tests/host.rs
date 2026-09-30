@@ -180,3 +180,185 @@ fn formats_numbers() {
     }
     assert_eq!(out(|s| s.put_str("vux> ")), "vux> ");
 }
+
+// ----- slot::payload_crc -----------------------------------------------------------
+use fw_common::header::SECTOR;
+use fw_common::slot::payload_crc;
+
+/// A slot's sectors holding `payload` after a 64-byte header, as vux_tool lays it out.
+fn slot_sectors(payload: &[u8]) -> Vec<[u8; SECTOR]> {
+    let mut raw = std::vec![0u8; HEADER_LEN];
+    raw.extend_from_slice(payload);
+    raw.resize(raw.len().div_ceil(SECTOR) * SECTOR, 0);
+    raw.chunks(SECTOR).map(|c| c.try_into().unwrap()).collect()
+}
+
+fn zlib_crc(data: &[u8]) -> u32 {
+    crc32_update(data, 0xFFFF_FFFF) ^ 0xFFFF_FFFF
+}
+
+#[test]
+fn payload_crc_walks_the_slot() {
+    for len in [
+        1usize,
+        FIRST_SECTOR_PAYLOAD,
+        FIRST_SECTOR_PAYLOAD + 1,
+        1000,
+        14 * 1024,
+    ] {
+        let payload: Vec<u8> = (0..len).map(|i| (i * 7 + 3) as u8).collect();
+        let sectors = slot_sectors(&payload);
+        let mut buf = sectors[0];
+        let mut reads = Vec::new();
+        let crc = payload_crc(len as u32, 128, &mut buf, |s, b| {
+            reads.push(s);
+            *b = sectors[(s - 128) as usize];
+            true
+        });
+        assert_eq!(crc, Ok(zlib_crc(&payload)), "{len} bytes");
+        assert_eq!(reads, (129..128 + sectors.len() as u32).collect::<Vec<_>>());
+    }
+}
+
+#[test]
+fn payload_crc_names_the_unreadable_sector() {
+    let sectors = slot_sectors(&[0x55; 2000]);
+    let mut buf = sectors[0];
+    assert_eq!(payload_crc(2000, 64, &mut buf, |s, _| s != 66), Err(66));
+}
+
+// ----- upload (the 'w' command) ------------------------------------------------------
+use fw_common::upload::{upload, Disk, Host};
+use std::collections::VecDeque;
+
+struct FakeHost {
+    input: VecDeque<u8>,
+    output: Vec<u8>,
+    drained: bool,
+}
+impl Sink for FakeHost {
+    fn put(&mut self, b: u8) {
+        self.output.push(b);
+    }
+}
+impl Host for FakeHost {
+    /// Everything queued arrives in time; then the host goes quiet (timeout).
+    fn recv(&mut self, timeout_ms: u32) -> Option<u8> {
+        assert_eq!(timeout_ms, 5000);
+        self.input.pop_front()
+    }
+    fn drain(&mut self) {
+        self.drained = true;
+    }
+}
+
+struct FakeDisk {
+    ready: bool,
+    bad_sector: Option<u32>,
+    written: Vec<(u32, [u8; SECTOR])>,
+}
+impl Disk for FakeDisk {
+    fn init(&mut self) -> bool {
+        self.ready
+    }
+    fn write(&mut self, sector: u32, data: &[u8; SECTOR]) -> bool {
+        self.written.push((sector, *data));
+        Some(sector) != self.bad_sector
+    }
+}
+
+fn run_upload(input: &[u8], disk: &mut FakeDisk) -> std::string::String {
+    let mut host = FakeHost {
+        input: input.iter().copied().collect(),
+        output: Vec::new(),
+        drained: false,
+    };
+    upload(&mut host, disk);
+    assert!(host.drained, "stale input is dropped first");
+    std::string::String::from_utf8(host.output).unwrap()
+}
+
+fn disk() -> FakeDisk {
+    FakeDisk {
+        ready: true,
+        bad_sector: None,
+        written: Vec::new(),
+    }
+}
+
+fn sectors_of(slot: u8, count: u8) -> Vec<u8> {
+    let mut v = std::vec![slot, count];
+    for s in 0..count {
+        v.extend((0..SECTOR).map(|i| (i as u8) ^ s));
+    }
+    v
+}
+
+#[test]
+fn upload_writes_every_sector() {
+    let mut d = disk();
+    let out = run_upload(&sectors_of(3, 2), &mut d);
+    assert_eq!(
+        out,
+        "[READY]\n[READY-SLOT:3]\n[READY-COUNT:2]\n[READY-SEC:0]\n[READY-SEC:1]\n\
+         [SD] Successfully wrote 2 sectors to Slot 3 (Sector 256)! [OK]\n\n"
+    );
+    assert_eq!(
+        d.written.iter().map(|w| w.0).collect::<Vec<_>>(),
+        [256, 257]
+    );
+    assert_eq!(d.written[1].1[5], 5 ^ 1);
+}
+
+#[test]
+fn upload_skips_line_ends_before_the_slot_id() {
+    let mut input = std::vec![b'\r', b'\n'];
+    input.extend(sectors_of(0, 1));
+    let out = run_upload(&input, &mut disk());
+    assert!(out.contains("[READY-SLOT:0]\n[READY-COUNT:1]\n"), "{out}");
+    assert!(out.ends_with("! [OK]\n\n"), "{out}");
+}
+
+#[test]
+fn upload_rejects_what_the_host_should_not_send() {
+    for (input, err) in [
+        (&[0x0B][..], "[SD-ERR] Invalid slot ID: 0x0B\n"),
+        (&[1, 0][..], "[SD-ERR] Invalid sector count: 0x00\n"),
+        (&[1, 65][..], "[SD-ERR] Invalid sector count: 0x41\n"),
+        (&[][..], "[SD-ERR] Slot ID timeout!\n"),
+        (&[1][..], "[SD-ERR] Sector count timeout!\n"),
+        (
+            &[1, 1, 7, 7, 7, 7, 7][..],
+            "[READY-SEC:0]\n[SD-ERR] Timeout at sector 0, byte 5\n",
+        ),
+    ] {
+        let mut d = disk();
+        let out = run_upload(input, &mut d);
+        assert!(out.ends_with(err), "{input:?}: {out}");
+        assert!(d.written.is_empty());
+    }
+}
+
+#[test]
+fn upload_reports_card_errors() {
+    let mut d = FakeDisk {
+        ready: false,
+        ..disk()
+    };
+    let out = run_upload(&sectors_of(1, 1), &mut d);
+    assert!(
+        out.ends_with("[READY-COUNT:1]\n[SD-ERR] Failed to initialize SD card!\n"),
+        "{out}"
+    );
+
+    let mut d = FakeDisk {
+        bad_sector: Some(129),
+        ..disk()
+    };
+    let out = run_upload(&sectors_of(1, 3), &mut d);
+    assert!(
+        out.ends_with("[READY-SEC:1]\n[SD-ERR] Failed to write block at sector 129\n"),
+        "{out}"
+    );
+    assert_eq!(d.written.len(), 2, "stops at the failed sector");
+}

@@ -3,14 +3,10 @@
 
 // Bare-metal GPIO Driver for Tang Nano 9K VUX9K SoC
 use core::ptr::{read_volatile, write_volatile};
+use fw_common::map;
 
-const GPIO_BASE: usize = 0x4000_3000;
-const GPIO_LED_REG: *mut u32 = GPIO_BASE as *mut u32;
-const GPIO_BTN_REG: *const u32 = (GPIO_BASE + 0x4) as *const u32;
-#[allow(dead_code)]
-const GPIO_RESET_REG: *mut u32 = (GPIO_BASE + 0xC) as *mut u32;
-#[allow(dead_code)]
-const RESET_MAGIC: u32 = 0x5A5A_A55A;
+const GPIO_LED_REG: *mut u32 = map::GPIO_LED as *mut u32;
+const GPIO_BTN_REG: *const u32 = map::GPIO_BUTTON as *const u32;
 
 pub struct Gpio;
 
@@ -26,9 +22,7 @@ impl Gpio {
     /// Read the user push button (1 = Pressed, 0 = Released)
     #[inline(always)]
     pub fn get_button() -> bool {
-        unsafe {
-            (read_volatile(GPIO_BTN_REG) & 0x1) != 0
-        }
+        unsafe { (read_volatile(GPIO_BTN_REG) & 0x1) != 0 }
     }
 
     /// Toggle specific LED bit (0-5) for activity indicator
@@ -37,18 +31,6 @@ impl Gpio {
         unsafe {
             let current = (read_volatile(GPIO_LED_REG) & 0x3F) as u8;
             write_volatile(GPIO_LED_REG, (current ^ (1 << bit)) as u32);
-        }
-    }
-
-    /// Trigger hardware CPU soft reset pulse (15 cycles)
-    #[allow(dead_code)]
-    #[inline(always)]
-    pub fn cpu_reset() -> ! {
-        unsafe {
-            write_volatile(GPIO_RESET_REG, RESET_MAGIC);
-            loop {
-                core::arch::asm!("nop");
-            }
         }
     }
 }

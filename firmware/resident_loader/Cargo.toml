@@ -9,3 +9,5 @@ authors = ["Takayuki Nagata"]
 license = "MIT"
 
 [dependencies]
+# Constants only (map, mailbox): nothing that adds code
+fw_common = { path = "../fw_common" }
