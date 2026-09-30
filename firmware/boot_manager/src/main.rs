@@ -65,7 +65,7 @@ fn print_help() {
     Uart::print_str("  [l] List program slots catalog (Slots 0-9)\n");
     Uart::print_str("  [1-9] Launch program in Slot 1-9 (S2 button = Slot 1)\n");
     Uart::print_str("  [w] Write program slot from UART (Multi-Sector Host Flash)\n");
-    Uart::print_str("  [s] Inspect Slot 0 Boot Manager Header\n");
+    Uart::print_str("  [s] Inspect a slot header (s then 0-9; Slot 0 by default)\n");
     Uart::print_str("  [d] Dump Sector 0 (MBR)\n");
     Uart::print_str("  [i] Re-initialize MicroSD Card\n");
     Uart::print_str("  [t] Run hardware diagnostic tests\n");
@@ -74,30 +74,59 @@ fn print_help() {
     Uart::print_str("vux> ");
 }
 
+/// The mcycle CSR's low word: CPU clock cycles.
+fn mcycle() -> u32 {
+    let c: u32;
+    unsafe {
+        core::arch::asm!(
+            ".option push",
+            ".option arch, +zicsr",
+            "csrr {0}, mcycle",
+            ".option pop",
+            out(reg) c,
+        );
+    }
+    c
+}
+
 fn run_diagnostics() {
     Uart::print_str("[DIAG] Running SoC Diagnostics...\n");
 
-    // 1. Knight Rider LED test
+    // 1. and 2. only show something: the LEDs are for the eye, the button is as it is
     Uart::print_str(" 1. GPIO LEDs: ");
     knight_rider(1, 5);
-    Uart::print_str("[PASS]\n");
+    Uart::print_str("swept 0-5 (check by eye)\n");
 
-    // 2. Button State
     Uart::print_str(" 2. User Button (S2): ");
     if Gpio::get_button() {
-        Uart::print_str("PRESSED [PASS]\n");
+        Uart::print_str("PRESSED\n");
     } else {
-        Uart::print_str("RELEASED [PASS]\n");
+        Uart::print_str("RELEASED\n");
     }
 
-    // 3. Timer accuracy test
+    // 3. mtime counts at the CPU clock (one tick per cycle at 18 MHz): measure 10 ms of
+    // it against mcycle, within 1/64
     Uart::print_str(" 3. Timer (mtime): ");
     let t0 = Timer::get_mtime32();
+    let c0 = mcycle();
     Timer::delay_ms(10);
-    let diff = Timer::get_mtime32().wrapping_sub(t0);
+    let ticks = Timer::get_mtime32().wrapping_sub(t0);
+    let cycles = mcycle().wrapping_sub(c0);
     Uart::print_str("10ms = ");
-    Uart::print_dec(diff);
-    Uart::print_str(" ticks (180,000 expected) [PASS]\n");
+    Uart::print_dec(ticks);
+    Uart::print_str(" ticks, ");
+    Uart::print_dec(cycles);
+    Uart::print_str(" CPU cycles ");
+    let off = if ticks > cycles {
+        ticks - cycles
+    } else {
+        cycles - ticks
+    };
+    Uart::print_str(if off <= cycles >> 6 {
+        "[PASS]\n"
+    } else {
+        "[FAIL]\n"
+    });
 
     // 4. MicroSD Card Init
     Uart::print_str(" 4. MicroSD SPI Card: ");
@@ -143,7 +172,9 @@ fn dump_sector_0() {
     Uart::print_str(" [PASS]\n\n");
 }
 
-const BOOT_MGR_VERSION: u32 = 10;
+/// Raise it with every Boot Manager change: boards install a slot-0 image only when
+/// its header's version is greater (fw_common::update::precheck).
+const BOOT_MGR_VERSION: u32 = 11;
 #[inline(never)]
 fn check_boot_manager_update() {
     // 0. Update boot check: if newly loaded from an update, skip checks and clear mailbox
@@ -448,7 +479,6 @@ pub extern "C" fn main() -> ! {
                 }
                 b'r' => {
                     Uart::print_str("r\n[RESET] Rebooting Boot Manager...\n\n");
-                    Timer::delay_ms(10);
                     boot_slot(0);
                 }
                 b'\r' => {
@@ -458,6 +488,25 @@ pub extern "C" fn main() -> ! {
                 _ => {}
             }
         }
+    }
+}
+
+/// start.s's trap_entry: an exception (the Boot Manager enables no interrupts).
+/// Report it and stop, blinking LEDs 1/3/5 against 0/2/4.
+#[no_mangle]
+extern "C" fn trap_report(mcause: u32, mepc: u32, mtval: u32) -> ! {
+    Uart::print_str("\n[TRAP] mcause=0x");
+    Uart::print_hex(mcause);
+    Uart::print_str(" mepc=0x");
+    Uart::print_hex(mepc);
+    Uart::print_str(" mtval=0x");
+    Uart::print_hex(mtval);
+    Uart::print_str("\n[TRAP] Stopped. Reset the board.\n");
+    let mut pattern = 0x2A;
+    loop {
+        Gpio::set_leds(pattern);
+        Timer::delay_ms(250);
+        pattern ^= 0x3F;
     }
 }
 

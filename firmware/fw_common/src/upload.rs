@@ -35,12 +35,19 @@ pub trait Disk {
     fn write(&mut self, sector: u32, data: &[u8; SECTOR]) -> bool;
 }
 
-/// One header byte (slot ID or sector count) in `lo..=hi`, skipping CR/LF. Reports
-/// what went wrong and returns None.
-fn recv_param(host: &mut impl Host, lo: u8, hi: u8, what: &str) -> Option<u32> {
+/// One header byte (slot ID or sector count) in `lo..=hi`. Reports what went wrong
+/// and returns None. `skip_line_ends`: ignore CR/LF, which a terminal may send after
+/// the `w`; only before the slot ID, since a sector count can be 10 or 13.
+fn recv_param(
+    host: &mut impl Host,
+    lo: u8,
+    hi: u8,
+    what: &str,
+    skip_line_ends: bool,
+) -> Option<u32> {
     loop {
         match host.recv(BYTE_TIMEOUT_MS) {
-            Some(b'\r') | Some(b'\n') => continue,
+            Some(b'\r') | Some(b'\n') if skip_line_ends => continue,
             Some(b) if b >= lo && b <= hi => return Some(b as u32),
             Some(invalid) => {
                 host.put_str("[SD-ERR] Invalid ");
@@ -71,11 +78,11 @@ pub fn upload(host: &mut impl Host, disk: &mut impl Disk) {
     host.drain();
     host.put_str("[READY]\n");
 
-    let Some(slot) = recv_param(host, 0, 9, "slot ID") else {
+    let Some(slot) = recv_param(host, 0, 9, "slot ID", true) else {
         return;
     };
     ready(host, "SLOT:", slot);
-    let Some(count) = recv_param(host, 1, MAX_SECTORS, "sector count") else {
+    let Some(count) = recv_param(host, 1, MAX_SECTORS, "sector count", false) else {
         return;
     };
     ready(host, "COUNT:", count);

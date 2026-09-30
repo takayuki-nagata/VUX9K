@@ -68,10 +68,10 @@ def test_every_cli_command():
     resp = cmd(soc, "t")
     expect_lines(
         resp,
-        [" 1. GPIO LEDs: [PASS]", " 2. User Button (S2): RELEASED [PASS]", "[DIAG] Diagnostics Complete."],
+        [" 1. GPIO LEDs: swept 0-5", " 2. User Button (S2): RELEASED\n", "[DIAG] Diagnostics Complete."],
         "diagnostics",
     )
-    m = re.search(r" 3\. Timer \(mtime\): 10ms = (\d+) ticks", resp)
+    m = re.search(r" 3\. Timer \(mtime\): 10ms = (\d+) ticks, (\d+) CPU cycles \[PASS\]", resp)
     assert m and 175_000 <= int(m.group(1)) <= 185_000, resp
 
     expect_lines(cmd(soc, "k"), ["[LED] Running Knight Rider...", "[LED] Done."], "knight rider")

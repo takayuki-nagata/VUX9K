@@ -122,14 +122,14 @@ async def test_boot_manager_cli(dut):
     expect_lines(
         resp,
         [
-            " 1. GPIO LEDs: [PASS]",
-            " 2. User Button (S2): RELEASED [PASS]",
+            " 1. GPIO LEDs: swept 0-5",
+            " 2. User Button (S2): RELEASED\n",
             " 4. MicroSD SPI Card: Detected & Initialized [PASS]",
             "[DIAG] Diagnostics Complete.",
         ],
         "diagnostics",
     )
-    m = re.search(r" 3\. Timer \(mtime\): 10ms = (\d+) ticks", resp)
+    m = re.search(r" 3\. Timer \(mtime\): 10ms = (\d+) ticks, \d+ CPU cycles \[PASS\]", resp)
     assert m, f"diagnostics: no timer line in {resp!r}"
     ticks = int(m.group(1))
     assert 175_000 <= ticks <= 185_000, f"10 ms measured as {ticks} ticks, expected ~180,000"

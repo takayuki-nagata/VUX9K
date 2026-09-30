@@ -38,12 +38,30 @@ _start:
     blt t0, t1, 3b
 4:
 
+    /* Exceptions go to trap_entry, which reports them and stops (at its reset value
+     * 0, mtvec sent them to _start: a silent restart over half-initialized state) */
+    la t0, trap_entry
+    .option push
+    .option arch, +zicsr
+    csrw mtvec, t0
+    .option pop
+
     /* Jump to Rust main() */
     call main
 5:
     j 5b
 
-.global trap_handler
-.type trap_handler, @function
-trap_handler:
-    mret
+/* mtvec (direct mode) needs a 4-byte aligned handler. It never returns, so it takes
+ * a fresh stack (the fault may have been the stack's) and saves nothing. */
+.balign 4
+trap_entry:
+    la sp, _stack_end
+    .option push
+    .option arch, +zicsr
+    csrr a0, mcause
+    csrr a1, mepc
+    csrr a2, mtval
+    .option pop
+    call trap_report
+6:
+    j 6b

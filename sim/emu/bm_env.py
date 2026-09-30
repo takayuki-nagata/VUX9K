@@ -4,6 +4,7 @@
 """Shared setup for the firmware tests on the emulator (Boot Manager + Resident Loader)."""
 
 import os
+import re
 import struct
 
 from vux9k import FIRMWARE_DIR, REPO_ROOT, UART_BIT, start_soc, wait_for
@@ -13,7 +14,8 @@ PROMPT = b"vux> "
 # check read up to a whole slot, ~10-20M cycles; this is a generous upper bound
 BOOT_CYCLES = 60_000_000
 BANNER = "VUX9K Dual-ISA RISC-V / Hack SoC Boot Manager (v1)"
-BOOT_MGR_VERSION = 10  # firmware/boot_manager/src/main.rs
+with open(os.path.join(REPO_ROOT, "firmware", "boot_manager", "src", "main.rs")) as _f:
+    BOOT_MGR_VERSION = int(re.search(r"const BOOT_MGR_VERSION: u32 = (\d+);", _f.read()).group(1))
 # lui a1,0x40000; addi a0,zero,'#'; sb a0,0(a1); j .
 HASH_PAYLOAD = struct.pack("<IIII", 0x400005B7, 0x02300513, 0x00A58023, 0x0000006F)
 BM_BIN = os.path.join(FIRMWARE_DIR, "firmware.bin")

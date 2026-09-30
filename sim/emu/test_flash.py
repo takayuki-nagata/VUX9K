@@ -55,15 +55,7 @@ def test_flash_and_boot_hack_demo(tool):
 
 # The 'w' count is one raw byte: 10 and 13 are LF and CR
 @pytest.mark.parametrize("sectors", [9, 10, 11, 13])
-def test_flash_every_sector_count(tool, sectors, request):
-    if sectors in (10, 13):
-        request.applymarker(
-            pytest.mark.xfail(
-                strict=True,
-                reason="firmware bug (step 6): the Boot Manager skips CR/LF while reading the sector "
-                "count byte, so 10 and 13 time out",
-            )
-        )
+def test_flash_every_sector_count(tool, sectors):
     soc, ser = tool
     payload = HASH_PAYLOAD + bytes(sectors * 512 - 64 - len(HASH_PAYLOAD))
     meta = vux_tool.flash_slot(ser, payload, slot=4, name="Count", mode="riscv")

@@ -320,6 +320,20 @@ fn upload_skips_line_ends_before_the_slot_id() {
 }
 
 #[test]
+fn upload_takes_every_sector_count() {
+    // 10 and 13 are LF and CR: a count, not line ends to skip
+    for count in [9u8, 10, 13, 64] {
+        let mut d = disk();
+        let out = run_upload(&sectors_of(2, count), &mut d);
+        assert!(
+            out.contains(&std::format!("[READY-COUNT:{count}]")),
+            "{count}: {out}"
+        );
+        assert_eq!(d.written.len(), count as usize);
+    }
+}
+
+#[test]
 fn upload_rejects_what_the_host_should_not_send() {
     for (input, err) in [
         (&[0x0B][..], "[SD-ERR] Invalid slot ID: 0x0B\n"),

@@ -7,7 +7,6 @@ take. No card or unreadable sectors, SD v1 and CMD1-only cards, the catalog's
 Hack/unnamed/system slots, and every error of the 'w' protocol.
 """
 
-import pytest
 from bm_env import BOOT_CYCLES, HASH_PAYLOAD, PROMPT, boot, cmd
 from vux9k import UART_BIT, ms, slot_image, slot_lba, start_soc, vux_tool, wait_for
 
@@ -35,7 +34,7 @@ def test_diag_sees_the_button_pressed():
     send(soc, b"t")
     wait_for(soc, b"[CMD:0x74]", ms(10), start=start)  # press only once 't' is being run
     soc.set_button(True)
-    wait_for(soc, b"PRESSED [PASS]", ms(3000))
+    wait_for(soc, b"User Button (S2): PRESSED\n", ms(3000))
     soc.set_button(False)
     wait_for(soc, PROMPT, ms(3000), start=len(soc.uart_received()))
 
@@ -94,7 +93,8 @@ def test_write_rejects_a_bad_sector_count():
 def test_write_times_out_waiting_for_the_count_or_the_data():
     soc, _ = boot()
     assert "[SD-ERR] Sector count timeout!" in write_until(soc, PROMPT, b"\x01")
-    out = write_until(soc, PROMPT, b"\r\x01", b"\n\x01", b"x" * 100)
+    # A line end before the slot ID is skipped; the count byte is taken as it is (\n = 10)
+    out = write_until(soc, PROMPT, b"\r\x01", b"\x01", b"x" * 100)
     assert "[SD-ERR] Timeout at sector 0, byte 100" in out, out
 
 
@@ -128,15 +128,16 @@ def test_card_that_never_becomes_ready():
     assert "[SD] Init Failed / No Card!" in cmd(soc, "i", timeout_cycles=4 * BOOT_CYCLES)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="firmware bug (step 6): mtvec stays 0, so an exception silently restarts the Boot Manager",
-)
 def test_exception_is_reported():
     soc, _ = boot()
     soc.run(ms(1))
     pc = soc.pc  # the next instruction of the Boot Manager's idle loop
+    mark = len(soc.uart_received())
     soc.load_iram_words([0], start=pc // 4)  # all-zero word: illegal instruction
-    out = wait_for(soc, b"[TRAP]", ms(10), start=len(soc.uart_received()))
-    out += wait_for(soc, b"\n", ms(10), start=len(soc.uart_received()))
-    assert f"mcause=0x00000002 mepc=0x{pc:08X}" in out, out
+    out = wait_for(soc, b"Reset the board.\n", ms(20), start=mark)
+    assert f"[TRAP] mcause=0x00000002 mepc=0x{pc:08X} mtval=0x00000000" in out, out
+    # Stopped, blinking alternate LEDs; nothing more on the UART (no restart)
+    end = len(soc.uart_received())
+    soc.run(ms(300))
+    assert soc.leds in (0x2A, 0x15)
+    assert len(soc.uart_received()) == end

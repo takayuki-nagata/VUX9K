@@ -17,6 +17,7 @@ Performs end-to-end hardware verification on Sipeed Tang Nano 9K & MicroSD card:
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -26,6 +27,15 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 
 import tools.vux_tool as vux_tool  # noqa: E402 (needs REPO_ROOT on sys.path)
+
+
+def boot_manager_version():
+    """BOOT_MGR_VERSION of the Boot Manager being tested (tests 4, 11-13 flash slot 0 relative to it)."""
+    with open(os.path.join(REPO_ROOT, "firmware", "boot_manager", "src", "main.rs")) as f:
+        return int(re.search(r"const BOOT_MGR_VERSION: u32 = (\d+);", f.read()).group(1))
+
+
+BM_VERSION = boot_manager_version()
 
 # What the suite flashes: the local build outputs, or with --dist DIR a `make dist` tree
 FILES = {
@@ -108,7 +118,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
         boot_mgr_bin = FILES["boot_manager"]
         test_name_flash_s0 = "4. Flash Slot 0: Boot Manager ('w' / vux_tool.flash_slot)"
         try:
-            meta = vux_tool.flash_slot(ser, boot_mgr_bin, slot=0, name="Boot Manager", mode="riscv", version=10)
+            meta = vux_tool.flash_slot(ser, boot_mgr_bin, slot=0, name="Boot Manager", mode="riscv", version=BM_VERSION)
             results.append(
                 (
                     test_name_flash_s0,
@@ -245,7 +255,13 @@ def run_hardware_test_suite(port="auto", baud=115200):
         test_name_crc = "11. Negative Test: CRC32 Corrupted Payload Rejection (Slot 0)"
         try:
             vux_tool.flash_slot(
-                ser, boot_mgr_bin, slot=0, name="CorruptBM", mode="riscv", version=11, crc_override=0xDEADBEEF
+                ser,
+                boot_mgr_bin,
+                slot=0,
+                name="CorruptBM",
+                mode="riscv",
+                version=BM_VERSION + 1,
+                crc_override=0xDEADBEEF,
             )
             out = vux_tool.reboot_soc(ser, timeout=8.0)
             passed = "CRC32 mismatch" in out or "Corrupted payload" in out or "invalid" in out
@@ -260,7 +276,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
             # Rollback Slot 0 back to valid Version 10
             time.sleep(0.5)
             vux_tool.sync_prompt(ser, timeout=4.0)
-            vux_tool.flash_slot(ser, boot_mgr_bin, slot=0, name="Boot Manager", mode="riscv", version=10)
+            vux_tool.flash_slot(ser, boot_mgr_bin, slot=0, name="Boot Manager", mode="riscv", version=BM_VERSION)
             results.append((test_name_crc, passed, msg))
             print_test_result(test_name_crc, passed, msg)
         except Exception as e:
@@ -294,16 +310,18 @@ def run_hardware_test_suite(port="auto", baud=115200):
         # -------------------------------------------------------------
         test_name_update = "13. Boot Manager v2 Self-Update & Rollback to v1"
         try:
-            vux_tool.flash_slot(ser, boot_mgr_bin, slot=0, name="BootMgr v2", mode="riscv", version=11)
+            vux_tool.flash_slot(ser, boot_mgr_bin, slot=0, name="BootMgr v2", mode="riscv", version=BM_VERSION + 1)
             out = vux_tool.reboot_soc(ser, timeout=8.0)
             passed = (
-                "Verified valid Boot Manager update" in out or "Booted newly updated" in out or "v11" in out
+                "Verified valid Boot Manager update" in out
+                or "Booted newly updated" in out
+                or f"v{BM_VERSION + 1}" in out
             ) and ("Auto-updating" in out or "Booted newly updated" in out)
             if passed and "vux>" not in out:
                 p_ok, _ = vux_tool.sync_prompt(ser, timeout=4.0)
                 passed = passed and p_ok
             msg = (
-                "Verified automatic Boot Manager self-update from Slot 0 (v11)"
+                f"Verified automatic Boot Manager self-update from Slot 0 (v{BM_VERSION + 1})"
                 if passed
                 else f"Failed self-update. Output: {out!r}"
             )
@@ -311,7 +329,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
             # Rollback Slot 0 back to Version 10 for clean state
             time.sleep(0.5)
             vux_tool.sync_prompt(ser, timeout=4.0)
-            vux_tool.flash_slot(ser, boot_mgr_bin, slot=0, name="Boot Manager", mode="riscv", version=10)
+            vux_tool.flash_slot(ser, boot_mgr_bin, slot=0, name="Boot Manager", mode="riscv", version=BM_VERSION)
 
             results.append((test_name_update, passed, msg))
             print_test_result(test_name_update, passed, msg)
