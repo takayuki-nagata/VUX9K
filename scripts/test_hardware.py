@@ -4,15 +4,10 @@
 
 """
 VUX9K Automated Hardware Test Suite (test_hardware.py)
-Performs end-to-end hardware verification on Sipeed Tang Nano 9K & MicroSD card:
-1. UART connection & Prompt Synchronization
-2. Hardware Self-Diagnostics (LEDs, UART, MicroSD SPI init)
-3. MicroSD Card Sector 0 (MBR) Dump & 0x55AA Signature Check
-4. Multi-Sector Flash: Hack 16-bit Firmware (Sector 64)
-5. Header Verification: Hack 16-bit (Magic VUX9, Mode 0)
-6. Multi-Sector Flash: RISC-V 32-bit Firmware (Sector 64)
-7. Header Verification: RISC-V 32-bit (Magic VUX9, Mode 1)
-8. SD Card Boot & Dual-ISA Execution Trigger
+End-to-end checks on a Sipeed Tang Nano 9K with a MicroSD card, through the Boot
+Manager's UART commands (README, "Real Hardware Test Suite", lists the 15 tests):
+prompt, diagnostics, MBR dump, flashing and inspecting slots 0-2, the slot catalog,
+CRC/magic rejection, Boot Manager self-update, and booting the Zephyr and Hack demos.
 """
 
 import argparse
@@ -52,6 +47,41 @@ DIST_FILES = {
 }
 
 
+def usb_hub_neighbours(tty, sysfs="/sys"):
+    """Full/low-speed USB devices sharing the board's hub, other than the board.
+
+    The board's USB-UART bridge loses output when such a device is busy on the same
+    USB 2.0 hub: it keeps 128 bytes, drops the rest and delivers the 128 bytes seconds
+    later (AGENTS.md, "Board UART output that stops"). Returns their names, or [] when
+    the board is on a root port or the port isn't a USB tty.
+    """
+    try:
+        dev = os.path.realpath(os.path.join(sysfs, "class", "tty", os.path.basename(os.path.realpath(tty)), "device"))
+    except OSError:
+        return []
+    while dev != os.path.dirname(dev) and not os.path.isfile(os.path.join(dev, "idVendor")):
+        dev = os.path.dirname(dev)
+    hub = os.path.dirname(dev)
+    if not os.path.isfile(os.path.join(dev, "idVendor")) or not os.path.isfile(os.path.join(hub, "idVendor")):
+        return []  # not USB, or on a root hub: no transaction translator to share
+
+    def read(d, name):
+        try:
+            with open(os.path.join(d, name)) as f:
+                return f.read().strip()
+        except OSError:
+            return ""
+
+    neighbours = []
+    prefix = os.path.basename(hub) + "."
+    for entry in sorted(os.listdir(hub)):
+        d = os.path.join(hub, entry)
+        if entry.startswith(prefix) and ":" not in entry and d != dev and read(d, "speed") in ("1.5", "12"):
+            label = " ".join(x for x in (read(d, "manufacturer"), read(d, "product")) if x)
+            neighbours.append(f"{label or 'unknown'} ({read(d, 'idVendor')}:{read(d, 'idProduct')})")
+    return neighbours
+
+
 def print_banner(title):
     print("\n" + "=" * 70)
     print(f"  {title}")
@@ -74,6 +104,15 @@ def run_hardware_test_suite(port="auto", baud=115200):
     except Exception as e:
         print_test_result("0. Port Connection", False, str(e))
         return False
+
+    neighbours = usb_hub_neighbours(ser.port)
+    hub_hint = ""
+    if neighbours:
+        hub_hint = (
+            "USB devices share the board's hub (" + ", ".join(neighbours) + "); they can make the board's "
+            "USB-UART bridge drop output. Give the board its own USB port or hub."
+        )
+        print(f"\033[93m[WARN]\033[0m {hub_hint}")
 
     try:
         # -------------------------------------------------------------
@@ -273,7 +312,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
                 if passed
                 else f"Failed CRC check. Output: {out!r}"
             )
-            # Rollback Slot 0 back to valid Version 10
+            # Restore Slot 0 to the Boot Manager under test
             time.sleep(0.5)
             vux_tool.sync_prompt(ser, timeout=4.0)
             vux_tool.flash_slot(ser, boot_mgr_bin, slot=0, name="Boot Manager", mode="riscv", version=BM_VERSION)
@@ -326,7 +365,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
                 else f"Failed self-update. Output: {out!r}"
             )
 
-            # Rollback Slot 0 back to Version 10 for clean state
+            # Restore Slot 0 to the Boot Manager under test
             time.sleep(0.5)
             vux_tool.sync_prompt(ser, timeout=4.0)
             vux_tool.flash_slot(ser, boot_mgr_bin, slot=0, name="Boot Manager", mode="riscv", version=BM_VERSION)
@@ -338,9 +377,9 @@ def run_hardware_test_suite(port="auto", baud=115200):
             print_test_result(test_name_update, False, str(e))
 
         # -------------------------------------------------------------
-        # Test 14: Boot Slot 1: Rust App Execution & Return
+        # Test 14: Boot Slot 1: Zephyr Rust demo
         # -------------------------------------------------------------
-        test_name_boot_s1 = "14. Boot Slot 1: Rust App Execution & Return ('1' / vux_tool.boot_slot)"
+        test_name_boot_s1 = "14. Boot Slot 1: Zephyr Rust App Execution ('1' / vux_tool.boot_slot)"
         out = vux_tool.boot_slot(ser, slot=1, timeout=8.0)
         passed = (
             ("[RL] Slot 1" in out)
@@ -348,10 +387,12 @@ def run_hardware_test_suite(port="auto", baud=115200):
             and ("All Rust application tasks finished successfully!" in out)
         )
         msg = "Executed the Zephyr Rust application tasks" if passed else f"Failed Slot 1 execution. Output: {out!r}"
+        if not passed and hub_hint:
+            msg += f"\n       -> {hub_hint}"
         results.append((test_name_boot_s1, passed, msg))
         print_test_result(test_name_boot_s1, passed, msg)
 
-        # Reset board via openFPGALoader to return cleanly to Boot Manager (known issue: app return SDHC reload)
+        # A launched application never returns to the Boot Manager: reconfigure the FPGA to get it back
         ser.close()
         pack_fs = FILES["pack_fs"]
         loader_bin = shutil.which("openFPGALoader") or os.path.expanduser("~/.local/oss-cad-suite/bin/openFPGALoader")
@@ -387,10 +428,12 @@ def run_hardware_test_suite(port="auto", baud=115200):
             if passed
             else f"Failed Slot 2 execution. Output: {out!r}"
         )
+        if not passed and hub_hint:
+            msg += f"\n       -> {hub_hint}"
         results.append((test_name_boot_s2, passed, msg))
         print_test_result(test_name_boot_s2, passed, msg)
 
-        # Reload bitstream via openFPGALoader to return cleanly to Boot Manager
+        # Reconfigure the FPGA again, so the board is left at the Boot Manager
         ser.close()
         pack_fs = FILES["pack_fs"]
         loader_bin = shutil.which("openFPGALoader") or os.path.expanduser("~/.local/oss-cad-suite/bin/openFPGALoader")

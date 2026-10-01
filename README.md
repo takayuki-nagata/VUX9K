@@ -403,7 +403,7 @@ Short tests run on Icarus, long SoC/GLS runs on Verilator (`SIM_UNIT` / `SIM_SOC
 15. **Boot Slot 2: Hack 16-bit Firmware Execution** (`2` / `vux_tool.boot_slot`: Hack C firmware execution and test pass)
 
 > [!NOTE]
-> Between steps 13→14 and 14→15, `test_hardware.py` reloads the SRAM bitstream via `openFPGALoader` as a recovery workaround for a known app-return SDHC re-init issue.
+> After steps 14 and 15, `test_hardware.py` reloads the SRAM bitstream via `openFPGALoader`: a launched application never returns to the Boot Manager, and reconfiguring the FPGA is the way back. Before the tests, it warns when other full/low-speed USB devices share the board's USB hub, which makes the board's USB-UART bridge drop output (see `docs/APP_DEVELOPMENT.md`).
 
 ### Board Smoke Test of Routed Seeds (`make hw-smoke`)
 
