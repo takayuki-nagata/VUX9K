@@ -13,9 +13,9 @@ PROMPT = b"vux> "
 # Boot Manager start to prompt: SD init (retries without a card) and the slot-0 update
 # check read up to a whole slot, ~10-20M cycles; this is a generous upper bound
 BOOT_CYCLES = 60_000_000
-BANNER = "VUX9K Dual-ISA RISC-V / Hack SoC Boot Manager (v1)"
 with open(os.path.join(REPO_ROOT, "firmware", "boot_manager", "src", "main.rs")) as _f:
     BOOT_MGR_VERSION = int(re.search(r"const BOOT_MGR_VERSION: u32 = (\d+);", _f.read()).group(1))
+BANNER = f"VUX9K Dual-ISA RISC-V / Hack SoC Boot Manager (v{BOOT_MGR_VERSION})"
 # lui a1,0x40000; addi a0,zero,'#'; sb a0,0(a1); j .
 HASH_PAYLOAD = struct.pack("<IIII", 0x400005B7, 0x02300513, 0x00A58023, 0x0000006F)
 BM_BIN = os.path.join(FIRMWARE_DIR, "firmware.bin")

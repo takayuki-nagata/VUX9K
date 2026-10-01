@@ -347,7 +347,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
         # -------------------------------------------------------------
         # Test 13: Boot Manager v2 Self-Update and Rollback
         # -------------------------------------------------------------
-        test_name_update = "13. Boot Manager v2 Self-Update & Rollback to v1"
+        test_name_update = "13. Boot Manager Self-Update & Rollback"
         try:
             vux_tool.flash_slot(ser, boot_mgr_bin, slot=0, name="BootMgr v2", mode="riscv", version=BM_VERSION + 1)
             out = vux_tool.reboot_soc(ser, timeout=8.0)

@@ -18,10 +18,9 @@ import sys
 import cocotb
 
 sys.path.append(os.path.dirname(__file__))
-from soc_env import mbr_sector, send_and_wait, slot_image, start_soc
+from soc_env import BANNER, mbr_sector, send_and_wait, slot_image, start_soc
 
 PROMPT = b"vux> "
-BANNER = "VUX9K Dual-ISA RISC-V / Hack SoC Boot Manager (v1)"
 SLOT1_NAME = "CliTest"
 # Slot 1 payload: lui a1,0x40000; addi a0,zero,'#'; sb a0,0(a1); j .
 SLOT1_PAYLOAD = struct.pack("<IIII", 0x400005B7, 0x02300513, 0x00A58023, 0x0000006F)

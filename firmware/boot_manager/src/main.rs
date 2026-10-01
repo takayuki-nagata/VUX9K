@@ -53,7 +53,9 @@ fn knight_rider(passes: u32, step_ms: u32) {
 fn print_banner() {
     Uart::print_str("\n");
     Uart::print_str("====================================================\n");
-    Uart::print_str("  VUX9K Dual-ISA RISC-V / Hack SoC Boot Manager (v1)\n");
+    Uart::print_str("  VUX9K Dual-ISA RISC-V / Hack SoC Boot Manager (v");
+    Uart::print_dec(BOOT_MGR_VERSION);
+    Uart::print_str(")\n");
     Uart::print_str("  Board: Sipeed Tang Nano 9K (Gowin GW1NR-9)\n");
     Uart::print_str("  Clock: 18.0 MHz | UART: 115200 bps | SPI: 400 kHz\n");
     Uart::print_str("====================================================\n\n");
@@ -174,7 +176,7 @@ fn dump_sector_0() {
 
 /// Raise it with every Boot Manager change: boards install a slot-0 image only when
 /// its header's version is greater (fw_common::update::precheck).
-const BOOT_MGR_VERSION: u32 = 11;
+const BOOT_MGR_VERSION: u32 = 12;
 #[inline(never)]
 fn check_boot_manager_update() {
     // 0. Update boot check: if newly loaded from an update, skip checks and clear mailbox

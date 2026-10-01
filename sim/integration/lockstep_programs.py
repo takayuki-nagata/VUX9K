@@ -216,6 +216,35 @@ def traps() -> list:
     return a.assemble()
 
 
+def hack_soft_reset(key_by_addition: bool = True) -> list:
+    """Hack: print 'R', store the soft-reset key to GPIO 0x600C, spin. Hack registers are
+    32 bits wide, so 0x255A + 0x4000 + 0x4000 is 0x0000_A55A, a key the GPIO accepts, and
+    the program restarts from 0 (ISA detected again); 0xFFFF_A55A from !0x5AA5 is not."""
+    import hack_asm
+
+    a = hack_asm.Asm()
+    a.at(ord("R"))
+    a.c("D=A")
+    a.at(0x6000)  # UART data
+    a.c("M=D")
+    if key_by_addition:
+        a.at(0x255A)
+        a.c("D=A")
+        a.at(0x4000)
+        a.c("D=D+A")
+        a.at(0x4000)
+        a.c("D=D+A")
+    else:
+        a.at(0x5AA5)
+        a.c("D=!A")
+    a.at(0x600C)  # GPIO soft reset
+    a.c("M=D")
+    a.label("spin")
+    a.at("spin")
+    a.c("0;JMP")
+    return a.assemble()
+
+
 # --- firmware and demo programs --------------------------------------------------------
 def _hex_words(path):
     with open(path) as f:
@@ -258,6 +287,7 @@ def programs() -> list:
             slow=True,
         )
     )
+    progs.append(Program("hack_soft_reset", cycles=20_000, imem_words=hack_soft_reset()))
     seeds = os.environ.get("LOCKSTEP_SEEDS", "")
     for s in [int(x) for x in seeds.split(",") if x]:
         progs.append(Program(f"random_rv_{s}", cycles=200_000, imem_words=random_rv(s, blocks=1500), slow=True))

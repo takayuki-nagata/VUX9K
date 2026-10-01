@@ -210,8 +210,12 @@ At start, an application finds:
   the timer (`MTI`) and UART receive (`MEI`, while the receive FIFO holds data).
 
 Writing `0x5A5A_A55A` to `0x4000_300C` resets the CPU only, like S1: it restarts the
-application (the instruction RAM now holds it). To return to the Boot Manager,
-reconfigure the FPGA as in section 2.
+application (the instruction RAM now holds it). A Hack application writes `0x0000_A55A`
+to `0x600C` instead, formed by addition such as `0x255A + 0x4000 + 0x4000` (an `@n` holds
+at most `0x7FFF`). After such a reset the CPU guesses the ISA from the first instruction
+word ([ISA selection](../README.md#hack-mode-address-space-16-bit-word-addresses) in the
+README) unless the application first writes it to GPIO register `0x8` (`0x101` RV32,
+`0x100` Hack). To return to the Boot Manager, reconfigure the FPGA as in section 2.
 
 **If output stops after ~128 bytes** or arrives seconds late: the Tang Nano 9K's on-board
 USB-UART bridge (BL702) does this when another full-speed USB device is busy on the same

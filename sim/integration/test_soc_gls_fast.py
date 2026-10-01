@@ -12,10 +12,9 @@ import sys
 import cocotb
 
 sys.path.append(os.path.dirname(__file__))
-from soc_env import start_soc
+from soc_env import BANNER, start_soc
 
 SAFE_MODE = "[SAFE MODE] Button S2 held. Bypassing Slot 0 auto-update."
-BANNER = "VUX9K Dual-ISA RISC-V / Hack SoC Boot Manager (v1)"
 
 
 @cocotb.test()

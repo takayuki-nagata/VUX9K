@@ -3,6 +3,8 @@
 
 """CPU basics on the emulator, through programs (ported from sim/emulator/test_emulator.py)."""
 
+import pytest
+from lockstep_programs import hack_soft_reset
 from rv32_asm import Asm
 from vux9k import Soc
 
@@ -104,3 +106,18 @@ def test_byte_and_halfword_stores_to_dram():
 
     soc = run_program(prog, 8)
     assert soc.dram_word(0) == 0x1234ABFF
+
+
+@pytest.mark.parametrize("key_by_addition", [True, False])
+def test_hack_soft_reset_key(key_by_addition):
+    """A Hack program can soft-reset the CPU (lockstep_programs.hack_soft_reset): the
+    key it forms by addition is accepted, the one formed with ! is not."""
+    soc = Soc("real")
+    soc.load_iram_words(hack_soft_reset(key_by_addition))
+    soc.run(200_000)  # ~17 UART bytes' time
+    assert not soc.riscv_mode
+    sent = soc.uart_received()
+    if key_by_addition:
+        assert sent.count(b"R") >= 2, sent  # restarted from 0 after the soft reset
+    else:
+        assert sent == b"R", sent
