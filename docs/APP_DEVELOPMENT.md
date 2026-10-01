@@ -213,10 +213,10 @@ Writing `0x5A5A_A55A` to `0x4000_300C` resets the CPU only, like S1: it restarts
 application (the instruction RAM now holds it). To return to the Boot Manager,
 reconfigure the FPGA as in section 2.
 
-**Known issue:** the Tang Nano 9K's on-board USB-UART bridge (BL702) sometimes stops
-passing data for a few seconds and drops bytes that arrive right after such a pause. It is
-on the host side, not in the SoC; a test that reads long output automatically should
-tolerate a missing line or retry.
+**If output stops after ~128 bytes** or arrives seconds late: the Tang Nano 9K's on-board
+USB-UART bridge (BL702) does this when another full-speed USB device is busy on the same
+USB hub. It is on the host side, not in the SoC. Plug the board into its own USB port or
+hub.
 
 ## 6. Reference
 

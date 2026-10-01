@@ -141,6 +141,24 @@ eqy can't see this (zero-delay models, and both sides of eqy come from Yosys). S
   declares only the parameters `board_top` sets; setting another one makes GLS fail to
   elaborate until the model declares it.
 
+## Board UART output that stops: check the USB hub before the firmware
+
+The board's USB-UART bridge (BL702, full speed) can lose output because of the host's
+USB setup, typically another full-speed device busy on the same USB 2.0 hub (found
+2026-10). The loss is deterministic, not random: after a short pass-through, the bridge
+keeps the first 128 B, drops the rest, and delivers the 128 B seconds later. A timing
+change in the firmware can therefore look exactly like a regression: the Resident
+Loader's check pass (`c70d180`) only delayed the demo's output, and `make test-hw` failed
+tests 14/15 until the board had a hub to itself.
+- **Before suspecting the SoC or firmware for lost board output, check the USB topology**
+  (`lsusb -t`): give the board its own port or hub.
+- **Tell device from host with the LEDs**, not the UART: write progress to the GPIO LED
+  register (`0x4000_3000`; software writes 1 = lit, the RTL inverts the pins). A
+  `putc` that waits on TX-full can't finish with a stopped transmitter, so a program
+  that reaches its last LED step has sent every byte.
+- Numbered lines of one length, sent with known gaps and read with arrival timestamps,
+  show in one run which output the host path drops or delays.
+
 ## Veryl module resolution is directory-agnostic
 
 `veryl build`/`veryl check` scan the whole project root recursively for `.veryl`
@@ -378,7 +396,7 @@ All SoC tests are on `soc_env`/`tb_soc_top`; keep new ones there too.
 long SoC/GLS runs on Verilator (`SIM_SOC`): `sim-soc-fast`, `sim-hw-flow`,
 `sim-soc-gls-fast`, `sim-gls-hw-flow`. Measured 2026-09 (wall time incl. compile):
 hw-flow RTL 860 s (Icarus) -> ~30 s; gls-fast ~1,050 s -> ~33 s. Verilator needs
-`perl` (not on the Silverblue host — run it inside the `fedora-toolbox-43` toolbox).
+`perl`; on a host without it, run Verilator from a container or toolbox that has it.
 - **Don't let cocotb's `--public-flat-rw` back in.** cocotb's Verilator runner
   adds it unconditionally; it makes every signal VPI-visible and blocks most of
   Verilator's optimization — on the gate-level netlist it was ~18x slower to

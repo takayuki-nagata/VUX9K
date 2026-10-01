@@ -418,8 +418,8 @@ stay exactly those of the seed; the SD card and the boot chain are not involved.
 branches, dependent sub/branch loops, back-to-back dependencies, loads/stores of every
 width, all registers) against the values the emulator computes, one line each, then
 `RESULT PASS|FAIL <passed>/<total> <failure mask>`, repeated every 2 s: the host's
-USB-UART bridge can drop output after a pause or right after programming, and the
-repeated line alone carries the verdict. Its LEDs: 0x01 from the first instruction, the test number while
+USB-UART bridge drops output when another full-speed device shares its USB hub
+(see `docs/APP_DEVELOPMENT.md`), and the repeated line alone carries the verdict. Its LEDs: 0x01 from the first instruction, the test number while
 it runs, 0x15/0x2A alternating on PASS, the first failing test number blinking on
 FAIL, 0x2A steady on a trap. `sim/emu/test_hw_test.py` keeps it passing on the
 emulator.
