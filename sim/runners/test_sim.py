@@ -23,6 +23,9 @@ UNIT = [
     ("hack_translator", "test_hack_translator"),
     ("rv32i_regfile", "test_rv32i_regfile"),
     ("rv32i_csrs", "test_rv32i_csrs"),
+    ("rv32i_lsu", "test_rv32i_lsu"),
+    ("next_pc_unit", "test_next_pc_unit"),
+    ("rv32i_trap_unit", "test_rv32i_trap_unit"),
     ("auto_mode_detector", "test_auto_mode_detector"),
     ("unified_cpu", "test_unified_cpu"),
     ("unified_cpu", "test_hack_cpu_ops"),
@@ -37,6 +40,7 @@ UNIT = [
     ("uart_controller", "test_uart_controller"),
     ("timer_core", "test_timer_core"),
     ("gpio_controller", "test_gpio_controller"),
+    ("soc_addr_decoder", "test_soc_addr_decoder"),
     ("sdcard_spi", "test_sdcard_spi"),
     ("soc_ram", "test_soc_ram"),
     ("tb_gowin_bram", "test_gowin_bram"),  # SP/SDPB cell models (no netlist uses them)
