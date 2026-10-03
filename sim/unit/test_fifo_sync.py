@@ -1,6 +1,9 @@
 # Copyright (c) 2026 Takayuki Nagata
 # SPDX-License-Identifier: MIT
 
+import random
+from collections import deque
+
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import FallingEdge, Timer
@@ -138,3 +141,41 @@ async def test_fifo_full_write_and_read(dut):
     await Timer(1, unit="ns")
     assert got == expected, f"order broken: first {got[:3]}..., last {got[-3:]}; expected ...{expected[-3:]}"
     assert int(dut.empty.value) == 1
+
+
+@cocotb.test()
+async def test_fifo_random(dut):
+    """Random writes and reads against a deque, in phases that fill the FIFO up to full and
+    drain it to empty, so both edges see every we/re combination; rdata, full and empty
+    are checked every cycle"""
+    cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
+    await FallingEdge(dut.clk)
+    dut.rst.value = 0
+    dut.we.value = 0
+    dut.re.value = 0
+    dut.wdata.value = 0
+    await FallingEdge(dut.clk)
+    dut.rst.value = 1
+
+    depth = 1 << 8  # fifo_sync's default LOG_DEPTH (parameters aren't VPI-visible under Verilator)
+    model = deque()
+    width_mask = (1 << len(dut.wdata)) - 1
+    history = deque(maxlen=8)  # the last cycles' (we, re), for failure messages
+    for p_we, p_re in ((0.9, 0.2), (0.2, 0.9), (0.95, 0.5), (0.5, 0.95), (0.5, 0.5)) * 2:
+        for _ in range(depth * 2):
+            we, re = random.random() < p_we, random.random() < p_re
+            data = random.getrandbits(32) & width_mask
+            dut.we.value, dut.re.value, dut.wdata.value = int(we), int(re), data
+            await Timer(1, unit="ns")
+            ctx = f"{len(model)} entries; last (we, re): {list(history)}"
+            assert int(dut.empty.value) == (len(model) == 0), f"empty={int(dut.empty.value)} with {ctx}"
+            assert int(dut.full.value) == (len(model) == depth), f"full={int(dut.full.value)} with {ctx}"
+            if model:
+                assert int(dut.rdata.value) == model[0], f"rdata is not the head, {ctx}"
+            history.append((int(we), int(re)))
+            do_read = re and len(model) > 0
+            if we and (len(model) < depth or do_read):
+                model.append(data)
+            if do_read:
+                model.popleft()
+            await FallingEdge(dut.clk)

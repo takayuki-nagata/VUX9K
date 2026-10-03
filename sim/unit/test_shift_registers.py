@@ -1,6 +1,8 @@
 # Copyright (c) 2026 Takayuki Nagata
 # SPDX-License-Identifier: MIT
 
+import random
+
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import FallingEdge, Timer
@@ -60,3 +62,28 @@ async def test_shift_registers(dut):
     assert int(dut.pout.value) == 0x2A5, "Contents changed while ce=0!"
 
     dut._log.info("Shift registers verified successfully [PASS]")
+
+
+@cocotb.test()
+async def test_shift_registers_random(dut):
+    """Random ce/set/sin/pin every cycle against a model (set only counts with ce)"""
+    cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
+    dut.rst.value = 0
+    dut.ce.value = 0
+    dut.set.value = 0
+    dut.sin.value = 0
+    dut.pin.value = 0
+    await FallingEdge(dut.clk)
+    await FallingEdge(dut.clk)
+    dut.rst.value = 1
+    size = 10  # shift_registers' default SIZE
+    model = (1 << size) - 1
+    for _ in range(2000):
+        ce, st, sin = random.getrandbits(1), int(random.random() < 0.2), random.getrandbits(1)
+        pin = random.getrandbits(size)
+        dut.ce.value, dut.set.value, dut.sin.value, dut.pin.value = ce, st, sin, pin
+        await FallingEdge(dut.clk)
+        if ce:
+            model = pin if st else (sin << (size - 1)) | (model >> 1)
+        assert int(dut.pout.value) == model, f"pout 0x{int(dut.pout.value):x} != 0x{model:x}"
+        assert int(dut.sout.value) == model & 1

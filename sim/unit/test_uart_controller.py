@@ -1,9 +1,11 @@
 # Copyright (c) 2026 Takayuki Nagata
 # SPDX-License-Identifier: MIT
 
+import random
+
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import FallingEdge, Timer
+from cocotb.triggers import Edge, FallingEdge, Timer
 
 
 async def loopback_wire(dut):
@@ -140,3 +142,61 @@ async def test_uart_controller_error_flags(dut):
     await FallingEdge(dut.clk)
     dut.clr_err.value = 0
     assert int(dut.frame_err.value) == 0, "clr_err must clear frame_err"
+
+
+@cocotb.test()
+async def test_uart_controller_random_loopback(dut):
+    """Random bursts into the TX FIFO (some while it is full: dropped), random reads of the
+    RX FIFO and pauses, over a txd->rxd loopback: the bytes read are exactly the accepted
+    ones, in order, with no overrun or framing error"""
+    period_ns = 20
+    cocotb.start_soon(Clock(dut.clk, period_ns, unit="ns").start())
+    await FallingEdge(dut.clk)
+    dut.rst.value = 0
+    for sig in ("we", "re", "clr_err", "wdata"):
+        getattr(dut, sig).value = 0
+    dut.rxd.value = 1
+    await FallingEdge(dut.clk)
+    dut.rst.value = 1
+
+    async def loopback():  # txd is a register output: no glitches to follow
+        while True:
+            await Edge(dut.txd)
+            dut.rxd.value = dut.txd.value
+
+    cocotb.start_soon(loopback())
+    frame_ns = 10 * 434 * period_ns  # uart_controller's default CNT
+    accepted, received = [], []
+
+    async def read_all():
+        while not int(dut.empty.value):
+            received.append(int(dut.rdata.value))
+            dut.re.value = 1
+            await FallingEdge(dut.clk)
+            dut.re.value = 0
+            await Timer(1, unit="ns")
+
+    while len(accepted) < 60:
+        r = random.random()
+        if r < 0.4:  # a burst, possibly past full
+            for _ in range(random.randint(1, 40)):
+                data = random.getrandbits(8)
+                dut.wdata.value = data
+                dut.we.value = 1
+                await Timer(1, unit="ns")
+                if not int(dut.full.value):
+                    accepted.append(data)
+                await FallingEdge(dut.clk)
+            dut.we.value = 0
+        elif r < 0.7:
+            await read_all()
+        else:
+            await Timer(random.randint(1, 3 * frame_ns), unit="ns")
+            await FallingEdge(dut.clk)
+            await read_all()  # often enough that the RX FIFO can't overflow
+    for _ in range(len(accepted) - len(received) + 2):  # the rest is at most one frame each
+        await Timer(frame_ns, unit="ns")
+        await FallingEdge(dut.clk)
+        await read_all()
+    assert received == accepted, f"accepted {len(accepted)} bytes, read {len(received)}"
+    assert (int(dut.overrun.value), int(dut.frame_err.value)) == (0, 0)

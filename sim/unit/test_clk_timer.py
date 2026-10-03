@@ -1,6 +1,8 @@
 # Copyright (c) 2026 Takayuki Nagata
 # SPDX-License-Identifier: MIT
 
+import random
+
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import FallingEdge
@@ -59,3 +61,23 @@ async def test_clk_timer_clr_restarts_period(dut):
         await FallingEdge(dut.clk)
         edges += 1
     assert edges == cnt, f"alarm {edges} edges after clr, expected a full period ({cnt})"
+
+
+@cocotb.test()
+async def test_clk_timer_random_clr(dut):
+    """Random clr pulses (incl. on the alarm cycle and back to back) against a counter
+    model: alm exactly when the model's counter is 0, every cycle"""
+    cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
+    await FallingEdge(dut.clk)
+    dut.rst.value = 0
+    dut.clr.value = 0
+    await FallingEdge(dut.clk)
+    dut.rst.value = 1
+    cnt = 434  # clk_timer's default CNT
+    counter = cnt - 1
+    for _ in range(5 * cnt):
+        assert int(dut.alm.value) == (counter == 0), f"alm with the counter at {counter}"
+        clr = random.random() < (0.5 if counter < 3 else 0.004)  # often right at the alarm
+        dut.clr.value = int(clr)
+        await FallingEdge(dut.clk)
+        counter = cnt - 1 if clr or counter == 0 else counter - 1

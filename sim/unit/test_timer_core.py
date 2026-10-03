@@ -9,9 +9,12 @@ Reads are registered: data_out reflects the addressed register at the previous
 rising edge.
 """
 
+import random
+
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, FallingEdge
+from unit_models import rand32
 
 ALL_ONES = 0xFFFFFFFF
 
@@ -125,3 +128,69 @@ async def test_mtime_low_write_does_not_carry(dut):
     assert await read(dut, 0x4) == 7, "low-word write must not carry into the high word"
     lo = await read(dut, 0x0)
     assert 0x100 <= lo < 0x108, f"low word after write: 0x{lo:08X}"
+
+
+class TimerModel:
+    """timer_core per rising edge: reads and timer_irq show the registers before the edge;
+    mtime counts every edge, and a write to a half replaces that half (a low write also
+    drops that edge's +1, a high write keeps the low half's +1 but not its carry)."""
+
+    def __init__(self, mtime, mtimecmp):
+        self.mtime, self.mtimecmp = mtime, mtimecmp
+
+    def edge(self, we, addr, data):
+        m, c = self.mtime, self.mtimecmp
+        out = {0x0: m & ALL_ONES, 0x4: m >> 32, 0x8: c & ALL_ONES, 0xC: c >> 32}.get(addr, 0)
+        irq = int(m >= c)
+        m_next = (m + 1) & (1 << 64) - 1
+        if we and addr == 0x0:
+            m_next = m & ~ALL_ONES | data
+        elif we and addr == 0x4:
+            m_next = data << 32 | m_next & ALL_ONES
+        elif we and addr == 0x8:
+            c = c & ~ALL_ONES | data
+        elif we and addr == 0xC:
+            c = data << 32 | c & ALL_ONES
+        self.mtime, self.mtimecmp = m_next, c
+        return out, irq
+
+
+@cocotb.test()
+async def test_random_against_model(dut):
+    """Random reads and writes of every offset (unmapped ones too), with values aimed at
+    the low word's carry and at mtimecmp just around mtime, checked every cycle"""
+    await setup(dut)
+    # Known state: write mtime hi, then lo (the lo write drops that edge's increment)
+    await write(dut, 0x4, 0)
+    await write(dut, 0x0, 0)
+    await write(dut, 0x8, ALL_ONES)
+    await write(dut, 0xC, ALL_ONES)
+    # write() waits for a falling edge, writes on the next rising one and returns at the
+    # falling edge after it: each mtimecmp write takes two edges, so mtime is 4 by now
+    model = TimerModel(4, (1 << 64) - 1)
+
+    for _ in range(4000):
+        r = random.random()
+        addr = random.choice((0x0, 0x4, 0x8, 0xC)) if r < 0.85 else random.randrange(16)
+        we = random.random() < 0.3
+        m = model.mtime
+        if random.random() < 0.6:  # aim near the interesting values
+            data = (
+                random.choice(
+                    (
+                        (m & ALL_ONES) + random.randint(-3, 3),
+                        (m >> 32) + random.randint(-1, 1),
+                        ALL_ONES - random.randint(0, 6),
+                        random.randint(0, 3),
+                    )
+                )
+                & ALL_ONES
+            )
+        else:
+            data = rand32()
+        dut.we.value, dut.addr.value, dut.data_in.value = int(we), addr, data
+        out, irq = model.edge(we, addr, data)
+        await FallingEdge(dut.clk)
+        ctx = f"we={int(we)} addr=0x{addr:x} data=0x{data:08x}"
+        assert int(dut.data_out.value) == out, f"data_out 0x{int(dut.data_out.value):08x} != 0x{out:08x}, {ctx}"
+        assert int(dut.timer_irq.value) == irq, f"timer_irq, {ctx}"

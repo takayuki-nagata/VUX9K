@@ -11,9 +11,12 @@ reset pulse ends), 0xC soft reset (write 0x5A5AA55A or 0x0000A55A to pulse cpu_s
 the pulse is active). Other offsets read 0. Reads are registered (one cycle).
 """
 
+import random
+
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, FallingEdge
+from unit_models import rand32
 
 MAGIC_A = 0x5A5AA55A
 MAGIC_B = 0x0000A55A
@@ -146,3 +149,51 @@ async def test_boot_mode_register(dut):
     assert n == PULSE_CYCLES
     assert int(dut.boot_mode_valid.value) == 0, "valid must clear once the soft reset used it"
     assert await read(dut, 0x8) == 0x001, "the mode bit itself is kept"
+
+
+class GpioModel:
+    """gpio_controller per rising edge (reads show the registers before the edge). Any
+    write, even to another register, holds the soft-reset pulse counter for that cycle."""
+
+    def __init__(self):
+        self.led, self.cnt, self.valid, self.rv32, self.sync = 0, 0, 0, 0, 0b11
+
+    def edge(self, we, addr, data, btn):
+        pressed = 1 - (self.sync >> 1)
+        out = {0x0: self.led, 0x4: pressed, 0x8: self.valid << 8 | self.rv32, 0xC: int(self.cnt != 0)}.get(addr, 0)
+        if we:
+            if addr == 0x0:
+                self.led = data & 0x3F
+            elif addr == 0x8:
+                self.valid, self.rv32 = data >> 8 & 1, data & 1
+            elif addr == 0xC and data in (MAGIC_A, MAGIC_B):
+                self.cnt = PULSE_CYCLES
+        elif self.cnt:
+            if self.cnt == 1:
+                self.valid = 0
+            self.cnt -= 1
+        self.sync = (self.sync << 1 | btn) & 0b11
+        return out
+
+
+@cocotb.test()
+async def test_random_against_model(dut):
+    """Random writes/reads of every offset, near-miss magic values, boot-mode writes during
+    a pulse and button changes, checked against GpioModel every cycle"""
+    await setup(dut)
+    model = GpioModel()
+    for _ in range(3000):
+        addr = random.choice((0x0, 0x4, 0x8, 0xC)) if random.random() < 0.85 else random.randrange(16)
+        we = random.random() < 0.3
+        magic = random.choice((MAGIC_A, MAGIC_B))
+        data = random.choice((magic, magic ^ 1 << random.randrange(32), rand32(), 0x101, 0x100, 0x1))
+        btn = int(random.random() < 0.9) if random.random() < 0.95 else random.getrandbits(1)
+        dut.we.value, dut.addr.value, dut.data_in.value, dut.gpio_btn.value = int(we), addr, data, btn
+        out = model.edge(we, addr, data, btn)
+        await FallingEdge(dut.clk)
+        ctx = f"we={int(we)} addr=0x{addr:x} data=0x{data:08x}"
+        assert int(dut.data_out.value) == out, f"data_out 0x{int(dut.data_out.value):x} != 0x{out:x}, {ctx}"
+        assert int(dut.gpio_led.value) == model.led ^ 0x3F, f"gpio_led, {ctx}"
+        assert int(dut.cpu_soft_rst.value) == int(model.cnt != 0), f"cpu_soft_rst, {ctx}"
+        assert int(dut.boot_mode_valid.value) == model.valid, f"boot_mode_valid, {ctx}"
+        assert int(dut.boot_mode.value) == model.rv32, f"boot_mode, {ctx}"

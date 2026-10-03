@@ -13,6 +13,8 @@ All reads are synchronous (one clock). The initial contents come from the firmwa
 hex files the runner stages into the test directory; tests only rely on what they write.
 """
 
+import random
+
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, FallingEdge
@@ -132,3 +134,52 @@ async def test_iram_via_data_port(dut):
     dut.active_mode.value = 0
     await d_write(dut, 0x40, 0x00002222)
     assert await d_read(dut, 0x40) == 0x00002222, "Hack mode must read D-RAM, not I-RAM"
+
+
+@cocotb.test()
+async def test_random_both_ports(dut):
+    """Random cycles on both ports at once, in both modes, over a small pool of words so
+    reads and writes collide: every read returns the word as it was before that edge's
+    write, I-RAM through the data port included. Words the test hasn't written yet (they
+    hold the staged firmware) aren't checked."""
+    await setup(dut, mode=1)
+    i_pool = [0, 1, 2, 0x37F, 0xFFF] + random.sample(range(4096), 5)
+    d_pool = [0, 1, 0x7FF] + random.sample(range(2048), 5)
+    imem, dmem = {}, {}  # word index -> word; D-RAM word index -> [4 bytes or None]
+
+    def d_word(idx):
+        lanes = dmem.get(idx)
+        return None if lanes is None or None in lanes else sum(b << (8 * i) for i, b in enumerate(lanes))
+
+    for _ in range(3000):
+        mode = int(random.random() < 0.8)
+        i_widx, i_ridx = random.choice(i_pool), random.choice(i_pool)
+        i_we, i_wdata = int(random.random() < 0.3), random.getrandbits(32)
+        if mode and random.random() < 0.3:  # a RISC-V data read of I-RAM (low 64 KB, aliased)
+            d_addr = random.choice(i_pool) << 2 | random.getrandbits(2) << 14 | random.getrandbits(2)
+        elif mode:  # D-RAM, with random don't-care bits above the 8 KB
+            d_addr = DRAM | random.getrandbits(15) << 13 | random.choice(d_pool) << 2 | random.getrandbits(2)
+        else:  # Hack: a word index; bits above [10:0] don't matter
+            d_addr = random.getrandbits(5) << 11 | random.choice(d_pool)
+        d_we, d_byte = int(random.random() < 0.3), random.getrandbits(4)
+        d_data = random.getrandbits(32)
+        dut.active_mode.value = mode
+        dut.i_we.value, dut.i_waddr.value, dut.i_wdata.value, dut.i_addr.value = i_we, i_widx, i_wdata, i_ridx << 2
+        dut.d_addr.value, dut.d_we.value, dut.d_we_byte.value, dut.d_data_in.value = d_addr, d_we, d_byte, d_data
+
+        d_idx = d_addr >> 2 & 0x7FF if mode else d_addr & 0x7FF
+        want_i = imem.get(i_ridx)
+        want_d = imem.get(d_addr >> 2 & 0xFFF) if mode and d_addr >> 16 == 0 else d_word(d_idx)
+        if i_we:
+            imem[i_widx] = i_wdata
+        if d_we:
+            lanes = dmem.setdefault(d_idx, [None] * 4)
+            for b in range(4):
+                if not mode or d_byte >> b & 1:
+                    lanes[b] = d_data >> (8 * b) & 0xFF
+        await FallingEdge(dut.clk)
+        ctx = f"mode={mode} i_addr=0x{i_ridx << 2:x} d_addr=0x{d_addr:08x}"
+        if want_i is not None:
+            assert int(dut.i_data_out.value) == want_i, f"i_data_out, {ctx}"
+        if want_d is not None:
+            assert int(dut.d_data_out.value) == want_d, f"d_data_out 0x{int(dut.d_data_out.value):08x}, {ctx}"

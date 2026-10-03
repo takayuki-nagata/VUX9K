@@ -1,9 +1,11 @@
 # Copyright (c) 2026 Takayuki Nagata
 # SPDX-License-Identifier: MIT
 
+import random
+
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import ClockCycles, FallingEdge
+from cocotb.triggers import ClockCycles, FallingEdge, RisingEdge, Timer
 
 
 async def send_uart_byte(dut, byte_val: int, cnt: int = 234, stop_bit: int = 1):
@@ -114,3 +116,52 @@ async def test_uart_rx_framing_error(dut):
     await ClockCycles(dut.clk, 2 * cnt)  # line back to idle
     cocotb.start_soon(send_uart_byte(dut, 0x3C, cnt=cnt))
     assert await receive(dut, 12 * cnt) == (0x3C, 0)
+
+
+PERIOD_PS = 37038  # reset_rx's clock
+
+
+async def send_frame_timed(dut, byte_val, bit_ps, stop_bit=1, idle_ps=0):
+    """One frame with the given bit length (a sender whose baud rate is off), then idle"""
+    for level in [0] + [(byte_val >> i) & 1 for i in range(8)] + [stop_bit]:
+        dut.rxd.value = level
+        await Timer(bit_ps, unit="ps")
+    dut.rxd.value = 1
+    if idle_ps:
+        await Timer(idle_ps, unit="ps")
+
+
+@cocotb.test()
+async def test_uart_rx_random_frames(dut):
+    """Random bytes back to back, from a sender up to 3% off the baud rate, with random
+    idle gaps (none to two bits) and some low stop bits: every byte arrives once, in
+    order, with frame_err exactly on the bad ones"""
+    cnt = await reset_rx(dut)
+    got = []
+
+    async def monitor():
+        # rdy is combinational: Icarus shows its zero-width glitches as edges, so a pulse
+        # counts only if rdy is still high at the falling clock edge
+        while True:
+            await RisingEdge(dut.rdy)
+            await FallingEdge(dut.clk)
+            if int(dut.rdy.value):
+                got.append((int(dut.data.value), int(dut.frame_err.value)))
+
+    cocotb.start_soon(monitor())
+    sent = []
+    nominal = cnt * PERIOD_PS
+    for _ in range(60):
+        byte_val, bad_stop = random.getrandbits(8), random.random() < 0.15
+        # A low stop bit from a slow sender stays low for more than half a bit after the
+        # receiver has sampled it, which is (rightly) a new start bit: keep those at or
+        # above the baud rate
+        bit_ps = round(nominal * random.uniform(0.97, 1.0 if bad_stop else 1.03))
+        # After a low stop bit the line must be high for a while before the next start bit
+        idle = random.randint(1, 2) * nominal if bad_stop else random.choice((0, 0, nominal // 2, 2 * nominal))
+        await send_frame_timed(dut, byte_val, bit_ps, stop_bit=0 if bad_stop else 1, idle_ps=idle)
+        sent.append((byte_val, int(bad_stop)))
+    await Timer(2 * nominal, unit="ps")
+    assert got == sent, f"received {len(got)} frames, sent {len(sent)}; first difference at " + str(
+        next((i for i, (g, s) in enumerate(zip(got, sent, strict=False)) if g != s), min(len(got), len(sent)))
+    )

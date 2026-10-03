@@ -12,9 +12,12 @@ MOSI shifts on the falling edge, MSB first. Writes are only accepted while not b
 including chip-select and divider writes.
 """
 
+import random
+
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, FallingEdge, RisingEdge, Timer
+from unit_models import rand32
 
 CLK_DIV_HALF = 23  # soc_pkg::SD_CLK_DIV_HALF at 18 MHz
 CLK_DIV_MIN = 3  # soc_pkg::SD_CLK_DIV_MIN
@@ -195,3 +198,41 @@ async def test_writes_ignored_while_busy(dut):
     assert await read(dut, 0x0) == 0x96
     await write(dut, 0x4, 1)
     assert int(dut.spi_cs_n.value) == 1, "CS write after the transfer must take effect"
+
+
+@cocotb.test()
+async def test_random_sequence(dut):
+    """Random dividers (incl. clamped and 9-bit values), chip-select changes and full-duplex
+    transfers with random replies and MISO delays, plus random writes while busy that must
+    all be dropped; every byte, SCLK period and register is checked"""
+    slave = await setup(dut)
+    div, cs = CLK_DIV_HALF, 1
+    for _ in range(40):
+        if random.random() < 0.5:
+            value = random.choice((0, 1, 2, 3, 4, 5, 8, 23, 0x103, random.randint(3, 40), random.getrandbits(9)))
+            await write(dut, 0xC, value)
+            div = max(value & 0xFF, CLK_DIV_MIN)
+            assert await read(dut, 0xC) == div, f"divider after writing 0x{value:x}"
+        if random.random() < 0.3:
+            cs = random.getrandbits(1)
+            await write(dut, 0x4, cs | random.getrandbits(31) << 1)  # only bit 0 counts
+            assert int(dut.spi_cs_n.value) == cs and await read(dut, 0x4) == cs
+
+        tx, reply = random.getrandbits(8), random.getrandbits(8)
+        # MISO may change up to (divider - 2) clocks after the falling edge: the synchronizer
+        # needs it stable two clocks before the rising one (one clock at CLK_DIV_MIN)
+        slave.delay_ns = random.randint(0, (div - 2) * CLK_NS - 1)
+        slave.load(reply)
+        await write(dut, 0x0, tx)
+        for _ in range(random.randint(0, 3)):  # all dropped while busy
+            await ClockCycles(dut.clk, random.randint(1, 3 * div))  # 3 x (3 div + 2) < 16 div
+            await write(dut, random.choice((0x0, 0x4, 0xC)), rand32())
+        await Timer(16 * div * CLK_NS, unit="ns")
+        await wait_idle(dut)
+        ctx = f"divider {div}, tx 0x{tx:02X}, reply 0x{reply:02X}"
+        assert len(slave.rx_bits) == 8 and slave.received() == tx, f"MOSI bits {slave.rx_bits}, {ctx}"
+        assert await read(dut, 0x0) == reply, f"received byte, {ctx}"
+        periods = {round(b - a) for a, b in zip(slave.rise_times, slave.rise_times[1:], strict=False)}
+        assert periods == {2 * div * CLK_NS}, f"SCLK periods {periods}, {ctx}"
+        assert int(dut.spi_cs_n.value) == cs and await read(dut, 0xC) == div, f"a write while busy took effect, {ctx}"
+        await Timer(slave.delay_ns + 1, unit="ns")  # the slave's last MISO update, before a faster transfer

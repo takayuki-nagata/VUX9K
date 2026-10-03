@@ -1,6 +1,8 @@
 # Copyright (c) 2026 Takayuki Nagata
 # SPDX-License-Identifier: MIT
 
+import random
+
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import FallingEdge, Timer
@@ -64,3 +66,52 @@ async def test_uart_tx(dut):
             await FallingEdge(dut.clk)
         assert int(dut.txd.value) == 1, "TX line should return to idle high"
         dut._log.info(f"UART TX frame verified: byte=0x{tx_byte:02X}")
+
+
+@cocotb.test()
+async def test_uart_tx_random_bytes(dut):
+    """Random bytes, each written a random 0-3 cycles after busy drops (so frames can
+    follow back to back): a receiver sampling mid-bit sees each one intact, in order"""
+    period_ns = 20
+    cocotb.start_soon(Clock(dut.clk, period_ns, unit="ns").start())
+    dut.rst.value = 0
+    dut.we.value = 0
+    dut.data.value = 0
+    await FallingEdge(dut.clk)
+    await FallingEdge(dut.clk)
+    dut.rst.value = 1
+    while int(dut.busy.value) == 1:
+        await FallingEdge(dut.clk)
+
+    got = []
+
+    async def receiver():
+        bit_ns = BIT_CYCLES * period_ns
+        while True:
+            await FallingEdge(dut.txd)  # start bit
+            await Timer(bit_ns // 2, unit="ns")
+            assert int(dut.txd.value) == 0, "start bit not low at its middle"
+            byte = 0
+            for i in range(8):
+                await Timer(bit_ns, unit="ns")
+                byte |= int(dut.txd.value) << i
+            await Timer(bit_ns, unit="ns")
+            assert int(dut.txd.value) == 1, f"stop bit of 0x{byte:02X} not high"
+            got.append(byte)
+
+    cocotb.start_soon(receiver())
+    sent = [random.getrandbits(8) for _ in range(25)]
+    for byte in sent:
+        for _ in range(random.randint(0, 3)):
+            await FallingEdge(dut.clk)
+        dut.data.value = byte
+        dut.we.value = 1
+        await FallingEdge(dut.clk)
+        dut.we.value = 0
+        await Timer(1, unit="ns")
+        # busy is combinational (glitches on Icarus): skip most of the frame, then poll it
+        await Timer(9 * BIT_CYCLES * period_ns, unit="ns")
+        while int(dut.busy.value) == 1:
+            await FallingEdge(dut.clk)
+    await Timer(2 * BIT_CYCLES * period_ns, unit="ns")
+    assert got == sent, f"sent {[hex(b) for b in sent]}, received {[hex(b) for b in got]}"
