@@ -1,0 +1,8 @@
+# ACT4 settings for VUX9K (scripts/act4/generate.sh runs them in the upstream image)
+name: vux9k
+compiler_exe: riscv64-unknown-elf-gcc
+objdump_exe: riscv64-unknown-elf-objdump
+ref_model_exe: sail_riscv_sim
+udb_config: vux9k.yaml
+linker_script: link.ld
+dut_include_dir: .

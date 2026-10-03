@@ -28,6 +28,12 @@ run aborts.
 
 Tests listed in EXPECTED_FAILURES document known CPU gaps. They must keep failing: an
 unexpected pass is reported as XPASS and fails the run, so the list can't go stale.
+
+`--suite act4` runs riscv-arch-test's ACT4 tests instead (`make act4-elfs`,
+scripts/act4/): self-checking ELFs with the Sail reference model's results built in,
+which stop through the same `tohost` (1 = PASS, 3 = FAIL) and print their failure details
+to the testbench's console word (console.txt in the run directory). Their harness
+self-test is scripts/act4/selftest_fail.S; their known gaps are EXPECTED_FAILURES_ACT4.
 """
 
 import argparse
@@ -52,6 +58,9 @@ sys.path.insert(0, HARNESS_DIR)
 sys.path.insert(0, os.path.join(REPO_DIR, "sim", "runners"))
 import sim_runner  # noqa: E402
 
+sys.path.insert(0, os.path.join(REPO_DIR, "scripts", "act4"))
+import act4_elfs  # noqa: E402
+
 RISCV_TESTS_REPO = "https://github.com/riscv-software-src/riscv-tests.git"
 RISCV_TESTS_COMMIT = "793a5ff2d99a6d9fbd91e84c34b9a0437e313b88"
 # riscv-tests' `env` submodule, pinned to the gitlink recorded at RISCV_TESTS_COMMIT
@@ -60,7 +69,9 @@ RISCV_TEST_ENV_COMMIT = "6de71edb142be36319e380ce782c3d1830c65d68"
 
 SUITES = ("rv32ui", "rv32mi")
 # Every rv32ui test finishes in well under 100k cycles; the cap only bounds hangs.
+# The ACT4 tests are longer (a branch test checks 400+ cases); main() sets their cap.
 MAX_CYCLES = 200000
+MAX_CYCLES_ACT4 = 5000000
 # sim/tb_hex_runner.veryl's RAM (256 KB); the image must fit
 RAM_WORDS = 65536
 
@@ -70,6 +81,22 @@ EXPECTED_FAILURES: dict[str, str] = {
     "env/p has no handler to emulate them",
     "rv32mi-p-pmpaddr": "PMP CSRs (pmpcfg0/pmpaddr0) not implemented",
 }
+
+# The same for the ACT4 tests, by ELF path below the elfs/ directory. Each is a difference
+# between the Sail configuration the expected values come from and this harness/CPU.
+_MTIP = (
+    "Sail's CLINT (required by the generator) starts with mtimecmp = 0, so its mip.MTIP is set; "
+    "tb_hex_runner raises no timer interrupt, so mip reads 0"
+)
+EXPECTED_FAILURES_ACT4: dict[str, str] = {
+    "priv/InterruptsSm/InterruptsSm-00.elf": "tb_hex_runner has no interrupt sources "
+    "(RVMODEL_SET_*_INT are empty), so the interrupts the test raises never arrive",
+    "priv/Sm/Sm_mcsr_access-00.elf": _MTIP,
+    "priv/Sm/Sm_mcsr_walk-02.elf": _MTIP,
+    "priv/Sm/Sm_mcsr_cntr-00.elf": "mcountinhibit is read-only zero (legal WARL: counters never "
+    "inhibited), but Sail 0.13.1 keeps its CY/IR bits writable and expects mcycle to stop",
+}
+ACT4_HARNESS_DIR = os.path.join(REPO_DIR, "scripts", "act4")
 
 ZEPHYR_SDK_BIN = os.path.expanduser("~/.local/zephyr-sdk-0.16.8/riscv64-zephyr-elf/bin")
 TOOL_PREFIXES = ("riscv64-zephyr-elf-", "riscv64-unknown-elf-", "riscv32-unknown-elf-", "riscv64-linux-gnu-")
@@ -173,6 +200,10 @@ def build_hex(src, name):
     code, _, err = run_cmd([OBJCOPY_BIN, "-O", "binary", elf, binf])
     if code != 0:
         return None, f"objcopy failed: {err.strip()}"
+    return bin_to_hex(binf, hexf)
+
+
+def bin_to_hex(binf, hexf):
     with open(binf, "rb") as f:
         data = f.read()
     data += b"\x00" * (-len(data) % 4)
@@ -184,9 +215,35 @@ def build_hex(src, name):
     return hexf, None
 
 
+def act4_hex(elf, name):
+    """program.hex of an ACT4 ELF, from address 0 (the jump to TEST_BASE) and with .bss
+    zero-filled, as an ELF loader would leave memory."""
+    binf = os.path.join(BUILD_DIR, "act4", f"{name}.bin")
+    os.makedirs(os.path.dirname(binf), exist_ok=True)
+    cmd = [OBJCOPY_BIN, "-O", "binary", "--set-section-flags", ".bss=alloc,load,contents", elf, binf]
+    code, _, err = run_cmd(cmd)
+    if code != 0:
+        return None, f"objcopy failed: {err.strip()}"
+    return bin_to_hex(binf, binf.removesuffix(".bin") + ".hex")
+
+
+def build_act4_selftest():
+    src = os.path.join(ACT4_HARNESS_DIR, "selftest_fail.S")
+    config = os.path.join(ACT4_HARNESS_DIR, "vux9k")
+    elf = os.path.join(BUILD_DIR, "act4", "selftest_fail.elf")
+    os.makedirs(os.path.dirname(elf), exist_ok=True)
+    cmd = [GCC_BIN, "-march=rv32i_zicsr_zifencei", "-mabi=ilp32", "-static", "-nostdlib", "-nostartfiles"]
+    cmd += ["-I", config, "-T", os.path.join(config, "link.ld"), src, "-o", elf]
+    code, _, err = run_cmd(cmd)
+    if code != 0:
+        sys.exit(f"[ERROR] ACT4 self-test build failed: {err.strip()}")
+    return act4_hex(elf, "selftest_fail")
+
+
 # Set from the command line in main(); passed on to the workers explicitly
 BACKEND = "rtl"
 GLS = False
+SUITE = "riscv-tests"
 
 
 def simulate(hexf, backend, gls):
@@ -216,6 +273,7 @@ def simulate_rtl(hexf, gls):
     name = os.path.basename(hexf).removesuffix(".hex")
     # HDL_COVERAGE=1 (make coverage): a run directory of its own, holding coverage.dat
     runs = "runs-gls" if gls else "runs-cov" if os.environ.get("HDL_COVERAGE", "") not in ("", "0") else "runs"
+    runs = runs.replace("runs", "runs-act4") if SUITE == "act4" else runs
     # A mutant's runs (make mutation: VUX9K_RTL_OVERRIDE, see sim_runner) stay in its own directory
     base = Path(os.environ["VUX9K_MUT_BUILD_DIR"]) if os.environ.get("VUX9K_RTL_OVERRIDE") else Path(BUILD_DIR)
     test_dir = base / runs / name
@@ -248,6 +306,10 @@ def simulate_rtl(hexf, gls):
     if not verdict.exists():
         return False, f"no verdict; see {os.path.relpath(log, REPO_DIR)}"
     detail = verdict.read_text().strip()
+    console = test_dir / "console.txt"
+    if not detail.startswith("[PASS]") and console.exists():
+        printed = console.read_text(errors="replace").strip().replace("\n", " / ")
+        detail += f" | console: {printed[-300:]}"
     return detail.startswith("[PASS]"), detail
 
 
@@ -269,44 +331,76 @@ def run_one(suite, test, backend, gls):
     return (False, err) if err else simulate(hexf, backend, gls)
 
 
-def run_suite(only=None, jobs=1):
-    counts = {"PASS": 0, "FAIL": 0, "XFAIL": 0, "XPASS": 0}
-    tests = [(s, t) for s in SUITES for t in list_tests(s) if not only or f"{s}-p-{t}" in only]
-    # Each test has its own run directory, so they can run concurrently (the testbench
-    # is already compiled by the self-test). Results are printed in list order.
-    # Workers are forked: simulate_rtl redirects fds 1/2, which must stay per process.
+def run_act4_selftest():
+    hexf, err = build_act4_selftest()
+    if err:
+        sys.exit(f"[ERROR] ACT4 self-test: {err}")
+    passed, detail = simulate(hexf, BACKEND, GLS)
+    console_ok = BACKEND == "emu" or "act4 selftest" in detail  # the emulator has no console
+    if passed or "(TESTNUM=1)" not in detail or not console_ok:
+        sys.exit(f"[ERROR] ACT4 harness self-test: expected FAIL with TESTNUM=1 and its console line, got: {detail}")
+    print(f"[INFO] ACT4 harness self-test OK (deliberate failure detected: {detail})")
+
+
+def run_act4_one(name, elf, backend, gls):
+    hexf, err = act4_hex(elf, name.replace("/", "__").removesuffix(".elf"))
+    return (False, err) if err else simulate(hexf, backend, gls)
+
+
+def run_parallel(func, args, jobs):
+    """func(*a, BACKEND, GLS) for each a, in worker processes; results in order. Each test has
+    its own run directory, so they can run concurrently (the testbench is already compiled
+    by the self-test). Workers are forked: simulate_rtl redirects fds 1/2, which must stay
+    per process."""
     ctx = multiprocessing.get_context("fork")
     with ctx.Pool(max(1, jobs)) as pool:
-        results = pool.starmap(run_one, [(s, t, BACKEND, GLS) for s, t in tests], chunksize=1)
-    for (suite, test), (passed, detail) in zip(tests, results, strict=True):
-        name = f"{suite}-p-{test}"
-        expected_fail = name in EXPECTED_FAILURES
+        return pool.starmap(func, [(*a, BACKEND, GLS) for a in args], chunksize=1)
+
+
+def report(label, names, results, expected, all_names):
+    """Print each result against the expected failures; True if the run passes."""
+    counts = {"PASS": 0, "FAIL": 0, "XFAIL": 0, "XPASS": 0}
+    for name, (passed, detail) in zip(names, results, strict=True):
+        expected_fail = name in expected
         if passed and expected_fail:
             status = "XPASS"
-            detail = f"listed in EXPECTED_FAILURES ({EXPECTED_FAILURES[name]}) but passed"
+            detail = f"listed as an expected failure ({expected[name]}) but passed"
         elif passed:
             status = "PASS"
         elif expected_fail:
             status = "XFAIL"
-            detail = f"{EXPECTED_FAILURES[name]} | {detail}"
+            detail = f"{expected[name]} | {detail}"
         else:
             status = "FAIL"
         counts[status] += 1
         print(f"[{status}] {name}" + ("" if status == "PASS" else f": {detail}"))
 
-    stale = [
-        n
-        for n in EXPECTED_FAILURES
-        if only is None and not any(n == f"{s}-p-{t}" for s in SUITES for t in list_tests(s))
-    ]
+    stale = [n for n in expected if all_names is not None and n not in all_names]
     for name in stale:
-        print(f"[ERROR] EXPECTED_FAILURES entry {name} does not match any test")
+        print(f"[ERROR] expected-failure entry {name} does not match any test")
 
     total = sum(counts.values())
     print("\n" + "=" * 60)
-    print("riscv-tests results: " + ", ".join(f"{v} {k}" for k, v in counts.items()) + f" (total {total})")
+    print(f"{label} results: " + ", ".join(f"{v} {k}" for k, v in counts.items()) + f" (total {total})")
     print("=" * 60)
     return total > 0 and counts["FAIL"] == 0 and counts["XPASS"] == 0 and not stale
+
+
+def run_suite(only=None, jobs=1):
+    tests = [(s, t) for s in SUITES for t in list_tests(s) if not only or f"{s}-p-{t}" in only]
+    results = run_parallel(run_one, tests, jobs)
+    all_names = None if only else {f"{s}-p-{t}" for s in SUITES for t in list_tests(s)}
+    return report("riscv-tests", [f"{s}-p-{t}" for s, t in tests], results, EXPECTED_FAILURES, all_names)
+
+
+def run_act4_suite(only=None, jobs=1):
+    root = act4_elfs.out_dir() / "elfs"
+    every = {str(p.relative_to(root)): p for p in act4_elfs.elfs()}
+    if not every:
+        sys.exit(f"[ERROR] No ACT4 ELFs in {os.path.relpath(root, REPO_DIR)}: run `make act4-elfs` first")
+    names = [n for n in every if not only or n in only]
+    results = run_parallel(run_act4_one, [(n, str(every[n])) for n in names], jobs)
+    return report("ACT4", names, results, EXPECTED_FAILURES_ACT4, None if only else set(every))
 
 
 def main():
@@ -315,10 +409,14 @@ def main():
     parser.add_argument("--backend", choices=("rtl", "emu"), default="rtl", help="RTL (cocotb) or the Rust emulator")
     parser.add_argument("--gls", action="store_true", help="gate-level unified_cpu netlist (make synth-units)")
     parser.add_argument("-j", "--jobs", type=int, default=os.cpu_count(), help="parallel tests (default: CPUs)")
+    parser.add_argument("--suite", choices=("riscv-tests", "act4"), default="riscv-tests")
     args = parser.parse_args()
-    global BACKEND, GLS
+    global BACKEND, GLS, SUITE, MAX_CYCLES
     BACKEND = args.backend
     GLS = args.gls
+    SUITE = args.suite
+    if SUITE == "act4":
+        MAX_CYCLES = MAX_CYCLES_ACT4
     if GLS and BACKEND != "rtl":
         parser.error("--gls needs --backend rtl")
 
@@ -327,8 +425,13 @@ def main():
     setup_sources()
     if BACKEND == "rtl":
         build_veryl()  # also the testbench, which GLS runs keep as RTL
-    run_selftest()
-    if not run_suite(only=set(args.tests) or None, jobs=args.jobs):
+    if SUITE == "act4":
+        run_act4_selftest()
+        ok = run_act4_suite(only=set(args.tests) or None, jobs=args.jobs)
+    else:
+        run_selftest()
+        ok = run_suite(only=set(args.tests) or None, jobs=args.jobs)
+    if not ok:
         sys.exit(1)
 
 

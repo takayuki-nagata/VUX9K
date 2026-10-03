@@ -10,6 +10,8 @@ Drives clock and reset, waits for the `tohost` write (or MAX_CYCLES) with one
 trigger rather than a per-cycle loop, and writes the verdict line to verdict.txt:
 "[PASS] tohost=1 ...", "[FAIL] tohost=0x... (TESTNUM=n) ..." or "[FAIL] ... timeout ...".
 The cocotb test itself passes whatever the verdict; it only fails if the harness breaks.
+Bytes the program stores to the testbench's console word (the ACT4 tests' failure
+details) go to console.txt.
 
 Environment: MAX_CYCLES (default 2000000); TRACE=1 logs PC/instruction every cycle.
 """
@@ -19,7 +21,7 @@ import os
 import cocotb
 from cocotb.clock import Clock
 from cocotb.simtime import get_sim_time
-from cocotb.triggers import ClockCycles, FallingEdge, First, ReadOnly, RisingEdge, Timer
+from cocotb.triggers import ClockCycles, Edge, FallingEdge, First, ReadOnly, RisingEdge, Timer
 
 PERIOD_NS = 20  # arbitrary; only cycles matter
 
@@ -29,6 +31,19 @@ async def trace(dut, start_ns):
         await FallingEdge(dut.clk)
         cycle = int((get_sim_time("ns") - start_ns) // PERIOD_NS)
         dut._log.info(f"[TRACE] {cycle} PC={int(dut.pc_out.value):08x} INSTR={int(dut.instr_in.value):08x}")
+
+
+async def console(dut, out):
+    # console_count is registered: safe to follow its edges (one per byte)
+    while True:
+        await Edge(dut.console_count)
+        await ReadOnly()
+        out.append(int(dut.console_byte.value))
+
+
+def write_console(data):
+    with open("console.txt", "wb") as f:
+        f.write(data)
 
 
 def write_verdict(line):
@@ -49,6 +64,8 @@ async def run_program(dut):
     start_ns = get_sim_time("ns")
     if os.environ.get("TRACE", "") not in ("", "0"):
         cocotb.start_soon(trace(dut, start_ns))
+    printed: list[int] = []
+    cocotb.start_soon(console(dut, printed))
 
     await First(RisingEdge(dut.halted), Timer(max_cycles * PERIOD_NS, unit="ns"))
     # halt_code is written on the same edge as halted, but cocotb resumes on halted's
@@ -65,3 +82,5 @@ async def run_program(dut):
         verdict = f"[FAIL] Simulation timeout after {max_cycles} cycles at PC={int(dut.pc_out.value):08x}"
     dut._log.info(verdict)
     write_verdict(verdict)
+    if printed:
+        write_console(bytes(printed))

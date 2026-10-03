@@ -38,7 +38,7 @@ python_version = "3.13"
 files = ["sim", "tools", "scripts"]
 # No packages here: modules are found the way the tests find them (sim_runner and the
 # tests put these directories on sys.path)
-mypy_path = "sim/integration:sim/emu:sim/unit:sim/runners:scripts:scripts/riscv_tests:."
+mypy_path = "sim/integration:sim/emu:sim/unit:sim/runners:scripts:scripts/riscv_tests:scripts/act4:scripts/mcy:."
 explicit_package_bases = true
 check_untyped_defs = true
 warn_unused_ignores = true
