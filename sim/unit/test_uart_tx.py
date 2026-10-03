@@ -10,7 +10,7 @@ from cocotb.triggers import FallingEdge, Timer
 BIT_CYCLES = 434  # uart_tx default CNT: clock cycles per bit
 
 
-@cocotb.test()
+@cocotb.test(timeout_time=200, timeout_unit="ms")
 async def test_uart_tx(dut):
     """Test UART TX serial frame transmission (Start bit, 8 data bits LSB-first, Stop bit)"""
     clock = Clock(dut.clk, 20, unit="ns")  # 50MHz
@@ -68,7 +68,7 @@ async def test_uart_tx(dut):
         dut._log.info(f"UART TX frame verified: byte=0x{tx_byte:02X}")
 
 
-@cocotb.test()
+@cocotb.test(timeout_time=200, timeout_unit="ms")
 async def test_uart_tx_random_bytes(dut):
     """Random bytes, each written a random 0-3 cycles after busy drops (so frames can
     follow back to back): a receiver sampling mid-bit sees each one intact, in order"""

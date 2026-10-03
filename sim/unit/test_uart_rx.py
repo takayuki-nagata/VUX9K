@@ -29,7 +29,7 @@ async def send_uart_byte(dut, byte_val: int, cnt: int = 234, stop_bit: int = 1):
     dut.rxd.value = 1
 
 
-@cocotb.test()
+@cocotb.test(timeout_time=200, timeout_unit="ms")
 async def test_uart_rx(dut):
     """Test UART RX serial frame reception and ready pulse generation"""
     clock = Clock(dut.clk, 37038, unit="ps")  # 27.0 MHz integer period in ps
@@ -94,7 +94,7 @@ async def receive(dut, cycles: int):
     return None
 
 
-@cocotb.test()
+@cocotb.test(timeout_time=200, timeout_unit="ms")
 async def test_uart_rx_rejects_short_glitch(dut):
     """A low pulse shorter than half a bit is not a start bit: no byte is received"""
     cnt = await reset_rx(dut)
@@ -108,7 +108,7 @@ async def test_uart_rx_rejects_short_glitch(dut):
     assert await receive(dut, 12 * cnt) == (0x5A, 0)
 
 
-@cocotb.test()
+@cocotb.test(timeout_time=200, timeout_unit="ms")
 async def test_uart_rx_framing_error(dut):
     """A stop bit sampled low is flagged with the byte (frame_err on the rdy pulse)"""
     cnt = await reset_rx(dut)
@@ -152,7 +152,7 @@ def sample(byte_val, bad_stop, ratio, idle_bits):
     pass
 
 
-@cocotb.test()
+@cocotb.test(timeout_time=200, timeout_unit="ms")
 async def test_uart_rx_random_frames(dut):
     """Random bytes back to back, from a sender up to 3% off the baud rate, with random
     idle gaps (none to two bits) and some low stop bits: every byte arrives once, in

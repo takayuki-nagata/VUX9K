@@ -10,7 +10,7 @@ from cocotb.clock import Clock
 from cocotb.triggers import FallingEdge, Timer
 
 
-@cocotb.test()
+@cocotb.test(timeout_time=10, timeout_unit="ms")
 async def test_fifo_sync(dut):
     """Test synchronous FIFO buffer push, pop, full, empty flags and ordering"""
     clock = Clock(dut.clk, 20, unit="ns")
@@ -70,7 +70,7 @@ async def test_fifo_sync(dut):
     dut._log.info("FIFO buffer verified successfully [PASS]")
 
 
-@cocotb.test()
+@cocotb.test(timeout_time=10, timeout_unit="ms")
 async def test_fifo_write_and_read_while_empty(dut):
     """A write arriving together with a read on an empty FIFO is kept (the read has nothing to take)"""
     cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
@@ -102,7 +102,7 @@ async def test_fifo_write_and_read_while_empty(dut):
     assert int(dut.empty.value) == 1, "expected exactly one entry"
 
 
-@cocotb.test()
+@cocotb.test(timeout_time=10, timeout_unit="ms")
 async def test_fifo_full_write_and_read(dut):
     """When full, a write is refused alone but accepted together with a read, keeping FIFO order"""
     cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
@@ -153,7 +153,7 @@ def sample(we, re, level):
     pass
 
 
-@cocotb.test()
+@cocotb.test(timeout_time=10, timeout_unit="ms")
 async def test_fifo_random(dut):
     """Random writes and reads against a deque, in phases that fill the FIFO up to full and
     drain it to empty, so both edges see every we/re combination; rdata, full and empty

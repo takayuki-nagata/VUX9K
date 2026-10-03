@@ -432,6 +432,9 @@ whether the model or the RTL is wrong; an RTL bug gets `xfail(strict=True)` unti
   edges: a monitor on `RisingEdge(dut.rdy)` of `uart_rx` saw duplicate frames, and
   `FallingEdge(dut.busy)` of `uart_tx` fired mid-frame. Sample such signals at a clock
   edge (registered outputs, like `txd`, are safe to follow with `Edge`).
+- **A test that waits on the DUT in a loop gets `timeout_time`** on its `@cocotb.test`
+  (UART RX/TX, FIFO): a broken DUT, or a mutant (`make mutation`), would otherwise hang
+  the run with the free-running clock.
 - **Parameters aren't VPI-visible under Verilator** (`make coverage` runs the unit
   tests there): use the module's default value in the test, not `dut.PARAM`.
 - **Functional coverage** (cocotb-coverage, `sim/unit/fcov.py`) counts which cases of the
