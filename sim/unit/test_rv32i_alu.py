@@ -4,6 +4,7 @@
 import random
 
 import cocotb
+import fcov
 from cocotb.triggers import Timer
 from unit_models import EDGES32, alu_model, rand32
 
@@ -119,7 +120,20 @@ async def test_alu_operations(dut):
     dut._log.info("All ALU operations verified successfully [PASS]")
 
 
+# Every operation (12-15 are unused codes) on every operand class, and the shift amounts
+# where shifts change behavior
+@fcov.point("alu.op", range(16), xf=lambda op, a, b: op)
+@fcov.point("alu.a", fcov.CLASSES32, xf=lambda op, a, b: fcov.classify32(a))
+@fcov.point("alu.b", fcov.CLASSES32, xf=lambda op, a, b: fcov.classify32(b))
+@fcov.point("alu.shamt", (0, 1, 31), xf=lambda op, a, b: b & 31 if op in (OP_SLL, OP_SRL, OP_SRA) else None)
+@fcov.cross("alu.op_x_a", ("alu.op", "alu.a"))
+@fcov.cross("alu.op_x_b", ("alu.op", "alu.b"))
+def sample(op, a, b):
+    pass
+
+
 async def check(dut, op, a, b):
+    sample(op, a, b)
     dut.a.value = a
     dut.b.value = b
     dut.alu_op.value = op
@@ -137,6 +151,7 @@ async def test_alu_edges(dut):
         for a in EDGES32:
             for b in EDGES32 + shifts:
                 await check(dut, op, a, b)
+    fcov.export()
 
 
 @cocotb.test()
@@ -144,3 +159,4 @@ async def test_alu_random(dut):
     """Random operands for every operation, and the unused op codes (12-15) give 0"""
     for _ in range(3000):
         await check(dut, random.randint(0, 15), rand32(), rand32())
+    fcov.export()

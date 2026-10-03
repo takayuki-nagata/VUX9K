@@ -9,3 +9,17 @@ boot_manager = 100.0
 resident_loader = 100.0
 zephyr_demo = 100.0
 hack_demo = 90.0
+
+# Functional coverage of the unit tests: cover groups (sim/unit/fcov.py), from the
+# fixed-seed sim-unit run (make coverage-fcov, scripts/fcov_report.py). A bin the
+# stimulus can't reach gets a directed case, not a lower minimum.
+[fcov]
+alu = 100.0
+csrs = 100.0
+decode = 100.0
+fifo = 100.0
+lsu = 100.0
+npc = 100.0
+sd = 100.0
+trap = 100.0
+uart_rx = 100.0

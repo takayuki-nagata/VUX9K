@@ -7,6 +7,7 @@ entry and MRET, in RV32 and Hack mode, against a model."""
 import random
 
 import cocotb
+import fcov
 from cocotb.triggers import Timer
 from unit_models import EDGES32, rand32, signed32
 
@@ -77,7 +78,45 @@ def random_state(riscv):
     }
 
 
+def _source(s):
+    """What selects the next PC in RV32 mode (rv_next's priority)."""
+    if not s["riscv_mode"]:
+        return None
+    for key in ("mem_wait", "trap_entry", "trap_return"):
+        if s[key]:
+            return key
+    return {BRANCH: "branch", JAL: "jal", JALR: "jalr"}.get(s["op"], "next")
+
+
+def _branch(s):
+    """(funct3, taken, operand signs differ) of an RV32 branch that decides the next PC."""
+    if _source(s) != "branch" or s["funct3"] not in (BEQ, BNE, BLT, BGE, BLTU, BGEU):
+        return None
+    differ = int((s["rs1"] ^ s["rs2"]) >> 31 & 1)
+    return (s["funct3"], int(branch_model(s["funct3"], s["rs1"], s["rs2"])), differ)
+
+
+# Every priority level, and every branch condition taken and not taken with operands of
+# equal and of different signs (equal operands have equal signs: no BEQ taken / BNE not
+# taken with different ones)
+@fcov.point("npc.source", ("mem_wait", "trap_entry", "trap_return", "branch", "jal", "jalr", "next"), xf=_source)
+@fcov.point(
+    "npc.branch",
+    [
+        (f3, t, d)
+        for f3 in (BEQ, BNE, BLT, BGE, BLTU, BGEU)
+        for t in (0, 1)
+        for d in (0, 1)
+        if (f3, t, d) not in ((BEQ, 1, 1), (BNE, 0, 1))
+    ],
+    xf=_branch,
+)
+def sample(s):
+    pass
+
+
 async def check(dut, s):
+    sample(s)
     await apply(dut, **s)
     ctx = ", ".join(f"{k}=0x{int(v):x}" for k, v in s.items())
     if s["riscv_mode"]:
@@ -96,6 +135,7 @@ async def test_branch_conditions_on_edges(dut):
         for a in EDGES32:
             for b in EDGES32:
                 await check(dut, s | {"funct3": f3, "rs1": a, "rs2": b, "imm": 0xFFFF_FFF8})
+    fcov.export()
 
 
 @cocotb.test()
@@ -107,6 +147,7 @@ async def test_priority(dut):
         for trap_entry in (0, 1):
             for trap_return in (0, 1):
                 await check(dut, base | {"mem_wait": mem_wait, "trap_entry": trap_entry, "trap_return": trap_return})
+    fcov.export()
 
 
 @cocotb.test()
@@ -124,3 +165,4 @@ async def test_hack_jumps(dut):
 async def test_random(dut):
     for _ in range(3000):
         await check(dut, random_state(random.random() < 0.75))
+    fcov.export()

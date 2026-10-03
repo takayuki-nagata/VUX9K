@@ -46,6 +46,6 @@ cache_dir = "build/mypy_cache"
 
 [[tool.mypy.overrides]]
 # Untyped or optional: pyserial/pyftdi (vux_tool works without them), the emulator's
-# pyo3 module (no stubs), pyelftools
-module = ["serial", "serial.*", "pyftdi", "pyftdi.*", "vux9k_emu", "elftools.*"]
+# pyo3 module (no stubs), pyelftools, cocotb-coverage, PyYAML
+module = ["serial", "serial.*", "pyftdi", "pyftdi.*", "vux9k_emu", "elftools.*", "cocotb_coverage.*", "yaml"]
 ignore_missing_imports = true

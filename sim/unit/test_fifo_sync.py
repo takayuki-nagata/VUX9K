@@ -5,6 +5,7 @@ import random
 from collections import deque
 
 import cocotb
+import fcov
 from cocotb.clock import Clock
 from cocotb.triggers import FallingEdge, Timer
 
@@ -143,6 +144,15 @@ async def test_fifo_full_write_and_read(dut):
     assert int(dut.empty.value) == 1
 
 
+# Every we/re combination with the FIFO empty, partly filled and full (the doc string's
+# claim, counted): a write when full is accepted only with a read, a read when empty is none
+@fcov.point("fifo.we_re", ((0, 0), (0, 1), (1, 0), (1, 1)), xf=lambda we, re, level: (we, re))
+@fcov.point("fifo.level", ("empty", "partial", "full"), xf=lambda we, re, level: level)
+@fcov.cross("fifo.we_re_x_level", ("fifo.we_re", "fifo.level"))
+def sample(we, re, level):
+    pass
+
+
 @cocotb.test()
 async def test_fifo_random(dut):
     """Random writes and reads against a deque, in phases that fill the FIFO up to full and
@@ -173,9 +183,11 @@ async def test_fifo_random(dut):
             if model:
                 assert int(dut.rdata.value) == model[0], f"rdata is not the head, {ctx}"
             history.append((int(we), int(re)))
+            sample(int(we), int(re), "empty" if not model else "full" if len(model) == depth else "partial")
             do_read = re and len(model) > 0
             if we and (len(model) < depth or do_read):
                 model.append(data)
             if do_read:
                 model.popleft()
             await FallingEdge(dut.clk)
+    fcov.export()

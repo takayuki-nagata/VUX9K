@@ -6,6 +6,7 @@
 import random
 
 import cocotb
+import fcov
 from cocotb.triggers import Timer
 from unit_models import EDGES32, rand32, sext
 
@@ -30,7 +31,30 @@ def load_model(f3, word, sel):
     return {LB: sext(byte, 8), LBU: byte, LH: sext(half, 16), LHU: half}.get(f3, word)
 
 
+def _loaded_sign(f3, value, low):
+    """(f3, offset, sign bit of the loaded byte/halfword) for the sign-extending loads."""
+    if f3 == LB:
+        return (f3, low, (value >> (8 * low + 7)) & 1)
+    if f3 == LH:
+        return (f3, low & 2, (value >> (16 * (low >> 1) + 15)) & 1)
+    return None
+
+
+# Every funct3 at every byte offset, and both signs of every byte/halfword LB/LH extend
+@fcov.point("lsu.f3", range(8), xf=lambda f3, value, low: f3)
+@fcov.point("lsu.offset", range(4), xf=lambda f3, value, low: low)
+@fcov.point(
+    "lsu.load_sign",
+    [(LB, o, s) for o in range(4) for s in (0, 1)] + [(LH, o, s) for o in (0, 2) for s in (0, 1)],
+    xf=_loaded_sign,
+)
+@fcov.cross("lsu.f3_x_offset", ("lsu.f3", "lsu.offset"))
+def sample(f3, value, low):
+    pass
+
+
 async def check(dut, f3, value, low):
+    sample(f3, value, low)
     dut.store_f3.value = f3
     dut.store_src.value = value
     dut.addr_low.value = low
@@ -54,9 +78,11 @@ async def test_lsu_all_widths_and_offsets(dut):
         for low in range(4):
             for value in patterns:
                 await check(dut, f3, value, low)
+    fcov.export()
 
 
 @cocotb.test()
 async def test_lsu_random(dut):
     for _ in range(3000):
         await check(dut, random.randrange(8), rand32(), random.randrange(4))
+    fcov.export()

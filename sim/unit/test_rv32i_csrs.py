@@ -4,6 +4,7 @@
 import random
 
 import cocotb
+import fcov
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, FallingEdge, Timer
 from unit_models import rand32
@@ -383,6 +384,28 @@ class CsrModel:
                 self.minstret = self.minstret & ~(0xFFFF_FFFF << shift) | value << shift
 
 
+_WRITABLE = (CSR_MSTATUS, CSR_MIE, CSR_MTVEC, CSR_MSCRATCH, CSR_MEPC, CSR_MCAUSE, CSR_MTVAL, 0xB00, 0xB80, 0xB02, 0xB82)
+
+
+def _irq(s, mstatus, mie):
+    """Which interrupt is pending and enabled (MEI > MSI > MTI), masked by mstatus.MIE or not."""
+    pending = mie & (s["timer_irq_in"] << 7 | s["ext_irq_in"] << 11 | s["sw_irq_in"] << 3)
+    if not pending:
+        return None
+    cause = "mei" if pending & 0x800 else "msi" if pending & 0x8 else "mti"
+    return cause if mstatus & 0x8 else "masked"
+
+
+# A write of every op to every writable CSR (the counters' halves included), a write in
+# the same cycle as a trap return, and each interrupt cause taken or masked
+@fcov.point("csrs.write", [(a, op) for a in _WRITABLE for op in (1, 2, 3, 5, 6, 7)],
+            xf=lambda s, mstatus, mie: (s["csr_addr"], s["csr_op"]) if s["csr_wr"] else None)  # fmt: skip
+@fcov.point("csrs.write_with_mret", (True,), xf=lambda s, mstatus, mie: bool(s["csr_wr"] and s["trap_return"]))
+@fcov.point("csrs.irq", ("mei", "msi", "mti", "masked"), xf=lambda s, mstatus, mie: _irq(s, mstatus, mie))
+def sample(s, mstatus, mie):
+    pass
+
+
 @cocotb.test()
 async def test_rv32i_csrs_random(dut):
     """Random CSR reads/writes (every op, listed and unlisted addresses), trap entries,
@@ -405,7 +428,10 @@ async def test_rv32i_csrs_random(dut):
     minstret = await read(0xB02) | await read(0xB82) << 32
     model = CsrModel(mcycle, minstret)
 
-    for _ in range(3000):
+    # The first cycles write every op to every writable CSR once, in random order
+    writes = [(a, op) for a in _WRITABLE for op in (1, 2, 3, 5, 6, 7)]
+    random.shuffle(writes)
+    for i in range(3000):
         r = random.random()
         s = {
             "csr_addr": random.choice(addrs) if random.random() < 0.9 else random.getrandbits(12),
@@ -423,6 +449,10 @@ async def test_rv32i_csrs_random(dut):
             "retire": random.getrandbits(1),
             "mtime_in": random.getrandbits(64),
         }
+        if i < len(writes):
+            s |= {"csr_wr": 1, "trap_entry": 0, "trap_return": 0}
+            s["csr_addr"], s["csr_op"] = writes[i]
+        sample(s, model.regs[CSR_MSTATUS], model.regs[CSR_MIE])
         for name, value in s.items():
             getattr(dut, name).value = value
         await Timer(1, unit="ns")
@@ -439,3 +469,4 @@ async def test_rv32i_csrs_random(dut):
 
         await FallingEdge(dut.clk)
         model.clock(s, rdata)
+    fcov.export()

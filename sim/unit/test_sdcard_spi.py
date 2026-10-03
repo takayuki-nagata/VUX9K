@@ -15,6 +15,7 @@ including chip-select and divider writes.
 import random
 
 import cocotb
+import fcov
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, FallingEdge, RisingEdge, Timer
 from unit_models import rand32
@@ -200,6 +201,30 @@ async def test_writes_ignored_while_busy(dut):
     assert int(dut.spi_cs_n.value) == 1, "CS write after the transfer must take effect"
 
 
+def _div(v):
+    return {CLK_DIV_MIN: "min", CLK_DIV_HALF: "init"}.get(v, "other")
+
+
+def _div_write(value):
+    v = value & 0xFF
+    if value > 0xFF:
+        return "9bit"
+    return "clamped" if v < CLK_DIV_MIN else {CLK_DIV_MIN: "min", CLK_DIV_HALF: "init"}.get(v, "other")
+
+
+# Divider writes of every kind, transfers at the fastest, the initial and other dividers,
+# and a dropped write to each register while busy
+@fcov.point(
+    "sd.div_write",
+    ("clamped", "min", "init", "9bit", "other"),
+    xf=lambda kind, v: _div_write(v) if kind == "div" else None,
+)
+@fcov.point("sd.transfer_div", ("min", "init", "other"), xf=lambda kind, v: _div(v) if kind == "xfer" else None)
+@fcov.point("sd.busy_write", (0x0, 0x4, 0xC), xf=lambda kind, v: v if kind == "busy" else None)
+def sample(kind, value):
+    pass
+
+
 @cocotb.test()
 async def test_random_sequence(dut):
     """Random dividers (incl. clamped and 9-bit values), chip-select changes and full-duplex
@@ -207,9 +232,13 @@ async def test_random_sequence(dut):
     all be dropped; every byte, SCLK period and register is checked"""
     slave = await setup(dut)
     div, cs = CLK_DIV_HALF, 1
-    for _ in range(40):
-        if random.random() < 0.5:
+    first = [0, 3, 0x103, 8, 23]  # one divider write of each kind first, then random ones
+    for i in range(40):
+        if i < len(first) or random.random() < 0.5:
             value = random.choice((0, 1, 2, 3, 4, 5, 8, 23, 0x103, random.randint(3, 40), random.getrandbits(9)))
+            if i < len(first):
+                value = first[i]
+            sample("div", value)
             await write(dut, 0xC, value)
             div = max(value & 0xFF, CLK_DIV_MIN)
             assert await read(dut, 0xC) == div, f"divider after writing 0x{value:x}"
@@ -223,10 +252,13 @@ async def test_random_sequence(dut):
         # needs it stable two clocks before the rising one (one clock at CLK_DIV_MIN)
         slave.delay_ns = random.randint(0, (div - 2) * CLK_NS - 1)
         slave.load(reply)
+        sample("xfer", div)
         await write(dut, 0x0, tx)
         for _ in range(random.randint(0, 3)):  # all dropped while busy
             await ClockCycles(dut.clk, random.randint(1, 3 * div))  # 3 x (3 div + 2) < 16 div
-            await write(dut, random.choice((0x0, 0x4, 0xC)), rand32())
+            addr = random.choice((0x0, 0x4, 0xC))
+            sample("busy", addr)
+            await write(dut, addr, rand32())
         await Timer(16 * div * CLK_NS, unit="ns")
         await wait_idle(dut)
         ctx = f"divider {div}, tx 0x{tx:02X}, reply 0x{reply:02X}"
@@ -236,3 +268,4 @@ async def test_random_sequence(dut):
         assert periods == {2 * div * CLK_NS}, f"SCLK periods {periods}, {ctx}"
         assert int(dut.spi_cs_n.value) == cs and await read(dut, 0xC) == div, f"a write while busy took effect, {ctx}"
         await Timer(slave.delay_ns + 1, unit="ns")  # the slave's last MISO update, before a faster transfer
+    fcov.export()

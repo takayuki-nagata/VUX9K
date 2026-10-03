@@ -4,6 +4,7 @@
 import random
 
 import cocotb
+import fcov
 from cocotb.triggers import Timer
 from unit_models import sext
 
@@ -103,7 +104,21 @@ def imm_model(w):
     return 0  # R-type, FENCE and unknown opcodes
 
 
+_FORMAT = {v: k for k, v in OPCODES.items()}
+
+
+# Every opcode the CPU knows (and unknown ones), each with the immediate's sign bit clear
+# and set, and every funct3
+@fcov.point("decode.opcode", (*OPCODES, "unknown"), xf=lambda w: _FORMAT.get(w & 0x7F, "unknown"))
+@fcov.point("decode.sign", (0, 1), xf=lambda w: w >> 31)
+@fcov.point("decode.funct3", range(8), xf=lambda w: (w >> 12) & 7)
+@fcov.cross("decode.opcode_x_sign", ("decode.opcode", "decode.sign"))
+def sample(w):
+    pass
+
+
 async def check(dut, w):
+    sample(w)
     dut.instruction.value = w
     await Timer(1, unit="ns")
     want = {
@@ -128,6 +143,7 @@ async def test_decoder_immediate_edges(dut):
     for op in OPCODES.values():
         for high in (0, 0xFFFF_FF80) + tuple(1 << b for b in range(7, 32)):
             await check(dut, high | op)
+    fcov.export()
 
 
 @cocotb.test()
@@ -137,3 +153,4 @@ async def test_decoder_random(dut):
     for _ in range(3000):
         op = random.choice(ops) if random.random() < 0.85 else random.getrandbits(7)
         await check(dut, (random.getrandbits(25) << 7) | op)
+    fcov.export()

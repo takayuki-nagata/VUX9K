@@ -7,6 +7,7 @@ model written from the RV32I/Zicsr spec and README's "RV32 CSRs" list."""
 import random
 
 import cocotb
+import fcov
 from cocotb.triggers import Timer
 from unit_models import rand32
 
@@ -101,7 +102,42 @@ def random_state():
     }
 
 
+def _outcome(s):
+    entry, cause, _, ret = model(s)
+    if not s["exec"]:
+        return None
+    if entry:
+        # an interrupt that beats an illegal instruction counts on its own
+        return "irq_over_illegal" if s["irq"] and illegal(s["instr"]) else cause
+    return "mret" if ret else "none"
+
+
+def _csr_access(s):
+    """How an executed CSR instruction uses its CSR (README "RV32 CSRs")."""
+    w = s["instr"]
+    if not s["exec"] or s["irq"] or w & 0x7F != SYSTEM or (w >> 12) & 7 in (0, 4):
+        return None
+    csr, f3, rs1 = w >> 20, (w >> 12) & 7, (w >> 15) & 0x1F
+    writes = f3 in (1, 5) or rs1 != 0
+    if csr not in CSRS:
+        return "unlisted"
+    return ("ro_" if csr >> 10 == 3 else "rw_") + ("write" if writes else "read")
+
+
+# Every trap cause and the cases without one, an interrupt beating an illegal instruction,
+# and every kind of CSR access
+@fcov.point(
+    "trap.outcome",
+    (0, 2, 3, 4, 6, 11, 0x8000_0003, 0x8000_0007, 0x8000_000B, "irq_over_illegal", "mret", "none"),
+    xf=_outcome,
+)
+@fcov.point("trap.csr_access", ("unlisted", "rw_read", "rw_write", "ro_read", "ro_write"), xf=_csr_access)
+def sample(s):
+    pass
+
+
 async def check(dut, s):
+    sample(s)
     for name, value in s.items():
         getattr(dut, name).value = int(value)
     await Timer(1, unit="ns")
@@ -120,6 +156,7 @@ async def test_csr_legality(dut):
     for csr in range(0x1000):
         for f3, rs1 in ((1, 0), (2, 0), (2, 5), (3, 0), (5, 0), (6, 0), (7, 3)):
             await check(dut, s | {"instr": csr << 20 | rs1 << 15 | f3 << 12 | 1 << 7 | SYSTEM})
+    fcov.export()
 
 
 @cocotb.test()
@@ -136,6 +173,7 @@ async def test_misalignment_matrix(dut):
             for low in range(4):
                 for take in (0, 1):
                     await check(dut, s | {"instr": op, "imm": imm, "addr_low": low, "branch_take": take})
+    fcov.export()
 
 
 @cocotb.test()
@@ -143,3 +181,4 @@ async def test_random(dut):
     """Random instructions and states: the right trap (or none) wins"""
     for _ in range(5000):
         await check(dut, random_state())
+    fcov.export()
