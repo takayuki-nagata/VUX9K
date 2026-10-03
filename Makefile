@@ -52,7 +52,7 @@ $(VENV_PATH)/bin/activate:
 	fi
 
 setup: venv
-	$(UV) pip install --python $(VENV_PATH)/bin/python cocotb pytest pyserial ruff mypy
+	$(UV) pip install --python $(VENV_PATH)/bin/python cocotb pytest pyserial ruff mypy cocotb-coverage python-constraint pyyaml
 	@if [ -d ".git" ]; then \
 		echo "Configuring Git core.hooksPath to .githooks..."; \
 		git config core.hooksPath .githooks; \
