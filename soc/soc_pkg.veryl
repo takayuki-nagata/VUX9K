@@ -12,9 +12,14 @@ pub package soc_pkg {
     const UART_CNT : u32 = CLK_HZ / UART_BAUD;
 
     // SD SPI clock during card init must not exceed 400 kHz: half-period in clocks,
-    // rounded up (23 -> 391 kHz)
+    // rounded up (23 -> 391 kHz). It is the reset value of sdcard_spi's divider
+    // register; firmware lowers it once the card is ready, down to SD_CLK_DIV_MIN
+    // (3 -> 3 MHz): MISO reaches the shift register through two synchronizer flops,
+    // so a bit is sampled as the pin was 2 clocks before the rising edge, and the card
+    // needs the clock after the falling edge to drive it.
     const SD_INIT_HZ     : u32 = 400000;
     const SD_CLK_DIV_HALF: u32 = (CLK_HZ + 2 * SD_INIT_HZ - 1) / (2 * SD_INIT_HZ);
+    const SD_CLK_DIV_MIN : u32 = 3;
 
     // RV32 data address map: region = addr[31:28], MMIO page = addr[15:12]
     const RV_REGION_IRAM : logic<4> = 4'h0;

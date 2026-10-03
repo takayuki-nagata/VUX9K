@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: MIT
 
 // Robust Hardware SPI Master Controller for MicroSD Card Interface
+//
+// Registers (addr): 0x0 write = start exchanging a byte, read = receive shift
+// register; 0x4 CS_n (bit 0); 0x8 busy; 0xC SCLK half-period in clocks (bits 7:0,
+// resets to SD_CLK_DIV_HALF, writes below SD_CLK_DIV_MIN set SD_CLK_DIV_MIN). Writes
+// while busy are ignored. Only the SoC reset resets the registers, not a CPU soft reset.
 pub module sdcard_spi (
     clk     : input  clock    ,
     rst     : input  reset    ,
@@ -14,8 +19,9 @@ pub module sdcard_spi (
     spi_miso: input  logic    ,
     spi_cs_n: output logic    ,
 ) {
-    // SPI clock: at most 400 kHz, as SD card initialization requires
+    // SPI clock: at most 400 kHz from reset, as SD card initialization requires
     const CLK_DIV_HALF: u32 = soc_pkg::SD_CLK_DIV_HALF;
+    const CLK_DIV_MIN : u32 = soc_pkg::SD_CLK_DIV_MIN;
 
     var cs_n_reg: logic   ;
     var sclk_reg: logic   ;
@@ -24,6 +30,7 @@ pub module sdcard_spi (
     var shift_rx: logic<8>;
     var busy    : logic   ;
 
+    var clk_div  : logic<8>;
     var clk_cnt  : logic<8>;
     var bit_idx  : logic<4>;
     var spi_phase: logic   ;
@@ -43,6 +50,7 @@ pub module sdcard_spi (
             shift_tx    = 8'hff;
             shift_rx    = 8'hff;
             busy        = 1'b0;
+            clk_div     = CLK_DIV_HALF;
             clk_cnt     = 8'd0;
             bit_idx     = 4'd0;
             spi_phase   = 1'b0;
@@ -67,10 +75,17 @@ pub module sdcard_spi (
                     4'h4: {
                         cs_n_reg = data_in[0];
                     }
+                    4'hC: {
+                        if (data_in[7:0] as u32) <: CLK_DIV_MIN {
+                            clk_div = CLK_DIV_MIN;
+                        } else {
+                            clk_div = data_in[7:0];
+                        }
+                    }
                     default: {}
                 }
             } else if busy {
-                if (clk_cnt as u32) >= (CLK_DIV_HALF - 1) {
+                if clk_cnt == clk_div - 8'd1 {
                     clk_cnt = 8'd0;
                     if !spi_phase {
                         // Rising edge: Sample MISO
@@ -98,6 +113,7 @@ pub module sdcard_spi (
                 4'h0   : data_out = {24'd0, shift_rx};
                 4'h4   : data_out = {31'd0, cs_n_reg};
                 4'h8   : data_out = {31'd0, busy};
+                4'hC   : data_out = {24'd0, clk_div};
                 default: data_out = 32'd0;
             }
         }

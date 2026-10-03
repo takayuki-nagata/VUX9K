@@ -245,6 +245,60 @@ def hack_soft_reset(key_by_addition: bool = True) -> list:
     return a.assemble()
 
 
+# --- SD SPI master: divider register --------------------------------------------------
+def sd_clkdiv() -> list:
+    """SD SPI bytes at several dividers (reset 23, 0 -> 3, 5, 255, 2 -> 3): CMD0 and CMD8
+    with their answers, the shift register and busy read on every poll mid-transfer,
+    and a divider write while busy (ignored)."""
+    a = Asm()
+    a.li("s1", 0x40002000)
+    a.li("s2", 23)
+    a.lw("t2", 0xC, "s1")
+    a.sw("zero", 4, "s1")  # CS low
+
+    def xfer(byte, n=1):
+        for _ in range(n):
+            a.li("a0", byte)
+            a.call("xfer")
+
+    def div(v):
+        a.li("t4", v)
+        a.sw("t4", 0xC, "s1")
+        a.lw("t2", 0xC, "s1")
+
+    xfer(0x40)  # CMD0 at the reset divider
+    xfer(0x00, 4)
+    xfer(0x95)
+    xfer(0xFF, 2)  # FF 01
+    div(0)
+    for b in (0x48, 0, 0, 1, 0xAA, 0x87):  # CMD8
+        xfer(b)
+    xfer(0xFF, 3)  # FF 01 00
+    div(5)
+    xfer(0xFF)  # 00
+    div(255)
+    xfer(0xFF)  # 01
+    div(2)
+    xfer(0xFF)  # AA
+    a.sw("s2", 4, "s1")  # CS high
+    xfer(0xFF)
+    a.label("done")
+    a.j("done")
+
+    a.label("xfer")
+    a.sw("a0", 0, "s1")
+    a.lw("t0", 0, "s1")
+    a.sw("s2", 0xC, "s1")  # ignored: busy
+    a.lw("t2", 0xC, "s1")
+    a.label("poll")
+    a.lw("t1", 8, "s1")
+    a.lw("t0", 0, "s1")
+    a.bnez("t1", "poll")
+    a.lw("a0", 0, "s1")
+    a.ret()
+    return a.assemble()
+
+
 # --- firmware and demo programs --------------------------------------------------------
 def _hex_words(path):
     with open(path) as f:
@@ -288,6 +342,7 @@ def programs() -> list:
         )
     )
     progs.append(Program("hack_soft_reset", cycles=20_000, imem_words=hack_soft_reset()))
+    progs.append(Program("sd_clkdiv", cycles=30_000, imem_words=sd_clkdiv()))
     seeds = os.environ.get("LOCKSTEP_SEEDS", "")
     for s in [int(x) for x in seeds.split(",") if x]:
         progs.append(Program(f"random_rv_{s}", cycles=200_000, imem_words=random_rv(s, blocks=1500), slow=True))

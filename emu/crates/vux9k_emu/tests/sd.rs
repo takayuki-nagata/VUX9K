@@ -4,7 +4,7 @@
 //! SD: the SPI master's busy window and bit-by-bit shift register, and the card's
 //! answers (initialization, CMD17/CMD24, SDSC/strict addressing, injected faults).
 
-use vux9k_emu::periph::sdspi::{HALF_PERIOD, TRANSFER};
+use vux9k_emu::periph::sdspi::{transfer, HALF_PERIOD, MIN_HALF_PERIOD};
 use vux9k_emu::periph::SdSpi;
 use vux9k_emu::sdcard::{SdCard, SECTOR};
 use vux9k_emu::{Profile, Soc};
@@ -12,6 +12,7 @@ use vux9k_emu::{Profile, Soc};
 const DATA: u32 = 0x4000_2000;
 const CS: u32 = 0x4000_2004;
 const BUSY: u32 = 0x4000_2008;
+const DIV: u32 = 0x4000_200C;
 
 /// Host side of the SPI bus, like the firmware's `transfer`/`set_cs`.
 struct Host {
@@ -26,8 +27,9 @@ impl Host {
         Host { sd, c: 10 }
     }
     fn xfer(&mut self, b: u8) -> u8 {
+        let d = self.sd.read(DIV, self.c) as u64;
         self.sd.write(DATA, b as u32, self.c);
-        self.c += TRANSFER + 1;
+        self.c += transfer(d) + 1;
         assert_eq!(self.sd.read(BUSY, self.c), 0);
         let r = self.sd.read(DATA, self.c) as u8;
         self.c += 5;
@@ -93,8 +95,8 @@ fn transfer_is_busy_for_16_half_periods_and_shifts_msb_first() {
     sd.write(DATA, 0x00, 100);
     assert!(!sd.busy(100));
     assert!(sd.busy(101));
-    assert!(sd.busy(100 + TRANSFER));
-    assert!(!sd.busy(101 + TRANSFER));
+    assert!(sd.busy(100 + transfer(HALF_PERIOD)));
+    assert!(!sd.busy(101 + transfer(HALF_PERIOD)));
     // Writes while busy are ignored, CS included
     sd.write(CS, 0, 200);
     assert_eq!(sd.read(CS, 700), 1);
@@ -118,6 +120,71 @@ fn shift_register_fills_one_bit_per_rising_edge() {
     assert_eq!(h.sd.read(DATA, at(6)), 0x80);
     assert_eq!(h.sd.read(DATA, at(7) - 1), 0x80);
     assert_eq!(h.sd.read(DATA, at(7)), 0x01);
+}
+
+#[test]
+fn divider_register_sets_the_half_period() {
+    let mut sd = SdSpi::default();
+    assert_eq!(
+        sd.read(DIV, 0),
+        HALF_PERIOD as u32,
+        "resets to SD_CLK_DIV_HALF"
+    );
+    for (v, want) in [
+        (0, 3),
+        (1, 3),
+        (2, 3),
+        (3, 3),
+        (0x104, 4),
+        (255, 255),
+        (3, 3),
+    ] {
+        sd.write(DIV, v, 10);
+        assert_eq!(sd.read(DIV, 11), want, "wrote {v}");
+    }
+    assert_eq!(MIN_HALF_PERIOD, 3);
+    // A transfer at the fastest divider: busy for 16 * 3 cycles
+    sd.write(DATA, 0x00, 100);
+    assert!(sd.busy(101) && sd.busy(148) && !sd.busy(149));
+    // Writes while busy are ignored, the divider included
+    sd.write(DATA, 0x00, 200);
+    sd.write(DIV, 23, 210);
+    assert_eq!(sd.read(DIV, 211), 3);
+    // MISO bit i lands at the end of cycle w + 3 (2i + 1)
+    let mut card = SdCard::new(vec![]);
+    card.set_sector(0, &[]);
+    sd.card = Some(card);
+    sd.write(CS, 0, 300);
+    for (i, b) in [0x40u8, 0, 0, 0, 0, 0x95, 0xFF].into_iter().enumerate() {
+        sd.write(DATA, b as u32, 400 + 100 * i as u64); // CMD0, then its FF
+    }
+    let w = 1100;
+    sd.write(DATA, 0xFF, w); // R1 = 0x01, shifted into FF
+    let at = |i: u64| w + 3 * (2 * i + 1) + 1;
+    assert_eq!(sd.read(DATA, at(0) - 1), 0xFF);
+    assert_eq!(sd.read(DATA, at(0)), 0xFE);
+    assert_eq!(sd.read(DATA, at(7) - 1), 0x80);
+    assert_eq!(sd.read(DATA, at(7)), 0x01);
+}
+
+#[test]
+fn strict_card_flags_a_fast_sclk_before_it_is_ready() {
+    let mut card = SdCard::new(vec![]);
+    card.strict = true;
+    let mut h = Host::new(card);
+    h.init(); // at the reset divider
+    h.sd.write(DIV, 3, h.c);
+    h.c += 1;
+    h.deselect();
+    assert_eq!(h.cmd(16, 512), 0x00);
+    h.deselect();
+    assert!(h.card().violations.is_empty(), "{:?}", h.card().violations);
+    // A re-init without slowing down first: reported once, until the card is ready
+    h.init();
+    h.deselect();
+    h.init();
+    assert_eq!(h.card().violations.len(), 2, "{:?}", h.card().violations);
+    assert!(h.card().violations[0].contains("SCLK 3000000 Hz"));
 }
 
 #[test]
