@@ -1,9 +1,12 @@
 # Copyright (c) 2026 Takayuki Nagata
 # SPDX-License-Identifier: MIT
 
+import random
+
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, FallingEdge, Timer
+from unit_models import HACK_COMP
 
 
 def make_hack_a(val: int) -> int:
@@ -373,3 +376,108 @@ async def test_hack_dual_dest_jump_uses_old_a(dut):
     await ClockCycles(dut.clk, 1)  # D write-back cycle -> FETCH
     await Timer(1, unit="ns")
     assert int(dut.pc_out.value) == 5 << 1, "the instruction after the jump must be fetched from the target"
+
+
+def hack_c(a, comp, dest, jump):
+    return 0xE000 | a << 12 | comp << 6 | dest << 3 | jump
+
+
+def random_hack_program(length):
+    """A random Hack program: @n and C-instructions with every comp/dest, M accesses, and
+    forward conditional jumps (@target; comp;Jxx), ending in an @END; 0;JMP loop.
+    Starts with @1 (so the CPU detects Hack) and D=0: registers have no reset."""
+    prog, jumps = [1, hack_c(0, 0b101010, 0b010, 0)], []
+    comps = list(HACK_COMP)
+    while len(prog) < length:
+        r = random.random()
+        if r < 0.3:
+            prog.append(random.getrandbits(4) if random.random() < 0.6 else random.getrandbits(15))
+        elif r < 0.85:
+            prog.append(hack_c(random.getrandbits(1), random.choice(comps), random.randrange(8), 0))
+        else:
+            jumps.append(len(prog))
+            jump = hack_c(random.getrandbits(1), random.choice(comps), random.randrange(8), random.randrange(1, 8))
+            prog += [0, jump]
+    end = len(prog)
+    # The @ before each jump: a later instruction, but never another pair's jump (that
+    # would jump with A still holding its own address: a loop)
+    landing = [t for t in range(end + 1) if t - 1 not in jumps]
+    for i in jumps:
+        prog[i] = random.choice([t for t in landing if t >= i + 2])
+    return prog + [end, hack_c(0, 0b101010, 0, 0b111)]
+
+
+def run_hack(prog, initial):
+    """Hack interpreter: the (address, value) of each memory write, 16-bit. initial(addr)
+    is what memory holds before the program writes it."""
+    a = d = pc = 0  # (A is set by the first instruction, D by the second)
+    writes, ram = [], {}
+    for _ in range(len(prog)):  # forward jumps only: never more steps than instructions
+        if pc == len(prog) - 2:
+            break
+        ins = prog[pc]
+        if not ins & 0x8000:
+            a, pc = ins, pc + 1
+            continue
+        y = ram.get(a, initial(a)) if ins >> 12 & 1 else a
+        r = HACK_COMP[ins >> 6 & 0x3F](d, y) & 0xFFFF
+        neg, zero = bool(r & 0x8000), r == 0
+        take = (ins & 4 and neg) or (ins & 2 and zero) or (ins & 1 and not neg and not zero)
+        if ins & 8:
+            writes.append((a, r))
+            ram[a] = r
+        target = a  # a jump goes to A as it was before the instruction
+        if ins & 0x20:
+            a = r
+        if ins & 0x10:
+            d = r
+        pc = target if take else pc + 1
+    assert pc == len(prog) - 2, f"generated program doesn't reach END: {[hex(i) for i in prog]}"
+    return writes
+
+
+@cocotb.test()
+async def test_random_programs_against_interpreter(dut):
+    """Random Hack programs on unified_cpu behind a memory model with soc_ram's timing
+    (both ports read one cycle after the address, before that edge's write): the memory
+    writes, in order, match a Hack interpreter's"""
+    cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start())
+    for sig in ("soft_rst", "timer_irq_in", "mtime_in", "boot_mode_valid", "boot_mode", "ext_irq_in", "sw_irq_in"):
+        getattr(dut, sig).value = 0
+    for _ in range(25):
+        prog = random_hack_program(random.randint(20, 80))
+        words = [prog[i] | (prog[i + 1] if i + 1 < len(prog) else 0) << 16 for i in range(0, len(prog), 2)]
+        init = {}  # memory before the program writes it: a fixed random value per address
+
+        def initial(addr, init=init):
+            return init.setdefault(addr, random.getrandbits(16))
+
+        expected = run_hack(prog, initial)
+        ram = {}
+
+        dut.rst.value = 0
+        dut.instr_in.value = words[0]
+        dut.data_in.value = 0
+        await ClockCycles(dut.clk, 2)
+        await FallingEdge(dut.clk)
+        dut.rst.value = 1
+        pending = (words[0], 0)  # what the RAM shows in the next cycle
+        writes = []
+        for _ in range(8 * len(prog) * 4):
+            await FallingEdge(dut.clk)  # mid-cycle: the CPU's outputs for the coming edge
+            pc, daddr = int(dut.pc_out.value), int(dut.data_addr.value) & 0xFFFF
+            we, wdata = int(dut.mem_write.value), int(dut.data_out.value) & 0xFFFF
+            dut.instr_in.value, dut.data_in.value = pending
+            pending = (words[pc >> 2] if pc >> 2 < len(words) else 0, ram.get(daddr, initial(daddr)))
+            if we:
+                ram[daddr] = wdata
+                writes.append((daddr, wdata))
+        assert int(dut.active_mode.value) == 0, "not in Hack mode"
+        assert int(dut.pc_out.value) >> 1 in (len(prog) - 2, len(prog) - 1), "did not reach the END loop"
+        first = next((i for i, (g, e) in enumerate(zip(writes, expected, strict=False)) if g != e), None)
+        assert writes == expected, (
+            f"memory writes differ at #{first} of {len(expected)} (got {len(writes)}): "
+            f"got {writes[first : first + 3] if first is not None else writes[len(expected) :][:3]}, "
+            f"expected {expected[first : first + 3] if first is not None else expected[len(writes) :][:3]}; "
+            f"program {[hex(i) for i in prog]}"
+        )
