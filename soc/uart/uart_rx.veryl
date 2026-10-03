@@ -81,7 +81,7 @@ pub module uart_rx #(
         case state {
             State::IDLE: {
                 if !rxd_sync[1] { // Start bit detected
-                    next_clkcnt = CNT / 2;
+                    next_clkcnt = (CNT / 2) as CSIZE;
                     next_state  = State::WAITFORMIDBIT;
                 } else {
                     next_state = State::IDLE;
@@ -105,7 +105,7 @@ pub module uart_rx #(
             State::RECEIVING: {
                 next_state = State::RECEIVING;
                 if sreg_ce {
-                    if reg_bitcnt == DSIZE {
+                    if reg_bitcnt == DSIZE as BITCNT_SIZE {
                         rdy        = '1;
                         frame_err  = !rxd_sync[1]; // mid stop bit
                         next_state = State::IDLE;

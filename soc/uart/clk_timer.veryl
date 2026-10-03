@@ -11,7 +11,7 @@ pub module clk_timer #(
     clr: input  logic, // synchronous restart of the period
     alm: output logic,
 ) {
-    const CONST_INIT : logic<CSIZE> = CNT - 1;
+    const CONST_INIT : logic<CSIZE> = (CNT - 1) as CSIZE;
     var   reg_counter: logic<CSIZE>;
 
     always_ff (clk, rst) {

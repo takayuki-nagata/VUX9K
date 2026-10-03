@@ -103,7 +103,7 @@ pub module uart_tx #(
             }
             State::SENDING: {
                 busy = '1;
-                if reg_sentcnt == DSIZE + 1 {
+                if reg_sentcnt == (DSIZE + 1) as SENTCNT_SIZE {
                     next_state   = State::IDLE;
                     next_sentcnt = '0;
                 } else {

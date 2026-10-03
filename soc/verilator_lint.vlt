@@ -35,13 +35,6 @@ lint_off -rule DECLFILENAME -file "*/gowin_cells_sim.sv"
 
 // ----- To fix (each one is removed by the refactor that fixes it) ---------------------
 
-// Unsized parameters assigned to/compared with narrower vectors
-lint_off -rule WIDTHTRUNC -file "*/fifo_sync.sv" -match "*'DEPTH_COUNT'*"
-lint_off -rule WIDTHTRUNC -file "*/clk_timer.sv" -match "*'CONST_INIT'*"
-lint_off -rule WIDTHTRUNC -file "*/uart_rx.sv" -match "*DIV*"
-lint_off -rule WIDTHEXPAND -file "*/uart_rx.sv" -match "*'reg_bitcnt'*"
-lint_off -rule WIDTHEXPAND -file "*/uart_tx.sv" -match "*'reg_sentcnt'*"
-lint_off -rule WIDTHTRUNC -file "*/sdcard_spi.sv" -match "*'CLK_DIV_*'*"
 // Unused: register file reset input, funct7 bits, the SD shift register's top bit
 lint_off -rule UNUSEDSIGNAL -file "*/rv32i_regfile.sv" -match "*'rst'*"
 lint_off -rule UNUSEDSIGNAL -file "*/unified_cpu.sv" -match "*'rv_funct7'*"

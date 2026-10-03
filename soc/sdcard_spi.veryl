@@ -50,7 +50,7 @@ pub module sdcard_spi (
             shift_tx    = 8'hff;
             shift_rx    = 8'hff;
             busy        = 1'b0;
-            clk_div     = CLK_DIV_HALF;
+            clk_div     = CLK_DIV_HALF as 8;
             clk_cnt     = 8'd0;
             bit_idx     = 4'd0;
             spi_phase   = 1'b0;
@@ -77,7 +77,7 @@ pub module sdcard_spi (
                     }
                     4'hC: {
                         if (data_in[7:0] as u32) <: CLK_DIV_MIN {
-                            clk_div = CLK_DIV_MIN;
+                            clk_div = CLK_DIV_MIN as 8;
                         } else {
                             clk_div = data_in[7:0];
                         }

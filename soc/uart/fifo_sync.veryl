@@ -17,7 +17,7 @@ pub module fifo_sync #(
     empty: output logic       ,
 ) {
     const DEPTH      : u32                = 1 << LOG_DEPTH;
-    const DEPTH_COUNT: logic<COUNT_WIDTH> = DEPTH;
+    const DEPTH_COUNT: logic<COUNT_WIDTH> = DEPTH as COUNT_WIDTH;
 
     var mem  : logic<WIDTH>       [DEPTH];
     var waddr: logic<LOG_DEPTH>          ;
