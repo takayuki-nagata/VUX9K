@@ -108,6 +108,17 @@ models with `input var` rewritten to `input wire`
 (`build/sim/gowin_cells_sim_net_inputs.sv`). Keep that step if you touch the GLS
 source list.
 
+## `make lint-rtl`: Verilator `-Wall` on the generated `.sv`, zero warnings
+
+`make lint-rtl` (in `test-sim`) runs `verilator --lint-only -Wall` on `board_top` (the
+whole SoC as synthesized, with the PLL's cell model), `tb_hex_runner` and `tb_gowin_bram`.
+Any warning fails it. Veryl can't emit Verilator comments, so waivers go into
+`soc/verilator_lint.vlt`, one `lint_off` per finding with `-file` and a `-match` as narrow
+as the message allows, and a comment saying why it's by design. Fix a finding in the
+Veryl source instead when the fix is a refactor (`make eqy`); `soc_ram` changes aren't
+covered by eqy, so its findings are waived. The simulator builds keep `-Wno-lint`
+(`sim_runner.py`'s `BUILD_ARGS`): lint is this target's job, not the tests'.
+
 ## The SoC clock: 18 MHz behind a PLL, and a passing STA is not proof
 
 The board's crystal is 27 MHz; the SoC runs at 18 MHz (`soc_pkg::CLK_HZ`) from the rPLL in

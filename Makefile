@@ -39,7 +39,7 @@ HACK_BUILD_DIR := $(BUILD_DIR)/hack
 ZEPHYR_BUILD_DIR ?= $(BUILD_DIR)/zephyr
 SYNTH_DIR := $(BUILD_DIR)/synth
 
-.PHONY: all emu emu-py emu-test test-isa-emu test-emu test-fw-host firmware-size coverage-fw sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hw-dist dist check-dist test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware hwtest hw-smoke sim-unit sim-unit-random sim-boot sim-soc sim test-isa test-isa-gls zephyr-bc-lib build-zephyr build-zephyr-demo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-demo-gls sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
+.PHONY: all lint-rtl emu emu-py emu-test test-isa-emu test-emu test-fw-host firmware-size coverage-fw sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hw-dist dist check-dist test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware hwtest hw-smoke sim-unit sim-unit-random sim-boot sim-soc sim test-isa test-isa-gls zephyr-bc-lib build-zephyr build-zephyr-demo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-demo-gls sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
 
 all: test-ci
 
@@ -83,6 +83,22 @@ $(VERYL_OUT_DIR)/.stamp: $(VERYL_SRCS)
 	@touch $(VERYL_OUT_DIR)/.stamp
 
 veryl: $(VERYL_OUT_DIR)/.stamp
+
+# Generated RTL (read order: packages first). SOC_RTL_SRCS, further down, adds the rest of the SoC.
+CPU_RTL_SRCS = $(addprefix $(VERYL_OUT_DIR)/soc/cpu/,rv32i_pkg.sv auto_mode_detector.sv hack_translator.sv \
+	rv32i_alu.sv rv32i_decode.sv rv32i_regfile.sv rv32i_csrs.sv rv32i_lsu.sv rv32i_trap_unit.sv next_pc_unit.sv \
+	unified_cpu.sv)
+
+# verilator -Wall on the generated .sv: the SoC as synthesized (board_top, with the PLL's
+# cell model) and the Veryl testbenches. Waivers, each with its reason: soc/verilator_lint.vlt
+LINT_VLT = soc/verilator_lint.vlt
+VERILATOR_LINT = verilator --lint-only -Wall $(LINT_VLT)
+GOWIN_CELLS_SV = $(VERYL_OUT_DIR)/sim/gowin_cells_sim.sv
+
+lint-rtl: veryl
+	$(VERILATOR_LINT) --top-module board_top $(SOC_RTL_SRCS) $(GOWIN_CELLS_SV)
+	$(VERILATOR_LINT) --top-module tb_hex_runner $(CPU_RTL_SRCS) $(VERYL_OUT_DIR)/sim/tb_hex_runner.sv
+	$(VERILATOR_LINT) --top-module tb_gowin_bram $(GOWIN_CELLS_SV) $(VERYL_OUT_DIR)/sim/tb_gowin_bram.sv
 
 # ===== Firmware (Rust Boot Manager & Resident Loader) =====
 
@@ -357,7 +373,7 @@ $(SYNTH_OPTS_STAMP): FORCE
 synth-units: veryl
 	@echo "=== Synthesizing Submodules to Gowin Netlists for GLS Unit Tests ==="
 	@mkdir -p $(SYNTH_DIR)
-	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_pkg.sv $(VERYL_OUT_DIR)/soc/cpu/auto_mode_detector.sv $(VERYL_OUT_DIR)/soc/cpu/hack_translator.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_alu.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_decode.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_regfile.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_csrs.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_lsu.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_trap_unit.sv $(VERYL_OUT_DIR)/soc/cpu/next_pc_unit.sv $(VERYL_OUT_DIR)/soc/cpu/unified_cpu.sv; synth_gowin -top unified_cpu $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/unified_cpu_syn.v"
+	$(YOSYS) -p "read_verilog -sv $(CPU_RTL_SRCS); synth_gowin -top unified_cpu $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/unified_cpu_syn.v"
 	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/uart/clk_timer.sv $(VERYL_OUT_DIR)/soc/uart/shift_registers.sv $(VERYL_OUT_DIR)/soc/uart/fifo_sync.sv $(VERYL_OUT_DIR)/soc/uart/uart_tx.sv $(VERYL_OUT_DIR)/soc/uart/uart_rx.sv $(VERYL_OUT_DIR)/soc/uart/uart_controller.sv; synth_gowin -top uart_controller $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/uart_controller_syn.v"
 	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_pkg.sv $(VERYL_OUT_DIR)/soc/cpu/auto_mode_detector.sv; synth_gowin -top auto_mode_detector $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/auto_mode_detector_syn.v"
 
@@ -422,9 +438,7 @@ sim-soc-gls-fast: synth-top firmware
 	@echo "=== Running Fast SoC Top Boot & Execution Verification (GLS Netlist) ==="
 	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc_gls[test_soc_gls_fast]"
 
-SOC_RTL_SRCS = $(VERYL_OUT_DIR)/soc/soc_pkg.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_pkg.sv $(VERYL_OUT_DIR)/soc/cpu/auto_mode_detector.sv $(VERYL_OUT_DIR)/soc/cpu/hack_translator.sv \
-               $(VERYL_OUT_DIR)/soc/cpu/rv32i_alu.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_decode.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_regfile.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_csrs.sv \
-               $(VERYL_OUT_DIR)/soc/cpu/rv32i_lsu.sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_trap_unit.sv $(VERYL_OUT_DIR)/soc/cpu/next_pc_unit.sv $(VERYL_OUT_DIR)/soc/cpu/unified_cpu.sv $(VERYL_OUT_DIR)/soc/uart/clk_timer.sv $(VERYL_OUT_DIR)/soc/uart/fifo_sync.sv $(VERYL_OUT_DIR)/soc/uart/shift_registers.sv \
+SOC_RTL_SRCS = $(VERYL_OUT_DIR)/soc/soc_pkg.sv $(CPU_RTL_SRCS) $(VERYL_OUT_DIR)/soc/uart/clk_timer.sv $(VERYL_OUT_DIR)/soc/uart/fifo_sync.sv $(VERYL_OUT_DIR)/soc/uart/shift_registers.sv \
                $(VERYL_OUT_DIR)/soc/uart/uart_tx.sv $(VERYL_OUT_DIR)/soc/uart/uart_rx.sv $(VERYL_OUT_DIR)/soc/uart/uart_controller.sv $(VERYL_OUT_DIR)/soc/timer_core.sv \
                $(VERYL_OUT_DIR)/soc/sdcard_spi.sv $(VERYL_OUT_DIR)/soc/gpio_controller.sv $(VERYL_OUT_DIR)/soc/soc_ram.sv $(VERYL_OUT_DIR)/soc/soc_addr_decoder.sv $(VERYL_OUT_DIR)/soc/soc_top.sv $(VERYL_OUT_DIR)/soc/board_top.sv
 
@@ -499,7 +513,7 @@ prog-flash: $(SYNTH_DIR)/pack.fs
 # ===== Aggregate Test Targets =====
 
 # Every push/PR (CI). Long SoC runs are on Verilator (SIM_SOC); see AGENTS.md for timings.
-test-sim: check emu-test test-isa-emu firmware test-fw-host firmware-size build-zephyr-demo zephyr-bc-lib build-hack test-emu coverage-fw sim-lockstep build-zephyr sim-unit test-isa sim-gls-unit test-isa-gls sim-soc-fast sim-soc-fast-icarus sim-soc-mmio sim-boot sim-hack-rtl sim-sd-quirks sim-hw-flow sim-zephyr-demo-rtl synth-top sim-soc-gls-fast
+test-sim: check lint-rtl emu-test test-isa-emu firmware test-fw-host firmware-size build-zephyr-demo zephyr-bc-lib build-hack test-emu coverage-fw sim-lockstep build-zephyr sim-unit test-isa sim-gls-unit test-isa-gls sim-soc-fast sim-soc-fast-icarus sim-soc-mmio sim-boot sim-hack-rtl sim-sd-quirks sim-hw-flow sim-zephyr-demo-rtl synth-top sim-soc-gls-fast
 	@echo "========================================================================"
 	@echo "  [SIM] ALL RTL, GLS NETLIST, ISA & SOC SIMULATION TESTS PASSED!        "
 	@echo "========================================================================"
