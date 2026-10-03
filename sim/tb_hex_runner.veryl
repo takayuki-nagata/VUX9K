@@ -27,6 +27,7 @@ module tb_hex_runner (
 
     var data_in    : logic<32>;
     var data_addr  : logic<32>;
+    var data_waddr : logic<32>;
     var data_out   : logic<32>;
     var mem_write  : logic    ;
     var mem_byte_we: logic<4> ;
@@ -36,10 +37,7 @@ module tb_hex_runner (
 
     // Only the program image is loaded; the rest of the RAM stays X, so a test that
     // strays outside its image fails loudly. Don't fill it (a loop here, or padding
-    // program.hex): Veryl emits the reads below as always_comb, which Icarus
-    // re-evaluates against the whole array on every word written, 15 s per test
-    // instead of 0.5 s. (Continuous assigns would need a net into the CPU's
-    // `input var` ports, which Icarus doesn't support; see AGENTS.md.)
+    // program.hex): it would also hide reads of memory the test never wrote.
     initial {
         $readmemh("program.hex", ram);
     }
@@ -58,7 +56,7 @@ module tb_hex_runner (
         mtime_in       : 64'd0,
         pc_out                ,
         data_addr             ,
-        data_waddr     : _    ,
+        data_waddr            ,
         data_out              ,
         mem_write             ,
         mem_read_req   : _    ,
@@ -66,29 +64,37 @@ module tb_hex_runner (
         active_mode    : _    ,
     );
 
-    // Word-aligned instruction and data reads; addresses wrap at 256 KB
-    assign instr_in = ram[pc_out[17:2]];
-    assign data_in  = ram[data_addr[17:2]];
+    // The bus timing of soc_ram (the real SoC): both ports read synchronously, one
+    // cycle after the CPU presents the address, and a read sees the RAM before a write
+    // on the same edge. pc_out is next_pc outside FETCH, so this checks that the CPU
+    // asks for the right instruction a cycle early, which a combinational read would
+    // not. Stores use data_waddr, as soc_top does. Word-aligned; addresses wrap at 256 KB.
+    var instr_q: logic<32>;
+    var data_q : logic<32>;
+    assign instr_in = instr_q;
+    assign data_in  = data_q;
+
+    always_ff (clk) {
+        instr_q = ram[pc_out[17:2]];
+        data_q  = ram[data_addr[17:2]];
+        // Data memory write (RAM window only; MMIO addresses must not alias into RAM)
+        if rst && mem_write && data_waddr[31:18] == 14'd0 {
+            for b in 0..4 {
+                if mem_byte_we[b] {
+                    ram[data_waddr[17:2]][b * 8+:8] = data_out[b * 8+:8];
+                }
+            }
+        }
+    }
 
     // A tohost write ends the test (the cocotb side reads the verdict)
     always_ff (clk, rst) {
         if_reset {
             halted    = 1'b0;
             halt_code = 32'h0;
-        } else if mem_write && !halted && data_addr == TOHOST_ADDR {
+        } else if mem_write && !halted && data_waddr == TOHOST_ADDR {
             halted    = 1'b1;
             halt_code = data_out;
-        }
-    }
-
-    // Data memory write (RAM window only; MMIO addresses must not alias into RAM)
-    always_ff (clk) {
-        if rst && mem_write && data_addr[31:18] == 14'd0 {
-            for b in 0..4 {
-                if mem_byte_we[b] {
-                    ram[data_addr[17:2]][b * 8+:8] = data_out[b * 8+:8];
-                }
-            }
         }
     }
 }
