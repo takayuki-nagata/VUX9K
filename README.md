@@ -363,8 +363,9 @@ Short tests run on Icarus, long SoC/GLS runs on Verilator (`SIM_UNIT` / `SIM_SOC
 
 | Level | Command | Typical Time | Verification Scope |
 |:---|:---|:---|:---|
-| **RTL Unit Tests** | `make sim-unit` | ~10 sec | 22 cocotb modules: CPU (ALU, decoder, regfile, CSRs, mode detector, Hack ops, RV32I smoke, branches, trap path), UART, timer, GPIO, SD SPI master, RAM, and the SP/SDPB block-RAM cell models |
-| **ISA Tests** | `make test-isa` | ~1.5 min | riscv-tests `rv32ui`/`rv32mi` on `tb_hex_runner` (56 pass; 2 known gaps, hardware misaligned access and PMP, tracked as expected failures in `scripts/run_riscv_tests.py`) |
+| **RTL Unit Tests** | `make sim-unit` | ~1 min | 26 cocotb modules: CPU (ALU, decoder, regfile, CSRs, LSU, next-PC, trap unit, mode detector, Hack translator and ops, RV32I smoke, branches, trap path), UART, timer, GPIO, SD SPI master, address decoder, RAM, and the SP/SDPB block-RAM cell models. Each has boundary-value and random tests against a Python model (fixed seed; *slow*: `sim-unit-random`, a new seed each day) |
+| **ISA Tests** | `make test-isa` | ~20 sec | riscv-tests `rv32ui`/`rv32mi` on `tb_hex_runner`, whose RAM has the SoC's synchronous timing (56 pass; 2 known gaps, hardware misaligned access and PMP, tracked as expected failures in `scripts/run_riscv_tests.py`) |
+| **GLS ISA Tests** | `make test-isa-gls` | ~1.5 min | The same riscv-tests on the gate-level `unified_cpu` netlist |
 | **GLS Unit Tests** | `make sim-gls-unit` | ~20 sec | Gowin primitive netlists (`sim/gowin_cells_sim.veryl`) of the CPU, UART controller and mode detector |
 | **SoC Boot** | `make sim-soc-fast` / `sim-soc-fast-icarus` | ~10 sec / ~3 min | Power-on reset, Boot Manager prompt, S2-button launch of an SD slot via the Resident Loader (Verilator / 4-state Icarus) |
 | **SoC MMIO** | `make sim-soc-mmio` | ~5 sec | RV32I program from I-RAM checking the memory map, D-RAM lanes, timer, GPIO, UART RX and status flags, soft reset; timer and UART RX interrupts |

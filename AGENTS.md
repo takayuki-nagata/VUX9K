@@ -371,7 +371,44 @@ are easy to break without noticing:
   latch; `scripts/riscv_tests/hex_runner.py` drives clock/reset, waits for the latch
   with one trigger (not per cycle) and writes `verdict.txt`. `run_riscv_tests.py
   rv32ui-p-add ...` runs a subset; set `TRACE=1` in the environment for a
-  per-cycle PC/instruction log in `build/riscv_tests/runs/<test>/sim.log`.
+  per-cycle PC/instruction log in `build/riscv_tests/runs/<test>/sim.log`. Tests run
+  in parallel (`--jobs`, default: CPUs); each has its own run directory.
+- **The tb's RAM has `soc_ram`'s timing: keep it.** Both ports read one cycle after
+  the CPU presents the address, before that edge's write, and stores use `data_waddr`.
+  Until 2026-10 it read combinationally at `pc_out`, which hid any fetch-address bug:
+  with `pc_out` mutated to `pc_reg` (the address one cycle late) all 56 tests still
+  passed; with the synchronous RAM the self-test fails. The combinational read was
+  also why the suite took ~97 s on Icarus (each RAM write re-evaluated the reads
+  against the whole array); it now takes ~20 s on 2 CPUs. On Icarus a test costs
+  ~0.45 s against ~0.7 s on Verilator (process start-up dominates), so `test-isa`
+  stays on Icarus, which also keeps unwritten RAM as X.
+- **`make test-isa-gls` runs the suite on the gate-level `unified_cpu` netlist**
+  (`make synth-units`; `--gls`, results in `runs-gls/`), the tb's memory staying RTL.
+  It is the ISA-wide check for constructs Yosys reads differently from the simulators
+  (the `as i32` compare above), which the RTL runs and `make eqy` can't see. On
+  Verilator, ~70 s with the compile; in `test-sim`.
+
+## Unit tests: reference models, seeds, and combinational outputs
+
+Each module under `sim/unit/` has, besides its directed cases, a test that drives
+boundary values and random stimulus against a Python model (shared operand generators
+and models: `sim/unit/unit_models.py`; e.g. `alu_model`, `HACK_COMP`); sequential
+modules are checked every cycle. When a check fails, decide from the README/spec
+whether the model or the RTL is wrong; an RTL bug gets `xfail(strict=True)` until fixed.
+- **Seeds.** cocotb seeds `random` per test from `COCOTB_RANDOM_SEED` and logs it.
+  `sim_runner.py` fixes it (`DEFAULT_RANDOM_SEED`) unless the environment sets it, so
+  `test-sim` is reproducible; `make sim-unit-random` (test-slow) uses the date. Rerun a
+  failure with the logged seed. Run a new random test with a few seeds before
+  committing: on its first multi-seed run here, two of them had stimulus outside the
+  contract (an SD MISO delay over `(divider - 2)` clocks) or a setup race that one seed
+  happened to hide.
+- **Don't trigger on edges of combinational outputs.** Icarus shows the zero-width
+  glitches of an `always_comb` output (default assignment, then the real one) as VPI
+  edges: a monitor on `RisingEdge(dut.rdy)` of `uart_rx` saw duplicate frames, and
+  `FallingEdge(dut.busy)` of `uart_tx` fired mid-frame. Sample such signals at a clock
+  edge (registered outputs, like `txd`, are safe to follow with `Edge`).
+- **Parameters aren't VPI-visible under Verilator** (`make coverage` runs the unit
+  tests there): use the module's default value in the test, not `dut.PARAM`.
 
 ## SoC cocotb tests: clock in HDL, never wait with `ClockCycles`
 
@@ -396,9 +433,9 @@ All SoC tests are on `soc_env`/`tb_soc_top`; keep new ones there too.
 
 ## Verilator: which tests use it, and the `--public-flat-rw` trap
 
-`make` runs short tests on Icarus (`SIM_UNIT`, compile time dominates) and the
-long SoC/GLS runs on Verilator (`SIM_SOC`): `sim-soc-fast`, `sim-hw-flow`,
-`sim-soc-gls-fast`, `sim-gls-hw-flow`. Measured 2026-09 (wall time incl. compile):
+`make` runs short tests on Icarus (`SIM_UNIT`, compile time dominates; also
+`test-isa`) and the long SoC/GLS runs on Verilator (`SIM_SOC`): `sim-soc-fast`,
+`sim-hw-flow`, `sim-soc-gls-fast`, `sim-gls-hw-flow`, `test-isa-gls`. Measured 2026-09 (wall time incl. compile):
 hw-flow RTL 860 s (Icarus) -> ~30 s; gls-fast ~1,050 s -> ~33 s. Verilator needs
 `perl`; on a host without it, run Verilator from a container or toolbox that has it.
 - **Don't let cocotb's `--public-flat-rw` back in.** cocotb's Verilator runner
@@ -467,9 +504,9 @@ hw-flow), merges them with `verilator_coverage` into `build/coverage/merged.dat`
 - Points are per hierarchy (unit-test toplevel vs `tb_soc_top.soc.cpu_inst`), so a
   `~` (partial) line is often covered by another instance; `%` lines were reached by
   nothing at all. `--annotate-points` shows every point with its `hier=`.
-- Not measured: Icarus-only runs (`make test-isa`'s `tb_hex_runner`) and GLS. RV32I
-  load/ALU/misaligned-fetch lines in `unified_cpu` that riscv-tests exercise
-  therefore show as `%` — cross-check against `test-isa` before calling them holes.
+- The riscv-tests are measured too (`run_riscv_tests.py` under `HDL_COVERAGE=1`,
+  run directories in `build/riscv_tests/runs-cov/`, hierarchy `tb_hex_runner.uut`).
+  GLS is not.
 
 ## Firmware coverage: `make coverage-fw` (emulator runs, source lines)
 
@@ -572,11 +609,12 @@ point is a fixed, documented list, not any property of the values.
 
 ## Test tiers: what `test-sim` does and doesn't cover
 
-`make test-sim` (every push/PR in CI) runs the unit suites (RTL + GLS), `test-isa`,
-and the SoC tests: `sim-soc-fast` (+ `-icarus`), `sim-soc-mmio`, `sim-boot` (CLI),
-`sim-hack-rtl`, `sim-sd-quirks`, `sim-hw-flow` (RTL flashing flow) and
-`sim-soc-gls-fast`. `make test-slow` (CI nightly + manual `workflow_dispatch`) adds
-`sim-gls-hw-flow` and `sim-hw-flow-icarus`. Until 2026-09 the flashing flow ran in
+`make test-sim` (every push/PR in CI) runs the unit suites (RTL + GLS), `test-isa`
+(+ `test-isa-gls`), and the SoC tests: `sim-soc-fast` (+ `-icarus`), `sim-soc-mmio`,
+`sim-boot` (CLI), `sim-hack-rtl`, `sim-sd-quirks`, `sim-hw-flow` (RTL flashing flow)
+and `sim-soc-gls-fast`. `make test-slow` (CI nightly + manual `workflow_dispatch`) adds
+`sim-gls-hw-flow`, `sim-hw-flow-icarus`, `sim-lockstep-slow`, `sim-zephyr-demo-gls` and
+`sim-unit-random` (the unit tests with the date as random seed). Until 2026-09 the flashing flow ran in
 no tier at all (25–35 min RTL / many hours GLS on Icarus); on Verilator it's ~16 s
 RTL / ~3–6 min GLS, which is what made it affordable per PR.
 
@@ -615,7 +653,7 @@ path- or timing-related regression the fast tests can't reach.
 Run in this order (each depends on the previous succeeding):
 ```
 make firmware        # Cargo workspace build -> build/firmware/
-make sim-unit         # broadest RTL path coverage (22 unit test modules)
+make sim-unit         # broadest RTL path coverage (26 unit test modules)
 make test-isa
 make build-hack        # hack_demo/
 make sim-hack-rtl
