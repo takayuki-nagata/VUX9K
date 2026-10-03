@@ -5,7 +5,6 @@
 // Single-write-port prioritized structure for optimal FPGA Distributed RAM mapping
 pub module rv32i_regfile (
     clk     : input  clock    ,
-    rst     : input  reset    ,
     we      : input  logic    ,
     rd_addr : input  logic<5> ,
     wr_data : input  logic<32>,

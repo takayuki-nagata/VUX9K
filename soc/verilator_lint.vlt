@@ -17,7 +17,11 @@ lint_off -rule UNUSEDSIGNAL -file "*/tb_hex_runner.sv" -match "*'data_addr'*"
 lint_off -rule UNUSEDSIGNAL -file "*/next_pc_unit.sv" -match "*'hack_comp'*"
 // mip only has MSIP/MTIP/MEIP
 lint_off -rule UNUSEDSIGNAL -file "*/rv32i_csrs.sv" -match "*'pending'*"
-// The SD data register is 8 bits wide on a 32-bit bus
+// The SD data register is 8 bits wide on a 32-bit bus; its TX shift register sends
+// bits 7..0 and so never reads its top bit after the load
+lint_off -rule UNUSEDSIGNAL -file "*/sdcard_spi.sv" -match "*'shift_tx'*"
+// The decoder hands over the whole funct7; RV32I only needs bit 5 (SUB/SRA)
+lint_off -rule UNUSEDSIGNAL -file "*/unified_cpu.sv" -match "*'rv_funct7'*"
 lint_off -rule UNUSEDSIGNAL -file "*/sdcard_spi.sv" -match "*'data_in'*"
 // Outputs nothing reads: the shift registers' unused side, the PLL's other clocks, and
 // the CPU outputs the riscv-tests harness doesn't need
@@ -35,9 +39,5 @@ lint_off -rule DECLFILENAME -file "*/gowin_cells_sim.sv"
 
 // ----- To fix (each one is removed by the refactor that fixes it) ---------------------
 
-// Unused: register file reset input, funct7 bits, the SD shift register's top bit
-lint_off -rule UNUSEDSIGNAL -file "*/rv32i_regfile.sv" -match "*'rst'*"
-lint_off -rule UNUSEDSIGNAL -file "*/unified_cpu.sv" -match "*'rv_funct7'*"
-lint_off -rule UNUSEDSIGNAL -file "*/sdcard_spi.sv" -match "*'shift_tx'*"
 // False loop: one always_comb in unified_cpu both drives the ALU operands and reads its result
 lint_off -rule UNOPTFLAT -file "*/rv32i_alu.sv" -match "*.res_int'*"

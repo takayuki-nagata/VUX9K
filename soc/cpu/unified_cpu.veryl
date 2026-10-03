@@ -194,7 +194,6 @@ pub module unified_cpu #(
     // Dual-Port Register File
     inst reg_file: rv32i_regfile (
         clk     : clk                 ,
-        rst     : rst                 ,
         we      : rf_we && !trap_entry,
         rd_addr : rf_rd_addr          ,
         wr_data : rf_wr_data          ,

@@ -15,8 +15,7 @@ async def test_rv32i_regfile(dut):
     clock = Clock(dut.clk, 10, unit="ns")
     cocotb.start_soon(clock.start())
 
-    # 1. Reset (active-low)
-    dut.rst.value = 0
+    # 1. Idle inputs (the register file has no reset)
     dut.we.value = 0
     dut.rd_addr.value = 0
     dut.wr_data.value = 0
@@ -25,9 +24,7 @@ async def test_rv32i_regfile(dut):
     dut.wr2_data.value = 0
     dut.rs1_addr.value = 0
     dut.rs2_addr.value = 0
-    await ClockCycles(dut.clk, 2)
-    dut.rst.value = 1
-    await ClockCycles(dut.clk, 1)
+    await ClockCycles(dut.clk, 3)
 
     # 2. Write to x0 on both ports (should be discarded)
     dut.we.value = 1
@@ -71,9 +68,7 @@ async def test_rv32i_regfile_random(dut):
     cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start())
     for sig in ("we", "rd_addr", "wr_data", "we2", "rd2_addr", "wr2_data", "rs1_addr", "rs2_addr"):
         getattr(dut, sig).value = 0
-    dut.rst.value = 0
     await ClockCycles(dut.clk, 2)
-    dut.rst.value = 1
 
     # Registers have no reset: give every one a known value first
     model = [0] * 32
