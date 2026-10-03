@@ -195,7 +195,10 @@ async def test_listed_csrs_do_not_trap(dut):
     def body(a):
         for csr in (0xF11, 0xF12, 0xF13, 0xF14, 0xF15, 0x310, 0x7A0, 0x7A1, 0x7A2, 0x7A3, 0xC00, 0xC01, 0xC02):
             a.word(csr_read_word(csr))
+        for csr in (0x320, 0x323, 0x33F, 0xB03, 0xB1F, 0xB83, 0xB9F):  # mcountinhibit, HPM
+            a.word(csr_read_word(csr))
         a.word((0x7A0 << 20) | (1 << 12) | 0x73)  # csrw tselect, x0: writes are ignored
+        a.word((0x323 << 20) | (1 << 12) | 0x73)  # csrw mhpmevent3, x0
 
     words = program_with_handler(body)
     pcs, _ = await run_program(dut, words)

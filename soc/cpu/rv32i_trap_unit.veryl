@@ -41,6 +41,9 @@ pub module rv32i_trap_unit (
     let csr_writes: logic = funct3[1:0] == 2'b01 || rs1 != 5'd0; // CSRRW[I], or non-zero rs1/uimm
     let csr_ro_wr : logic = csr_addr[11:10] == 2'b11 && csr_writes;
     var csr_exists: logic;
+    // 0x?03-0x?1F in the 32-CSR blocks of mhpmevent, mhpmcounter and mhpmcounterh
+    let csr_hpm: logic = (csr_addr[4:2] != 3'd0 || csr_addr[1:0] == 2'd3)
+        && (csr_addr[11:5] == 7'h19 || csr_addr[11:5] == 7'h58 || csr_addr[11:5] == 7'h5C);
     always_comb {
         case csr_addr {
             // Implemented machine-mode CSRs (rv32i_csrs)
@@ -51,7 +54,11 @@ pub module rv32i_trap_unit (
             // trigger registers (no triggers: riscv-tests' breakpoint test writes tselect
             // unguarded and expects it to read back 0)
             12'h310, 12'hF11, 12'hF12, 12'hF13, 12'hF14, 12'hF15, 12'h7A0, 12'h7A1, 12'h7A2, 12'h7A3: csr_exists = 1'b1;
-            default                                                                                 : csr_exists = 1'b0;
+            // Read as 0 too: mcountinhibit (counters never inhibited)
+            12'h320                                                                                 : csr_exists = 1'b1;
+            // and the HPM CSRs the privileged spec requires: mhpmevent3-31 (0x323-0x33F),
+            // mhpmcounter3-31 (0xB03-0xB1F) and their high halves (0xB83-0xB9F)
+            default                                                                                 : csr_exists = csr_hpm;
         }
     }
     always_comb {

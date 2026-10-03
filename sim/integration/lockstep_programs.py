@@ -162,6 +162,11 @@ def traps() -> list:
     a.csrr("t4", "minstret")
     a.csrr("t5", "mstatus")
     a.csrr("t6", "mip")
+    a.word((0x320 << 20) | (6 << 15) | (1 << 12) | 0x73)  # csrw mcountinhibit, t1: ignored
+    a.word((0x33F << 20) | (6 << 15) | (1 << 12) | 0x73)  # csrw mhpmevent31, t1: ignored
+    a.word(_csr_read(7, 0x320))  # mcountinhibit, mhpmcounter3, mhpmcounter31h: read 0
+    a.word(_csr_read(28, 0xB03))
+    a.word(_csr_read(29, 0xB9F))
     # UART TX: a few bytes, then poll tx_full
     for ch in b"Hi!\n":
         a.li("t1", ch)

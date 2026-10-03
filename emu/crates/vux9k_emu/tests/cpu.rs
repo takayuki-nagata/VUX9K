@@ -182,8 +182,8 @@ fn trap_priority_and_mtval() {
     let mut soc = load(Profile::Real, &program(&[jal(7, 6)]));
     run_n(&mut soc, 3);
     assert_eq!((soc.csr.mcause, soc.csr.mtval, soc.regs[7]), (0, 8 + 6, 0));
-    // a CSR the CPU doesn't implement (mcountinhibit) is illegal
-    let mut soc = load(Profile::Real, &program(&[csr(2, 5, 0x320, 0)]));
+    // a CSR the CPU doesn't implement (mcounteren: no U-mode) is illegal
+    let mut soc = load(Profile::Real, &program(&[csr(2, 5, 0x306, 0)]));
     run_n(&mut soc, 3);
     assert_eq!(soc.csr.mcause, 2);
     // writing a read-only CSR (unimp = csrrw x0, cycle, x0) is illegal
@@ -394,4 +394,19 @@ fn load_app_rejects_what_the_board_cannot_load() {
     // Not real hardware: up to the profile's I-RAM
     let mut soc = Soc::new(Profile::EXTENDED);
     assert!(soc.load_app(&vec![0x13; 256 * 1024], Isa::Rv32).is_ok());
+}
+
+#[test]
+fn hpm_csrs_exist_in_their_ranges() {
+    use vux9k_emu::csr::exists;
+    // mcountinhibit, mhpmevent3-31, mhpmcounter3-31 and their high halves read 0
+    for addr in [0x320, 0x323, 0x33F, 0xB03, 0xB1F, 0xB83, 0xB9F] {
+        assert!(exists(addr), "{addr:#x}");
+    }
+    // their neighbors don't exist (0x321/0x322 reserved; no hpmcounter without Zihpm)
+    for addr in [
+        0x321, 0x322, 0xB01, 0xB20, 0xB81, 0xBA0, 0xC03, 0xC83, 0x306,
+    ] {
+        assert!(!exists(addr), "{addr:#x}");
+    }
 }

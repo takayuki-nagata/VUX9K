@@ -33,9 +33,11 @@ pub const MIP_MSIP: u32 = 1 << 3;
 pub const MIP_MTIP: u32 = 1 << 7;
 pub const MIP_MEIP: u32 = 1 << 11;
 
-/// Whether the CPU implements `addr` (rv32i_trap_unit's `csr_exists`).
+/// Whether the CPU implements `addr` (rv32i_trap_unit's `csr_exists`): the CSRs it
+/// keeps, the ones that read 0 (incl. mcountinhibit and the HPM CSRs the spec requires).
 pub fn exists(addr: u16) -> bool {
-    matches!(
+    let hpm = matches!(addr & 0x1F, 3..=0x1F) && matches!(addr >> 5, 0x19 | 0x58 | 0x5C);
+    hpm || matches!(
         addr,
         0x300
             | 0x301
@@ -66,6 +68,7 @@ pub fn exists(addr: u16) -> bool {
             | 0x7A1
             | 0x7A2
             | 0x7A3
+            | 0x320
     )
 }
 

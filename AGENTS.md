@@ -389,7 +389,9 @@ are easy to break without noticing:
   riscv-tests env touch, checked by disassembling them. A few are legal only to
   read 0: `mhartid` and the other machine information registers, `mstatush`, and
   the debug trigger registers (`rv32mi-p-breakpoint` writes `tselect` without a
-  trap guard). Before adding a CSR access to firmware, add the CSR to both
+  trap guard), and `mcountinhibit` plus the HPM CSRs the spec requires
+  (`mhpmevent3`-`31`, `mhpmcounter3`-`31`(h)), which the ACT4 tests' boot code writes
+  unguarded. Before adding a CSR access to firmware, add the CSR to both
   `csr_exists` and `rv32i_csrs`.
 - **The tb is split: hardware in Veryl, stimulus in cocotb.** `sim/tb_hex_runner.veryl`
   holds the RAM (preloaded from `program.hex` in the cwd), the CPU and the `tohost`

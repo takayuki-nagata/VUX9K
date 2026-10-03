@@ -104,6 +104,7 @@ The CPU is machine-mode only. Accessing any CSR not listed here raises an illega
 | `mcycle`/`mcycleh`, `minstret`/`minstreth` (`0xB00`/`0xB80`/`0xB02`/`0xB82`) | 64-bit, writable; `minstret` counts RV32 instructions that complete without trapping |
 | `cycle`, `time`, `instret` and their `h` halves (`0xC00`-`0xC02`, `0xC80`-`0xC82`) | Read-only; `time` is the timer's `mtime` |
 | `mvendorid`, `marchid`, `mimpid`, `mhartid`, `mconfigptr` (`0xF11`-`0xF15`), `mstatush` (`0x310`), `tselect`/`tdata1`-`tdata3` (`0x7A0`-`0x7A3`) | Read 0 (no debug triggers); writes to `mstatush` and the trigger registers are ignored |
+| `mcountinhibit` (`0x320`), `mhpmevent3`-`31` (`0x323`-`0x33F`), `mhpmcounter3`-`31` and their `h` halves (`0xB03`-`0xB1F`, `0xB83`-`0xB9F`) | Read 0, writes ignored: no performance-monitoring events (the spec requires these CSRs to exist) |
 
 Interrupts: timer (`MTI`, cause 7) from `mtime >= mtimecmp`, external (`MEI`, cause 11) while the UART RX FIFO holds data; `MSI` is never raised.
 
