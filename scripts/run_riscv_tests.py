@@ -216,7 +216,9 @@ def simulate_rtl(hexf, gls):
     name = os.path.basename(hexf).removesuffix(".hex")
     # HDL_COVERAGE=1 (make coverage): a run directory of its own, holding coverage.dat
     runs = "runs-gls" if gls else "runs-cov" if os.environ.get("HDL_COVERAGE", "") not in ("", "0") else "runs"
-    test_dir = Path(BUILD_DIR) / runs / name
+    # A mutant's runs (make mutation: VUX9K_RTL_OVERRIDE, see sim_runner) stay in its own directory
+    base = Path(os.environ["VUX9K_MUT_BUILD_DIR"]) if os.environ.get("VUX9K_RTL_OVERRIDE") else Path(BUILD_DIR)
+    test_dir = base / runs / name
     test_dir.mkdir(parents=True, exist_ok=True)
     verdict = test_dir / "verdict.txt"
     verdict.unlink(missing_ok=True)

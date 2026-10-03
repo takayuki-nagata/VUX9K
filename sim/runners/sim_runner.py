@@ -117,6 +117,18 @@ def _gowin_cells_with_net_inputs() -> Path:
     return GOWIN_CELLS_NETS
 
 
+def _rtl_overrides() -> dict[str, Path]:
+    """VUX9K_RTL_OVERRIDE="<module>=<file>[,...]": generated .sv files to replace (make mutation).
+
+    Each file must define the module itself (flattened, see scripts/mcy/). Such builds go
+    to $VUX9K_MUT_BUILD_DIR/<toplevel>/, rebuilt every time, so they never mix with the
+    normal ones.
+    """
+    spec = os.environ.get("VUX9K_RTL_OVERRIDE", "")
+    pairs = (item.split("=", 1) for item in spec.split(",") if item)
+    return {module: Path(path).resolve() for module, path in pairs}
+
+
 def sources_for(toplevel: str, gls: bool) -> list[Path]:
     """RTL sources, or Gowin cell models + the yosys netlist for toplevel (GLS)."""
     if toplevel == "tb_gowin_bram":
@@ -128,7 +140,8 @@ def sources_for(toplevel: str, gls: bool) -> list[Path]:
         )
         sources = [_gowin_cells_with_net_inputs(), SYNTH_DIR / netlist]
     else:
-        sources = list(RTL_SOURCES)
+        overrides = _rtl_overrides()
+        sources = [overrides.get(p.stem, p) for p in RTL_SOURCES]
     if toplevel == "tb_soc_top":
         sources.append(TB_SOC_TOP)
     elif toplevel == "tb_hex_runner":
@@ -221,6 +234,11 @@ def run(
     if coverage:
         variant += "-cov"
     build_dir = SIM_BUILD_DIR / variant / toplevel
+    mutant = bool(_rtl_overrides())
+    if mutant:
+        if gls or coverage:
+            raise ValueError("VUX9K_RTL_OVERRIDE is for RTL builds without HDL_COVERAGE")
+        build_dir = Path(os.environ["VUX9K_MUT_BUILD_DIR"]).resolve() / toplevel
     test_dir = test_dir or build_dir / f"run_{module}"
 
     sources: list[Path | VerilatorControlFile] = list(sources_for(toplevel, gls))
@@ -258,7 +276,7 @@ def run(
             build_args=build_args,
             defines=defines,
             timescale=("1ns", "1ps"),
-            always=flags_changed,
+            always=flags_changed or mutant,
         )
         stamp.write_text(flags)
 

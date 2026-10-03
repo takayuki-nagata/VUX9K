@@ -526,6 +526,29 @@ count as the steadier signal. Register names don't survive synthesis
 net's autoname (e.g. `D=instr_addr` is the PC register). `make sta` prints the
 same end points for the adopted seed.
 
+## Mutation testing: `make mutation` (mcy, manual only)
+
+`make mutation MCY_TOP=<module>|all [MCY_SIZE=100]` (`scripts/mcy/mutation.py`) asks
+whether the unit tests notice a broken RTL module: mcy lists single-point mutations of
+the module's generated `.sv` (flattened with its submodules), Yosys `equiv_*` drops the
+equivalent ones, and the module's cocotb unit tests (plus the riscv-tests for
+`unified_cpu`) run against each remaining mutant, swapped in by `sim_runner`'s
+`VUX9K_RTL_OVERRIDE`. Results: `build/mcy/<module>/summary.md` (score and every survivor's
+source location), each mutant's test output in `logs/<id>.out`. It is in no tier and has
+no threshold: read the survivors, then add a test or note why the mutant is harmless.
+Things that went wrong while building it, and must stay fixed:
+- **A broken harness looks like a perfect score.** Every mutant "fails" if the tests
+  can't run at all. Two such cases: Yosys `write_verilog` renders `$pmux` as functions
+  Icarus can't compile (the mutant is now written after `pmuxtree`, and a mutant that
+  doesn't compile stops the run), and mcy runs its test scripts under OSS CAD Suite's
+  Python wrapper, whose `PYTHONHOME` broke the venv's Python (the script unsets it). The
+  run therefore starts with a self-test: the unmutated module through the same script,
+  under the same wrapper, must pass (`logs/selftest.out`).
+- **The equivalence check needs `memory_map` and `async2sync`**; without them every
+  sequential mutant, even mcy's no-op mutation 1, counted as non-equivalent.
+- `unified_cpu`'s mutants run one at a time (`run_riscv_tests.py` regenerates shared
+  files); expect hours for `MCY_SIZE=100`.
+
 ## Code coverage: `make coverage` (Verilator line + toggle)
 
 `HDL_COVERAGE=1` makes `sim_runner.py` build Verilator RTL sims with
