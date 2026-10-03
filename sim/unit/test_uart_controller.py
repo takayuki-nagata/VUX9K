@@ -166,7 +166,8 @@ async def test_uart_controller_random_loopback(dut):
 
     cocotb.start_soon(loopback())
     frame_ns = 10 * 434 * period_ns  # uart_controller's default CNT
-    accepted, received = [], []
+    accepted: list[int] = []
+    received: list[int] = []
 
     async def read_all():
         while not int(dut.empty.value):

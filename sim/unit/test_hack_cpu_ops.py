@@ -411,7 +411,8 @@ def run_hack(prog, initial):
     """Hack interpreter: the (address, value) of each memory write, 16-bit. initial(addr)
     is what memory holds before the program writes it."""
     a = d = pc = 0  # (A is set by the first instruction, D by the second)
-    writes, ram = [], {}
+    writes: list = []
+    ram: dict[int, int] = {}
     for _ in range(len(prog)):  # forward jumps only: never more steps than instructions
         if pc == len(prog) - 2:
             break
@@ -447,13 +448,13 @@ async def test_random_programs_against_interpreter(dut):
     for _ in range(25):
         prog = random_hack_program(random.randint(20, 80))
         words = [prog[i] | (prog[i + 1] if i + 1 < len(prog) else 0) << 16 for i in range(0, len(prog), 2)]
-        init = {}  # memory before the program writes it: a fixed random value per address
+        init: dict[int, int] = {}  # memory before the program writes it: a fixed random value per address
 
         def initial(addr, init=init):
             return init.setdefault(addr, random.getrandbits(16))
 
         expected = run_hack(prog, initial)
-        ram = {}
+        ram: dict[int, int] = {}
 
         dut.rst.value = 0
         dut.instr_in.value = words[0]

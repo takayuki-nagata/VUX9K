@@ -14,7 +14,9 @@ PROMPT = b"vux> "
 # check read up to a whole slot, ~10-20M cycles; this is a generous upper bound
 BOOT_CYCLES = 60_000_000
 with open(os.path.join(REPO_ROOT, "firmware", "boot_manager", "src", "main.rs")) as _f:
-    BOOT_MGR_VERSION = int(re.search(r"const BOOT_MGR_VERSION: u32 = (\d+);", _f.read()).group(1))
+    _m = re.search(r"const BOOT_MGR_VERSION: u32 = (\d+);", _f.read())
+    assert _m, "BOOT_MGR_VERSION not found in main.rs"
+    BOOT_MGR_VERSION = int(_m.group(1))
 BANNER = f"VUX9K Dual-ISA RISC-V / Hack SoC Boot Manager (v{BOOT_MGR_VERSION})"
 # lui a1,0x40000; addi a0,zero,'#'; sb a0,0(a1); j .
 HASH_PAYLOAD = struct.pack("<IIII", 0x400005B7, 0x02300513, 0x00A58023, 0x0000006F)

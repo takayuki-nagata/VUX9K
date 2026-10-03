@@ -30,7 +30,7 @@ UART_FRAME = 10 * UART_BIT
 class Program:
     name: str
     cycles: int  # run length, from cycle 0
-    imem_words: list = None  # over the firmware preload, from word 0
+    imem_words: list | None = None  # over the firmware preload, from word 0
     uart_rx: list = field(default_factory=list)  # (cycle, bytes): start bits back to back from cycle
     button: list = field(default_factory=list)  # (cycle, pressed) S2 pin level from cycle
     sd_sectors: dict = field(default_factory=dict)  # lba -> bytes (after the MBR in sector 0)

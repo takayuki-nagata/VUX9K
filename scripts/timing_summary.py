@@ -39,7 +39,7 @@ AUTONAME_SUFFIX = re.compile(r"_(LUT\d|MUX2|DFF\w*|ALU|RAM16\w*|DO|DI|DPB|SPX9)(
 
 def cell_counts(soc_json):
     top = json.load(open(soc_json))["modules"]["board_top"]
-    types = {}
+    types: dict[str, int] = {}
     for cell in top["cells"].values():
         types[cell["type"]] = types.get(cell["type"], 0) + 1
     return {group: sum(types.get(t, 0) for t in members) for group, members in CELL_GROUPS.items()}
@@ -63,7 +63,7 @@ def endpoint_desc(cell, port, netnames_by_bit):
 def worst_path_endpoints(pnr_json, sta_json):
     modules = json.load(open(pnr_json))["modules"]
     top = modules[next(iter(modules))]
-    by_bit = {}
+    by_bit: dict[int, list[str]] = {}
     for name, net in top["netnames"].items():
         for bit in net["bits"]:
             by_bit.setdefault(bit, []).append(name)

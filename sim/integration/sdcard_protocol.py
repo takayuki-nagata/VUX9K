@@ -129,7 +129,7 @@ class SdCardProtocol:
                 if self.write_reject:
                     self._resp += b"\x0b"
                 else:
-                    self.set_sector(self._lba, self._buf[:SECTOR])
+                    self.set_sector(self._lba, bytes(self._buf[:SECTOR]))
                     self._resp += b"\x05\x3f"
 
     def exchange(self, mosi: int, selected: bool) -> int:

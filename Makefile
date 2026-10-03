@@ -5,6 +5,7 @@
 
 VERYL = veryl
 RUFF = ruff
+MYPY = mypy
 YOSYS = yosys
 GOWIN_PACK = gowin_pack
 NEXTPNR ?= nextpnr-himbaechel
@@ -51,7 +52,7 @@ $(VENV_PATH)/bin/activate:
 	fi
 
 setup: venv
-	$(UV) pip install --python $(VENV_PATH)/bin/python cocotb pytest pyserial ruff
+	$(UV) pip install --python $(VENV_PATH)/bin/python cocotb pytest pyserial ruff mypy
 	@if [ -d ".git" ]; then \
 		echo "Configuring Git core.hooksPath to .githooks..."; \
 		git config core.hooksPath .githooks; \
@@ -65,6 +66,7 @@ check: check-paths
 	$(VERYL) check
 	$(RUFF) format --check
 	$(RUFF) check
+	$(MYPY)
 	cd firmware && $(CARGO) fmt --check
 
 fmt:

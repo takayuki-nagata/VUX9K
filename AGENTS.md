@@ -227,6 +227,13 @@ to reach `build/`/`tools/` from a `sim/<file>.py` that's one level below repo
 root) needed an extra `dirname()` after the move to `sim/<subdir>/<file>.py`
 (two levels below repo root) — check this if you add a new such computation.
 
+`make check` runs mypy (`[tool.mypy]` in `pyproject.toml`, `check_untyped_defs`) over
+`sim/`, `tools/` and `scripts/`. None of it is a package: modules find each other through
+`sys.path` inserts, and `mypy_path` lists the same directories, so a new directory that
+tests put on `sys.path` goes there too. Import `vux_tool` as `tools.vux_tool` (with the
+repo root on `sys.path`) everywhere; a second spelling (`import vux_tool` from `tools/`)
+makes mypy see the file twice under two module names.
+
 ## Cargo workspace gotcha: rustflags paths are workspace-root-relative
 
 `firmware/` is a Cargo workspace (`boot_manager` + `resident_loader` members, plus

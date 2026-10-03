@@ -158,9 +158,9 @@ async def test_fifo_random(dut):
     dut.rst.value = 1
 
     depth = 1 << 8  # fifo_sync's default LOG_DEPTH (parameters aren't VPI-visible under Verilator)
-    model = deque()
+    model: deque[int] = deque()
     width_mask = (1 << len(dut.wdata)) - 1
-    history = deque(maxlen=8)  # the last cycles' (we, re), for failure messages
+    history: deque[tuple[int, int]] = deque(maxlen=8)  # the last cycles' (we, re), for failure messages
     for p_we, p_re in ((0.9, 0.2), (0.2, 0.9), (0.95, 0.5), (0.5, 0.95), (0.5, 0.5)) * 2:
         for _ in range(depth * 2):
             we, re = random.random() < p_we, random.random() < p_re

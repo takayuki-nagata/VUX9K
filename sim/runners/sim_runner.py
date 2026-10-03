@@ -223,8 +223,8 @@ def run(
     build_dir = SIM_BUILD_DIR / variant / toplevel
     test_dir = test_dir or build_dir / f"run_{module}"
 
-    sources = sources_for(toplevel, gls)
-    paths = [Path(getattr(s, "value", s)) for s in sources]  # sources may be runner tags
+    sources: list[Path | VerilatorControlFile] = list(sources_for(toplevel, gls))
+    paths = [Path(str(getattr(s, "value", s))) for s in sources]  # sources may be runner tags
     missing = [str(p.relative_to(REPO_ROOT)) for p in paths if not p.exists()]
     if missing:
         hint = "make synth-top / make synth-units" if gls else "make veryl"
@@ -240,7 +240,7 @@ def run(
         if sim == "verilator":
             # The runner infers the HDL language from the *last* source, so the .vlt goes first
             build_dir.mkdir(parents=True, exist_ok=True)
-            sources = [_public_vlt(build_dir, toplevel, gls)] + sources
+            sources = [_public_vlt(build_dir, toplevel, gls), *sources]
         # cocotb only rebuilds when a source is newer than the binary; also rebuild
         # when the compile flags changed, or a flag edit would silently not apply.
         # tb_soc_top's lockstep trace reads RTL-internal names: RTL builds only. GLS

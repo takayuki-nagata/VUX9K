@@ -25,6 +25,7 @@ Exit code: 0 when equivalent, non-zero otherwise.
 """
 
 import argparse
+import io
 import os
 import shutil
 import subprocess
@@ -136,7 +137,8 @@ def main():
         help="Net-name patterns not to match between gold and gate (e.g. 'wr_decode.*' for a new instance)",
     )
     args = parser.parse_args()
-    sys.stdout.reconfigure(line_buffering=True)  # keep our lines in order with eqy's output
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(line_buffering=True)  # keep our lines in order with eqy's output
 
     gate_src = REPO_ROOT / "build" / "veryl"
     if not (gate_src / PACKAGE).exists():

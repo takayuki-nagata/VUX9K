@@ -109,7 +109,7 @@ def bsp_archive(out_path, mtime):
             info.mode = 0o755 if os.access(src, os.X_OK) else 0o644
             with open(src, "rb") as f:
                 tar.addfile(info, f)
-    with open(out_path, "wb") as f, gzip.GzipFile(fileobj=f, mode="wb", mtime=mtime, filename="") as gz:
+    with open(out_path, "wb") as out, gzip.GzipFile(fileobj=out, mode="wb", mtime=mtime, filename="") as gz:
         gz.write(buf.getvalue())
 
 
@@ -156,14 +156,13 @@ def third_party_licenses(out_path):
         "zephyr/vux9k-zephyr-bsp.tar.gz. Its Rust part is built with Rust's core library",
         "(MIT OR Apache-2.0, https://github.com/rust-lang/rust).",
     ]
-    linked = {}
+    linked: dict[str, dict] = {}
     for binary, crate in (("emu/vux9k-emu", "vux9k_emu_cli"), ("emu/vux9k_emu.abi3.so", "vux9k_emu_py")):
         crates = linked_into(crate)
         out += ["", f"{binary} links " + ("these Rust crates:" if crates else "no third-party Rust crates.")]
         out += [f"  {p['name']} {p['version']}  ({p['license']})" for p in crates]
         linked |= {p["id"]: p for p in crates}
-    linked = sorted(linked.values(), key=lambda p: p["name"])
-    for p in linked:
+    for p in sorted(linked.values(), key=lambda p: p["name"]):
         crate_dir = os.path.dirname(p["manifest_path"])
         texts = sorted(n for n in os.listdir(crate_dir) if re.match(r"(LICEN[CS]E|COPYING)", n, re.I))
         if not texts:

@@ -27,7 +27,9 @@ if REPO_ROOT not in sys.path:
 import tools.vux_tool as vux_tool  # noqa: E402 (needs REPO_ROOT on sys.path)
 
 with open(os.path.join(REPO_ROOT, "firmware", "boot_manager", "src", "main.rs")) as _f:
-    BOOT_MGR_VERSION = int(re.search(r"const BOOT_MGR_VERSION: u32 = (\d+);", _f.read()).group(1))
+    _m = re.search(r"const BOOT_MGR_VERSION: u32 = (\d+);", _f.read())
+    assert _m, "BOOT_MGR_VERSION not found in main.rs"
+    BOOT_MGR_VERSION = int(_m.group(1))
 BANNER = f"VUX9K Dual-ISA RISC-V / Hack SoC Boot Manager (v{BOOT_MGR_VERSION})"
 
 CLK_PERIOD_PS = 55556  # 18.0 MHz SoC clock (tb_soc_top.sv: 2 x 27778 ps)

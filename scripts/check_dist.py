@@ -86,7 +86,11 @@ def fail(msg):
 
 def check_sums(dist):
     with open(os.path.join(dist, "SHA256SUMS")) as f:
-        listed = dict(reversed(line.rstrip("\n").split("  ", 1)) for line in f if line.strip())
+        listed: dict[str, str] = {}
+        for line in f:
+            if line.strip():
+                digest, name = line.rstrip("\n").split("  ", 1)
+                listed[name] = digest
     present = set()
     for root, _, names in os.walk(dist):
         for name in names:

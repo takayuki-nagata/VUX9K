@@ -34,7 +34,7 @@ import sys
 import time
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(REPO_ROOT, "tools"))
+sys.path.insert(0, REPO_ROOT)
 
 IMEM_WORDS = 4096
 IMEM_CELL = re.compile(r"(^|\.)ram_inst\.i_mem\.([01])\.([0-7])$")
@@ -98,7 +98,7 @@ def check_dram_zero(fw_dir):
 
 
 def run_on_board(fs, port, timeout):
-    import vux_tool
+    import tools.vux_tool as vux_tool
 
     ser = vux_tool.open_port(port, baudrate=115200, timeout=0.05)
     try:

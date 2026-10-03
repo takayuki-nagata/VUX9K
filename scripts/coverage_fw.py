@@ -36,7 +36,8 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def load_hits(cov_dir):
-    rv, hack = set(), set()
+    rv: set[tuple[int, int]] = set()
+    hack: set[tuple[int, int]] = set()
     for path in glob.glob(os.path.join(cov_dir, "*.cov")):
         with open(path) as f:
             for line in f:
@@ -60,7 +61,7 @@ def elf_words(elf):
 
 def line_ranges(elf, prefixes):
     """{(file, line): [(lo, hi), ...]} from the DWARF line tables, repo files only."""
-    out = {}
+    out: dict[tuple[str, int], list[tuple[int, int]]] = {}
     dwarf = elf.get_dwarf_info()
     for cu in dwarf.iter_CUs():
         lp = dwarf.line_program_for_CU(cu)
@@ -97,7 +98,7 @@ def line_ranges(elf, prefixes):
     return out
 
 
-_sources = {}
+_sources: dict[str, list[str]] = {}
 
 
 def excluded(path, line):
@@ -119,7 +120,7 @@ def cover_elf(name, elf_path, prefixes, rv_hits):
         ranges = line_ranges(elf, prefixes)
     ranges = {k: v for k, v in ranges.items() if not excluded(*k)}
     ran = sorted(pc for pc, w in rv_hits if words.get(pc) == w)
-    lines = {}
+    lines: dict[tuple[str, int], bool] = {}
     for key, rs in ranges.items():
         hit = False
         for lo, hi in rs:
@@ -135,7 +136,7 @@ def cover_hack(asm_path, bin_path, hack_hits):
     with open(bin_path, "rb") as f:
         data = f.read()
     words = [int.from_bytes(data[i : i + 2], "big") for i in range(0, len(data) - 1, 2)]
-    index_line = []
+    index_line: list[int] = []
     literals = {}  # instruction index -> value of a numeric A-instruction
     with open(asm_path) as f:
         for n, raw in enumerate(f, 1):
@@ -153,7 +154,7 @@ def cover_hack(asm_path, bin_path, hack_hits):
         sys.exit(f"{asm_path} does not match {bin_path} (A-instructions at {bad[:5]})")
     ran = {pc // 2 for pc, w in hack_hits if pc // 2 < len(words) and words[pc // 2] == w}
     rel = os.path.relpath(asm_path, REPO_ROOT)
-    lines = {}
+    lines: dict[tuple[str, int], bool] = {}
     for i, n in enumerate(index_line):
         lines[(rel, n)] = lines.get((rel, n), False) or (i in ran)
     return lines
@@ -183,7 +184,7 @@ def main():
     os.makedirs(os.path.dirname(os.path.abspath(args.lcov)), exist_ok=True)
     with open(args.lcov, "w") as f:
         for name, lines in results.items():
-            by_file = {}
+            by_file: dict[str, dict[int, bool]] = {}
             for (path, n), hit in lines.items():
                 by_file.setdefault(path, {})[n] = hit
             for path in sorted(by_file):
@@ -205,15 +206,15 @@ def main():
     ]
     failed = []
     for name, lines in results.items():
-        by_file = {}
+        counts: dict[str, list[int]] = {}
         for (path, _), hit in lines.items():
-            t = by_file.setdefault(path, [0, 0])
+            t = counts.setdefault(path, [0, 0])
             t[0] += 1
             t[1] += hit
-        total = sum(t[0] for t in by_file.values())
-        covered = sum(t[1] for t in by_file.values())
-        for path in sorted(by_file):
-            t = by_file[path]
+        total = sum(t[0] for t in counts.values())
+        covered = sum(t[1] for t in counts.values())
+        for path in sorted(counts):
+            t = counts[path]
             md.append(f"| {name} | {path} | {t[0]} | {t[1]} | {100 * t[1] / max(t[0], 1):.1f} |")
         pct = 100 * covered / max(total, 1)
         md.append(f"| **{name}** | **total** | **{total}** | **{covered}** | **{pct:.1f}** |")

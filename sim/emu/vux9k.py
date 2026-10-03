@@ -93,10 +93,11 @@ def preload_firmware(soc) -> None:
 # through start_soc() records the instructions it executes, and the union is written
 # to <dir>/<pid>.cov (hex keys, one per line) when the process exits.
 _COV_DIR = os.environ.get("VUX9K_COV_DIR")
-_cov_socs = []
+_cov_socs: list = []
 
 
 def _write_coverage():
+    assert _COV_DIR
     keys = set()
     for soc in _cov_socs:
         keys.update(soc.cov_keys())

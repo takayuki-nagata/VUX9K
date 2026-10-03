@@ -36,13 +36,13 @@ Instr = namedtuple("Instr", "cycle riscv pc regs writes trap")
 def _parse_trace(path):
     """{program id: ([Instr], [(cycle, uart_tx level)])} from tb_soc_top's trace."""
     progs = {}
-    instrs = uart = modes = None
+    instrs: list = []
+    uart: list = []
+    modes: list = []
     cur = None
 
     def finish():
         # An instruction runs in the ISA active_mode has in the cycle after its FETCH
-        if instrs is None:
-            return
         cycles = [c for c, _ in modes]
         for k, i in enumerate(instrs):
             m = bisect.bisect_right(cycles, i.cycle + 1)

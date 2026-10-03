@@ -99,6 +99,7 @@ def tcp_session(extra_args, dialog):
             dialog(recv_until, conn.sendall)
     finally:
         proc.wait(timeout=30)
+    assert proc.stderr
     return proc.stderr.read()
 
 

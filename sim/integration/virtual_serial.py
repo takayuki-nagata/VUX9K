@@ -45,8 +45,8 @@ class VirtualSerialBridge:
         self.tx_pin = getattr(dut, tx_pin)
         self.clk_pin = getattr(dut, clk_pin)
 
-        self.rx_buffer = collections.deque()
-        self.tx_buffer = collections.deque()
+        self.rx_buffer: collections.deque[int] = collections.deque()
+        self.tx_buffer: collections.deque[int] = collections.deque()
         self.tx_idle = True
         self._tx_event = Event()
         self._rx_event = Event()

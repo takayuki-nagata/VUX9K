@@ -21,6 +21,7 @@ Timing failure is not an error here; `report_sta.py --strict` decides that.
 """
 
 import argparse
+import io
 import json
 import os
 import shutil
@@ -78,7 +79,8 @@ def main():
     args, unknown = parser.parse_known_args()
     if args.all_seeds:
         args.abort_slack = None
-    sys.stdout.reconfigure(line_buffering=True)  # per-seed lines show up as seeds finish, even in CI logs
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(line_buffering=True)  # per-seed lines show up as seeds finish, even in CI logs
     # Turn SIGTERM into SystemExit so the `finally` below kills the nextpnr children too
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
 
@@ -100,7 +102,7 @@ def main():
 
     pending = list(seeds)
     running = {}  # seed -> (Popen, log file)
-    results = {}  # seed -> slack (None if nextpnr failed or the report is unreadable)
+    results: dict[int, float | None] = {}  # seed -> slack (None if nextpnr failed or the report is unreadable)
     stop_reason = None
 
     def start(seed):

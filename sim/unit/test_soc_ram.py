@@ -145,7 +145,8 @@ async def test_random_both_ports(dut):
     await setup(dut, mode=1)
     i_pool = [0, 1, 2, 0x37F, 0xFFF] + random.sample(range(4096), 5)
     d_pool = [0, 1, 0x7FF] + random.sample(range(2048), 5)
-    imem, dmem = {}, {}  # word index -> word; D-RAM word index -> [4 bytes or None]
+    imem: dict[int, int] = {}
+    dmem: dict[int, list] = {}  # word index -> word; D-RAM word index -> [4 bytes or None]
 
     def d_word(idx):
         lanes = dmem.get(idx)

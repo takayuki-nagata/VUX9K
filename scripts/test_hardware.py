@@ -27,7 +27,9 @@ import tools.vux_tool as vux_tool  # noqa: E402 (needs REPO_ROOT on sys.path)
 def boot_manager_version():
     """BOOT_MGR_VERSION of the Boot Manager being tested (tests 4, 11-13 flash slot 0 relative to it)."""
     with open(os.path.join(REPO_ROOT, "firmware", "boot_manager", "src", "main.rs")) as f:
-        return int(re.search(r"const BOOT_MGR_VERSION: u32 = (\d+);", f.read()).group(1))
+        m = re.search(r"const BOOT_MGR_VERSION: u32 = (\d+);", f.read())
+    assert m, "BOOT_MGR_VERSION not found in main.rs"
+    return int(m.group(1))
 
 
 BM_VERSION = boot_manager_version()
