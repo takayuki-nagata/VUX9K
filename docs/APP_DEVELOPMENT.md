@@ -206,7 +206,8 @@ At start, an application finds:
 - the data RAM zeroed, except for the last 8 bytes (`0x2000_1FF8`-`0x2000_1FFF`), which
   belong to the loaders: don't use them;
 - the UART, timer, GPIO and SD SPI master as the Boot Manager left them
-  ([Memory & MMIO Register Map](../README.md#memory--mmio-register-map)). Interrupts are
+  ([Memory & MMIO Register Map](../README.md#memory--mmio-register-map)); the SD card is
+  initialized and its SCLK at 3 MHz. Interrupts are
   the timer (`MTI`) and UART receive (`MEI`, while the receive FIFO holds data).
 
 Writing `0x5A5A_A55A` to `0x4000_300C` resets the CPU only, like S1: it restarts the

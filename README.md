@@ -43,7 +43,7 @@ The SoC features a multi-cycle Unified CPU core capable of seamlessly executing 
 The SoC runs at **18 MHz** (`soc_pkg::CLK_HZ`): `board_top` feeds the board's 27 MHz
 crystal through the GW1NR-9's rPLL (27 x 2 / 3) and holds the SoC in reset until the
 PLL locks. Everything clock-derived follows from it: UART 156 clocks per bit, SD SPI
-391 kHz during init, `mtime` 18 ticks per microsecond (the firmware's delays, the
+391 kHz during card init and 3 MHz after it, `mtime` 18 ticks per microsecond (the firmware's delays, the
 Zephyr board's timebase), and the emulator's cycle timing. Simulations drive
 `soc_top` at 18 MHz directly; only synthesis goes through `board_top`.
 
@@ -83,7 +83,7 @@ The RTL modules in this repository were originally authored in VHDL-2008 and hav
 | `0x2000_0000` - `0x2000_1FFF` | 8 KB | **Data RAM** | `.data`, `.bss`, stack, and heap. The last 8 bytes (`0x2000_1FF8`-`0x2000_1FFF`) belong to the loaders: the mailbox is at `0x2000_1FFC` |
 | `0x4000_0000` - `0x4000_000F` | 16 B | **UART Controller** | 115200 bps 8N1, 32-byte TX and RX FIFOs. `0x0` data: read pops a received byte, write sends one (only this offset transmits). `0x4` status: bit 0 `rx_empty`, bit 1 `tx_full`, bit 2 `overrun` (a byte was dropped, RX FIFO full), bit 3 `frame_err` (a stop bit was low); bits 2-3 stay set until the status register is read. While the RX FIFO holds data, the machine external interrupt is pending (`mip.MEIP`, level; taken when `mie.MEIE` and `mstatus.MIE` are set; reading the bytes clears it) |
 | `0x4000_1000` - `0x4000_100F` | 16 B | **System Timer (CLINT)** | 64-bit `mtime` (`0x0`/`0x4`) and `mtimecmp` (`0x8`/`0xC`) registers |
-| `0x4000_2000` - `0x4000_200F` | 16 B | **MicroSD SPI Master** | SPI TX/RX data (`0x0`), CS (`0x4`), busy (`0x8`); SPI clock fixed at ~400 kHz. Writes while busy are ignored (data and CS alike): wait for busy to clear first |
+| `0x4000_2000` - `0x4000_200F` | 16 B | **MicroSD SPI Master** | SPI TX/RX data (`0x0`), CS (`0x4`), busy (`0x8`), SCLK divider (`0xC`): half period in clocks, bits 7:0, resets to 23 (391 kHz, for card init); writes below 3 (3 MHz, the fastest the MISO synchronizer can read) set 3. The Boot Manager initializes the card at 23 and switches to 3 when the card is ready. Writes while busy are ignored (all registers): wait for busy to clear first. Only power-on resets the registers, not a CPU soft reset |
 | `0x4000_3000` - `0x4000_300F` | 16 B | **GPIO Controller** | 6 onboard active-low LEDs (`0x00`=ON, `0x3F`=OFF) & user buttons (Button S2 on pin 3); offset `0x8` is the ISA for the next soft reset (bit 8 valid, bit 0: 1 = RV32, 0 = Hack; valid clears once a soft reset has used it); offset `0xC` is a soft-reset trigger — writing `0x5A5A_A55A` (or its short form `0x0000_A55A`) pulses `cpu_soft_rst`, resetting the CPU FSM/PC/CSRs to `RESET_VECTOR` without a full FPGA reload |
 
 **Address decoding and aliases.** Only the address bits needed to tell the regions apart are decoded, so every region repeats and nothing raises an access fault:

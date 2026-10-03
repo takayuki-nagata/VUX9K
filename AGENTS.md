@@ -125,13 +125,13 @@ eqy can't see this (zero-delay models, and both sides of eqy come from Yosys). S
   flashing a new bitstream. If you change `hw_test`'s tests, take the new checksums
   from the emulator (`sim/emu/test_hw_test.py` prints them on failure).
 - **`CLK_HZ` has copies that must change with it**, none derived from `soc_pkg`
-  automatically: the emulator (`uart::BIT`, `sdspi::HALF_PERIOD`, the CLI's real-time
-  pacing), the Boot Manager (`timer.rs` ticks per us/ms, `read_uart_byte_timeout`, the
+  automatically: the emulator (`uart::BIT`, `sdspi::HALF_PERIOD`/`CLK_HZ`, the CLI's real-time
+  pacing), `fw_common::map` (`TICKS_PER_*`, `SD_DIV_INIT`), the Boot Manager (`timer.rs` ticks per us/ms, `read_uart_byte_timeout`, the
   `t` banner and expected tick count), the Resident Loader's 10 us CS delay, Zephyr
   (`timebase-frequency`/`clock-frequency` in `vux9k-common.dtsi`,
   `SYS_CLOCK_HW_CYCLES_PER_SEC`), and the test constants (`tb_soc_top.sv`'s half period,
   `soc_env.py`, `virtual_serial.py`, `lockstep_programs.UART_BIT`, `sim/emu/vux9k.py`,
-  `test_sdcard_spi.CLK_DIV_HALF`, the tick windows in `test_soc_boot.py` and
+  `test_sdcard_spi.CLK_DIV_HALF`, `test_sd_transcripts.SLOW_HZ`/`FAST_HZ`, the tick windows in `test_soc_boot.py` and
   `test_boot_manager.py`). `make sim-lockstep` catches an emulator that disagrees with
   the RTL; the rest only shows up as timeouts or wrong tick counts.
 - **Simulations bypass the PLL.** RTL tests instantiate `soc_top` and drive it at 18 MHz.
@@ -309,6 +309,10 @@ CI artifact was tested on the board, never a local build. Keep in sync:
   checks in the first pass. For size, watch what the compiler links in: a
   zero-initialized buffer that is then fully overwritten cost a 152-byte `memset`
   (the header buffer is `MaybeUninit` for that reason).
+- **The SD SCLK divider survives a soft reset** (`0x4000_200C`; only power-on resets it).
+  The Boot Manager sets `SD_DIV_INIT` before every card init (a strict card reports a
+  faster SCLK before it is ready) and `SD_DIV_FAST` after it; the Resident Loader reads at
+  whatever the Boot Manager left and never touches the divider.
 - **Mailbox requests are marked** (`0xB007_xxxx` launch, `0xA55A_xxxx` update); any
   other value makes the RL restart the Boot Manager. Keep slot in bits 7:0 and SDHC in
   bit 8: older RLs in flashed bitstreams read those.
