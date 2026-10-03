@@ -178,8 +178,8 @@ def csr_read_word(csr: int, rd: int = 5) -> int:
 
 @cocotb.test()
 async def test_unknown_csr_is_illegal(dut):
-    """Reading a CSR the CPU doesn't implement (mcountinhibit) is illegal, mtval = the word"""
-    word = csr_read_word(0x320)
+    """Reading a CSR the CPU doesn't implement (mcounteren: no U-mode) is illegal, mtval = the word"""
+    word = csr_read_word(0x306)
 
     def body(a):
         a.label("insn")
