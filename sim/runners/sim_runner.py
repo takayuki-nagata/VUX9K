@@ -117,7 +117,10 @@ def sources_for(toplevel: str, gls: bool) -> list[Path]:
     if toplevel == "tb_gowin_bram":
         return [_gowin_cells_with_net_inputs(), TB_GOWIN_BRAM]
     if gls:
-        netlist = "soc_syn.v" if toplevel in ("soc_top", "tb_soc_top") else f"{toplevel}_syn.v"
+        # Wrappers simulate around the netlist of what they wrap
+        netlist = {"soc_top": "soc_syn.v", "tb_soc_top": "soc_syn.v", "tb_hex_runner": "unified_cpu_syn.v"}.get(
+            toplevel, f"{toplevel}_syn.v"
+        )
         sources = [_gowin_cells_with_net_inputs(), SYNTH_DIR / netlist]
     else:
         sources = list(RTL_SOURCES)

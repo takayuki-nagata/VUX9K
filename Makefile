@@ -38,7 +38,7 @@ HACK_BUILD_DIR := $(BUILD_DIR)/hack
 ZEPHYR_BUILD_DIR ?= $(BUILD_DIR)/zephyr
 SYNTH_DIR := $(BUILD_DIR)/synth
 
-.PHONY: all emu emu-py emu-test test-isa-emu test-emu test-fw-host firmware-size coverage-fw sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hw-dist dist check-dist test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware hwtest hw-smoke sim-unit sim-boot sim-soc sim test-isa zephyr-bc-lib build-zephyr build-zephyr-demo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-demo-gls sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
+.PHONY: all emu emu-py emu-test test-isa-emu test-emu test-fw-host firmware-size coverage-fw sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hw-dist dist check-dist test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware hwtest hw-smoke sim-unit sim-boot sim-soc sim test-isa test-isa-gls zephyr-bc-lib build-zephyr build-zephyr-demo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-demo-gls sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
 
 all: test-ci
 
@@ -279,7 +279,12 @@ test-emu: emu-py firmware hwtest build-hack build-zephyr build-zephyr-demo
 
 test-isa: veryl
 	@echo "=== Running riscv-tests (rv32ui/rv32mi) on tb_hex_runner ==="
-	$(PYTHON) scripts/run_riscv_tests.py
+	SIM=$(SIM_UNIT) $(PYTHON) scripts/run_riscv_tests.py
+
+# Same tests on the gate-level unified_cpu netlist: catches what Yosys reads differently
+test-isa-gls: veryl synth-units
+	@echo "=== Running riscv-tests (rv32ui/rv32mi) on the unified_cpu netlist (GLS) ==="
+	SIM=$(SIM_SOC) $(PYTHON) scripts/run_riscv_tests.py --gls
 
 # ===== Simulation - SoC Integration =====
 
@@ -329,7 +334,7 @@ sim-gls-hw-flow: synth-top firmware build-hack
 	@echo "=== Running SoC Top End-to-End Hardware Verification Flow (GLS Simulation) ==="
 	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc_gls[test_soc_hardware_flow]"
 
-sim: sim-unit test-isa sim-gls-unit sim-soc-fast sim-soc-mmio sim-boot sim-hack-rtl sim-sd-quirks sim-hw-flow
+sim: sim-unit test-isa sim-gls-unit test-isa-gls sim-soc-fast sim-soc-mmio sim-boot sim-hack-rtl sim-sd-quirks sim-hw-flow
 
 # ===== Synthesis / PnR / STA / Bitstream / Programming =====
 
@@ -387,18 +392,19 @@ EQY_NOMATCH ?=
 eqy: veryl
 	$(PYTHON) scripts/run_eqy.py --base $(EQY_BASE) --top $(EQY_TOP) --veryl $(VERYL) $(if $(EQY_NOMATCH),--nomatch $(EQY_NOMATCH))
 
-# Line + toggle coverage of the Verilator RTL runs (unit + SoC, incl. the slow hw-flow),
-# merged and annotated onto the generated .sv under build/coverage/. Icarus-only runs
-# (test-isa) and GLS aren't measured. The merge also runs when a test fails; the
-# target still fails then.
+# Line + toggle coverage of the Verilator RTL runs (unit + SoC, incl. the slow hw-flow,
+# and the riscv-tests), merged and annotated onto the generated .sv under build/coverage/.
+# GLS isn't measured. The merge also runs when a test fails; the target still fails then.
 COVERAGE_DIR := $(BUILD_DIR)/coverage
 
 coverage: veryl firmware build-hack
-	@echo "=== Measuring Verilator line/toggle coverage (RTL unit + SoC tests) ==="
+	@echo "=== Measuring Verilator line/toggle coverage (RTL unit + SoC tests + riscv-tests) ==="
 	@rm -rf $(COVERAGE_DIR) && mkdir -p $(COVERAGE_DIR)
+	@rm -rf $(BUILD_DIR)/riscv_tests/runs-cov
 	HDL_COVERAGE=1 SIM=verilator $(PYTEST_SIM) "$(SIM_TESTS)::test_unit" "$(SIM_TESTS)::test_soc"; rc=$$?; \
+	HDL_COVERAGE=1 SIM=verilator $(PYTHON) scripts/run_riscv_tests.py || rc=1; \
 	verilator_coverage --write $(COVERAGE_DIR)/merged.dat --write-info $(COVERAGE_DIR)/merged.info \
-		$(BUILD_DIR)/sim/verilator-cov/*/run_*/coverage.dat && \
+		$(BUILD_DIR)/sim/verilator-cov/*/run_*/coverage.dat $(BUILD_DIR)/riscv_tests/runs-cov/*/coverage.dat && \
 	verilator_coverage --annotate $(COVERAGE_DIR)/annotated --annotate-min 1 $(COVERAGE_DIR)/merged.dat && \
 	echo "=== Annotated sources: $(COVERAGE_DIR)/annotated ===" && exit $$rc
 
@@ -487,7 +493,7 @@ prog-flash: $(SYNTH_DIR)/pack.fs
 # ===== Aggregate Test Targets =====
 
 # Every push/PR (CI). Long SoC runs are on Verilator (SIM_SOC); see AGENTS.md for timings.
-test-sim: check emu-test test-isa-emu firmware test-fw-host firmware-size build-zephyr-demo zephyr-bc-lib build-hack test-emu coverage-fw sim-lockstep build-zephyr sim-unit test-isa sim-gls-unit sim-soc-fast sim-soc-fast-icarus sim-soc-mmio sim-boot sim-hack-rtl sim-sd-quirks sim-hw-flow sim-zephyr-demo-rtl synth-top sim-soc-gls-fast
+test-sim: check emu-test test-isa-emu firmware test-fw-host firmware-size build-zephyr-demo zephyr-bc-lib build-hack test-emu coverage-fw sim-lockstep build-zephyr sim-unit test-isa sim-gls-unit test-isa-gls sim-soc-fast sim-soc-fast-icarus sim-soc-mmio sim-boot sim-hack-rtl sim-sd-quirks sim-hw-flow sim-zephyr-demo-rtl synth-top sim-soc-gls-fast
 	@echo "========================================================================"
 	@echo "  [SIM] ALL RTL, GLS NETLIST, ISA & SOC SIMULATION TESTS PASSED!        "
 	@echo "========================================================================"

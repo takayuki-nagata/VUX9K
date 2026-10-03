@@ -8,9 +8,15 @@ Each test is self-checking: riscv-tests' env/p writes 1 to `tohost` on PASS, or
 (failing TESTNUM << 1) | 1 on FAIL. scripts/riscv_tests/link.ld places `tohost` at
 the testbench's TOHOST_ADDR, where sim/tb_hex_runner.veryl latches the write and the
 cocotb test scripts/riscv_tests/hex_runner.py turns it into a [PASS]/[FAIL] line.
-The testbench is compiled once (build/sim/<sim>/tb_hex_runner/; the simulator is
-$SIM, default icarus); each test runs in build/riscv_tests/runs/<test>/, which holds
-its program.hex, verdict.txt and sim.log.
+The testbench is compiled once (build/sim/<sim>[-gls]/tb_hex_runner/; the simulator
+is $SIM, default icarus); each test runs in build/riscv_tests/runs[-gls]/<test>/, which
+holds its program.hex, verdict.txt and sim.log (runs-cov/ for `make coverage`). Tests run
+in parallel (--jobs).
+
+`--gls` runs them on the gate-level unified_cpu netlist (build/synth/unified_cpu_syn.v,
+`make synth-units`) instead of the RTL: the testbench's memory stays RTL. This catches
+constructs that Yosys reads differently from the simulators (AGENTS.md, "Veryl constructs
+the toolchain rejects"), which the RTL runs and `make eqy` can't see.
 
 `--backend emu` runs the same tests on the Rust emulator instead (emu/, the isa-test
 profile: the same flat 256 KB RAM and tohost), through its Python module
@@ -25,6 +31,7 @@ unexpected pass is reported as XPASS and fails the run, so the list can't go sta
 """
 
 import argparse
+import multiprocessing
 import os
 import re
 import shutil
@@ -177,12 +184,14 @@ def build_hex(src, name):
     return hexf, None
 
 
+# Set from the command line in main(); passed on to the workers explicitly
 BACKEND = "rtl"
+GLS = False
 
 
-def simulate(hexf):
+def simulate(hexf, backend, gls):
     """Returns (passed, detail line) from the selected backend."""
-    return simulate_emu(hexf) if BACKEND == "emu" else simulate_rtl(hexf)
+    return simulate_emu(hexf) if backend == "emu" else simulate_rtl(hexf, gls)
 
 
 def simulate_emu(hexf):
@@ -202,10 +211,12 @@ def simulate_emu(hexf):
     return False, f"[FAIL] tohost=0x{code:08x} (TESTNUM={code >> 1}) at cycle {soc.cycle}"
 
 
-def simulate_rtl(hexf):
+def simulate_rtl(hexf, gls):
     """Returns (passed, detail line). The first call also compiles the testbench."""
     name = os.path.basename(hexf).removesuffix(".hex")
-    test_dir = Path(BUILD_DIR) / "runs" / name
+    # HDL_COVERAGE=1 (make coverage): a run directory of its own, holding coverage.dat
+    runs = "runs-gls" if gls else "runs-cov" if os.environ.get("HDL_COVERAGE", "") not in ("", "0") else "runs"
+    test_dir = Path(BUILD_DIR) / runs / name
     test_dir.mkdir(parents=True, exist_ok=True)
     verdict = test_dir / "verdict.txt"
     verdict.unlink(missing_ok=True)
@@ -223,6 +234,7 @@ def simulate_rtl(hexf):
                 sim_runner.run(
                     "tb_hex_runner",
                     "hex_runner",
+                    gls=gls,
                     test_dir=test_dir,
                     extra_env={"MAX_CYCLES": str(MAX_CYCLES)},
                 )
@@ -241,35 +253,44 @@ def run_selftest():
     hexf, err = build_hex(os.path.join(HARNESS_DIR, "selftest_fail.S"), "selftest_fail")
     if err:
         sys.exit(f"[ERROR] Self-test build failed: {err}")
-    passed, detail = simulate(hexf)
+    passed, detail = simulate(hexf, BACKEND, GLS)
     if passed or "(TESTNUM=2)" not in detail:
         sys.exit(f"[ERROR] Harness self-test: expected FAIL with TESTNUM=2, got: {detail}")
     print(f"[INFO] Harness self-test OK (deliberate failure detected: {detail})")
 
 
-def run_suite(only=None):
+def run_one(suite, test, backend, gls):
+    """Build and run one test; returns (passed, detail). Runs in a worker process."""
+    name = f"{suite}-p-{test}"
+    src = os.path.join(RISCV_TESTS_DIR, "isa", suite, f"{test}.S")
+    hexf, err = build_hex(src, name)
+    return (False, err) if err else simulate(hexf, backend, gls)
+
+
+def run_suite(only=None, jobs=1):
     counts = {"PASS": 0, "FAIL": 0, "XFAIL": 0, "XPASS": 0}
-    for suite in SUITES:
-        for test in list_tests(suite):
-            name = f"{suite}-p-{test}"
-            if only and name not in only:
-                continue
-            src = os.path.join(RISCV_TESTS_DIR, "isa", suite, f"{test}.S")
-            hexf, err = build_hex(src, name)
-            passed, detail = (False, err) if err else simulate(hexf)
-            expected_fail = name in EXPECTED_FAILURES
-            if passed and expected_fail:
-                status = "XPASS"
-                detail = f"listed in EXPECTED_FAILURES ({EXPECTED_FAILURES[name]}) but passed"
-            elif passed:
-                status = "PASS"
-            elif expected_fail:
-                status = "XFAIL"
-                detail = f"{EXPECTED_FAILURES[name]} | {detail}"
-            else:
-                status = "FAIL"
-            counts[status] += 1
-            print(f"[{status}] {name}" + ("" if status == "PASS" else f": {detail}"))
+    tests = [(s, t) for s in SUITES for t in list_tests(s) if not only or f"{s}-p-{t}" in only]
+    # Each test has its own run directory, so they can run concurrently (the testbench
+    # is already compiled by the self-test). Results are printed in list order.
+    # Workers are forked: simulate_rtl redirects fds 1/2, which must stay per process.
+    ctx = multiprocessing.get_context("fork")
+    with ctx.Pool(max(1, jobs)) as pool:
+        results = pool.starmap(run_one, [(s, t, BACKEND, GLS) for s, t in tests], chunksize=1)
+    for (suite, test), (passed, detail) in zip(tests, results, strict=True):
+        name = f"{suite}-p-{test}"
+        expected_fail = name in EXPECTED_FAILURES
+        if passed and expected_fail:
+            status = "XPASS"
+            detail = f"listed in EXPECTED_FAILURES ({EXPECTED_FAILURES[name]}) but passed"
+        elif passed:
+            status = "PASS"
+        elif expected_fail:
+            status = "XFAIL"
+            detail = f"{EXPECTED_FAILURES[name]} | {detail}"
+        else:
+            status = "FAIL"
+        counts[status] += 1
+        print(f"[{status}] {name}" + ("" if status == "PASS" else f": {detail}"))
 
     stale = [
         n
@@ -290,17 +311,22 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("tests", nargs="*", help="run only these tests, e.g. rv32ui-p-add")
     parser.add_argument("--backend", choices=("rtl", "emu"), default="rtl", help="RTL (cocotb) or the Rust emulator")
+    parser.add_argument("--gls", action="store_true", help="gate-level unified_cpu netlist (make synth-units)")
+    parser.add_argument("-j", "--jobs", type=int, default=os.cpu_count(), help="parallel tests (default: CPUs)")
     args = parser.parse_args()
-    global BACKEND
+    global BACKEND, GLS
     BACKEND = args.backend
+    GLS = args.gls
+    if GLS and BACKEND != "rtl":
+        parser.error("--gls needs --backend rtl")
 
     check_tools()
     os.makedirs(BUILD_DIR, exist_ok=True)
     setup_sources()
     if BACKEND == "rtl":
-        build_veryl()
+        build_veryl()  # also the testbench, which GLS runs keep as RTL
     run_selftest()
-    if not run_suite(only=set(args.tests) or None):
+    if not run_suite(only=set(args.tests) or None, jobs=args.jobs):
         sys.exit(1)
 
 
