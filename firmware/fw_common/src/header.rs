@@ -63,14 +63,14 @@ impl SlotHeader {
         if sector.len() < HEADER_LEN || le32(sector, OFF_MAGIC) != VUX_MAGIC {
             return None;
         }
-        let le16 = |at: usize| u16::from_le_bytes([sector[at], sector[at + 1]]);
-        let header_version = le16(OFF_HEADER_VERSION);
-        let flags = le16(OFF_FLAGS);
+        let header_version =
+            u16::from_le_bytes([sector[OFF_HEADER_VERSION], sector[OFF_HEADER_VERSION + 1]]);
+        let flags = u16::from_le_bytes([sector[OFF_FLAGS], sector[OFF_FLAGS + 1]]);
         if header_version != HEADER_VERSION || (flags & FLAG_VALID) == 0 {
             return None;
         }
         let mut name = [0u8; 32];
-        name.copy_from_slice(&sector[OFF_NAME..HEADER_LEN]);
+        name.copy_from_slice(&sector[OFF_NAME..OFF_NAME + 32]);
         Some(SlotHeader {
             header_version,
             flags,
