@@ -307,6 +307,13 @@ CI artifact was tested on the board, never a local build. Keep in sync:
   (`upload` is the `w` exchange over `Host`/`Disk`; a 10/13-sector upload bug hid in
   the Boot Manager until it moved there). The emulator's SD card is lenient about
   SDSC/SDHC addressing unless `strict=True`: use strict for anything card-type related.
+- **The VUX9 header exists twice**: `fw_common::header` (the firmware reads it) and
+  `SlotHeader`/the constants in `tools/vux_tool.py` (it writes the slots; the dist ships
+  it as one file, so nothing is generated). Change both, then regenerate
+  `firmware/fw_common/tests/vux9_vectors/` (`VUX9_VECTORS_UPDATE=1 pytest
+  sim/emu/test_vux9_header.py`): both parsers are tested against those files, and the
+  pytest also compares the constants and field offsets. The Resident Loader reads fields
+  by `OFF_*` and, unlike `SlotHeader::parse`, ignores the valid flag (no room).
 - **Raise `BOOT_MGR_VERSION` with every Boot Manager change**: boards install a slot-0
   image only if its header version is greater. Tests read it from `main.rs`
   (`sim/emu/bm_env.py`, `scripts/test_hardware.py`); don't hard-code it.

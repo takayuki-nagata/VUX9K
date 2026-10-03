@@ -19,6 +19,7 @@ import os
 import struct
 import sys
 import time
+from dataclasses import dataclass
 
 try:
     import pyftdi.serialext
@@ -30,7 +31,72 @@ try:
 except ImportError:
     serial = None
 
+# The VUX9 v3 slot header, as firmware/fw_common/src/header.rs (the firmware's side)
+# defines it; sim/emu/test_vux9_header.py keeps the two in step.
 VUX_MAGIC = 0x56555839  # "VUX9"
+HEADER_VERSION = 3
+HEADER_LEN = 64
+SECTOR = 512
+FLAG_VALID = 1
+FLAG_SYSTEM = 4  # slot 0, the Boot Manager's update image
+MODE_HACK = 0
+MODE_RISCV = 1
+# magic, header_version (u16), flags (u16), mode, size, load_addr, entry_point, crc32,
+# version (the application's), name (32 bytes, NUL-padded); little-endian
+HEADER_FORMAT = "<IHHIIIIII32s"
+SLOT_SECTORS = 64  # 32 KB per slot
+
+
+def slot_sector(slot):
+    """First SD sector (LBA) of slot 0-9."""
+    return 64 + slot * SLOT_SECTORS
+
+
+@dataclass(frozen=True)
+class SlotHeader:
+    mode: int
+    size: int
+    crc32: int
+    name: bytes = b""
+    version: int = 1
+    load_addr: int = 0
+    entry_point: int = 0
+    flags: int = FLAG_VALID
+    header_version: int = HEADER_VERSION
+
+    def pack(self, magic=VUX_MAGIC):
+        return struct.pack(
+            HEADER_FORMAT,
+            magic,
+            self.header_version,
+            self.flags,
+            self.mode,
+            self.size,
+            self.load_addr,
+            self.entry_point,
+            self.crc32,
+            self.version,
+            self.name[:32].ljust(32, b"\x00"),
+        )
+
+    @classmethod
+    def parse(cls, sector):
+        """The header at the start of sector if the firmware accepts it (magic, version,
+        valid flag; fw_common's SlotHeader::parse), else None."""
+        if len(sector) < HEADER_LEN:
+            return None
+        magic, hver, flags, mode, size, load, entry, crc, ver, name = struct.unpack_from(HEADER_FORMAT, sector)
+        if magic != VUX_MAGIC or hver != HEADER_VERSION or not flags & FLAG_VALID:
+            return None
+        return cls(mode, size, crc, name, ver, load, entry, flags, hver)
+
+    def name_str(self):
+        """The printable (0x20-0x7E) prefix of the name, as the Boot Manager shows it."""
+        n = next((i for i, c in enumerate(self.name) if not 0x20 <= c <= 0x7E), len(self.name))
+        return self.name[:n].decode("ascii")
+
+
+assert struct.calcsize(HEADER_FORMAT) == HEADER_LEN
 DEFAULT_FTDI_URL = "ftdi://ftdi:2232/2"
 
 
@@ -294,8 +360,8 @@ def build_vux9_image(
             payload = f.read()
         default_name = os.path.splitext(os.path.basename(file_or_bytes))[0]
 
-    mode_val = 0 if mode == "hack" else 1
-    if mode_val == 0:
+    mode_val = MODE_HACK if mode == "hack" else MODE_RISCV
+    if mode_val == MODE_HACK:
         # Pre-pack Hack 16-bit big-endian binary into native 32-bit LE word order for I-RAM
         packed_payload = bytearray()
         for i in range(0, len(payload), 4):
@@ -313,49 +379,29 @@ def build_vux9_image(
     size_bytes = len(final_payload)
     if not name:
         name = default_name
-    name_bytes = name.encode("ascii", errors="replace")[:32].ljust(32, b"\x00")
-    flags = 1  # valid
-    if slot == 0:
-        flags |= 4  # system slot
-
-    magic_val = magic_override if magic_override is not None else VUX_MAGIC
     crc_val = crc_override if crc_override is not None else (binascii.crc32(final_payload) & 0xFFFFFFFF)
-    header_ver = 3
-    # VUX9 v3 Boot Header: 64 bytes total
-    # 0x00: magic (u32)
-    # 0x04: header_version (u16), flags (u16)
-    # 0x08: mode_val (u32)
-    # 0x0C: size_bytes (u32)
-    # 0x10: load_addr (u32)
-    # 0x14: entry_point (u32)
-    # 0x18: crc_val (u32)
-    # 0x1C: version (u32: app_version)
-    # 0x20: name_bytes (32 bytes)
-    header = struct.pack(
-        "<IHHIIIIII32s",
-        magic_val,
-        header_ver,
-        flags,
-        mode_val,
-        size_bytes,
-        load_addr,
-        entry_point,
-        crc_val,
-        version,
-        name_bytes,
+    header = SlotHeader(
+        mode=mode_val,
+        size=size_bytes,
+        crc32=crc_val,
+        name=name.encode("ascii", errors="replace"),
+        version=version,
+        load_addr=load_addr,
+        entry_point=entry_point,
+        flags=FLAG_VALID | (FLAG_SYSTEM if slot == 0 else 0),
     )
-    assert len(header) == 64, f"Header must be 64 bytes, got {len(header)}"
-    raw_data = header + final_payload
+    header_ver = header.header_version
+    raw_data = header.pack(magic_override if magic_override is not None else VUX_MAGIC) + final_payload
 
-    rem = len(raw_data) % 512
+    rem = len(raw_data) % SECTOR
     if rem != 0:
-        raw_data = raw_data + b"\x00" * (512 - rem)
+        raw_data = raw_data + b"\x00" * (SECTOR - rem)
 
-    num_sectors = len(raw_data) // 512
-    if num_sectors > 64:
+    num_sectors = len(raw_data) // SECTOR
+    if num_sectors > SLOT_SECTORS:
         raise ValueError(f"Binary with header ({num_sectors} sectors) exceeds 32KB slot limit (64 sectors)!")
 
-    start_sector = 64 + (slot << 6)
+    start_sector = slot_sector(slot)
     meta = {
         "slot": slot,
         "name": name,
@@ -650,7 +696,7 @@ def build_sd_image(slots, mbr=True):
         img[510:512] = b"\x55\xaa"
     for slot, src, mode, name in slots:
         raw, meta = build_vux9_image(src, slot=slot, name=name, mode=mode)
-        start = (64 + (slot << 6)) * 512
+        start = slot_sector(slot) * SECTOR
         if len(img) < start + len(raw):
             img.extend(bytes(start + len(raw) - len(img)))
         img[start : start + len(raw)] = raw

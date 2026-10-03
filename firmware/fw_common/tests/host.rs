@@ -1,9 +1,10 @@
 // Copyright (c) 2026 Takayuki Nagata
 // SPDX-License-Identifier: MIT
 
-//! Host tests of fw_common. Header vectors come from tools/vux_tool.py's
-//! build_vux9_image (the tool that writes the slots), so the parser and the tool
-//! are checked against each other.
+//! Host tests of fw_common. Header vectors (tests/vux9_vectors/) come from
+//! tools/vux_tool.py's build_vux9_image (the tool that writes the slots), so the
+//! parser and the tool are checked against each other; sim/emu/test_vux9_header.py
+//! regenerates and checks them on the Python side.
 
 extern crate std;
 use std::vec::Vec;
@@ -21,11 +22,46 @@ fn hex(s: &str) -> Vec<u8> {
 }
 
 // build_vux9_image(bytes.fromhex("13000000") * 4, slot=0, name="BootMgr", mode="riscv", version=11)
-const BOOTMGR_V11: &str = "3958555603000500010000001000000000000000000000008c304ae80b000000\
-                           426f6f744d677200000000000000000000000000000000000000000000000000";
+const BOOTMGR_V11: &[u8] = include_bytes!("vux9_vectors/bootmgr_v11.bin");
 // build_vux9_image(bytes.fromhex("13000000") * 4, slot=2, name="Hk", mode="hack", version=1)
-const HACK_V1: &str = "395855560300010000000000100000000000000000000000d387e6c601000000\
-                       486b000000000000000000000000000000000000000000000000000000000000";
+const HACK_V1: &[u8] = include_bytes!("vux9_vectors/hack_v1.bin");
+
+/// Every vector against its `<case>.txt`: `field value` lines (name in hex), or `invalid`.
+#[test]
+fn parses_every_vux9_vector_like_vux_tool() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/vux9_vectors");
+    let mut cases = 0;
+    for entry in std::fs::read_dir(&dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_none_or(|e| e != "bin") {
+            continue;
+        }
+        let header = std::fs::read(&path).unwrap();
+        let expected = std::fs::read_to_string(path.with_extension("txt")).unwrap();
+        let got = match SlotHeader::parse(&header) {
+            None => std::string::String::from("invalid\n"),
+            Some(h) => std::format!(
+                "header_version {}\nflags {}\nmode {}\nsize {}\nload_addr {}\nentry_point {}\n\
+                 crc32 {}\nversion {}\nname {}\n",
+                h.header_version,
+                h.flags,
+                h.mode,
+                h.size,
+                h.load_addr,
+                h.entry_point,
+                h.crc32,
+                h.version,
+                h.name
+                    .iter()
+                    .map(|b| std::format!("{b:02x}"))
+                    .collect::<std::string::String>(),
+            ),
+        };
+        assert_eq!(got, expected, "{}", path.display());
+        cases += 1;
+    }
+    assert!(cases >= 6, "vectors missing from {}", dir.display());
+}
 
 struct Buf(Vec<u8>);
 impl Sink for Buf {
@@ -49,21 +85,21 @@ fn slot_layout() {
 
 #[test]
 fn parses_vux_tool_headers() {
-    let h = SlotHeader::parse(&hex(BOOTMGR_V11)).unwrap();
+    let h = SlotHeader::parse(BOOTMGR_V11).unwrap();
     assert_eq!((h.header_version, h.flags), (3, 5), "valid | system slot");
     assert!(h.is_riscv());
     assert_eq!((h.size, h.load_addr, h.entry_point), (16, 0, 0));
     assert_eq!((h.crc32, h.version), (3_897_176_204, 11));
     assert_eq!(&h.name[..h.name_len()], b"BootMgr");
 
-    let h = SlotHeader::parse(&hex(HACK_V1)).unwrap();
+    let h = SlotHeader::parse(HACK_V1).unwrap();
     assert!(!h.is_riscv());
     assert_eq!(&h.name[..h.name_len()], b"Hk");
 }
 
 #[test]
 fn rejects_invalid_headers() {
-    let good = hex(BOOTMGR_V11);
+    let good = BOOTMGR_V11.to_vec();
     assert!(SlotHeader::parse(&good[..63]).is_none(), "too short");
     assert!(SlotHeader::parse(&[0u8; 512]).is_none(), "empty slot");
     let mut bad = good.clone();
@@ -79,7 +115,7 @@ fn rejects_invalid_headers() {
 
 #[test]
 fn name_stops_at_nul_or_unprintable() {
-    let mut s = hex(BOOTMGR_V11);
+    let mut s = BOOTMGR_V11.to_vec();
     assert_eq!(SlotHeader::parse(&s).unwrap().name_len(), 7);
     s[32 + 3] = 0x07;
     assert_eq!(SlotHeader::parse(&s).unwrap().name_len(), 3);
@@ -134,7 +170,7 @@ fn mailbox_words() {
 
 #[test]
 fn update_prechecks_in_order() {
-    let base = SlotHeader::parse(&hex(BOOTMGR_V11)).unwrap();
+    let base = SlotHeader::parse(BOOTMGR_V11).unwrap();
     let nop = 0x13;
     assert_eq!(precheck(&base, 10, nop), Precheck::Candidate);
     assert_eq!(precheck(&base, 11, nop), Precheck::NotNewer);

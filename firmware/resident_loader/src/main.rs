@@ -21,7 +21,10 @@ global_asm!(
 );
 
 use fw_common::crc32_update;
-use fw_common::header::{HEADER_LEN, HEADER_VERSION, SECTOR, VUX_MAGIC};
+use fw_common::header::{
+    slot_sector, HEADER_LEN, HEADER_VERSION, OFF_CRC32, OFF_HEADER_VERSION, OFF_LOAD_ADDR,
+    OFF_MAGIC, OFF_MODE, OFF_SIZE, SECTOR, VUX_MAGIC,
+};
 use fw_common::mailbox::{self, SLOT_UPDATED_BOOT_MAGIC, SLOT_UPDATE_MAGIC};
 use fw_common::map;
 use fw_common::update::MAX_IMAGE;
@@ -140,7 +143,7 @@ fn le32(b: &[u8], at: usize) -> u32 {
 /// error number 1-5 (E1 header sector unreadable, E2 bad header, E3 bad size, E4
 /// later sector unreadable, E5 CRC mismatch).
 fn pass(is_sdhc: bool, slot_id: u32, write: bool) -> Result<u32, u8> {
-    let mut sector = 64 + (slot_id << 6);
+    let mut sector = slot_sector(slot_id);
     if !spi_start_block(is_sdhc, sector) {
         return Err(1);
     }
@@ -151,22 +154,24 @@ fn pass(is_sdhc: bool, slot_id: u32, write: bool) -> Result<u32, u8> {
         unsafe { p.add(n).write(spi_transfer(0xFF)) };
     }
     let header = unsafe { raw.assume_init() };
-    let size = le32(&header, 12) as usize;
-    let err =
-        if le32(&header, 0) != VUX_MAGIC || (le32(&header, 4) & 0xFFFF) != HEADER_VERSION as u32 {
-            2
-        } else if size == 0 || size > MAX_IMAGE as usize {
-            3
-        } else {
-            0
-        };
+    // Unlike SlotHeader::parse, the valid flag isn't checked (no room): vux_tool always sets it
+    let size = le32(&header, OFF_SIZE) as usize;
+    let err = if le32(&header, OFF_MAGIC) != VUX_MAGIC
+        || (le32(&header, OFF_HEADER_VERSION) & 0xFFFF) != HEADER_VERSION as u32
+    {
+        2
+    } else if size == 0 || size > MAX_IMAGE as usize {
+        3
+    } else {
+        0
+    };
     if err != 0 {
         skip_bytes(SECTOR - HEADER_LEN);
         spi_end_block();
         return Err(err);
     }
 
-    let mut dest = le32(&header, 16) as *mut u32;
+    let mut dest = le32(&header, OFF_LOAD_ADDR) as *mut u32;
     let mut crc = 0xFFFF_FFFF;
     let mut remaining = size;
     let mut offset = HEADER_LEN; // bytes of this sector already read
@@ -203,10 +208,10 @@ fn pass(is_sdhc: bool, slot_id: u32, write: bool) -> Result<u32, u8> {
             return Err(4);
         }
     }
-    if crc ^ 0xFFFF_FFFF != le32(&header, 24) {
+    if crc ^ 0xFFFF_FFFF != le32(&header, OFF_CRC32) {
         return Err(5);
     }
-    Ok(BOOT_MODE_VALID | (le32(&header, 8) & 1))
+    Ok(BOOT_MODE_VALID | (le32(&header, OFF_MODE) & 1))
 }
 
 fn report(err: u8) {
