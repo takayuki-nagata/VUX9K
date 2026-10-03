@@ -1,8 +1,11 @@
 # Copyright (c) 2026 Takayuki Nagata
 # SPDX-License-Identifier: MIT
 
+import random
+
 import cocotb
 from cocotb.triggers import Timer
+from unit_models import sext
 
 
 @cocotb.test()
@@ -61,3 +64,76 @@ async def test_rv32i_decoder(dut):
     assert int(dut.imm.value) == 24
 
     dut._log.info("Instruction decoder & immediate generation verified successfully [PASS]")
+
+
+OPCODES = {
+    "R_TYPE": 0x33,
+    "I_TYPE": 0x13,
+    "LOAD": 0x03,
+    "STORE": 0x23,
+    "BRANCH": 0x63,
+    "JAL": 0x6F,
+    "JALR": 0x67,
+    "LUI": 0x37,
+    "AUIPC": 0x17,
+    "SYSTEM": 0x73,
+    "FENCE": 0x0F,
+}
+
+
+def bits(x, hi, lo):
+    return (x >> lo) & ((1 << (hi - lo + 1)) - 1)
+
+
+def imm_model(w):
+    """The immediate rv32i_decode produces for instruction word w (RISC-V spec formats)."""
+    op = w & 0x7F
+    if op in (0x13, 0x03, 0x67):  # I
+        return sext(bits(w, 31, 20), 12)
+    if op == 0x23:  # S
+        return sext(bits(w, 31, 25) << 5 | bits(w, 11, 7), 12)
+    if op == 0x63:  # B
+        return sext(bits(w, 31, 31) << 12 | bits(w, 7, 7) << 11 | bits(w, 30, 25) << 5 | bits(w, 11, 8) << 1, 13)
+    if op in (0x37, 0x17):  # U
+        return w & 0xFFFF_F000
+    if op == 0x6F:  # J
+        return sext(bits(w, 31, 31) << 20 | bits(w, 19, 12) << 12 | bits(w, 20, 20) << 11 | bits(w, 30, 21) << 1, 21)
+    if op == 0x73:  # SYSTEM: the CSR zimm
+        return bits(w, 19, 15)
+    return 0  # R-type, FENCE and unknown opcodes
+
+
+async def check(dut, w):
+    dut.instruction.value = w
+    await Timer(1, unit="ns")
+    want = {
+        "opcode": bits(w, 6, 0),
+        "rd": bits(w, 11, 7),
+        "funct3": bits(w, 14, 12),
+        "rs1": bits(w, 19, 15),
+        "rs2": bits(w, 24, 20),
+        "funct7": bits(w, 31, 25),
+        "imm": imm_model(w),
+        "csr_addr": bits(w, 31, 20),
+        "uimm": bits(w, 19, 15),
+    }
+    for name, value in want.items():
+        got = int(getattr(dut, name).value)
+        assert got == value, f"instruction 0x{w:08x}: {name} = 0x{got:x}, want 0x{value:x}"
+
+
+@cocotb.test()
+async def test_decoder_immediate_edges(dut):
+    """Each format with the immediate's bits all clear, all set, and each one alone"""
+    for op in OPCODES.values():
+        for high in (0, 0xFFFF_FF80) + tuple(1 << b for b in range(7, 32)):
+            await check(dut, high | op)
+
+
+@cocotb.test()
+async def test_decoder_random(dut):
+    """Random instruction words: every opcode the CPU knows, and random (unknown) ones"""
+    ops = list(OPCODES.values())
+    for _ in range(3000):
+        op = random.choice(ops) if random.random() < 0.85 else random.getrandbits(7)
+        await check(dut, (random.getrandbits(25) << 7) | op)

@@ -88,6 +88,11 @@ SOC_RTL_PUBLIC = [
     ("rv32i_regfile", "registers"),  # test_soc_lockstep zeroes the register file
 ]
 
+# Seed of the tests' `random` (cocotb derives one per test from it and logs it). Fixed, so a
+# test-sim run is reproducible; COCOTB_RANDOM_SEED in the environment overrides it
+# (make sim-unit-random, in test-slow, uses the date). Reproduce a failure with its seed.
+DEFAULT_RANDOM_SEED = "20261003"
+
 # soc_ram's $readmemh() calls use bare file names, resolved against the simulator's cwd
 FIRMWARE_HEX = ["firmware.hex", "firmware_d0.hex", "firmware_d1.hex", "firmware_d2.hex", "firmware_d3.hex"]
 
@@ -262,6 +267,8 @@ def run(
     if coverage:
         (test_dir / "coverage.dat").unlink(missing_ok=True)  # never merge a stale run
     extra_env = dict(extra_env or {})
+    if "COCOTB_RANDOM_SEED" not in os.environ:
+        extra_env.setdefault("COCOTB_RANDOM_SEED", DEFAULT_RANDOM_SEED)
     preload = _libs_to_preload()
     if preload and "LD_PRELOAD" not in os.environ:
         extra_env["LD_PRELOAD"] = preload

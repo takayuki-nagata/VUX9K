@@ -1,9 +1,12 @@
 # Copyright (c) 2026 Takayuki Nagata
 # SPDX-License-Identifier: MIT
 
+import random
+
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import ClockCycles, Timer
+from cocotb.triggers import ClockCycles, FallingEdge, Timer
+from unit_models import rand32
 
 CSR_MSTATUS = 0x300
 CSR_MISA = 0x301
@@ -312,3 +315,127 @@ async def test_rv32i_csrs_counters(dut):
     assert await read(0xB02) == 0x100, "minstret write (no retire pulse since)"
     await ClockCycles(dut.clk, 20)  # mcycle low wraps from 0xFFFF_FFF0 into mcycleh
     assert await read(0xB80) == 6, "mcycle must carry from the low into the high word"
+
+
+class CsrModel:
+    """rv32i_csrs as README "RV32 CSRs" describes it: WARL masks, trap entry/MRET, counters."""
+
+    WRITE_MASK = {
+        CSR_MSTATUS: 0x0000_0088,
+        CSR_MIE: 0x0000_0888,
+        CSR_MTVEC: 0xFFFF_FFFC,
+        CSR_MSCRATCH: 0xFFFF_FFFF,
+        CSR_MEPC: 0xFFFF_FFFC,
+        CSR_MCAUSE: 0xFFFF_FFFF,
+        CSR_MTVAL: 0xFFFF_FFFF,
+    }
+
+    def __init__(self, mcycle, minstret):
+        self.regs = dict.fromkeys(self.WRITE_MASK, 0)
+        self.mcycle, self.minstret = mcycle, minstret
+
+    def read(self, addr, irqs, mtime):
+        timer, ext, sw = irqs
+        counters = {
+            0xB00: self.mcycle,
+            0xB80: self.mcycle >> 32,
+            0xB02: self.minstret,
+            0xB82: self.minstret >> 32,
+            0xC01: mtime,
+            0xC81: mtime >> 32,
+        }
+        counters |= {a + 0x100: counters[a] for a in (0xB00, 0xB80, 0xB02, 0xB82)}  # cycle/instret views
+        if addr == CSR_MSTATUS:
+            return self.regs[addr] | 0x1800
+        if addr == CSR_MISA:
+            return 0x4000_0100
+        if addr == CSR_MIP:
+            return timer << 7 | ext << 11 | sw << 3
+        if addr in self.regs:
+            return self.regs[addr]
+        return counters.get(addr, 0) & 0xFFFF_FFFF
+
+    def clock(self, s, rdata):
+        """One rising edge with the inputs of state s (rdata: the CSR's value before it)."""
+        wr, addr = s["csr_wr"], s["csr_addr"]
+        if not (wr and addr in (0xB00, 0xB80)):
+            self.mcycle = (self.mcycle + 1) & (1 << 64) - 1
+        if not (wr and addr in (0xB02, 0xB82)):
+            self.minstret = (self.minstret + s["retire"]) & (1 << 64) - 1
+        r = self.regs
+        if s["trap_entry"]:
+            r[CSR_MEPC], r[CSR_MCAUSE], r[CSR_MTVAL] = s["trap_pc"], s["trap_cause"], s["trap_val"]
+            mie = r[CSR_MSTATUS] >> 3 & 1
+            r[CSR_MSTATUS] = mie << 7  # MPIE <= MIE, MIE <= 0
+        elif s["trap_return"]:
+            r[CSR_MSTATUS] = 0x80 | (r[CSR_MSTATUS] >> 7 & 1) << 3  # MIE <= MPIE, MPIE <= 1
+        elif wr:
+            op, d = s["csr_op"], s["csr_wdata"]
+            value = {1: d, 5: d, 2: rdata | d, 6: rdata | d, 3: rdata & ~d, 7: rdata & ~d}.get(op, rdata)
+            value &= 0xFFFF_FFFF
+            if addr in self.WRITE_MASK:
+                r[addr] = value & self.WRITE_MASK[addr]
+            elif addr in (0xB00, 0xB80):
+                shift = 32 if addr == 0xB80 else 0
+                self.mcycle = self.mcycle & ~(0xFFFF_FFFF << shift) | value << shift
+            elif addr in (0xB02, 0xB82):
+                shift = 32 if addr == 0xB82 else 0
+                self.minstret = self.minstret & ~(0xFFFF_FFFF << shift) | value << shift
+
+
+@cocotb.test()
+async def test_rv32i_csrs_random(dut):
+    """Random CSR reads/writes (every op, listed and unlisted addresses), trap entries,
+    MRETs, interrupt lines and retire pulses against CsrModel, every cycle; also checks
+    irq_pending/irq_cause"""
+    dut.retire.value = 0
+    dut.mtime_in.value = 0
+    await csr_reset(dut)
+    addrs = list(CsrModel.WRITE_MASK) + [CSR_MISA, CSR_MIP, 0xB00, 0xB80, 0xB02, 0xB82]
+    addrs += [0xC00, 0xC80, 0xC02, 0xC82, 0xC01, 0xC81, 0x310, 0xF14, 0x7A0, 0x000, 0xFFF]
+
+    async def read(addr):
+        dut.csr_addr.value = addr
+        await Timer(1, unit="ns")
+        return int(dut.csr_rdata.value)
+
+    await FallingEdge(dut.clk)
+    # Sync the model's counters with the DUT's (both halves read within one cycle)
+    mcycle = await read(0xB00) | await read(0xB80) << 32
+    minstret = await read(0xB02) | await read(0xB82) << 32
+    model = CsrModel(mcycle, minstret)
+
+    for _ in range(3000):
+        r = random.random()
+        s = {
+            "csr_addr": random.choice(addrs) if random.random() < 0.9 else random.getrandbits(12),
+            "csr_wdata": rand32(),
+            "csr_op": random.randrange(8),
+            "csr_wr": int(r < 0.5),
+            "trap_entry": int(0.5 <= r < 0.6),
+            "trap_return": int(0.6 <= r < 0.7 or (r < 0.05)),  # sometimes alongside a write
+            "trap_cause": rand32(),
+            "trap_pc": rand32(),
+            "trap_val": rand32(),
+            "timer_irq_in": random.getrandbits(1),
+            "ext_irq_in": random.getrandbits(1),
+            "sw_irq_in": random.getrandbits(1),
+            "retire": random.getrandbits(1),
+            "mtime_in": random.getrandbits(64),
+        }
+        for name, value in s.items():
+            getattr(dut, name).value = value
+        await Timer(1, unit="ns")
+        irqs = (s["timer_irq_in"], s["ext_irq_in"], s["sw_irq_in"])
+        rdata = model.read(s["csr_addr"], irqs, s["mtime_in"])
+        assert int(dut.csr_rdata.value) == rdata, f"read 0x{s['csr_addr']:03x}: {s}"
+
+        pending = model.read(CSR_MIE, irqs, 0) & model.read(CSR_MIP, irqs, 0)
+        want_pending = int(bool(model.regs[CSR_MSTATUS] & 0x8) and bool(pending))
+        assert int(dut.irq_pending.value) == want_pending, f"irq_pending: {s}"
+        if pending:
+            cause = 0x8000_000B if pending & 0x800 else 0x8000_0003 if pending & 0x8 else 0x8000_0007
+            assert int(dut.irq_cause.value) == cause, f"irq_cause: {s}"
+
+        await FallingEdge(dut.clk)
+        model.clock(s, rdata)

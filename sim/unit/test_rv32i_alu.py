@@ -1,8 +1,11 @@
 # Copyright (c) 2026 Takayuki Nagata
 # SPDX-License-Identifier: MIT
 
+import random
+
 import cocotb
 from cocotb.triggers import Timer
+from unit_models import EDGES32, alu_model, rand32
 
 OP_ADD = 0
 OP_SUB = 1
@@ -114,3 +117,30 @@ async def test_alu_operations(dut):
     assert int(dut.result.value) == 0xCAFE_BABE
 
     dut._log.info("All ALU operations verified successfully [PASS]")
+
+
+async def check(dut, op, a, b):
+    dut.a.value = a
+    dut.b.value = b
+    dut.alu_op.value = op
+    await Timer(1, unit="ns")
+    want = alu_model(op, a, b)
+    got = int(dut.result.value)
+    assert got == want, f"op {op} a=0x{a:08x} b=0x{b:08x}: got 0x{got:08x}, want 0x{want:08x}"
+
+
+@cocotb.test()
+async def test_alu_edges(dut):
+    """Every operation on every pair of boundary values (signs, carries, shift amounts)"""
+    shifts = (0, 1, 15, 31, 32, 33, 0xFFFF_FFE0, 0xFFFF_FFFF)  # only b[4:0] counts
+    for op in range(OP_COPY_A + 1):
+        for a in EDGES32:
+            for b in EDGES32 + shifts:
+                await check(dut, op, a, b)
+
+
+@cocotb.test()
+async def test_alu_random(dut):
+    """Random operands for every operation, and the unused op codes (12-15) give 0"""
+    for _ in range(3000):
+        await check(dut, random.randint(0, 15), rand32(), rand32())
