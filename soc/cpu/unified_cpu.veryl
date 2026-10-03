@@ -259,7 +259,8 @@ pub module unified_cpu #(
     let hack_writeback: logic = if h_use_mem ? state == CpuState::HACK_WB : state == CpuState::EXECUTE;
     let hack_dual_dest: logic = !is_riscv_mode && h_we_reg_a && h_we_reg_d;
 
-    // Combinational Execution Datapath
+    // ALU operands and operation. Kept apart from the writeback below, which reads the
+    // ALU result: in one always_comb, Verilator saw a combinational loop (UNOPTFLAT).
     always_comb {
         rv_op = rv_opcode as rv32i_pkg::Opcode;
         rv_f3 = rv_funct3 as rv32i_pkg::Funct3;
@@ -287,11 +288,6 @@ pub module unified_cpu #(
         }
 
         if is_riscv_mode {
-            // RISC-V Mode
-            rf_we2      = 1'b0;
-            rf_rd2_addr = 5'd0;
-            rf_wr2_data = 32'd0;
-
             case rv_op {
                 rv32i_pkg::Opcode::AUIPC: {
                     alu_operand_a = pc_reg;
@@ -339,6 +335,30 @@ pub module unified_cpu #(
                     alu_ctrl      = rv32i_pkg::AluOp::ADD;
                 }
             }
+        } else {
+            let y_val: logic<32> = if h_use_mem ? r_hack_data : rf_rs2_data;
+            case h_op_a_sel {
+                2'd0   : alu_operand_a = rf_rs1_data; // D
+                2'd1   : alu_operand_a = y_val; // A or M
+                default: alu_operand_a = 32'd0; // ZERO
+            }
+            case h_op_b_sel {
+                2'd0   : alu_operand_b = y_val; // A or M
+                2'd1   : alu_operand_b = rf_rs1_data; // D
+                default: alu_operand_b = h_imm; // IMM
+            }
+
+            alu_ctrl = h_alu_op;
+        }
+    }
+
+    // Combinational Execution Datapath: register writeback and store data
+    always_comb {
+        if is_riscv_mode {
+            // RISC-V Mode
+            rf_we2      = 1'b0;
+            rf_rd2_addr = 5'd0;
+            rf_wr2_data = 32'd0;
 
             // Store data and byte enables (rv32i_lsu); a non-store drives rs2 on all lanes
             if rv_op == rv32i_pkg::Opcode::STORE {
@@ -392,26 +412,12 @@ pub module unified_cpu #(
             // Hack Mode: A is x1 (write port 1), D is x2 (write port 2). The register
             // file writes one port per cycle, so an instruction writing both A and D
             // writes A now and D from r_hack_d in the extra HACK_WR_D cycle.
-            rf_rd_addr  = 5'd1;
-            rf_we       = hack_writeback && h_we_reg_a;
-            rf_wr_data  = alu_result;
-            rf_rd2_addr = 5'd2;
-            rf_we2      = (hack_writeback && h_we_reg_d && !h_we_reg_a) || state == CpuState::HACK_WR_D;
-            rf_wr2_data = if state == CpuState::HACK_WR_D ? r_hack_d : alu_result;
-
-            let y_val: logic<32> = if h_use_mem ? r_hack_data : rf_rs2_data;
-            case h_op_a_sel {
-                2'd0   : alu_operand_a = rf_rs1_data; // D
-                2'd1   : alu_operand_a = y_val; // A or M
-                default: alu_operand_a = 32'd0; // ZERO
-            }
-            case h_op_b_sel {
-                2'd0   : alu_operand_b = y_val; // A or M
-                2'd1   : alu_operand_b = rf_rs1_data; // D
-                default: alu_operand_b = h_imm; // IMM
-            }
-
-            alu_ctrl      = h_alu_op;
+            rf_rd_addr    = 5'd1;
+            rf_we         = hack_writeback && h_we_reg_a;
+            rf_wr_data    = alu_result;
+            rf_rd2_addr   = 5'd2;
+            rf_we2        = (hack_writeback && h_we_reg_d && !h_we_reg_a) || state == CpuState::HACK_WR_D;
+            rf_wr2_data   = if state == CpuState::HACK_WR_D ? r_hack_d : alu_result;
             r_data_out    = alu_result;
             r_mem_byte_we = 4'b1111;
         }

@@ -36,8 +36,3 @@ lint_off -rule SYNCASYNCNET -file "*/tb_hex_runner.sv" -match "*'rst'*"
 lint_off -rule UNUSEDPARAM -file "*/gowin_cells_sim.sv"
 lint_off -rule UNUSEDSIGNAL -file "*/gowin_cells_sim.sv"
 lint_off -rule DECLFILENAME -file "*/gowin_cells_sim.sv"
-
-// ----- To fix (each one is removed by the refactor that fixes it) ---------------------
-
-// False loop: one always_comb in unified_cpu both drives the ALU operands and reads its result
-lint_off -rule UNOPTFLAT -file "*/rv32i_alu.sv" -match "*.res_int'*"
