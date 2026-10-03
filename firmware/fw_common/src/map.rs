@@ -22,6 +22,13 @@ pub const SD_CS: usize = 0x4000_2004;
 /// Bit 0: transfer in progress.
 pub const SD_STATUS: usize = 0x4000_2008;
 pub const SD_BUSY: u32 = 1 << 0;
+/// SCLK half period in SoC clocks (bits 7:0). Resets to `SD_DIV_INIT` on power-on
+/// only (a CPU soft reset keeps it); writes below `SD_DIV_FAST` set `SD_DIV_FAST`.
+pub const SD_CLKDIV: usize = 0x4000_200C;
+/// soc_pkg::SD_CLK_DIV_HALF: 391 kHz, for card initialization (at most 400 kHz).
+pub const SD_DIV_INIT: u32 = 23;
+/// soc_pkg::SD_CLK_DIV_MIN: 3 MHz, once the card is ready.
+pub const SD_DIV_FAST: u32 = 3;
 
 // ----- GPIO (0x4000_3000) ---------------------------------------------------------
 pub const GPIO_LED: usize = 0x4000_3000;

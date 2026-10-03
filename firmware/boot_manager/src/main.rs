@@ -176,7 +176,7 @@ fn dump_sector_0() {
 
 /// Raise it with every Boot Manager change: boards install a slot-0 image only when
 /// its header's version is greater (fw_common::update::precheck).
-const BOOT_MGR_VERSION: u32 = 12;
+const BOOT_MGR_VERSION: u32 = 13;
 #[inline(never)]
 fn check_boot_manager_update() {
     // 0. Update boot check: if newly loaded from an update, skip checks and clear mailbox

@@ -17,7 +17,8 @@ from vux9k import sd_image, slot_image, slot_lba, vux_tool, wait_for
 def launch(soc, slot=1, back_to_prompt=True):
     resp = cmd(soc, str(slot), until=b"[RL] Slot")
     mark = len(soc.uart_received())
-    # A bad sector costs the RL its full data-token wait (50,000 bytes, ~27M cycles)
+    # A bad sector costs the RL its full data-token wait (50,000 bytes, ~27M cycles at
+    # 391 kHz; the Boot Manager leaves the SCLK at 3 MHz, which takes far less)
     out = wait_for(soc, b"Load failed, returning to Boot Manager", 60_000_000, start=mark)
     if back_to_prompt:
         wait_for(soc, PROMPT, BOOT_CYCLES, start=len(soc.uart_received()))
@@ -90,6 +91,22 @@ def test_reboot_after_swapping_to_an_sdsc_card():
     mark = len(soc.uart_received())
     cmd(soc, "r", until=b"[RL] Slot 0")
     wait_for(soc, b"#", 60_000_000, start=mark)
+    # The new card was initialized at <= 400 kHz although the SPI master was left fast
+    assert not sclk_violations(soc), soc.sd_violations
+
+
+def sclk_violations(soc):
+    return [v for v in soc.sd_violations if v.startswith("SCLK")]
+
+
+def test_return_to_the_boot_manager_initializes_the_card_slowly_again():
+    # The RL reads at the Boot Manager's fast SCLK and soft-resets back to it on E5; the
+    # divider survives the reset, so the Boot Manager must slow down before its CMD0
+    raw, meta = vux_tool.build_vux9_image(HASH_PAYLOAD, slot=1, mode="riscv", crc_override=0xDEADBEEF)
+    soc, _ = boot(sd_sectors={slot_lba(1): raw[:512]}, sd_card={"strict": True})
+    assert "[RL] E5" in launch(soc)[1]
+    assert soc.sd_commands.count((0, 0)) >= 2, "the Boot Manager initialized the card again"
+    assert not sclk_violations(soc), soc.sd_violations
 
 
 @pytest.mark.parametrize("sdhc", [True, False], ids=["sdhc", "sdsc"])

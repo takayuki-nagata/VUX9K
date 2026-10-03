@@ -8,6 +8,7 @@ use fw_common::map;
 const SD_DATA: *mut u32 = map::SD_DATA as *mut u32;
 const SD_CS: *mut u32 = map::SD_CS as *mut u32;
 const SD_STATUS: *const u32 = map::SD_STATUS as *const u32;
+const SD_CLKDIV: *mut u32 = map::SD_CLKDIV as *mut u32;
 
 static mut IS_SDHC: bool = false;
 static mut IS_INITIALIZED: bool = false;
@@ -15,6 +16,16 @@ static mut IS_INITIALIZED: bool = false;
 pub struct SdCard;
 
 impl SdCard {
+    /// SCLK half period (map::SD_DIV_*). Bitstreams from before the register ignore
+    /// the write and stay at 391 kHz.
+    fn set_clkdiv(div: u32) {
+        unsafe {
+            // Ignored while busy, like every SPI register write
+            while (core::ptr::read_volatile(SD_STATUS) & map::SD_BUSY) != 0 {}
+            core::ptr::write_volatile(SD_CLKDIV, div);
+        }
+    }
+
     fn set_cs(active: bool) {
         unsafe {
             core::ptr::write_volatile(SD_CS, if active { 0 } else { 1 });
@@ -73,6 +84,9 @@ impl SdCard {
 
     /// Callers clear IS_INITIALIZED first.
     fn init() -> bool {
+        // Identification runs at <= 400 kHz. The divider survives a soft reset, so a
+        // previous init (or another program) may have left it fast.
+        Self::set_clkdiv(map::SD_DIV_INIT);
         Self::deselect();
         for _ in 0..16 {
             Self::transfer(0xFF);
@@ -159,6 +173,9 @@ impl SdCard {
         Self::send_cmd(16, 512, 0xFF);
         Self::deselect();
 
+        // The card is ready: full speed from here, for the Resident Loader too (it
+        // keeps the divider)
+        Self::set_clkdiv(map::SD_DIV_FAST);
         true
     }
 
