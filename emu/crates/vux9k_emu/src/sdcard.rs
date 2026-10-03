@@ -19,8 +19,10 @@
 //!
 //! Addressing (CMD17/CMD24): by default forgiving, `arg < 0x10000 ? arg : arg >> 9`.
 //! `strict` uses exactly the card type's rule (SDHC block address, SDSC byte address)
-//! and records violations: an SDSC byte address not a multiple of 512, and fewer than
-//! 74 SCLK cycles with CS high before the first command.
+//! and records violations: an SDSC byte address not a multiple of 512, fewer than
+//! 74 SCLK cycles with CS high before the first command, and SCLK above 400 kHz before
+//! the card is ready (from power-up or CMD0 until ACMD41/CMD1 answers 00), reported
+//! once until the card is ready. The SPI master tells the card its SCLK (`set_sclk_hz`).
 //!
 //! The data is a raw sector image (sector n at byte 512 n); reads past its end return
 //! zeros and writes past it grow it.
@@ -30,6 +32,8 @@ use std::collections::VecDeque;
 pub const SECTOR: usize = 512;
 /// SD spec: at least 74 clocks with CS high before the first command.
 pub const POWER_UP_CLOCKS: u64 = 74;
+/// SD spec: the most SCLK until the card leaves identification.
+pub const INIT_SCLK_HZ: u64 = 400_000;
 
 /// Faults to inject, for testing firmware error paths.
 #[derive(Clone, Debug, Default)]
@@ -78,6 +82,9 @@ pub struct SdCard {
     ready: bool,
     first_cmd_seen: bool,
     idle_clocks: u64,
+    sclk_hz: u64,
+    /// A too-fast SCLK was reported while not ready.
+    fast_reported: bool,
     /// (cmd, arg) of every command received.
     pub commands: Vec<(u8, u32)>,
     /// Good CMD17 reads so far, per sector (for `Faults::fail_after`).
@@ -99,6 +106,8 @@ impl SdCard {
             ready: false,
             first_cmd_seen: false,
             idle_clocks: 0,
+            sclk_hz: INIT_SCLK_HZ,
+            fast_reported: false,
             commands: Vec::new(),
             reads: std::collections::HashMap::new(),
             violations: Vec::new(),
@@ -134,6 +143,11 @@ impl SdCard {
         self.idle_clocks
     }
 
+    /// SCLK of the bytes exchanged from now on.
+    pub fn set_sclk_hz(&mut self, hz: u64) {
+        self.sclk_hz = hz;
+    }
+
     /// CS changed (true = selected).
     pub fn set_cs(&mut self, selected: bool) {
         if !selected {
@@ -145,6 +159,13 @@ impl SdCard {
     pub fn exchange(&mut self, mosi: u8, selected: bool) -> u8 {
         if !selected && !self.first_cmd_seen {
             self.idle_clocks += 8;
+        }
+        if self.strict && !self.ready && self.sclk_hz > INIT_SCLK_HZ && !self.fast_reported {
+            self.fast_reported = true;
+            self.violations.push(format!(
+                "SCLK {} Hz before the card is ready, SD spec allows <= {INIT_SCLK_HZ} Hz",
+                self.sclk_hz
+            ));
         }
         if let Some(b) = self.resp.pop_front() {
             return b;
@@ -238,6 +259,7 @@ impl SdCard {
             // CMD1 (SEND_OP_COND, MMC): initialization without CMD55/ACMD41
             1 | 41 => {
                 self.ready = !self.faults.never_ready;
+                self.fast_reported &= !self.ready;
                 r.extend([0xFF, if self.ready { 0x00 } else { 0x01 }]);
             }
             58 => r.extend([

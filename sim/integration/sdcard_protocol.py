@@ -23,8 +23,11 @@ Answers (the model's behavior, not a full SD implementation):
 Default (sdhc=True, strict=False) is deliberately forgiving: CMD17/CMD24 arguments
 >= 0x10000 are taken as byte offsets. sdhc=False makes an SDSC card (OCR CCS=0,
 byte addresses); strict=True applies the card type's addressing exactly and records
-`violations`: an SDSC byte address that isn't a multiple of 512, and fewer than 74
-SCLK cycles with CS high before the first command (SD spec power-up sequence).
+`violations`: an SDSC byte address that isn't a multiple of 512, fewer than 74
+SCLK cycles with CS high before the first command (SD spec power-up sequence), and
+SCLK above 400 kHz before the card is ready (from power-up or CMD0 until ACMD41/CMD1
+answers 00), reported once until the card is ready. The host tells the card its SCLK with
+`set_sclk_hz` (default: INIT_SCLK_HZ).
 
 Faults (for firmware error paths): mute_cmds (never answered), never_ready (ACMD41
 keeps answering 01), read_error (CMD17 sends data error token 08), bad_sectors
@@ -34,6 +37,7 @@ keeps answering 01), read_error (CMD17 sends data error token 08), bad_sectors
 
 SECTOR = 512
 POWER_UP_CLOCKS = 74  # SD spec: >= 74 clocks with CS high before the first command
+INIT_SCLK_HZ = 400_000  # SD spec: the most SCLK until the card leaves identification
 
 
 class SdCardProtocol:
@@ -61,6 +65,8 @@ class SdCardProtocol:
         self.idle_clocks = 0  # SCLK cycles with CS high before the first command
         self._first_cmd_seen = False
         self._ready = False
+        self.sclk_hz = INIT_SCLK_HZ
+        self._fast_reported = False  # a too-fast SCLK was reported while not ready
         self._resp = bytearray()
         self._answering = False  # the current byte comes from _resp
         self._state = "idle"  # idle | cmd | wait_token | data | resync
@@ -81,6 +87,10 @@ class SdCardProtocol:
             self._state = "idle"
             self._buf = bytearray()
 
+    def set_sclk_hz(self, hz: int):
+        """SCLK of the bytes clocked from now on."""
+        self.sclk_hz = hz
+
     def begin_byte(self) -> int:
         """MISO byte for the next byte clocked (it can't depend on that byte's MOSI)."""
         self._answering = bool(self._resp)
@@ -92,6 +102,11 @@ class SdCardProtocol:
         """The byte clocked: its MOSI and whether CS was low during it."""
         if not selected and not self._first_cmd_seen:
             self.idle_clocks += 8
+        if self.strict and not self._ready and self.sclk_hz > INIT_SCLK_HZ and not self._fast_reported:
+            self._fast_reported = True
+            self.violations.append(
+                f"SCLK {self.sclk_hz} Hz before the card is ready, SD spec allows <= {INIT_SCLK_HZ} Hz"
+            )
         if self._answering or not selected:
             return
         if self._state == "idle":
@@ -154,6 +169,7 @@ class SdCardProtocol:
             r += b"\xff\x00" if self._ready else b"\xff\x01"
         elif cmd in (1, 41):  # SEND_OP_COND (CMD1, MMC) / SD_SEND_OP_COND (ACMD41)
             self._ready = not self.never_ready
+            self._fast_reported = self._fast_reported and not self._ready
             r += b"\xff\x00" if self._ready else b"\xff\x01"
         elif cmd == 58:  # READ_OCR: powered up, CCS for SDHC
             r += bytes([0xFF, 0x00, 0xC0 if self.sdhc else 0x80, 0xFF, 0x80, 0x00])

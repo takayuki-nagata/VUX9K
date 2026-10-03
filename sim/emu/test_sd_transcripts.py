@@ -16,6 +16,7 @@ File format, one record per line ('#' comments):
   card sdhc=0|1 strict=0|1 [mute=N,N] [bad=LBA,LBA] [never_ready] [read_error] [write_reject]
   sector LBA HEX             preloaded sector
   cs 0|1                     CS change (1 = selected)
+  sclk HZ                    SCLK of the bytes that follow (default 400 kHz)
   x 0|1 MOSI-HEX MISO-HEX    bytes clocked with CS at that level, and the answers
   expect-sector LBA HEX
   expect-commands CMD:ARG,...
@@ -66,6 +67,11 @@ class Recorder:
             self.selected = selected
             self.card.set_cs(selected)
             self.lines.append(f"cs {int(selected)}")
+
+    def sclk(self, hz):
+        self._flush()
+        self.card.set_sclk_hz(hz)
+        self.lines.append(f"sclk {hz}")
 
     def xfer(self, b):
         if self._run is None or self._run[0] != self.selected:
@@ -231,7 +237,45 @@ def mute_cmd0():
     return h.finish()
 
 
-SCENARIOS = {f.__name__: f for f in (sdhc_read_write, sdsc_strict, faults, bad_sector, mute_cmd55, mute_cmd0)}
+SLOW_HZ = 391_304  # 18 MHz / 46: the SPI master's reset divider
+FAST_HZ = 3_000_000  # 18 MHz / 6: the Boot Manager's divider after init
+
+
+def sclk_switch():
+    """Fast SCLK only once the card is ready; then a re-init that forgets to slow down."""
+    h = Recorder("sclk_switch", strict=True)
+    h.sector(1, pattern(1))
+    h.sclk(SLOW_HZ)
+    h.init()
+    h.sclk(FAST_HZ)
+    h.read_block(1)
+    h.write_block(2, pattern(2))
+    h.init()  # CMD0 at 3 MHz: one violation for this whole init
+    h.read_block(2)
+    return h.finish(expect_sectors=[2])
+
+
+def sclk_fast_power_up():
+    """Fast from power-up: one violation, however long the card stays not ready."""
+    h = Recorder("sclk_fast_power_up", strict=True, never_ready=True)
+    h.sclk(FAST_HZ)
+    h.init()
+    return h.finish()
+
+
+SCENARIOS = {
+    f.__name__: f
+    for f in (
+        sdhc_read_write,
+        sdsc_strict,
+        faults,
+        bad_sector,
+        mute_cmd55,
+        mute_cmd0,
+        sclk_switch,
+        sclk_fast_power_up,
+    )
+}
 
 
 @pytest.mark.parametrize("name", SCENARIOS)

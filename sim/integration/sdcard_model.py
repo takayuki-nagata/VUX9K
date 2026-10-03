@@ -7,10 +7,13 @@ Cocotb Virtual SD Card SPI Slave Model (sim/integration/sdcard_model.py).
 Drives the byte-level card of sdcard_protocol.py (answers, SDHC/SDSC, strict mode,
 faults: see there) from the RTL's SPI pins: MISO changes after each falling SCLK
 edge, MOSI and CS are sampled on rising edges, and every 8 rising edges make one byte.
+Each byte's SCLK frequency (its first to last rising edge) goes to the card, which
+checks it during initialization in strict mode.
 Keyword arguments go to SdCardProtocol (e.g. sdhc=False, strict=True).
 """
 
 import cocotb
+from cocotb.simtime import get_sim_time
 from cocotb.triggers import FallingEdge, RisingEdge
 from sdcard_protocol import POWER_UP_CLOCKS, SdCardProtocol  # noqa: F401 (re-exported)
 
@@ -61,6 +64,9 @@ class SpiSdCardModel:
                 await RisingEdge(self.sclk)
                 if i == 7:
                     selected = self.cs_n.value == 0
+                    first_rise = get_sim_time("ps")
+                elif i == 0:
+                    self.card.set_sclk_hz(round(7e12 / (get_sim_time("ps") - first_rise)))
                 bit = int(self.mosi.value) if self.mosi.value.is_resolvable else 1
                 mosi = (mosi << 1) | bit
                 await FallingEdge(self.sclk)

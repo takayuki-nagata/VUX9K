@@ -54,6 +54,7 @@ fn replay(path: &PathBuf) {
         match f[0] {
             "sector" => c.set_sector(f[1].parse().unwrap(), &hex(f[2])),
             "cs" => c.set_cs(f[1] == "1"),
+            "sclk" => c.set_sclk_hz(f[1].parse().unwrap()),
             "x" => {
                 let sel = f[1] == "1";
                 let (mosi, miso) = (hex(f[2]), hex(f[3]));
