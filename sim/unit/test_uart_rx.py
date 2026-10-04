@@ -122,6 +122,39 @@ async def test_uart_rx_framing_error(dut):
 PERIOD_PS = 37038  # reset_rx's clock
 
 
+async def send_frame_windowed(dut, cnt, byte_val, stop_bit, w):
+    """One frame, clock-synchronous from a falling clock edge, in which each data and stop
+    bit has its level only within w clocks of the bit's middle, and the opposite level for
+    the rest of the bit. The start bit is low throughout (its falling edge is the
+    reference); the line stays high after the frame."""
+    levels = [(byte_val >> i) & 1 for i in range(8)] + [stop_bit]
+    dut.rxd.value = 0
+    await ClockCycles(dut.clk, cnt, rising=False)
+    for k, level in enumerate(levels, start=1):
+        mid = k * cnt + cnt // 2  # clocks from the start bit's falling edge
+        dut.rxd.value = 1 - level
+        await ClockCycles(dut.clk, mid - w - k * cnt, rising=False)
+        dut.rxd.value = level
+        await ClockCycles(dut.clk, 2 * w + 1, rising=False)
+        dut.rxd.value = 1 if k == len(levels) else 1 - level
+        await ClockCycles(dut.clk, (k + 1) * cnt - (mid + w + 1), rising=False)
+    dut.rxd.value = 1
+
+
+@cocotb.test(timeout_time=200, timeout_unit="ms")
+async def test_uart_rx_samples_mid_bit(dut):
+    """Every data bit and the stop bit are sampled within 1% of a bit of their middle:
+    a bit whose level holds only there, opposite elsewhere, is received right (the
+    random test's 3% baud tolerance can't see a sample point a few % off)"""
+    cnt = await reset_rx(dut)
+    w = cnt // 100
+    for byte_val, stop_bit in ((0x00, 1), (0xFF, 1), (0x55, 1), (0xAA, 0), (0x96, 1), (0x0F, 0)):
+        await FallingEdge(dut.clk)
+        cocotb.start_soon(send_frame_windowed(dut, cnt, byte_val, stop_bit, w))
+        assert await receive(dut, 11 * cnt) == (byte_val, 1 - stop_bit), f"byte 0x{byte_val:02X}, stop {stop_bit}"
+        await ClockCycles(dut.clk, cnt)  # rest of the stop bit, then idle
+
+
 async def send_frame_timed(dut, byte_val, bit_ps, stop_bit=1, idle_ps=0):
     """One frame with the given bit length (a sender whose baud rate is off), then idle"""
     for level in [0] + [(byte_val >> i) & 1 for i in range(8)] + [stop_bit]:
