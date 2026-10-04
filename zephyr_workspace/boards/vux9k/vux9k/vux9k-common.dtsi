@@ -55,9 +55,11 @@
 			compatible = "mmio-sram";
 		};
 
+		/* Machine external interrupt (cause 11) while the RX FIFO holds data */
 		uart0: uart@40000000 {
 			compatible = "vux9k,uart";
 			reg = <0x40000000 0x10>;
+			interrupts-extended = <&cpu0_intc 11>;
 			status = "okay";
 		};
 
