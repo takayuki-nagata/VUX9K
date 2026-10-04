@@ -103,3 +103,7 @@ their own target dirs under `build/coverage/rust/`, so the normal builds are unt
   run. Raise a minimum when coverage rises; never lower one.
 - The `[rust]` minimums are floors measured on CI's toolchain; when a run reports more,
   raise them.
+- Run on its own, the target still needs Verilator and the Zephyr builds: `sim-lockstep`
+  (the RTL trace that `sim/emu/test_lockstep.py` replays) is a prerequisite; a missing
+  trace file fails the run. Programs marked `slow` skip ("not in the trace"; one in the
+  default set); that is expected.
