@@ -179,6 +179,17 @@ async def test_misalignment_matrix(dut):
 
 
 @cocotb.test()
+async def test_system_near_misses(dut):
+    """ECALL, EBREAK, MRET and WFI are exact encodings: each of them with any one bit
+    flipped is another instruction (mostly illegal), never the one it nearly matches"""
+    s = random_state() | {"exec": True, "irq": False}
+    for w in (ECALL, EBREAK, MRET, WFI):
+        for bit in range(32):
+            await check(dut, s | {"instr": w ^ 1 << bit})
+    fcov.export()
+
+
+@cocotb.test()
 async def test_random(dut):
     """Random instructions and states: the right trap (or none) wins"""
     for _ in range(5000):
