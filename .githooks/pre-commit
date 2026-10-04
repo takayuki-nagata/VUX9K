@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
-# Git pre-commit hook: the repository's static checks (absolute paths, formatting, lint, mypy).
+# Git pre-commit hook: the repository's static checks (absolute paths, agent guides,
+# formatting, lint, mypy). Quiet when they pass; the full output when they don't.
 
-set -e
-
-cd "$(git rev-parse --show-toplevel)"
-# make check starts with scripts/check_no_absolute_paths.py; the rest takes a few seconds
-make -s check
+cd "$(git rev-parse --show-toplevel)" || exit 1
+log=$(mktemp)
+trap 'rm -f "$log"' EXIT
+if ! make -s check >"$log" 2>&1; then
+    cat "$log"
+    echo "pre-commit: make check failed" >&2
+    exit 1
+fi
