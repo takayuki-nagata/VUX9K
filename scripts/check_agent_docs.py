@@ -8,7 +8,7 @@
   top-level entry of the repository; build/, placeholders and globs are skipped).
 - Every citation `docs/agents/<file>.md, "<Title>"` (in code or in the guides) names a guide
   that exists and a section whose heading starts with that title.
-- Every guide has a .claude/rules/ entry and every rule imports a guide that exists.
+- Every guide has `paths:` frontmatter and a .claude/rules/ symlink; every rule is one.
 
 Renames and section edits otherwise leave the guides pointing at nothing, silently.
 """
@@ -90,7 +90,7 @@ def flatten_comments(text: str) -> str:
 def check_citations(errors: list[str]) -> None:
     for rel in tracked():
         src = ROOT / rel
-        if rel.startswith("vendor/") or not src.is_file():
+        if rel.startswith("vendor/") or src.is_symlink() or not src.is_file():
             continue
         try:
             text = flatten_comments(src.read_text())
@@ -106,16 +106,19 @@ def check_citations(errors: list[str]) -> None:
 
 
 def check_rules(errors: list[str]) -> None:
-    imported = set()
-    for rule in sorted(RULES.glob("*.md")):
-        for target in re.findall(r"^@(\S+)", rule.read_text(), re.M):
-            path = (rule.parent / target).resolve()
-            if not path.exists():
-                errors.append(f"{rule.relative_to(ROOT)}: imports missing {target}")
-            imported.add(path)
+    """Each guide carries its own `paths:` frontmatter and is linked into .claude/rules/. A rule
+    that @imports the guide instead would not do: Claude Code expands imports at session start,
+    which loads every guide into every session."""
     for guide in sorted(GUIDES.glob("*.md")):
-        if guide.resolve() not in imported:
-            errors.append(f"{guide.relative_to(ROOT)}: no .claude/rules/ entry loads it")
+        rel = guide.relative_to(ROOT)
+        if not re.match(r"---\npaths:\n(  - \"[^\"]+\"\n)+---\n", guide.read_text()):
+            errors.append(f"{rel}: no `paths:` frontmatter")
+        rule = RULES / guide.name
+        if not rule.is_symlink() or rule.resolve() != guide.resolve():
+            errors.append(f"{rel}: .claude/rules/{guide.name} isn't a symlink to it")
+    for rule in sorted(RULES.glob("*.md")):
+        if not rule.is_symlink() or not rule.resolve().is_relative_to(GUIDES.resolve()) or not rule.exists():
+            errors.append(f"{rule.relative_to(ROOT)}: not a symlink to an existing guide in docs/agents/")
 
 
 def main() -> int:

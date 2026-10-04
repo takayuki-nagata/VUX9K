@@ -1,3 +1,12 @@
+---
+paths:
+  - "soc/**/*.veryl"
+  - "emu/**"
+  - "scripts/run_eqy.py"
+  - "scripts/run_pnr.py"
+  - "sim/integration/lockstep_programs.py"
+---
+
 # RTL change workflow: eqy, emulator, timing
 
 Read before committing any RTL change: how refactors are proven, what a behavior change must carry, and how timing is measured. Index and the rules that apply everywhere: [`AGENTS.md`](../../AGENTS.md).

@@ -1,3 +1,11 @@
+---
+paths:
+  - "Makefile"
+  - "sim/runners/**"
+  - ".gitignore"
+  - "scripts/check_no_absolute_paths.py"
+---
+
 # Build layout and directory changes
 
 Where generated files go, and what to check after moving files or changing build paths. Index and the rules that apply everywhere: [`AGENTS.md`](../../AGENTS.md).

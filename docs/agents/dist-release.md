@@ -1,3 +1,12 @@
+---
+paths:
+  - "scripts/make_dist.py"
+  - "scripts/check_dist.py"
+  - "scripts/release_check.py"
+  - ".github/**"
+  - "docs/*.md"
+---
+
 # Distribution and releases
 
 Read before changing `make dist`, the release scripts or workflows, or the application docs. Index and the rules that apply everywhere: [`AGENTS.md`](../../AGENTS.md).

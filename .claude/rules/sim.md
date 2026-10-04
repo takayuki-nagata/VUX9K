@@ -1,6 +1,1 @@
----
-paths:
-  - "sim/**"
----
-
-@../../docs/agents/sim.md
+../../docs/agents/sim.md

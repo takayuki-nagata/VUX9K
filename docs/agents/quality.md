@@ -1,3 +1,10 @@
+---
+paths:
+  - "scripts/mcy/**"
+  - "coverage/**"
+  - "scripts/coverage_fw.py"
+---
+
 # Mutation testing and code coverage
 
 Read before running or changing `make mutation`, `make coverage` or their thresholds. Index and the rules that apply everywhere: [`AGENTS.md`](../../AGENTS.md).

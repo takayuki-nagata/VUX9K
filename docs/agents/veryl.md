@@ -1,3 +1,10 @@
+---
+paths:
+  - "soc/**/*.veryl"
+  - "sim/*.veryl"
+  - "soc/verilator_lint.vlt"
+---
+
 # Veryl and the generated SystemVerilog
 
 Read before editing `soc/**/*.veryl` or the `.veryl` files in `sim/`. Index and the rules that apply everywhere: [`AGENTS.md`](../../AGENTS.md).

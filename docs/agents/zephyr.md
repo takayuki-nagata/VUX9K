@@ -1,3 +1,8 @@
+---
+paths:
+  - "zephyr_workspace/**"
+---
+
 # Zephyr
 
 Read before changing `zephyr_workspace/`. Index and the rules that apply everywhere: [`AGENTS.md`](../../AGENTS.md).

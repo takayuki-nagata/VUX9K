@@ -1,3 +1,8 @@
+---
+paths:
+  - "sim/**"
+---
+
 # Simulation tests (cocotb, Verilator)
 
 Read before adding or changing tests under `sim/` or the runner. Index and the rules that apply everywhere: [`AGENTS.md`](../../AGENTS.md).

@@ -1,3 +1,14 @@
+---
+paths:
+  - "soc/**"
+  - "emu/**"
+  - "firmware/**"
+  - "sim/**"
+  - "tools/**"
+  - "scripts/**"
+  - "zephyr_workspace/**"
+---
+
 # Sync points: what has to change together
 
 Things that exist in more than one place with nothing to generate one from the other. Each row

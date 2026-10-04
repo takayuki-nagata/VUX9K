@@ -1,3 +1,13 @@
+---
+paths:
+  - "soc/board_top.veryl"
+  - "soc/soc_pkg.veryl"
+  - "scripts/hw_smoke.py"
+  - "scripts/test_hardware.py"
+  - "firmware/hw_test/**"
+  - "zephyr_workspace/boards/**"
+---
+
 # The SoC clock and the board
 
 Read before changing the clock, the PLL, anything timed in ticks, or debugging the board. Index and the rules that apply everywhere: [`AGENTS.md`](../../AGENTS.md).

@@ -1,6 +1,1 @@
----
-paths:
-  - "zephyr_workspace/**"
----
-
-@../../docs/agents/zephyr.md
+../../docs/agents/zephyr.md

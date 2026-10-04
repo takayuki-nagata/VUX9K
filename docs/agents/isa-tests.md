@@ -1,3 +1,12 @@
+---
+paths:
+  - "scripts/run_riscv_tests.py"
+  - "scripts/riscv_tests/**"
+  - "scripts/act4/**"
+  - "sim/tb_hex_runner.veryl"
+  - "soc/cpu/**"
+---
+
 # ISA tests (riscv-tests, ACT4) and the CSR rules
 
 Read before changing the CPU's ISA behavior or CSRs, `tb_hex_runner`, or the ISA test harnesses. Index and the rules that apply everywhere: [`AGENTS.md`](../../AGENTS.md).

@@ -1,3 +1,13 @@
+---
+paths:
+  - "Makefile"
+  - ".github/workflows/ci.yml"
+  - "sim/integration/**"
+  - "tools/vux_tool.py"
+  - "firmware/boot_manager/**"
+  - "firmware/resident_loader/**"
+---
+
 # Test tiers
 
 What `test-sim` and `test-slow` cover, and which long tests to run by hand for which change. Index and the rules that apply everywhere: [`AGENTS.md`](../../AGENTS.md).

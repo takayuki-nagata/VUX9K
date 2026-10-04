@@ -108,3 +108,8 @@ except the handful of firmware-hex symlinks described below
 | `make mutation`, `make coverage`, `coverage/thresholds.toml` | [quality.md](docs/agents/quality.md) |
 | `build/` layout, moving files, `Makefile` paths, the post-move checklist | [layout.md](docs/agents/layout.md) |
 | What has to change together | [sync-points.md](docs/agents/sync-points.md) |
+
+A new guide gets `paths:` frontmatter (the files it is about), a symlink in `.claude/rules/`
+and a row here; `make check` verifies the first two. Don't replace the symlink with a rule
+that `@import`s the guide: Claude Code expands imports at session start, so every guide would
+load into every session.

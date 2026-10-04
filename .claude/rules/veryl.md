@@ -1,8 +1,1 @@
----
-paths:
-  - "soc/**/*.veryl"
-  - "sim/*.veryl"
-  - "soc/verilator_lint.vlt"
----
-
-@../../docs/agents/veryl.md
+../../docs/agents/veryl.md

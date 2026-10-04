@@ -1,3 +1,9 @@
+---
+paths:
+  - "firmware/**"
+  - "tools/vux_tool.py"
+---
+
 # Firmware (Boot Manager, Resident Loader, fw_common)
 
 Read before changing anything under `firmware/` or the slot format in `tools/vux_tool.py`. Index and the rules that apply everywhere: [`AGENTS.md`](../../AGENTS.md).
