@@ -129,7 +129,7 @@ async def check(dut, s):
 @cocotb.test()
 async def test_branch_conditions_on_edges(dut):
     """Every branch funct3 on every pair of boundary operands (incl. the signs that the
-    synthesized BLT/BGE once got wrong, AGENTS.md)"""
+    synthesized BLT/BGE once got wrong, docs/agents/veryl.md)"""
     s = random_state(True) | {"mem_wait": False, "trap_entry": False, "trap_return": False, "op": BRANCH}
     for f3 in range(8):
         for a in EDGES32:

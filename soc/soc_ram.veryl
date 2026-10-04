@@ -41,7 +41,7 @@ pub module soc_ram #(
     // Not simulation-only: synthesis reads these files too, which is how the Boot
     // Manager / Resident Loader get baked into the bitstream's block RAM (hence
     // #[allow(initial_assign)] on the arrays). The bare file names resolve against the
-    // tool's cwd (AGENTS.md, "build/").
+    // tool's cwd (docs/agents/layout.md, "`build/`").
     initial {
         $readmemh("firmware.hex", i_mem);
         $readmemh("firmware_d0.hex", d_mem0);

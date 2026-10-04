@@ -54,7 +54,7 @@ def usb_hub_neighbours(tty, sysfs="/sys"):
 
     The board's USB-UART bridge loses output when such a device is busy on the same
     USB 2.0 hub: it keeps 128 bytes, drops the rest and delivers the 128 bytes seconds
-    later (AGENTS.md, "Board UART output that stops"). Returns their names, or [] when
+    later (docs/agents/clock-and-board.md, "Board UART output that stops"). Returns their names, or [] when
     the board is on a root port or the port isn't a USB tty.
     """
     try:

@@ -15,7 +15,7 @@ in parallel (--jobs).
 
 `--gls` runs them on the gate-level unified_cpu netlist (build/synth/unified_cpu_syn.v,
 `make synth-units`) instead of the RTL: the testbench's memory stays RTL. This catches
-constructs that Yosys reads differently from the simulators (AGENTS.md, "Veryl constructs
+constructs that Yosys reads differently from the simulators (docs/agents/veryl.md, "Veryl constructs
 the toolchain rejects"), which the RTL runs and `make eqy` can't see.
 
 `--backend emu` runs the same tests on the Rust emulator instead (emu/, the isa-test

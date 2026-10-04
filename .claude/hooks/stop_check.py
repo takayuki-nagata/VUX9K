@@ -27,7 +27,7 @@ from hooklib import CARGO_DIRS, ROOT, block, is_python, read_input, run, tool
 STATE = ROOT / "build" / "agent-hooks" / "stop_ok"
 LOCK = Path(os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()) / "vux9k-agent-hooks.lock"
 BUDGET_S = 90
-RTL_SYNTAX_LABEL = 'make check-rtl-syntax  # see AGENTS.md, "Veryl constructs the toolchain rejects"'
+RTL_SYNTAX_LABEL = 'make check-rtl-syntax  # see docs/agents/veryl.md, "Veryl constructs the toolchain rejects"'
 
 
 def changed_files() -> list[str]:
@@ -89,7 +89,7 @@ def plan(paths: list[str]) -> tuple[list[tuple[str, list[str], Path]], list[tupl
         checks.append(("veryl check", ["veryl", "check", "--quiet"], ROOT))
         checks.append(
             (
-                'make check-rtl-syntax  # see AGENTS.md, "Veryl constructs the toolchain rejects"',
+                'make check-rtl-syntax  # see docs/agents/veryl.md, "Veryl constructs the toolchain rejects"',
                 ["make", "-s", "check-rtl-syntax"],
                 ROOT,
             )

@@ -6,7 +6,7 @@ SD card edge cases the forgiving default SpiSdCardModel hides (test_soc_sd_quirk
 
 Runs the real Boot Manager against a strict SD model (addresses interpreted exactly
 as the card type requires, protocol violations recorded) to reproduce the SD-related
-issues found on hardware (AGENTS.md / the IS_SDHC investigation):
+issues found on hardware (docs/agents/firmware.md / the IS_SDHC investigation):
 - the SPI init preamble must satisfy the SD spec's >= 74-clock power-up
   requirement (it does: SdCard::init() sends 16 bytes of 0xFF = 128 clocks --
   an earlier analysis that counted "16 clocks" was wrong);

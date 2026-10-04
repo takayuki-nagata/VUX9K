@@ -4,7 +4,7 @@
 
 """PreToolUse hook (Edit/Write): refuse to write generated or vendored files.
 
-Everything under build/ is regenerated (AGENTS.md, "build/"); the repo-root firmware*.hex are
+Everything under build/ is regenerated (docs/agents/layout.md, "`build/`"); the repo-root firmware*.hex are
 symlinks into it; target/ is cargo's; vendor/ holds a submodule and fetched upstream code. An edit
 there is lost on the next build or hides a bug in the real source, so point at the source instead.
 """

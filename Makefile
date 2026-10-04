@@ -100,9 +100,10 @@ lint-rtl: veryl
 	$(VERILATOR_LINT) --top-module tb_hex_runner $(CPU_RTL_SRCS) $(VERYL_OUT_DIR)/sim/tb_hex_runner.sv
 	$(VERILATOR_LINT) --top-module tb_gowin_bram $(GOWIN_CELLS_SV) $(VERYL_OUT_DIR)/sim/tb_gowin_bram.sv
 
-# The generated SoC RTL read by Yosys and compiled by Icarus, nothing else: catches in seconds the
-# Veryl constructs these tools reject though veryl build accepts them (AGENTS.md, "Veryl constructs
-# the toolchain rejects"). soc_ram is left out of the Yosys read, whose $$readmemh needs firmware.hex.
+# The generated SoC RTL read by Yosys and compiled by Icarus, nothing else: catches in seconds
+# the Veryl constructs these tools reject though veryl build accepts them (docs/agents/veryl.md,
+# "Veryl constructs the toolchain rejects"). soc_ram is left out of the Yosys read: its
+# $$readmemh needs firmware.hex.
 check-rtl-syntax: veryl
 	$(YOSYS) -q -p "read_verilog -sv $(filter-out %/soc_ram.sv,$(SOC_RTL_SRCS))"
 	iverilog -g2012 -o /dev/null -s board_top $(SOC_RTL_SRCS) $(GOWIN_CELLS_SV)
@@ -388,7 +389,7 @@ sim: sim-unit test-isa sim-gls-unit test-isa-gls sim-soc-fast sim-soc-mmio sim-b
 
 # ===== Synthesis / PnR / STA / Bitstream / Programming =====
 
-# synth_gowin options, shared by the SoC and the unit gate-level netlists (AGENTS.md: "Synthesis flags").
+# synth_gowin options, shared by the SoC and the unit gate-level netlists (docs/agents/rtl-workflow.md, "Synthesis flags").
 # -nowidelut: no MUX2_LUT5..8 wide-LUT muxes. Behavior-neutral; they made the mapping (and timing)
 #   swing by hundreds of LUTs on small RTL changes and routed worse.
 # -no-rw-check: no collision emulation for BSRAM read/write to the same address in one cycle. It put
@@ -553,7 +554,8 @@ prog-flash: $(SYNTH_DIR)/pack.fs
 
 # ===== Aggregate Test Targets =====
 
-# Every push/PR (CI). Long SoC runs are on Verilator (SIM_SOC); see AGENTS.md for timings.
+# Every push/PR (CI). Long SoC runs are on Verilator (SIM_SOC); timings: docs/agents/sim.md,
+# "Verilator".
 test-sim: check lint-rtl emu-test test-isa-emu firmware test-fw-host firmware-size build-zephyr-demo zephyr-bc-lib build-hack test-emu coverage-fw sim-lockstep build-zephyr sim-unit coverage-fcov test-isa test-act4 test-act4-emu sim-gls-unit test-isa-gls test-act4-gls sim-soc-fast sim-soc-fast-icarus sim-soc-mmio sim-boot sim-hack-rtl sim-sd-quirks sim-hw-flow sim-zephyr-demo-rtl synth-top sim-soc-gls-fast
 	@echo "========================================================================"
 	@echo "  [SIM] ALL RTL, GLS NETLIST, ISA & SOC SIMULATION TESTS PASSED!        "
