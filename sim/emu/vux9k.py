@@ -4,7 +4,8 @@
 """
 Helpers for tests on the Rust emulator (sim/emu/vux9k.py).
 
-`vux9k_emu` is the pyo3 module that `make emu-py` builds into build/emu/python/.
+`vux9k_emu` is the pyo3 module that `make emu-py` builds into build/emu/python/
+(VUX9K_EMU_PY_DIR overrides it: `make coverage-rust` points it at an instrumented build).
 This module puts it, the repo root (for tools.vux_tool) and sim/integration (for the
 pure-Python rv32_asm/hack_asm assemblers) on sys.path, and sets a SoC up the way
 sim/integration/soc_env.start_soc() sets up the RTL: firmware preloaded from the
@@ -15,7 +16,7 @@ import os
 import sys
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-EMU_PY_DIR = os.path.join(REPO_ROOT, "build", "emu", "python")
+EMU_PY_DIR = os.environ.get("VUX9K_EMU_PY_DIR") or os.path.join(REPO_ROOT, "build", "emu", "python")
 FIRMWARE_DIR = os.path.join(REPO_ROOT, "build", "firmware")
 for _p in (EMU_PY_DIR, REPO_ROOT, os.path.join(REPO_ROOT, "sim", "integration")):
     if _p not in sys.path:

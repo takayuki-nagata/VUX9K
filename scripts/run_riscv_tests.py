@@ -20,7 +20,8 @@ the toolchain rejects"), which the RTL runs and `make eqy` can't see.
 
 `--backend emu` runs the same tests on the Rust emulator instead (emu/, the isa-test
 profile: the same flat 256 KB RAM and tohost), through its Python module
-(build/emu/python, `make emu-py`). The verdicts and EXPECTED_FAILURES must match.
+(build/emu/python, `make emu-py`; VUX9K_EMU_PY_DIR overrides it). The verdicts and
+EXPECTED_FAILURES must match.
 
 Before the suite runs, a deliberately failing test (scripts/riscv_tests/selftest_fail.S)
 must be reported as FAIL with TESTNUM=2, otherwise the harness itself is broken and the
@@ -253,7 +254,7 @@ def simulate(hexf, backend, gls):
 
 def simulate_emu(hexf):
     """Run on the Rust emulator's isa-test profile (tb_hex_runner's memory and tohost)."""
-    sys.path.insert(0, os.path.join(REPO_DIR, "build", "emu", "python"))
+    sys.path.insert(0, os.environ.get("VUX9K_EMU_PY_DIR") or os.path.join(REPO_DIR, "build", "emu", "python"))
     import vux9k_emu  # noqa: PLC0415 (built by `make emu-py`; only this backend needs it)
 
     with open(hexf) as f:

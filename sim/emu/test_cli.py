@@ -12,7 +12,8 @@ import time
 
 from vux9k import REPO_ROOT, sd_image
 
-EMU = os.path.join(REPO_ROOT, "build", "emu", "target", "release", "vux9k-emu")
+# VUX9K_EMU_BIN: an instrumented build (`make coverage-rust`)
+EMU = os.environ.get("VUX9K_EMU_BIN") or os.path.join(REPO_ROOT, "build", "emu", "target", "release", "vux9k-emu")
 
 
 def run(*args, timeout=60):
