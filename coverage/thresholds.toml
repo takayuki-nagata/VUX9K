@@ -23,3 +23,14 @@ npc = 100.0
 sd = 100.0
 trap = 100.0
 uart_rx = 100.0
+
+# Host Rust lines (make coverage-rust, scripts/coverage_rust.py, cargo-llvm-cov): the
+# emulator from its cargo tests plus the Python-driven runs of an instrumented build
+# (sim/emu, riscv-tests and ACT4 on the emu backend); fw_common from its host tests.
+# There is no exclusion comment on stable Rust (#[coverage(off)] is nightly-only), so a
+# minimum below 100 stands for what is known not to run.
+[rust]
+vux9k_emu = 87.6
+vux9k_emu_cli = 44.1
+vux9k_emu_py = 7.1
+fw_common = 99.5

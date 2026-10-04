@@ -39,7 +39,7 @@ HACK_BUILD_DIR := $(BUILD_DIR)/hack
 ZEPHYR_BUILD_DIR ?= $(BUILD_DIR)/zephyr
 SYNTH_DIR := $(BUILD_DIR)/synth
 
-.PHONY: all lint-rtl check-rtl-syntax coverage-fcov mutation act4-elfs test-act4 test-act4-gls test-act4-emu emu emu-py emu-test test-isa-emu test-emu test-fw-host firmware-size coverage-fw sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hw-dist dist check-dist test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware hwtest hw-smoke sim-unit sim-unit-random sim-boot sim-soc sim test-isa test-isa-gls zephyr-bc-lib build-zephyr build-zephyr-demo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-demo-gls sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
+.PHONY: all lint-rtl check-rtl-syntax coverage-fcov mutation act4-elfs test-act4 test-act4-gls test-act4-emu emu emu-py emu-test test-isa-emu test-emu test-fw-host firmware-size coverage-fw coverage-rust sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hw-dist dist check-dist test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware hwtest hw-smoke sim-unit sim-unit-random sim-boot sim-soc sim test-isa test-isa-gls zephyr-bc-lib build-zephyr build-zephyr-demo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-demo-gls sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
 
 all: test-ci
 
@@ -178,6 +178,38 @@ coverage-fw: emu-py firmware build-hack build-zephyr-demo build-zephyr
 HOST_TARGET ?= $(shell rustc -vV | sed -n 's/^host: //p')
 test-fw-host:
 	cd firmware && $(CARGO) test -p fw_common --target $(HOST_TARGET)
+
+# Line coverage of the host Rust code (cargo-llvm-cov): the emulator from its cargo tests and
+# from the Python-driven runs of an instrumented build (sim/emu incl. the lockstep trace, the
+# riscv-tests and ACT4 on the emu backend), fw_common from its host tests. Minimums in
+# coverage/thresholds.toml's [rust]; report in build/coverage/rust/. See docs/agents/quality.md.
+RUST_COV_DIR = $(BUILD_DIR)/coverage/rust
+RUST_COV_REPORT = $(CURDIR)/$(RUST_COV_DIR)/report
+RUST_COV_EMU_TARGET = $(CURDIR)/$(RUST_COV_DIR)/emu-target
+# The instrumentation environment (RUSTC_WRAPPER, LLVM_PROFILE_FILE, ...) for the emulator workspace
+RUST_COV_EMU_ENV = export CARGO_TARGET_DIR=$(RUST_COV_EMU_TARGET) PYO3_PYTHON=$$(command -v $(PYTHON)) && \
+	eval "$$(cd emu && $(CARGO) llvm-cov show-env --sh --release)"
+coverage-rust: firmware hwtest build-hack build-zephyr build-zephyr-demo act4-elfs sim-lockstep
+	@$(CARGO) llvm-cov --version >/dev/null 2>&1 || \
+		{ echo "coverage-rust needs cargo-llvm-cov (version: ci.yml): cargo install cargo-llvm-cov --locked"; exit 1; }
+	rm -rf $(RUST_COV_DIR)/python $(RUST_COV_REPORT) && mkdir -p $(RUST_COV_DIR)/python $(RUST_COV_REPORT)
+	$(RUST_COV_EMU_ENV) && cd emu && $(CARGO) llvm-cov clean --workspace && \
+		$(CARGO) test --release && $(CARGO) build --release
+	cp $(RUST_COV_EMU_TARGET)/release/libvux9k_emu.so $(RUST_COV_DIR)/python/vux9k_emu.abi3.so
+	$(RUST_COV_EMU_ENV) && export VUX9K_EMU_PY_DIR=$(CURDIR)/$(RUST_COV_DIR)/python \
+		VUX9K_EMU_BIN=$(RUST_COV_EMU_TARGET)/release/vux9k-emu && \
+		LOCKSTEP_TRACE=$(LOCKSTEP_TRACE_FILE) $(PYTHON) -m pytest -q sim/emu && \
+		$(PYTHON) scripts/run_riscv_tests.py --backend emu && \
+		$(PYTHON) scripts/run_riscv_tests.py --suite act4 --backend emu
+	$(RUST_COV_EMU_ENV) && cd emu && \
+		$(CARGO) llvm-cov report --release --json --summary-only --output-path $(RUST_COV_REPORT)/emu.json && \
+		$(CARGO) llvm-cov report --release --lcov --output-path $(RUST_COV_REPORT)/emu.info
+	cd firmware && export CARGO_TARGET_DIR=$(CURDIR)/$(RUST_COV_DIR)/fw-target && \
+		$(CARGO) llvm-cov test -p fw_common --target $(HOST_TARGET) \
+			--json --summary-only --output-path $(RUST_COV_REPORT)/fw_common.json && \
+		$(CARGO) llvm-cov report -p fw_common --target $(HOST_TARGET) --lcov --output-path $(RUST_COV_REPORT)/fw_common.info
+	$(PYTHON) scripts/coverage_rust.py $(RUST_COV_REPORT)/emu.json $(RUST_COV_REPORT)/fw_common.json \
+		--thresholds coverage/thresholds.toml --summary $(RUST_COV_DIR)/summary.md
 
 # Size budgets: the Boot Manager fills lower I-RAM below the Resident Loader
 # (0x0000-0x37FF), the Resident Loader its 2 KB above it (0x3800-0x3FFF)
@@ -557,7 +589,7 @@ prog-flash: $(SYNTH_DIR)/pack.fs
 
 # Every push/PR (CI). Long SoC runs are on Verilator (SIM_SOC); timings: docs/agents/sim.md,
 # "Verilator".
-test-sim: check lint-rtl emu-test test-isa-emu firmware test-fw-host firmware-size build-zephyr-demo zephyr-bc-lib build-hack test-emu coverage-fw sim-lockstep build-zephyr sim-unit coverage-fcov test-isa test-act4 test-act4-emu sim-gls-unit test-isa-gls test-act4-gls sim-soc-fast sim-soc-fast-icarus sim-soc-mmio sim-boot sim-hack-rtl sim-sd-quirks sim-hw-flow sim-zephyr-demo-rtl synth-top sim-soc-gls-fast
+test-sim: check lint-rtl emu-test test-isa-emu firmware test-fw-host firmware-size build-zephyr-demo zephyr-bc-lib build-hack test-emu coverage-fw sim-lockstep build-zephyr sim-unit coverage-fcov test-isa test-act4 test-act4-emu coverage-rust sim-gls-unit test-isa-gls test-act4-gls sim-soc-fast sim-soc-fast-icarus sim-soc-mmio sim-boot sim-hack-rtl sim-sd-quirks sim-hw-flow sim-zephyr-demo-rtl synth-top sim-soc-gls-fast
 	@echo "========================================================================"
 	@echo "  [SIM] ALL RTL, GLS NETLIST, ISA & SOC SIMULATION TESTS PASSED!        "
 	@echo "========================================================================"

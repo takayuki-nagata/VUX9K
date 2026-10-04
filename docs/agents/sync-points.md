@@ -33,7 +33,7 @@ column, the rest of its row belongs to the same piece of work. Reviews check thi
 | Distribution contents | `make_dist.py` `FILES`, `check_dist.py` `REQUIRED`, docs/APP_DEVELOPMENT.md (its Python example is `check_dist.PY_EXAMPLE`); `PINS` when ci.yml changes shape | dist-release.md |
 | Firmware size | `make firmware-size` (Boot Manager 14 KB, Resident Loader 2 KB with ~100 B left) | firmware.md, "Cargo workspace gotcha" |
 | `hw_test`'s tests | new checksums from the emulator (`sim/emu/test_hw_test.py` prints them) | clock-and-board.md, "The SoC clock" |
-| Coverage | raise a threshold when coverage rises, never lower one; `cov:exclude(reason)` only for lines that can't run by design | firmware.md, "Firmware coverage"; sim.md, "Unit tests" |
+| Coverage | raise a threshold when coverage rises, never lower one; `cov:exclude(reason)` only for lines that can't run by design (firmware; host Rust has none) | firmware.md, "Firmware coverage"; sim.md, "Unit tests"; quality.md, "Rust coverage: `make coverage-rust` (cargo-llvm-cov, in test-sim)" |
 | A mutation survivor | a test, or an `ACCEPTED` entry with its reason in `scripts/mcy/mutation.py` | quality.md, "Mutation testing" |
 | Synthesis flags | re-measure with `make timing` | rtl-workflow.md, "Synthesis flags" |
 | `pyproject.toml`'s ruff/mypy scope, a crate, a Makefile target the hooks run, where generated or upstream code lives, a tool pin | `.claude/hooks/` and the guides' `paths:` per its table | agent-tooling.md |

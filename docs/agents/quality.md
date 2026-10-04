@@ -3,6 +3,7 @@ paths:
   - "scripts/mcy/**"
   - "coverage/**"
   - "scripts/coverage_fw.py"
+  - "scripts/coverage_rust.py"
 ---
 
 # Mutation testing and code coverage
@@ -78,3 +79,27 @@ hw-flow), merges them with `verilator_coverage` into `build/coverage/merged.dat`
 - The riscv-tests are measured too (`run_riscv_tests.py` under `HDL_COVERAGE=1`,
   run directories in `build/riscv_tests/runs-cov/`, hierarchy `tb_hex_runner.uut`).
   GLS is not.
+
+## Rust coverage: `make coverage-rust` (cargo-llvm-cov, in test-sim)
+
+Line coverage of the host Rust code, checked per crate against `coverage/thresholds.toml`'s
+`[rust]` by `scripts/coverage_rust.py` (summary and per-file table in
+`build/coverage/rust/summary.md`, lcov and JSON in `report/`). The emulator workspace
+(`vux9k_emu`, `vux9k_emu_cli`, `vux9k_emu_py`) is measured from its `cargo test` **and**
+from the Python-driven runs: `cargo llvm-cov show-env` supplies the instrumentation
+environment (`RUSTC_WRAPPER`, `LLVM_PROFILE_FILE` with `%p-%4m`, so every process writes
+its own profile), the release build's `.so` is copied to `build/coverage/rust/python/`, and
+`VUX9K_EMU_PY_DIR`/`VUX9K_EMU_BIN` point `sim/emu` (with the lockstep trace), the
+riscv-tests and ACT4 on the emu backend at that build and at the instrumented
+`vux9k-emu`. `report` picks up the cdylib and the CLI as objects. `fw_common` is measured
+from its host tests only (its RV32 side is `coverage-fw`'s). Both workspaces build into
+their own target dirs under `build/coverage/rust/`, so the normal builds are untouched.
+- `report` warns "23 functions have mismatched data" (2026-10, already from `cargo test`
+  alone): a function's profile hash differs between the objects that contain it (test
+  binaries, cdylib, CLI). It doesn't fail the run; treat a sudden change in that count as
+  something to look at.
+- Stable Rust has no exclusion comment (`#[coverage(off)]` is nightly-only), so unlike
+  `coverage-fw` there is no `cov:exclude`: a minimum below 100 stands for code known not to
+  run. Raise a minimum when coverage rises; never lower one.
+- The `[rust]` minimums are floors measured on CI's toolchain; when a run reports more,
+  raise them.

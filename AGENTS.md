@@ -28,7 +28,7 @@ sim/                    cocotb/pytest RTL testbenches
   emu/                  pytest tests on the Rust emulator + vux9k.py helpers
   sd_transcripts/       SD exchanges both card models must reproduce
 emu/                    Rust emulator (core, CLI vux9k-emu, pyo3 module vux9k_emu)
-coverage/               thresholds.toml (make coverage-fw)
+coverage/               thresholds.toml (make coverage-fw, coverage-rust)
 scripts/                Build/CI plumbing only (elf2bin.py, run_riscv_tests.py, ...)
 tools/                  End-user CLI: vux_tool.py (UART flashing/diagnostics/monitor)
 vendor/                 bc_clone_rs submodule; riscv-tests (fetched on demand)
@@ -86,7 +86,7 @@ except the handful of firmware-hex symlinks described below
 | Tier | What | When |
 |---|---|---|
 | `make check`, `check-rtl-syntax`, `lint-rtl` | static checks | every change (seconds) |
-| `make test-sim` | everything in CI per push: unit RTL + GLS, ISA (riscv-tests, ACT4) RTL/GLS/emu, emulator, firmware host tests + size, coverage-fw/fcov, lockstep, SoC fast/mmio/boot/hack/sd-quirks/hw-flow, Zephyr demo RTL, GLS fast | before merging |
+| `make test-sim` | everything in CI per push: unit RTL + GLS, ISA (riscv-tests, ACT4) RTL/GLS/emu, emulator, firmware host tests + size, coverage-fw/fcov/rust, lockstep, SoC fast/mmio/boot/hack/sd-quirks/hw-flow, Zephyr demo RTL, GLS fast | before merging |
 | `make test-slow` | GLS flashing flow, Icarus full flow, long lockstep, Zephyr demo GLS, unit tests with a new random seed | nightly; by hand after touching the flashing/SD chain (sync-points.md) |
 | `make sta`, `make timing`, `make eqy` | timing; RTL refactor proof | RTL changes |
 | `make hw-smoke`, `make test-hw` | the board | after RTL changes, before flashing or releasing |

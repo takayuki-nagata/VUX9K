@@ -383,6 +383,7 @@ Short tests run on Icarus, long SoC/GLS runs on Verilator (`SIM_UNIT` / `SIM_SOC
 | **Firmware on the Emulator** | `make test-emu` | ~30 sec | Boot Manager CLI and error paths, flashing through `vux_tool.py`, Resident Loader E1-E6, self-update, Hack demo, Zephyr demo from SD, bc (extended profile), SD transcripts |
 | **Firmware Host Tests** | `make test-fw-host` / `firmware-size` | ~5 sec | `firmware/fw_common` on the host; Boot Manager ≤ 14 KB, Resident Loader ≤ 2 KB |
 | **Firmware Coverage** | `make coverage-fw` | ~40 sec | Source-line coverage of the firmware and demos from the emulator tests, against `coverage/thresholds.toml` (report in `build/coverage/fw/`) |
+| **Rust Coverage** | `make coverage-rust` | a few min | Line coverage of the emulator (its cargo tests and the Python-driven emulator runs) and `fw_common` (host tests) with cargo-llvm-cov, against `coverage/thresholds.toml` (report in `build/coverage/rust/`) |
 | **RTL ↔ Emulator Lockstep** | `make sim-lockstep` | ~40 sec | Random RV32I, traps/interrupts, Hack demo and the firmware on RTL and emulator, compared cycle by cycle (*slow*: `sim-lockstep-slow`, more programs) |
 | **Zephyr Demo** | `make sim-zephyr-demo-rtl` | ~45 sec | The Zephyr Rust demo booted from SD on the RTL (*slow*: `sim-zephyr-demo-gls` on the netlist) |
 | **Static Timing (STA)**| `make sta` | ~15 sec | Exhaustive post-PnR timing analysis, Fmax verification, and critical path breakdown (`build/synth/soc_sta.json`) |
@@ -493,7 +494,7 @@ VUX9K/
     ├── zephyr/                     # Zephyr `west build` output
     ├── synth/                      # soc.json, soc_syn.v, soc_pnr.json, soc_sta.json, pack.fs, unit netlists
     ├── emu/                        # emulator build (cargo target) and the Python module
-    ├── coverage/                   # coverage reports (fw/: firmware lines from the emulator)
+    ├── coverage/                   # coverage reports (fw/: firmware lines from the emulator; rust/: host Rust lines)
     ├── dist/                       # make dist: the release tree (docs/APP_DEVELOPMENT.md)
     └── sim/                        # cocotb builds (<sim>[-gls]/<toplevel>/) and per-test run dirs/results
 ```
