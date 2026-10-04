@@ -22,6 +22,7 @@ firmware/               Cargo workspace (virtual manifest)
 hack_demo/              Standalone Hack 16-bit C/asm demo app (toolchain self-test)
 zephyr_workspace/       Zephyr west module: board/SoC/driver/dts support for "vux9k"
   app/                  Zephyr Rust demo (C glue + rust_demo staticlib; see "Zephyr" below)
+  irq_echo/             Zephyr interrupt-driven UART echo (C), the driver's IRQ API test
 sim/                    cocotb/pytest RTL testbenches
   unit/                 cocotb unit tests (single RTL module each)
   integration/          cocotb SoC-level integration tests + sdcard_model.py/virtual_serial.py

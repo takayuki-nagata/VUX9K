@@ -4,6 +4,7 @@ paths:
   - "soc/soc_pkg.veryl"
   - "scripts/hw_smoke.py"
   - "scripts/test_hardware.py"
+  - "scripts/hw_irq_echo.py"
   - "firmware/hw_test/**"
   - "zephyr_workspace/boards/**"
 ---

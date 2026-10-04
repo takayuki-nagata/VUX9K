@@ -39,7 +39,7 @@ HACK_BUILD_DIR := $(BUILD_DIR)/hack
 ZEPHYR_BUILD_DIR ?= $(BUILD_DIR)/zephyr
 SYNTH_DIR := $(BUILD_DIR)/synth
 
-.PHONY: all lint-rtl check-rtl-syntax coverage-fcov mutation act4-elfs test-act4 test-act4-gls test-act4-emu emu emu-py emu-test test-isa-emu test-emu test-fw-host firmware-size coverage-fw coverage-rust coverage-rust-tool sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hw-dist dist check-dist test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware hwtest hw-smoke sim-unit sim-unit-random sim-boot sim-soc sim test-isa test-isa-gls zephyr-bc-lib build-zephyr build-zephyr-demo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-demo-gls sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
+.PHONY: all lint-rtl check-rtl-syntax coverage-fcov mutation act4-elfs test-act4 test-act4-gls test-act4-emu emu emu-py emu-test test-isa-emu test-emu test-fw-host firmware-size coverage-fw coverage-rust coverage-rust-tool sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hw-dist dist check-dist test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware hwtest hw-smoke sim-unit sim-unit-random sim-boot sim-soc sim test-isa test-isa-gls zephyr-bc-lib build-zephyr build-zephyr-demo build-zephyr-irq-echo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-demo-gls sim-zephyr-irq-echo-rtl test-hw-irq-echo sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
 
 all: test-ci
 
@@ -282,6 +282,12 @@ build-zephyr-demo:
 	@echo "=== Building the Zephyr Rust demo (vux9k) ==="
 	$(call west_build,vux9k,zephyr_workspace/app,$(ZEPHYR_DEMO_BUILD_DIR),)
 
+# Interrupt-driven UART echo on Zephyr for the real board (the driver's IRQ API)
+ZEPHYR_IRQ_ECHO_BUILD_DIR ?= $(BUILD_DIR)/zephyr-irq-echo
+build-zephyr-irq-echo:
+	@echo "=== Building the Zephyr interrupt-driven UART echo (vux9k) ==="
+	$(call west_build,vux9k,zephyr_workspace/irq_echo,$(ZEPHYR_IRQ_ECHO_BUILD_DIR),)
+
 # ===== Hack 16-bit Toolchain & Firmware =====
 
 MSP430_GCC_URL ?= https://dr-download.ti.com/software-development/ide-configuration-compiler-or-debugger/MD-LlCjWuAbzH/9.3.1.2/msp430-gcc-9.3.1.11_linux64.tar.bz2
@@ -342,7 +348,7 @@ sim-lockstep-slow: veryl firmware build-hack emu-py
 	LOCKSTEP_SEEDS=$(LOCKSTEP_SEEDS) LOCKSTEP_SLOW=1 SIM=verilator $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_lockstep]"
 	LOCKSTEP_SEEDS=$(LOCKSTEP_SEEDS) LOCKSTEP_SLOW=1 LOCKSTEP_TRACE=$(LOCKSTEP_TRACE_FILE) $(PYTHON) -m pytest sim/emu/test_lockstep.py
 
-test-emu: emu-py firmware hwtest build-hack build-zephyr build-zephyr-demo
+test-emu: emu-py firmware hwtest build-hack build-zephyr build-zephyr-demo build-zephyr-irq-echo
 	@echo "=== Running firmware and demo tests on the emulator ==="
 	$(PYTHON) -m pytest sim/emu
 
@@ -397,7 +403,11 @@ sim-zephyr-demo-gls: synth-top firmware build-zephyr-demo
 	@echo "=== Running the Zephyr Rust demo from SD on the GLS netlist ==="
 	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc_gls[test_soc_zephyr_demo]"
 
-sim-zephyr: sim-zephyr-repl sim-zephyr-demo-rtl
+sim-zephyr-irq-echo-rtl: veryl firmware build-zephyr-irq-echo
+	@echo "=== Running the Zephyr interrupt-driven UART echo from SD on the RTL ==="
+	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_zephyr_irq_echo]"
+
+sim-zephyr: sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-irq-echo-rtl
 
 sim-hack-emu: emu build-hack
 	@echo "=== Running the Hack demo on the emulator (vux9k-emu) ==="
@@ -592,7 +602,7 @@ prog-flash: $(SYNTH_DIR)/pack.fs
 
 # Every push/PR (CI). Long SoC runs are on Verilator (SIM_SOC); timings: docs/agents/sim.md,
 # "Verilator".
-test-sim: check lint-rtl emu-test test-isa-emu firmware test-fw-host firmware-size build-zephyr-demo zephyr-bc-lib build-hack test-emu coverage-fw sim-lockstep build-zephyr sim-unit coverage-fcov test-isa test-act4 test-act4-emu coverage-rust sim-gls-unit test-isa-gls test-act4-gls sim-soc-fast sim-soc-fast-icarus sim-soc-mmio sim-boot sim-hack-rtl sim-sd-quirks sim-hw-flow sim-zephyr-demo-rtl synth-top sim-soc-gls-fast
+test-sim: check lint-rtl emu-test test-isa-emu firmware test-fw-host firmware-size build-zephyr-demo build-zephyr-irq-echo zephyr-bc-lib build-hack test-emu coverage-fw sim-lockstep build-zephyr sim-unit coverage-fcov test-isa test-act4 test-act4-emu coverage-rust sim-gls-unit test-isa-gls test-act4-gls sim-soc-fast sim-soc-fast-icarus sim-soc-mmio sim-boot sim-hack-rtl sim-sd-quirks sim-hw-flow sim-zephyr-demo-rtl sim-zephyr-irq-echo-rtl synth-top sim-soc-gls-fast
 	@echo "========================================================================"
 	@echo "  [SIM] ALL RTL, GLS NETLIST, ISA & SOC SIMULATION TESTS PASSED!        "
 	@echo "========================================================================"
@@ -631,6 +641,11 @@ check-dist:
 
 # test-hw on a `make dist` tree (e.g. CI's vux9k-dist-<sha> artifact): nothing is rebuilt
 DIST ?= $(BUILD_DIR)/dist
+# The interrupt-driven UART echo on the board: flashed to slot 3 and booted through the
+# Boot Manager that is running (bitstream and SD card as test-hw or hw-smoke left them)
+test-hw-irq-echo: build-zephyr-irq-echo
+	$(PYTHON) scripts/hw_irq_echo.py --bin $(ZEPHYR_IRQ_ECHO_BUILD_DIR)/zephyr/zephyr.bin
+
 test-hw-dist:
 	$(OPENFPGALOADER) -b tangnano9k $(DIST)/bitstream/pack.fs
 	$(PYTHON) scripts/test_hardware.py --dist $(DIST)

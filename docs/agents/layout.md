@@ -52,6 +52,7 @@ make sim-hack-rtl
 make sim-hw-flow         # full UART/SD chain; longest real interaction (Verilator, ~16 s)
 make synth-top          # yosys must resolve build/veryl/soc/{cpu,uart}/*.sv
 make build-zephyr-demo   # Zephyr Rust demo for the real board (needs Zephyr)
+make build-zephyr-irq-echo  # Zephyr interrupt-driven UART echo for the real board
 python3 scripts/check_no_absolute_paths.py
 git status                # confirm no stray untracked build output
 ```

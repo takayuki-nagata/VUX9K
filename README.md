@@ -283,7 +283,9 @@ SoC timer as `andestech,machine-timer`, 14 KB of I-RAM below the Resident Loader
 8 KB of D-RAM, which the link enforces), and `vux9k/vux9k/ext`, the extended profile
 for the emulator only. `make build-zephyr-demo` builds the Rust demo
 (`zephyr_workspace/app/`, Zephyr + a Rust staticlib) for the real board; `make
-build-zephyr` builds bc_clone_rs for `ext`.
+build-zephyr` builds bc_clone_rs for `ext`. `make build-zephyr-irq-echo` builds
+`zephyr_workspace/irq_echo/`, an echo through the UART driver's interrupt-driven API
+(RX on the machine external interrupt; see `zephyr_workspace/README.md`, "UART").
 
 ## Application Development & Releases
 
@@ -380,14 +382,16 @@ Short tests run on Icarus, long SoC/GLS runs on Verilator (`SIM_UNIT` / `SIM_SOC
 | *slow* **GLS End-to-End** | `make sim-gls-hw-flow` | ~3-6 min | The end-to-end flow on the full Gowin netlist |
 | *slow* **Icarus End-to-End** | `make sim-hw-flow-icarus` | ~15 min | The end-to-end flow on 4-state Icarus |
 | **Emulator** | `make emu-test` / `test-isa-emu` | ~10 sec | Rust unit tests of the emulator; riscv-tests on it (same results as `test-isa`) |
-| **Firmware on the Emulator** | `make test-emu` | ~30 sec | Boot Manager CLI and error paths, flashing through `vux_tool.py`, Resident Loader E1-E6, self-update, Hack demo, Zephyr demo from SD, bc (extended profile), SD transcripts |
+| **Firmware on the Emulator** | `make test-emu` | ~30 sec | Boot Manager CLI and error paths, flashing through `vux_tool.py`, Resident Loader E1-E6, self-update, Hack demo, Zephyr demo and interrupt-driven UART echo from SD, bc (extended profile), SD transcripts |
 | **Firmware Host Tests** | `make test-fw-host` / `firmware-size` | ~5 sec | `firmware/fw_common` on the host; Boot Manager ≤ 14 KB, Resident Loader ≤ 2 KB |
 | **Firmware Coverage** | `make coverage-fw` | ~40 sec | Source-line coverage of the firmware and demos from the emulator tests, against `coverage/thresholds.toml` (report in `build/coverage/fw/`) |
 | **Rust Coverage** | `make coverage-rust` | a few min | Line coverage of the emulator (its cargo tests and the Python-driven emulator runs) and `fw_common` (host tests) with cargo-llvm-cov, against `coverage/thresholds.toml` (report in `build/coverage/rust/`) |
 | **RTL ↔ Emulator Lockstep** | `make sim-lockstep` | ~40 sec | Random RV32I, traps/interrupts, Hack demo and the firmware on RTL and emulator, compared cycle by cycle (*slow*: `sim-lockstep-slow`, more programs) |
 | **Zephyr Demo** | `make sim-zephyr-demo-rtl` | ~45 sec | The Zephyr Rust demo booted from SD on the RTL (*slow*: `sim-zephyr-demo-gls` on the netlist) |
+| **Zephyr UART Interrupts** | `make sim-zephyr-irq-echo-rtl` | ~1 min | The interrupt-driven UART echo booted from SD on the RTL: a 64-byte line, longer than both FIFOs, comes back with no overrun |
 | **Static Timing (STA)**| `make sta` | ~15 sec | Exhaustive post-PnR timing analysis, Fmax verification, and critical path breakdown (`build/synth/soc_sta.json`) |
 | **Real Hardware** | `make test-hw` | ~60 sec | Automated physical hardware execution on Tang Nano 9K via `scripts/test_hardware.py` (15 tests) |
+| **Board UART Interrupts** | `make test-hw-irq-echo` | ~20 sec | The interrupt-driven UART echo on the board (`scripts/hw_irq_echo.py`): flashed to slot 3 through the running Boot Manager, five 256-byte lines, then the FPGA is reconfigured from `build/synth/pack.fs` |
 
 ### Real Hardware Test Suite (15 Automated Checks)
 `scripts/test_hardware.py` automatically executes an exhaustive 15-step hardware validation workflow:
@@ -476,7 +480,8 @@ VUX9K/
 │   └── hw_test/                        # Board self-test for make hw-smoke (replaces the Boot Manager in BRAM)
 ├── hack_demo/                      # Hack 16-bit C/Assembly demo app (toolchain self-test)
 ├── zephyr_workspace/               # Zephyr module: vux9k boards, SoC, UART driver, dts (Apache-2.0, own README)
-│   └── app/                        # Zephyr Rust demo for the real board (rust_demo staticlib)
+│   ├── app/                        # Zephyr Rust demo for the real board (rust_demo staticlib)
+│   └── irq_echo/                   # Zephyr interrupt-driven UART echo (C) for the real board
 ├── docs/                           # APP_DEVELOPMENT.md (application developers), RELEASING.md
 ├── emu/                            # Rust emulator: core, CLI (vux9k-emu), Python module (vux9k_emu)
 ├── sim/                            # cocotb & pytest testbenches (run via sim/runners/test_sim.py)

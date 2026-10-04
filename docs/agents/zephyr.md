@@ -38,3 +38,30 @@ Two traps found while bringing Zephyr up on the RTL (the old Python emulator hid
   the bug was the Makefile overwriting it with an older `scripts/elf2bin.py` that
   dropped such segments. Use `zephyr.bin` as `west build` writes it (byte-identical to
   today's elf2bin output on both boards, checked 2026-09); elf2bin is for the firmware.
+
+## Zephyr: the interrupt-driven UART
+
+`uart_vux9k.c` implements the interrupt-driven API under `CONFIG_UART_INTERRUPT_DRIVEN`
+(the polling build, and so the demo's `zephyr.bin`, is unchanged by it). What the
+hardware gives and what the driver makes up for:
+- **RX is the machine external interrupt** (dts `interrupts-extended = <&cpu0_intc 11>`):
+  `soc_top` wires `ext_irq_in` to `!uart_empty`, level, with no enable bit in the UART.
+  `uart_irq_rx_disable()` therefore masks MEIE in `mie`; leaving it enabled with a
+  callback that doesn't read the FIFO dry re-enters the ISR forever.
+- **There is no TX interrupt.** `uart_irq_tx_enable()` runs the callback at once (under
+  `irq_lock` when called from a thread; from inside the callback only a flag is set),
+  then a `k_timer` re-runs it every 700 us, rounded up to a tick, while TX stays enabled.
+  At the boards' 100 ticks/s that is one 32-byte refill per 10 ms (~3 KB/s); an app that
+  streams output sets `CONFIG_SYS_CLOCK_TICKS_PER_SEC=1000` as `irq_echo/` does.
+- `irq_tx_complete` and error interrupts are left out on purpose: the status register
+  has no "transmitter empty" bit, and errors are only sticky flags.
+
+The TX interrupt and an interrupt-enable register belong to Rev.B's UART rework (with
+compatibility with an in-tree Linux driver in mind), not to Rev.A.
+
+`zephyr_workspace/irq_echo/` exercises all of it: main sleeps on a semaphore the RX
+callback gives, and each line comes back upper-cased in one piece (longer than the TX
+FIFO, so the timer path runs) with `rx=<n> drop=<n> err=<n>`. It fits the board without
+printk (cbprintf alone is 1.5 KB; with it the app overflowed 14 KB by 1.8 KB). Tests:
+`sim/emu/test_zephyr_irq_echo.py`, `sim-zephyr-irq-echo-rtl`, and on the board
+`make test-hw-irq-echo` (`scripts/hw_irq_echo.py`, slot 3, not part of `test-hw`/dist).
