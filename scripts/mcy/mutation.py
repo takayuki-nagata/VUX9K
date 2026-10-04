@@ -132,6 +132,12 @@ ACCEPTED: dict[str, dict[str, str]] = {
         " shift register holds; CNT (434 here, 156 in the SoC) is even, so it is back to the right value on"
         " every rdy; data differs only without rdy",
     },
+    "unified_cpu": {
+        "const0 B[23] @ unified_cpu.sv:577.21-585.24 unified_cpu.sv:577.25-577.38": "clears bit 23 of"
+        " r_hack_data in RV32 mode's MEM_WAIT. Only a Hack instruction with M as operand reads it, in"
+        " HACK_WB, after its own MEM_WAIT has reloaded it from data_in; the ISA mode changes only through a"
+        " reset, which zeroes it. Equivalent from reset, beyond dprove's reach on the whole CPU",
+    },
     "fifo_sync": {
         "const1 A[1] @ $auto$proc_dff.cc:proc_dff": "sets bit 1 of a memory word while rst is asserted. The"
         " memory has no reset: a word is read as the head only after it has been written, so only rdata of"
