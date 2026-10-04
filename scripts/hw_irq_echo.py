@@ -83,6 +83,7 @@ def main():
         default=os.path.join(REPO_ROOT, "build", "synth", "pack.fs"),
         help="bitstream to reconfigure the FPGA with afterwards (back to the Boot Manager)",
     )
+    parser.add_argument("--loader", default="openFPGALoader", help="openFPGALoader to reconfigure with")
     parser.add_argument("--port", default="auto", help="serial port (default: auto)")
     parser.add_argument("--size", type=int, default=256, help="bytes per burst (default: 256)")
     parser.add_argument("--count", type=int, default=5, help="bursts (default: 5)")
@@ -101,16 +102,16 @@ def main():
         passed = False
     finally:
         ser.close()
+        loader = shutil.which(args.loader) or os.path.expanduser("~/.local/oss-cad-suite/bin/openFPGALoader")
+        reconfigured = False
         if os.path.isfile(args.pack_fs):
-            loader = shutil.which("openFPGALoader") or os.path.expanduser("~/.local/oss-cad-suite/bin/openFPGALoader")
-            subprocess.run(
-                [loader, "-b", "tangnano9k", args.pack_fs],
-                check=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-        else:
-            print(f"[WARN] {args.pack_fs} missing: the board stays in the echo app until reconfigured")
+            try:
+                cmd = [loader, "-b", "tangnano9k", args.pack_fs]
+                reconfigured = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+            except OSError:
+                pass
+        if not reconfigured:
+            print(f"[WARN] could not reconfigure from {args.pack_fs}: the board stays in the echo app")
     print("IRQ echo on the board: " + ("PASSED" if passed else "FAILED"))
     sys.exit(0 if passed else 1)
 

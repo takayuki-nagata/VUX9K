@@ -27,7 +27,8 @@ async def test_zephyr_irq_echo_from_sd(dut):
     ser.write(b"1")
     await ser.wait_for(b"irq_echo ready\n", timeout_cycles=10_000_000)
     ser.reset_input_buffer()
-    ser.write(BURST + b"\n")
-    # A nonzero error code times out, and the TimeoutError shows the output
-    out = await ser.wait_for(b"err=0\n", timeout_cycles=5_000_000)
-    assert out == BURST.upper() + b"\nrx=64 drop=0 err=0\n", out
+    for _ in range(2):  # the second burst: the driver state after the first
+        ser.write(BURST + b"\n")
+        # A nonzero error code times out, and the TimeoutError shows the output
+        out = await ser.wait_for(b"err=0\n", timeout_cycles=5_000_000)
+        assert out == BURST.upper() + b"\nrx=64 drop=0 err=0\n", out

@@ -17,7 +17,11 @@
 
 static const struct device *const uart = DEVICE_DT_GET(DT_CHOSEN(zephyr_console));
 
-/* One producer and one consumer each; the indices only grow (wrap at 2^32) */
+/*
+ * One producer and one consumer each; the indices only grow (wrap at 2^32). The
+ * barriers keep the compiler from moving a buf access past the index update that
+ * hands the slot over.
+ */
 #define RING_SIZE 256
 struct ring {
 	uint8_t buf[RING_SIZE];
@@ -43,6 +47,7 @@ static void uart_cb(const struct device *dev, void *user_data)
 		}
 		if (rx.head - rx.tail < RING_SIZE) {
 			rx.buf[rx.head % RING_SIZE] = c;
+			compiler_barrier();
 			rx.head++;
 		} else {
 			rx_dropped++;
@@ -56,6 +61,7 @@ static void uart_cb(const struct device *dev, void *user_data)
 		}
 		while (tx.tail != tx.head &&
 		       uart_fifo_fill(dev, &tx.buf[tx.tail % RING_SIZE], 1) == 1) {
+			compiler_barrier();
 			tx.tail++;
 		}
 	}
@@ -67,6 +73,7 @@ static void send(const char *data, uint32_t len)
 	while (len > 0) {
 		while (len > 0 && tx.head - tx.tail < RING_SIZE) {
 			tx.buf[tx.head % RING_SIZE] = *data++;
+			compiler_barrier();
 			tx.head++;
 			len--;
 		}
@@ -108,6 +115,7 @@ int main(void)
 		while (rx.tail != rx.head) {
 			char c = rx.buf[rx.tail % RING_SIZE];
 
+			compiler_barrier();
 			rx.tail++;
 			if (c != '\n') {
 				if (len < sizeof(line)) {
@@ -120,13 +128,17 @@ int main(void)
 			send(line, MIN(len, sizeof(line)));
 			send_str("\nrx=");
 			send_u32(len);
+			unsigned int key = irq_lock();
+			uint32_t dropped = rx_dropped;
+
+			rx_dropped = 0;
+			irq_unlock(key);
 			send_str(" drop=");
-			send_u32(rx_dropped);
+			send_u32(dropped);
 			send_str(" err=");
 			send_u32(uart_err_check(uart));
 			send_str("\n");
 			len = 0;
-			rx_dropped = 0;
 		}
 	}
 	return 0;

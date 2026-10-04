@@ -47,9 +47,11 @@ hardware gives and what the driver makes up for:
 - **RX is the machine external interrupt** (dts `interrupts-extended = <&cpu0_intc 11>`):
   `soc_top` wires `ext_irq_in` to `!uart_empty`, level, with no enable bit in the UART.
   `uart_irq_rx_disable()` therefore masks MEIE in `mie`; leaving it enabled with a
-  callback that doesn't read the FIFO dry re-enters the ISR forever.
+  callback that doesn't read the FIFO dry re-enters the ISR forever (with no callback
+  set, the ISR masks it itself).
 - **There is no TX interrupt.** `uart_irq_tx_enable()` runs the callback at once (under
-  `irq_lock` when called from a thread; from inside the callback only a flag is set),
+  `irq_lock` when called from a thread; from inside the callback only a flag is set;
+  a thread the callback wakes there runs at the next reschedule point, not at once),
   then a `k_timer` re-runs it every 700 us, rounded up to a tick, while TX stays enabled.
   At the boards' 100 ticks/s that is one 32-byte refill per 10 ms (~3 KB/s); an app that
   streams output sets `CONFIG_SYS_CLOCK_TICKS_PER_SEC=1000` as `irq_echo/` does.

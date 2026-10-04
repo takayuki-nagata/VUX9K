@@ -210,6 +210,13 @@ static void uart_vux9k_irq_callback_set(const struct device *dev,
 
 static void uart_vux9k_isr(const struct device *dev)
 {
+	struct uart_vux9k_data *data = dev->data;
+
+	/* Level-triggered: with nobody to read the FIFO, it would re-enter forever */
+	if (!data->cb) {
+		uart_vux9k_irq_rx_disable(dev);
+		return;
+	}
 	uart_vux9k_run_callback(dev);
 }
 #endif /* CONFIG_UART_INTERRUPT_DRIVEN */

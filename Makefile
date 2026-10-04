@@ -639,13 +639,13 @@ check-dist:
 	$(PYTHON) scripts/check_dist.py $(BUILD_DIR)/dist
 	$(PYTHON) scripts/release_check.py selftest $(BUILD_DIR)/dist
 
-# test-hw on a `make dist` tree (e.g. CI's vux9k-dist-<sha> artifact): nothing is rebuilt
-DIST ?= $(BUILD_DIR)/dist
 # The interrupt-driven UART echo on the board: flashed to slot 3 and booted through the
 # Boot Manager that is running (bitstream and SD card as test-hw or hw-smoke left them)
 test-hw-irq-echo: build-zephyr-irq-echo
-	$(PYTHON) scripts/hw_irq_echo.py --bin $(ZEPHYR_IRQ_ECHO_BUILD_DIR)/zephyr/zephyr.bin
+	$(PYTHON) scripts/hw_irq_echo.py --bin $(ZEPHYR_IRQ_ECHO_BUILD_DIR)/zephyr/zephyr.bin --loader $(OPENFPGALOADER)
 
+# test-hw on a `make dist` tree (e.g. CI's vux9k-dist-<sha> artifact): nothing is rebuilt
+DIST ?= $(BUILD_DIR)/dist
 test-hw-dist:
 	$(OPENFPGALOADER) -b tangnano9k $(DIST)/bitstream/pack.fs
 	$(PYTHON) scripts/test_hardware.py --dist $(DIST)
