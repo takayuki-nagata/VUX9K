@@ -51,6 +51,7 @@ jobs:
         with:
           toolchain: "1.95.0"
           targets: riscv32i-unknown-none-elf
+          components: llvm-tools-preview
 
       - name: Cache Veryl Binary
         id: cache-veryl
@@ -64,6 +65,18 @@ jobs:
         # --locked: build with Veryl's own Cargo.lock, so a cache miss can't pick up newer
         # (possibly broken) dependency releases
         run: cargo install veryl --version 0.21.0 --locked
+
+      - name: Cache cargo-llvm-cov
+        id: cache-cargo-llvm-cov
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-llvm-cov
+          key: ${{ runner.os }}-cargo-llvm-cov-v0.9.1-locked
+
+      # Line coverage of the emulator and fw_common (make coverage-rust)
+      - name: Install cargo-llvm-cov
+        if: steps.cache-cargo-llvm-cov.outputs.cache-hit != 'true'
+        run: cargo install cargo-llvm-cov --version 0.9.1 --locked
 
       - name: Cache MSP430 GCC Toolchain
         id: cache-msp430-gcc

@@ -301,6 +301,7 @@ those after it has been tested on the board ([`docs/RELEASING.md`](docs/RELEASIN
 1. **Rust Toolchain**:
    ```bash
    rustup target add riscv32i-unknown-none-elf
+   cargo install cargo-llvm-cov --version 0.9.1 --locked   # make coverage-rust
    ```
 2. **OSS CAD Suite** (Yosys, nextpnr, Icarus Verilog, openFPGALoader):
    [YosysHQ/oss-cad-suite-build](https://github.com/YosysHQ/oss-cad-suite-build)
