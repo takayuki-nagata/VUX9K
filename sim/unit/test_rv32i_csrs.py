@@ -384,6 +384,37 @@ class CsrModel:
                 self.minstret = self.minstret & ~(0xFFFF_FFFF << shift) | value << shift
 
 
+@cocotb.test()
+async def test_rv32i_csrs_read_map(dut):
+    """Every 12-bit CSR address reads what CsrModel says: the listed CSRs their value,
+    every other address 0 (also those one bit away from a listed one)"""
+    dut.retire.value = 0
+    dut.mtime_in.value = 0
+    await csr_reset(dut)
+    model = CsrModel(0, 0)
+    for addr, mask in CsrModel.WRITE_MASK.items():
+        value = rand32()
+        await csr_write(dut, addr, value)
+        model.regs[addr] = value & mask
+    irqs = (1, 1, 1)
+    mtime = random.getrandbits(64)
+    dut.timer_irq_in.value, dut.ext_irq_in.value, dut.sw_irq_in.value = irqs
+    dut.mtime_in.value = mtime
+
+    async def read(addr):
+        dut.csr_addr.value = addr
+        await Timer(1, unit="ns")
+        return int(dut.csr_rdata.value)
+
+    for addr in range(0x1000):
+        await FallingEdge(dut.clk)  # the address and the counters it is compared with in one cycle
+        got = await read(addr)
+        model.mcycle = await read(0xB00) | await read(0xB80) << 32
+        model.minstret = await read(0xB02) | await read(0xB82) << 32
+        want = model.read(addr, irqs, mtime)
+        assert got == want, f"CSR 0x{addr:03x} read 0x{got:08x}, expected 0x{want:08x}"
+
+
 _WRITABLE = (CSR_MSTATUS, CSR_MIE, CSR_MTVEC, CSR_MSCRATCH, CSR_MEPC, CSR_MCAUSE, CSR_MTVAL, 0xB00, 0xB80, 0xB02, 0xB82)
 
 
