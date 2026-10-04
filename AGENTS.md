@@ -58,6 +58,23 @@ into BRAM at synthesis time. Don't remove these symlinks or "clean up" the
 duplication without also fixing the underlying `$readmemh` calls (out of scope
 for a build-layout change; would require re-verifying real hardware).
 
+## Checks that run on their own: Claude Code hooks and pre-commit
+
+`.claude/settings.json` wires up `.claude/hooks/` (Python, linted like `scripts/`); other agents
+should run the same commands themselves:
+- **After each edit** (`post_edit.py`): `ruff check` on the file plus `mypy` for Python,
+  `veryl check` for Veryl. Nothing is rewritten.
+- **When the agent stops** (`stop_check.py`): for the files changed since the last clean pass,
+  format (`veryl fmt`, `ruff format`, `cargo fmt`), then `ruff`/`mypy`, `veryl check` +
+  `make check-rtl-syntax` + `make lint-rtl`, `cargo check` of the touched crates, and
+  `check_no_absolute_paths.py`. A failure keeps the agent working on it. It stays light on
+  purpose (one lock across worktrees, nice'd, 90 s budget; a timeout passes with a note):
+  the test suites are CI's job.
+- **Before an edit** (`pre_edit.py`): writes into `build/`, `vendor/`, `target/` and the
+  root `firmware*.hex` are refused; change the source they come from.
+- **On `git commit`**: `.githooks/pre-commit` runs `make check` (a few seconds; it checks the
+  working tree, not just what is staged).
+
 ## Veryl constructs the toolchain rejects
 
 The generated SV must get through Icarus, Verilator and Yosys. Veryl accepts all of
@@ -87,8 +104,8 @@ these; one of the three tools does not (found 2026-09):
   2026-09 by the Zephyr demo on the board; reproduced in GLS). Write signed compares
   out (`if a[31] != b[31] ? a[31] : a <: b`, as `next_pc_unit`/`rv32i_alu` do);
   `test_rv32i_branches` runs on the netlist too (`make sim-gls-unit`).
-`make sim-unit` (Icarus) and `yosys -p "read_verilog -sv …"` catch the first five in
-seconds; `veryl build` alone does not. Only a GLS test catches the last one.
+`make check-rtl-syntax` (Yosys read + Icarus compile of the generated SoC, about a second)
+catches the first five, as does `make sim-unit`; `veryl build` alone does not. Only a GLS test catches the last one.
 
 `$readmemh` in synthesized RTL: `soc_ram` preloads its arrays in a plain Veryl
 `initial` block, allowed by `#[allow(initial_assign)]` on each array. Veryl emits it
