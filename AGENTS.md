@@ -587,6 +587,34 @@ Things that went wrong while building it, and must stay fixed:
 - `unified_cpu`'s mutants run one at a time (`run_riscv_tests.py` regenerates shared
   files); expect hours for `MCY_SIZE=100`.
 
+Reading the survivors (2026-10: at size 50, 20 for `unified_cpu`, none is open in any module):
+- **Equivalence is decided twice.** `equiv_induct` starts from any state, so a mutant that
+  differs only in states the module can't reach (sdcard_spi's `bit_idx` counting
+  0,1,6,3,4,5,2,7 is still 8 steps) fails it. For modules with `clk` and `rst` a proof
+  from reset follows: the miter with `rst` asserted in step 0, built like sby's AIGER
+  model, proven by abc `dprove` (`EQ_RESET`). It took sdcard_spi from 9 survivors to 1.
+  Storage without a reset (a FIFO's memory) starts at zero on **each side before the
+  miter**: `setundef -zero` on the miter also rewrote `-ignore_gold_x`'s x constants into
+  a mask that hid real differences, and a detected mutant came out equivalent. The
+  self-test therefore also requires the original to be equivalent to itself and one of
+  the first mutants not to be. The proof uses the module's default parameters.
+- **A mutated flip-flop output toggles.** `inv`/`cnot` on a `Q` port also feeds the hold
+  path (`prep` leaves it as a mux from Q), so the register flips every cycle it holds.
+  Whether that shows depends on the hold length's parity: such mutants are often
+  equivalent (the proof above) or visible only outside the interface's contract.
+- **`ACCEPTED`** in `mutation.py` lists survivors that are equivalent beyond `dprove`'s
+  reach (uart_rx's 434-clock timer, the count enumerated instead; a Hack-only register in
+  `unified_cpu`) or differ only where the interface promises nothing (uart_rx's `data`
+  without `rdy`, fifo_sync's `rdata` while empty), each with its reason; `summary.md` shows them apart from the open
+  ones and names entries no survivor matched any more. A survivor that is merely untested
+  gets a test, not an entry (the `cov:exclude` rule). `unified_cpu`'s riscv-tests run in a
+  256 KB window: what the upper address and PC bits do is the unit test's job
+  (`test_unified_cpu.py`).
+- `--replay <id>` reruns a module's tests on one mutant of the last run (`--node` picks
+  the pytest node), keeping `mutated.v` and the output in `replay/<id>/`; `--summarize`
+  rewrites the summaries after editing `ACCEPTED`. mcy's seed is fixed, so ids repeat
+  as long as the RTL doesn't change; compare by `summary.md`'s description otherwise.
+
 ## Code coverage: `make coverage` (Verilator line + toggle)
 
 `HDL_COVERAGE=1` makes `sim_runner.py` build Verilator RTL sims with
