@@ -151,6 +151,17 @@ async def test_priority(dut):
 
 
 @cocotb.test()
+async def test_every_opcode(dut):
+    """Only BRANCH, JAL and JALR redirect the PC: every other 7-bit opcode, near misses of
+    theirs included, continues at pc + 4"""
+    s = random_state(True) | {"mem_wait": False, "trap_entry": False, "trap_return": False}
+    s |= {"funct3": BEQ, "rs1": 5, "rs2": 5}  # a taken branch
+    for op in range(128):
+        await check(dut, s | {"op": op})
+    fcov.export()
+
+
+@cocotb.test()
 async def test_hack_jumps(dut):
     """Every Hack jump condition on comp values around 0 and the 16-bit sign; only comp[15:0]
     counts"""
