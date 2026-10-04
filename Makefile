@@ -62,6 +62,7 @@ check-paths:
 	$(PYTHON) scripts/check_no_absolute_paths.py
 
 check: check-paths
+	$(PYTHON) scripts/check_agent_docs.py
 	$(VERYL) fmt --check
 	$(VERYL) check
 	$(RUFF) format --check
