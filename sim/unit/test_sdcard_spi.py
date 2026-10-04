@@ -221,6 +221,7 @@ def _div_write(value):
 )
 @fcov.point("sd.transfer_div", ("min", "init", "other"), xf=lambda kind, v: _div(v) if kind == "xfer" else None)
 @fcov.point("sd.busy_write", (0x0, 0x4, 0xC), xf=lambda kind, v: v if kind == "busy" else None)
+@fcov.point("sd.busy_read_cs", (0, 1), xf=lambda kind, v: v if kind == "busy_read" else None)
 def sample(kind, value):
     pass
 
@@ -254,8 +255,14 @@ async def test_random_sequence(dut):
         slave.load(reply)
         sample("xfer", div)
         await write(dut, 0x0, tx)
+        # Registers read while busy show only their own field (8 clocks: still busy at
+        # CLK_DIV_MIN, together with the writes below)
+        sample("busy_read", cs)
+        unused = random.choice([a for a in range(16) if a not in (0x0, 0x4, 0x8, 0xC)])
+        got = [await read(dut, a) for a in (0x4, 0x8, 0xC, unused)]
+        assert got == [cs, 1, div, 0], f"registers 0x4/0x8/0xC/0x{unused:x} read {got} while busy, divider {div}"
         for _ in range(random.randint(0, 3)):  # all dropped while busy
-            await ClockCycles(dut.clk, random.randint(1, 3 * div))  # 3 x (3 div + 2) < 16 div
+            await ClockCycles(dut.clk, random.randint(1, 3 * div))  # 8 + 3 x (3 div + 2) < 16 div
             addr = random.choice((0x0, 0x4, 0xC))
             sample("busy", addr)
             await write(dut, addr, rand32())
