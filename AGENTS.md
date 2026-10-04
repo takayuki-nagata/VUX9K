@@ -107,6 +107,7 @@ except the handful of firmware-hex symlinks described below
 | `make dist`, releases, `.github/workflows/`, `docs/APP_DEVELOPMENT.md` | [dist-release.md](docs/agents/dist-release.md) |
 | `make mutation`, `make coverage`, `coverage/thresholds.toml` | [quality.md](docs/agents/quality.md) |
 | `build/` layout, moving files, `Makefile` paths, the post-move checklist | [layout.md](docs/agents/layout.md) |
+| `.claude/` (hooks, agents, skills), `.githooks/`, these guides; when they need review | [agent-tooling.md](docs/agents/agent-tooling.md) |
 | What has to change together | [sync-points.md](docs/agents/sync-points.md) |
 
 A new guide gets `paths:` frontmatter (the files it is about), a symlink in `.claude/rules/`

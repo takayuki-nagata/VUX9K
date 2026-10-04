@@ -8,15 +8,22 @@
   top-level entry of the repository; build/, placeholders and globs are skipped).
 - Every citation `docs/agents/<file>.md, "<Title>"` (in code or in the guides) names a guide
   that exists and a section whose heading starts with that title.
-- Every guide has `paths:` frontmatter and a .claude/rules/ symlink; every rule is one.
+- Every guide has `paths:` frontmatter and a .claude/rules/ symlink; every rule is one; every
+  `paths:` glob matches some file.
+- Every `make <target>` the guides, agents and skills name exists in the Makefile.
+- The hooks' Python directories (.claude/hooks/hooklib.py PY_DIRS) are pyproject's ruff ones.
+The agent definitions and skills in .claude/ are checked like the guides
+(docs/agents/agent-tooling.md says what else to review by hand).
 
 Renames and section edits otherwise leave the guides pointing at nothing, silently.
 """
 
+import ast
 import re
 import subprocess
 import sys
-from pathlib import Path
+import tomllib
+from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parent.parent
 GUIDES = ROOT / "docs" / "agents"
@@ -43,7 +50,14 @@ def tracked() -> list[str]:
 
 
 def guide_files() -> list[Path]:
-    return [ROOT / "AGENTS.md", *sorted(GUIDES.glob("*.md"))]
+    """The guides plus the agent definitions and skills, which name paths and targets too."""
+    claude = ROOT / ".claude"
+    return [
+        ROOT / "AGENTS.md",
+        *sorted(GUIDES.glob("*.md")),
+        *sorted((claude / "agents").glob("*.md")),
+        *sorted((claude / "skills").glob("*/SKILL.md")),
+    ]
 
 
 def headings(path: Path) -> list[str]:
@@ -121,11 +135,61 @@ def check_rules(errors: list[str]) -> None:
             errors.append(f"{rule.relative_to(ROOT)}: not a symlink to an existing guide in docs/agents/")
 
 
+def make_targets() -> set[str]:
+    targets: set[str] = set()
+    for line in (ROOT / "Makefile").read_text().splitlines():
+        m = re.match(r"^([A-Za-z0-9_.%-]+(?:\s+[A-Za-z0-9_.%-]+)*)\s*:(?!=)", line)
+        if m:
+            targets.update(m.group(1).split())
+    return targets
+
+
+def check_make_targets(errors: list[str]) -> None:
+    """Every `make <target>` the guides, agents and skills name is a target of the Makefile."""
+    targets = make_targets()
+    for doc in guide_files():
+        for cmd in re.findall(r"`make ([^`\n]+)`", doc.read_text()):
+            for word in cmd.split():
+                if word.startswith("-") or "=" in word or "<" in word or "|" in word:
+                    continue
+                if word not in targets:
+                    errors.append(f"{doc.relative_to(ROOT)}: `make {cmd}`: no target {word}")
+
+
+def check_globs(errors: list[str]) -> None:
+    """Every `paths:` glob of a guide matches some file: a moved directory would otherwise
+    silently stop loading the guide."""
+    files = [PurePosixPath(f) for f in tracked()]
+    for guide in sorted(GUIDES.glob("*.md")):
+        m = re.match(r"---\npaths:\n((?:  - \"[^\"]+\"\n)+)---\n", guide.read_text())
+        for glob in re.findall(r"\"([^\"]+)\"", m.group(1) if m else ""):
+            if not any(f.full_match(glob) for f in files):
+                errors.append(f"{guide.relative_to(ROOT)}: paths glob {glob} matches no file")
+
+
+def check_hook_scope(errors: list[str]) -> None:
+    """The hooks lint the Python directories pyproject.toml's ruff configuration covers."""
+    tree = ast.parse((ROOT / ".claude" / "hooks" / "hooklib.py").read_text())
+    hook_dirs: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "PY_DIRS" for t in node.targets):
+            hook_dirs = set(ast.literal_eval(node.value))
+    ruff = tomllib.loads((ROOT / "pyproject.toml").read_text())["tool"]["ruff"]["include"]
+    ruff_dirs = {g.split("*")[0] for g in ruff}
+    if hook_dirs != ruff_dirs:
+        errors.append(
+            f".claude/hooks/hooklib.py: PY_DIRS {sorted(hook_dirs)} != pyproject ruff include {sorted(ruff_dirs)}"
+        )
+
+
 def main() -> int:
     errors: list[str] = []
     check_paths(errors)
     check_citations(errors)
     check_rules(errors)
+    check_make_targets(errors)
+    check_globs(errors)
+    check_hook_scope(errors)
     for e in errors:
         print(f"❌ {e}")
     if errors:

@@ -36,4 +36,5 @@ column, the rest of its row belongs to the same piece of work. Reviews check thi
 | Coverage | raise a threshold when coverage rises, never lower one; `cov:exclude(reason)` only for lines that can't run by design | firmware.md, "Firmware coverage"; sim.md, "Unit tests" |
 | A mutation survivor | a test, or an `ACCEPTED` entry with its reason in `scripts/mcy/mutation.py` | quality.md, "Mutation testing" |
 | Synthesis flags | re-measure with `make timing` | rtl-workflow.md, "Synthesis flags" |
+| `pyproject.toml`'s ruff/mypy scope, a crate, a Makefile target the hooks run, where generated or upstream code lives, a tool pin | `.claude/hooks/` and the guides' `paths:` per its table | agent-tooling.md |
 | A file named in these docs, or a section title cited from code (`docs/agents/x.md, "Title"`) | the docs and the citations; `make check` runs `scripts/check_agent_docs.py` | AGENTS.md |
