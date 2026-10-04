@@ -20,13 +20,15 @@ HANDLER = 0x200
 MAX_CYCLES = 400
 
 
-async def run_program(dut, words, *, irq_after=None, irq_lines=("timer_irq_in",), max_cycles=MAX_CYCLES):
-    """Serve `words` as instruction memory (pc_out -> instr_in) and reset the CPU.
+async def run_program(dut, words, *, irq_after=None, irq_lines=("timer_irq_in",), max_cycles=MAX_CYCLES, stores=None):
+    """Serve `words` (a list from address 0, or {address: word}) as instruction memory
+    (pc_out -> instr_in) and reset the CPU.
 
     Returns (PCs seen, one per cycle; whether mem_write was ever asserted).
     irq_after: raise the irq_lines inputs (default timer_irq_in) after that many cycles.
+    stores: a list that gets (data_waddr, data_out, mem_byte_we) of every cycle with mem_write.
     """
-    mem = {i * 4: w for i, w in enumerate(words)}
+    mem = words if isinstance(words, dict) else {i * 4: w for i, w in enumerate(words)}
     cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start())
     for sig, val in (
         ("soft_rst", 0),
@@ -50,7 +52,10 @@ async def run_program(dut, words, *, irq_after=None, irq_lines=("timer_irq_in",)
         await FallingEdge(dut.clk)
         pc = int(dut.pc_out.value)
         pcs.append(pc)
-        wrote |= bool(int(dut.mem_write.value))
+        if int(dut.mem_write.value):
+            wrote = True
+            if stores is not None:
+                stores.append((int(dut.data_waddr.value), int(dut.data_out.value), int(dut.mem_byte_we.value)))
         dut.instr_in.value = mem.get(pc, 0x00000013)  # nop outside the program
         if irq_after is not None and cycle == irq_after:
             for line in irq_lines:

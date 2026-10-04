@@ -4,6 +4,8 @@
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, FallingEdge, Timer
+from rv32_asm import Asm
+from test_unified_cpu_traps import run_program
 
 
 @cocotb.test()
@@ -118,3 +120,67 @@ async def test_unified_cpu_hack_and_riscv(dut):
     await ClockCycles(dut.clk, 1)  # MEM_WAIT -> FETCH
 
     dut._log.info("[PASS] Unified CPU: RISC-V 32-bit program execution verified!")
+
+
+@cocotb.test()
+async def test_full_width_store_addresses(dut):
+    """Stores put out all 32 address bits (each one set alone, and all of them), with the
+    byte enables and replicated data of SB at every byte and SH at both halves"""
+    a = Asm()
+    want = []
+    for addr in [1 << b for b in range(2, 32)] + [0xFFFF_FFFC]:
+        a.li("t0", addr)
+        a.li("t1", addr ^ 0x5A5A_5A5A)
+        a.sw("t1", 0, "t0")
+        want.append((addr, addr ^ 0x5A5A_5A5A, 0xF))
+    a.li("t0", 0x2000_0100)
+    a.li("t1", 0x1234_56A5)
+    for k in range(4):
+        a.sb("t1", k, "t0")
+        want.append((0x2000_0100 + k, 0xA5A5_A5A5, 1 << k))
+    for k in (0, 2):
+        a.sh("t1", k, "t0")
+        want.append((0x2000_0100 + k, 0x56A5_56A5, 3 << k))
+    a.label("done")
+    a.j("done")
+    stores: list[tuple[int, int, int]] = []
+    pcs, _ = await run_program(dut, a.assemble(), max_cycles=8 * len(want) + 400, stores=stores)
+    assert a.labels["done"] in pcs, "never reached the end of the program"
+    got = stores
+    assert got == want, (
+        "stores (address, data, byte enables): "
+        + ", ".join(
+            f"#{i} got {tuple(hex(v) for v in g)} want {tuple(hex(v) for v in w)}"
+            for i, (g, w) in enumerate(zip(got, want, strict=False))
+            if g != w
+        )
+        + f" ({len(got)} stores, {len(want)} expected)"
+    )
+
+
+@cocotb.test()
+async def test_high_pc_continues_after_load_and_store(dut):
+    """Code far up the address space: after a load or a store (MEM_WAIT), execution goes
+    on at pc + 4 with every PC bit kept"""
+    bases = (0xAAAA_A000, 0x5555_4000, 0xFFFF_F000)
+    mem = {}
+    a = Asm()
+    a.li("t0", bases[0])
+    a.jalr("zero", "t0")
+    a.label("done")
+    a.j("done")
+    mem.update({i * 4: w for i, w in enumerate(a.assemble())})
+    done = a.labels["done"]
+    for i, base in enumerate(bases):
+        b = Asm(origin=base)
+        b.lw("t1", 0, "zero")
+        b.label("after_load")
+        b.sw("t1", 0, "zero")
+        b.label("after_store")
+        b.li("t0", bases[i + 1] if i + 1 < len(bases) else done)
+        b.jalr("zero", "t0")
+        mem.update({base + 4 * j: w for j, w in enumerate(b.assemble())})
+    pcs, _ = await run_program(dut, mem, max_cycles=300)
+    for base in bases:
+        assert base + 4 in pcs and base + 8 in pcs, f"no pc + 4 after the load/store at 0x{base:08x}"
+    assert done in pcs, f"never got back; last PCs {[hex(p) for p in pcs[-4:]]}"
