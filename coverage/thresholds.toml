@@ -30,7 +30,7 @@ uart_rx = 100.0
 # There is no exclusion comment on stable Rust (#[coverage(off)] is nightly-only), so a
 # minimum below 100 stands for what is known not to run.
 [rust]
-vux9k_emu = 94.8
+vux9k_emu = 95.0
 vux9k_emu_cli = 72.4
 vux9k_emu_py = 70.5
 fw_common = 99.5
