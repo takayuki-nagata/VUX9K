@@ -25,7 +25,8 @@ from I-RAM to D-RAM at startup). Write it to a slot with
 | `vux9k/vux9k/ext` | 512 KB ROM, 256 KB RAM | **the emulator only** (`vux9k-emu --profile extended`); not real hardware |
 
 The linker enforces the `vux9k` limits: an application that outgrows the board fails to
-link. The CPU is RV32I + Zicsr + Zifencei, machine mode only, running at 18 MHz.
+link. The CPU is RV32I + Zicsr + Zifencei, machine mode only, running at 18 MHz. Both
+boards run the kernel tickless at 1000 ticks/s, so timeouts have 1 ms resolution.
 
 ## UART
 
@@ -34,9 +35,9 @@ interrupt-driven API (`uart_irq_*`, `uart_fifo_*`). The SoC raises the machine e
 interrupt (cause 11) while the 32-byte RX FIFO holds data; it is level-triggered and has
 no enable bit in the UART, so `uart_irq_rx_disable()` masks it in `mie`. The UART has no
 TX interrupt: `uart_irq_tx_enable()` calls the callback at once, and a kernel timer calls
-it again every 700 us (rounded up to a tick) while TX stays enabled. At the board's
-default 100 ticks/s that refills the 32-byte TX FIFO every 10 ms, about 3 KB/s;
-`CONFIG_SYS_CLOCK_TICKS_PER_SEC=1000` keeps up with 115200 baud. `uart_irq_tx_complete()`
+it again every 700 us (rounded up to a tick, 1 ms at the boards' 1000 ticks/s) while TX
+stays enabled, which keeps up with 115200 baud. A lower `CONFIG_SYS_CLOCK_TICKS_PER_SEC`
+slows it down: one 32-byte refill per tick. `uart_irq_tx_complete()`
 is not supported (the status register has no "transmitter empty" bit), nor are error
 interrupts. `irq_echo/` is an example.
 

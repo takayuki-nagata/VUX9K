@@ -53,8 +53,11 @@ hardware gives and what the driver makes up for:
   `irq_lock` when called from a thread; from inside the callback only a flag is set;
   a thread the callback wakes there runs at the next reschedule point, not at once),
   then a `k_timer` re-runs it every 700 us, rounded up to a tick, while TX stays enabled.
-  At the boards' 100 ticks/s that is one 32-byte refill per 10 ms (~3 KB/s); an app that
-  streams output sets `CONFIG_SYS_CLOCK_TICKS_PER_SEC=1000` as `irq_echo/` does.
+  The boards run 1000 ticks/s (`vux9k*_defconfig`) for this: at the earlier 100 it was
+  one 32-byte refill per 10 ms (~3 KB/s). An app that lowers
+  `CONFIG_SYS_CLOCK_TICKS_PER_SEC` slows its TX the same way. The kernel is tickless, so
+  the rate costs no periodic interrupts; the demo tests check `k_msleep(100)` to 102 ms,
+  which fails at 100 ticks/s.
 - `irq_tx_complete` and error interrupts are left out on purpose: the status register
   has no "transmitter empty" bit, and errors are only sticky flags.
 

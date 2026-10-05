@@ -279,7 +279,7 @@ board, such as bc. Python tests drive the emulator through the `vux9k_emu` modul
 ### Zephyr boards
 
 `zephyr_workspace/boards/vux9k/` has two targets: `vux9k`, the real board (18 MHz, the
-SoC timer as `andestech,machine-timer`, 14 KB of I-RAM below the Resident Loader and
+SoC timer as `andestech,machine-timer`, tickless at 1000 ticks/s, 14 KB of I-RAM below the Resident Loader and
 8 KB of D-RAM, which the link enforces), and `vux9k/vux9k/ext`, the extended profile
 for the emulator only. `make build-zephyr-demo` builds the Rust demo
 (`zephyr_workspace/app/`, Zephyr + a Rust staticlib) for the real board; `make

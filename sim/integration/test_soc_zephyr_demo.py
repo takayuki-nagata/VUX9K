@@ -30,4 +30,5 @@ async def test_zephyr_rust_demo_from_sd(dut):
     out = out.decode("utf-8", errors="replace")
     assert "[RL] Slot 1" in out and "Zephyr RTOS Booting on VUX9K SoC!" in out, out
     m = re.search(r"k_msleep\(100\) took (\d+) ms", out)
-    assert m and 100 <= int(m.group(1)) <= 110, out
+    # A tick (1 ms at the boards' 1000 ticks/s) plus rounding; 100 ticks/s reads 110
+    assert m and 100 <= int(m.group(1)) <= 102, out
