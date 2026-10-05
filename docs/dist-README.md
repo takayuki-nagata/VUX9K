@@ -11,6 +11,7 @@ files' hashes. Source: https://github.com/takayuki-nagata/VUX9K
 | `boot-manager.bin` | Boot Manager image, to update it from the SD card's slot 0 |
 | `demos/` | Zephyr demo (RV32) and Hack demo images, for the board and the emulator alike |
 | `tools/vux_tool.py` | Writes applications to the SD card and starts them, over the serial port |
+| `tools/70-vux9k-board.rules` | udev rule that keeps ModemManager off the board (docs/APP_DEVELOPMENT.md, section 1) |
 | `zephyr/vux9k-zephyr-bsp.tar.gz` | Zephyr board support (module) with a Rust application template |
 | `hack/` | Hack demo's C source, a template for Hack applications |
 | `emu/vux9k-emu`, `emu/vux9k_emu.abi3.so` | The emulator: command line and Python module (Linux x86_64) |

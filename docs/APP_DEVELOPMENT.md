@@ -24,6 +24,13 @@ Python 3.10 or later, and [openFPGALoader](https://github.com/trabucayre/openFPG
 (packaged by most distributions, and part of the OSS CAD Suite). Your user needs access to
 the board's USB device; openFPGALoader's documentation lists the udev rule.
 
+**ModemManager.** If it runs on your host (most desktop distributions start it), install
+`tools/70-vux9k-board.rules`, as its comment shows, so that it leaves the board alone.
+ModemManager probes each new serial port, and openFPGALoader hands the board's JTAG port
+back as a new one after every load. The probe sets 57600 baud, and the board's USB bridge
+applies that rate to the board's serial port as well: the next session shows noise instead
+of the board's output. `tools/vux_tool.py` warns when ModemManager can probe the board.
+
 **Bitstream.** Load it into the FPGA's SRAM (lost at power-off, handy while trying a
 release) or write it to the on-board flash (loaded at every power-on):
 

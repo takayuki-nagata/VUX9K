@@ -57,7 +57,9 @@ except the handful of firmware-hex symlinks described below
 - **The extended profile and the `vux9k/vux9k/ext` Zephyr board are emulator-only.** Never
   present anything that only runs there as running on the board.
 - **Lost board UART output: check the USB topology (`lsusb -t`) before the firmware**
-  (clock-and-board.md, "Board UART output that stops").
+  (clock-and-board.md, "Board UART output that stops"); **noise instead of output: the
+  host's ModemManager** (clock-and-board.md, "Board UART output that is noise: ModemManager
+  and the bridge's shared baud rate").
 - **Bugs a test exposes are pinned as `xfail(strict=True)`** with the reason until fixed;
   expected-failure lists are strict (an XPASS fails the run). Never loosen a check, lower a
   coverage threshold, or remove a harness self-test to get a run through.

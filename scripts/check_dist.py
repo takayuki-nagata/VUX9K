@@ -33,6 +33,7 @@ REQUIRED = [
     "demos/hack-demo.bin",
     "tools/vux_tool.py",
     "tools/requirements.txt",
+    "tools/70-vux9k-board.rules",
     "hack/main.c",
     "hack/uart.c",
     "hack/uart.h",

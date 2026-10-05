@@ -38,6 +38,7 @@ FILES = {
     "demos/hack-demo.bin": "build/hack/firmware.bin",
     "tools/vux_tool.py": "tools/vux_tool.py",
     "tools/requirements.txt": "tools/requirements.txt",
+    "tools/70-vux9k-board.rules": "tools/70-vux9k-board.rules",
     "hack/main.c": "hack_demo/src/main.c",
     "hack/uart.c": "hack_demo/src/uart.c",
     "hack/uart.h": "hack_demo/src/uart.h",

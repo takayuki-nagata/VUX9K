@@ -63,3 +63,28 @@ tests 14/15 until the board had a hub to itself.
   that reaches its last LED step has sent every byte.
 - Numbered lines of one length, sent with known gaps and read with arrival timestamps,
   show in one run which output the host path drops or delays.
+
+## Board UART output that is noise: ModemManager and the bridge's shared baud rate
+
+The board's USB bridge (BL702 emulating an FT2232) keeps **one** line setting for both of
+its interfaces (JTAG if00 and UART if01; measured with usbmon 2026-10): `SET_BAUD`, on
+either interface, only stores a rate, and `SET_DATA`, on either, restarts the UART at the
+stored rate. Linux's ftdi_sio sends `SET_DATA` before `SET_BAUD` when a port opens, so a
+fresh open runs at the rate stored *last*. After each openFPGALoader load the JTAG
+interface comes back as a new tty, ModemManager (when running and not told to ignore the
+board) opens it at 57600, and the next session on the UART tty reads the board's 115200
+output at 57600: about half as many bytes, all noise, reproducibly the same bytes. A second
+session is clean, which made it look random. While its probe runs (up to ~20 s after a
+load) ModemManager's reopens can switch the rate even in the middle of an open session.
+- **`tools/70-vux9k-board.rules`** sets `ID_MM_DEVICE_IGNORE` on the board's ttys; the
+  board-test scripts (`test_hardware.py`, `hw_smoke.py`, `hw_irq_echo.py`) refuse to run
+  while ModemManager could probe the board (`vux_tool.modemmanager_hint`), and `vux_tool`
+  warns.
+- `vux_tool.open_port` sets the line format twice after opening
+  (`apply_line_settings`), so a stale stored rate never survives into a session; changing
+  only the baud rate would not help (`SET_BAUD` alone isn't applied).
+- Output the board sent while no host had the port open is handed over at the next open.
+  Anything that waits for a verdict must anchor it to the run it started: `hw_smoke.py`
+  takes a `RESULT` line only after this boot's `hw_test` banner.
+- Noise with non-ASCII bytes is a host-side rate problem until proven otherwise:
+  `vux_tool.garbled_hint` adds that note to the test failures.
