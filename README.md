@@ -276,6 +276,13 @@ I-RAM, 8 KB D-RAM, as the board) and `extended` (512 KB / 256 KB, same MMIO) —
 board, such as bc. Python tests drive the emulator through the `vux9k_emu` module
 (`make emu-py`; helpers in `sim/emu/vux9k.py`).
 
+`make emu-bench` (`scripts/emu_bench.py`) measures how fast that runs (millions of
+instructions per second, driven from Python as the tests do) on a fixed RV32I loop, bc,
+the Zephyr and Hack demos and the Boot Manager, and prints a digest of each final state.
+`--compare` checks the digests against a saved run of another build: a change made for
+speed must not change any. CI prints the numbers but never fails on them; compare them on
+one machine.
+
 ### Zephyr boards
 
 `zephyr_workspace/boards/vux9k/` has two targets: `vux9k`, the real board (18 MHz, the
@@ -382,6 +389,7 @@ Short tests run on Icarus, long SoC/GLS runs on Verilator (`SIM_UNIT` / `SIM_SOC
 | *slow* **GLS End-to-End** | `make sim-gls-hw-flow` | ~3-6 min | The end-to-end flow on the full Gowin netlist |
 | *slow* **Icarus End-to-End** | `make sim-hw-flow-icarus` | ~15 min | The end-to-end flow on 4-state Icarus |
 | **Emulator** | `make emu-test` / `test-isa-emu` | ~10 sec | Rust unit tests of the emulator; riscv-tests on it (same results as `test-isa`) |
+| **Emulator Speed** | `make emu-bench` | ~10 sec | MIPS from Python and final-state digests (`--compare` with a saved run); prints only |
 | **Firmware on the Emulator** | `make test-emu` | ~30 sec | Boot Manager CLI and error paths, flashing through `vux_tool.py`, Resident Loader E1-E6, self-update, Hack demo, Zephyr demo and interrupt-driven UART echo from SD, bc (extended profile), SD transcripts |
 | **Firmware Host Tests** | `make test-fw-host` / `firmware-size` | ~5 sec | `firmware/fw_common` on the host; Boot Manager ≤ 14 KB, Resident Loader ≤ 2 KB |
 | **Firmware Coverage** | `make coverage-fw` | ~40 sec | Source-line coverage of the firmware and demos from the emulator tests, against `coverage/thresholds.toml` (report in `build/coverage/fw/`) |
