@@ -70,6 +70,8 @@ pub struct Uart {
     frame_err: bool,
     /// CPU effects waiting for their edge: (edge cycle, op), in time order.
     cpu_ops: VecDeque<(u64, CpuOp)>,
+    /// No edge before this cycle changes anything (`advance`'s fast path; 0 = unknown).
+    quiet_until: u64,
 }
 
 impl Default for Uart {
@@ -86,6 +88,7 @@ impl Default for Uart {
             overrun: false,
             frame_err: false,
             cpu_ops: VecDeque::new(),
+            quiet_until: 0,
         }
     }
 }
@@ -102,6 +105,12 @@ fn next_alarm(c: u64) -> u64 {
 impl Uart {
     /// Apply every edge before cycle `to`, so the state is the one during `to`.
     pub fn advance(&mut self, to: u64) {
+        // Nothing happens at the edges before `quiet_until` (called every instruction)
+        if to <= self.quiet_until {
+            self.now = self.now.max(to);
+            return;
+        }
+        self.quiet_until = 0; // unknown again unless the loop below finds the next edge
         while self.now < to {
             // Next edge at which something happens (all < `to` or we stop)
             let tx_pop = (!self.tx_fifo.is_empty()).then(|| self.now.max(self.tx_idle_from));
@@ -109,10 +118,12 @@ impl Uart {
             let cpu = self.cpu_ops.front().map(|op| op.0);
             let Some(edge) = [tx_pop, rx_push, cpu].into_iter().flatten().min() else {
                 self.now = to;
+                self.quiet_until = u64::MAX;
                 return;
             };
             if edge >= to {
                 self.now = to;
+                self.quiet_until = edge;
                 return;
             }
             self.apply_edge(edge, tx_pop == Some(edge), rx_push == Some(edge));
@@ -171,6 +182,7 @@ impl Uart {
 
     fn queue(&mut self, edge: u64, op: CpuOp) {
         self.cpu_ops.push_back((edge, op));
+        self.quiet_until = self.quiet_until.min(edge);
     }
 
     /// Status during cycle `c` (the state must have been advanced to `c`).
@@ -239,6 +251,7 @@ impl Uart {
                 bad_stop,
             });
             self.rx_line_free = start + FRAME;
+            self.quiet_until = self.quiet_until.min(start + RX_PUSH_DELAY);
         }
     }
 
@@ -263,5 +276,16 @@ impl Uart {
     /// `c` (the state must have been advanced to `c`).
     pub fn tx_complete_by(&self, c: u64) -> usize {
         self.tx_out.partition_point(|&(_, s)| s + FRAME <= c)
+    }
+
+    /// Earliest cycle in which more than `n` bytes can have completely left the pin, when
+    /// `n` have by cycle `c` (the state must have been advanced to `c`). A byte not yet
+    /// popped from the TX FIFO, even one the CPU hasn't written yet, is popped at an edge
+    /// e >= c and starts after the next alarm, at e + 2 or later.
+    pub fn next_tx_complete(&self, n: usize, c: u64) -> u64 {
+        let unpopped = c + 2 + FRAME;
+        self.tx_out
+            .get(n)
+            .map_or(unpopped, |&(_, s)| (s + FRAME).min(unpopped))
     }
 }

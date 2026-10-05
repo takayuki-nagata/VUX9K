@@ -521,9 +521,14 @@ impl Soc {
             ..Retire::default()
         };
         if self.riscv_mode {
-            // The interrupt is sampled in FETCH (unified_cpu r_irq)
-            let mip = self.mip();
-            let irq = self.csr.pending_interrupt(mip);
+            // The interrupt is sampled in FETCH (unified_cpu r_irq); with none enabled
+            // there's no need to look at the lines
+            let irq = if self.csr.mstatus & csr::MSTATUS_MIE != 0 && self.csr.mie != 0 {
+                let mip = self.mip();
+                self.csr.pending_interrupt(mip)
+            } else {
+                None
+            };
             self.step_rv(word, irq, &mut r);
         } else {
             self.step_hack(word, &mut r);
@@ -863,17 +868,24 @@ impl Soc {
     pub fn run_until_tx(&mut self, needle: &[u8], from: usize, max_cycles: u64) -> Option<usize> {
         let end = self.cycle.saturating_add(max_cycles);
         let mut searched = from;
+        // The received output can't grow before this cycle, so it isn't looked at
+        let mut next_check = 0;
         loop {
-            let got = self.uart_received();
-            if got.len() > searched {
-                let start = searched.saturating_sub(needle.len()).max(from);
-                if let Some(p) = got[start..]
-                    .windows(needle.len().max(1))
-                    .position(|w| w == needle)
-                {
-                    return Some(start + p + needle.len());
+            if self.cycle >= next_check {
+                let c = self.cycle;
+                let got = self.uart_received();
+                let n = got.len();
+                if n > searched {
+                    let start = searched.saturating_sub(needle.len()).max(from);
+                    if let Some(p) = got[start..]
+                        .windows(needle.len().max(1))
+                        .position(|w| w == needle)
+                    {
+                        return Some(start + p + needle.len());
+                    }
+                    searched = n;
                 }
-                searched = got.len();
+                next_check = self.periph.uart.next_tx_complete(n, c);
             }
             if self.cycle >= end {
                 return None;
@@ -884,13 +896,18 @@ impl Soc {
 
     pub fn run(&mut self, max_cycles: u64) -> Stop {
         let end = self.cycle.saturating_add(max_cycles);
+        let mut stop = Stop::Budget;
         while self.cycle < end {
             self.step();
             if let Some(code) = self.tohost {
-                return Stop::ToHost(code);
+                stop = Stop::ToHost(code);
+                break;
             }
         }
-        Stop::Budget
+        // The UART catches up lazily (only the CPU's accesses and the interrupt check move
+        // it); bring it up to now so that its log is current when this returns
+        self.periph.uart.advance(self.cycle);
+        stop
     }
 }
 

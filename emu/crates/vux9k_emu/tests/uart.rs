@@ -157,3 +157,152 @@ fn rx_data_raises_the_external_interrupt_until_read() {
     assert_eq!(soc.regs[4], 0x7E);
     assert_eq!(soc.regs[5], 1, "empty again after the data read");
 }
+
+fn andi(rd: u32, rs1: u32, imm: i32) -> u32 {
+    i(0x13, imm, rs1, 7, rd)
+}
+fn bne(rs1: u32, rs2: u32, off: i32) -> u32 {
+    let u = off as u32;
+    ((u >> 12 & 1) << 31)
+        | ((u >> 5 & 0x3F) << 25)
+        | (rs2 << 20)
+        | (rs1 << 15)
+        | (1 << 12)
+        | ((u >> 1 & 0xF) << 8)
+        | ((u >> 11 & 1) << 7)
+        | 0x63
+}
+fn jal0(off: i32) -> u32 {
+    let u = off as u32;
+    ((u >> 20 & 1) << 31) | ((u >> 1 & 0x3FF) << 21) | ((u >> 11 & 1) << 20) | (u & 0xF_F000) | 0x6F
+}
+
+/// `run_until_tx` as it was before it skipped the cycles in which the received output
+/// can't grow: the output is looked at before every instruction.
+fn run_until_tx_reference(
+    soc: &mut Soc,
+    needle: &[u8],
+    from: usize,
+    max_cycles: u64,
+) -> Option<usize> {
+    let end = soc.cycle.saturating_add(max_cycles);
+    let mut searched = from;
+    loop {
+        let got = soc.uart_received().to_vec();
+        if got.len() > searched {
+            let start = searched.saturating_sub(needle.len()).max(from);
+            if let Some(p) = got[start..]
+                .windows(needle.len().max(1))
+                .position(|w| w == needle)
+            {
+                return Some(start + p + needle.len());
+            }
+            searched = got.len();
+        }
+        if soc.cycle >= end {
+            return None;
+        }
+        soc.step();
+    }
+}
+
+#[test]
+fn run_until_tx_stops_where_checking_every_instruction_would() {
+    // Echo every received byte twice (so TX backs up behind RX), polling the status
+    let echo = [
+        lui(1, 0x40000),
+        lw(2, 1, 4), // 0x04: wait for RX data
+        andi(2, 2, 1),
+        bne(2, 0, -8),
+        lw(3, 1, 0),
+        lw(2, 1, 4), // 0x14: wait for TX room
+        andi(2, 2, 2),
+        bne(2, 0, -8),
+        sw(3, 1, 0),
+        sw(3, 1, 0),
+        jal0(-36), // back to 0x04
+    ];
+    let start = || {
+        let mut soc = load(&echo);
+        soc.periph
+            .uart
+            .host_send(b"Hello, emulator! 0123456789", 0, false);
+        soc.periph
+            .uart
+            .host_send(b"abcdefghijklmnopqrstuvwxyz", 900_000, false);
+        soc
+    };
+    // (needle, from, budget), one after the other on the same SoC as wait_for() calls go
+    let calls: &[(&[u8], usize, u64)] = &[
+        (b"H", 0, 1_000_000),
+        (b"ee", 0, 1_000_000),
+        (b"llll", 2, 1_000_000),
+        (b"!!", 10, 1_000_000),
+        (b"never", 0, 300_000), // budget runs out while bytes are still arriving
+        (b"9", 0, 2_000_000),
+        (b"z", 30, 3_000_000),
+        (b"zz", 0, 50_000), // already there: found without stepping
+        (b"x", 0, 100_000), // the line is idle: budget
+    ];
+    let (mut fast, mut slow) = (start(), start());
+    for &(needle, from, budget) in calls {
+        let got = fast.run_until_tx(needle, from, budget);
+        let want = run_until_tx_reference(&mut slow, needle, from, budget);
+        assert_eq!(got, want, "{:?}", std::str::from_utf8(needle));
+        assert_eq!(
+            (fast.cycle, fast.steps),
+            (slow.cycle, slow.steps),
+            "{:?}",
+            std::str::from_utf8(needle)
+        );
+    }
+    assert_eq!(fast.uart_received(), slow.uart_received());
+    assert_eq!(
+        fast.uart_received().len(),
+        2 * 53,
+        "everything echoed twice"
+    );
+}
+
+#[test]
+fn run_until_tx_stops_where_checking_every_instruction_would_after_idle_gaps() {
+    // One byte at a time with gaps of 0 to ~4,000 cycles between them, so the
+    // transmitter keeps going idle and restarting at every phase of its bit timer
+    let slli = |rd, rs1, sh| i(0x13, sh, rs1, 1, rd);
+    let add = |rd: u32, rs1: u32, rs2: u32| (rs2 << 20) | (rs1 << 15) | (rd << 7) | 0x33;
+    let prog = [
+        lui(1, 0x40000),
+        addi(6, 0, 0),  // k
+        andi(7, 6, 15), // 0x08
+        addi(7, 7, 0x41),
+        sw(7, 1, 0),
+        slli(8, 6, 5),
+        add(8, 8, 6),
+        andi(8, 8, 0x3FF),
+        addi(8, 8, 1),
+        addi(8, 8, -1), // 0x24: delay loop
+        bne(8, 0, -4),
+        addi(6, 6, 1),
+        jal0(-40), // back to 0x08
+    ];
+    let (mut fast, mut slow) = (load(&prog), load(&prog));
+    let (mut at_fast, mut at_slow) = (0, 0);
+    for k in 0..80u8 {
+        let needle = [b'A' + (k & 15)];
+        let got = fast.run_until_tx(&needle, at_fast, 20_000);
+        let want = run_until_tx_reference(&mut slow, &needle, at_slow, 20_000);
+        assert_eq!(got, want, "byte {k}");
+        assert_eq!(fast.cycle, slow.cycle, "byte {k}");
+        (at_fast, at_slow) = (got.unwrap(), want.unwrap());
+    }
+}
+
+#[test]
+fn a_byte_sent_after_a_quiet_spell_still_arrives() {
+    let mut u = Uart::default();
+    u.advance(10_000); // nothing pending: the UART has nothing to do from here on
+    u.host_send(&[0x5A], 10_000, false);
+    assert_eq!(u.rx_level(10_000 + 1485), 0);
+    assert_eq!(u.rx_level(10_000 + 1486), 1);
+    assert!(u.rx_pending(10_000 + 1486));
+}
