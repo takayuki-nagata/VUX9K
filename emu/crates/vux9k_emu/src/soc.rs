@@ -567,112 +567,28 @@ impl Soc {
     fn step_rv(&mut self, i: u32, irq: Option<u32>, r: &mut Retire) {
         r.instr = i;
         let pc = self.pc;
-        let x1 = self.regs[rs1(i)];
-        let x2 = self.regs[rs2(i)];
         let op = i & 0x7F;
         let f3 = funct3(i);
 
-        // Exceptions in rv32i_trap_unit's priority order
+        // Exceptions in rv32i_trap_unit's priority order: interrupt, illegal instruction,
+        // then per opcode a misaligned target, ECALL/EBREAK, a misaligned load/store
         if let Some(cause) = irq {
             return self.take_trap(cause, 0, r);
         }
         if rv_illegal(i) {
             return self.take_trap(2, i, r);
         }
-        let branch_take = op == OP_BRANCH
-            && match f3 {
-                0 => x1 == x2,
-                1 => x1 != x2,
-                4 => (x1 as i32) < (x2 as i32),
-                5 => (x1 as i32) >= (x2 as i32),
-                6 => x1 < x2,
-                7 => x1 >= x2,
-                _ => false,
-            };
-        let jalr_target = x1.wrapping_add(imm_i(i)) & !1;
-        let fetch_misalign = match op {
-            OP_JAL => imm_j(i) & 2 != 0,
-            OP_BRANCH => imm_b(i) & 2 != 0 && branch_take,
-            OP_JALR => jalr_target & 2 != 0,
-            _ => false,
-        };
-        if fetch_misalign {
-            let target = if op == OP_JALR {
-                jalr_target
-            } else if op == OP_JAL {
-                pc.wrapping_add(imm_j(i))
-            } else {
-                pc.wrapping_add(imm_b(i))
-            };
-            return self.take_trap(0, target, r);
-        }
-        if i == 0x0000_0073 {
-            return self.take_trap(11, 0, r);
-        }
-        if i == 0x0010_0073 {
-            return self.take_trap(3, pc, r);
-        }
-        let mem_addr = x1.wrapping_add(if op == OP_STORE { imm_s(i) } else { imm_i(i) });
-        if op == OP_LOAD || op == OP_STORE {
-            let misaligned = match f3 & 3 {
-                1 => mem_addr & 1 != 0,
-                2 => mem_addr & 3 != 0,
-                _ => false,
-            };
-            if misaligned {
-                return self.take_trap(if op == OP_LOAD { 4 } else { 6 }, mem_addr, r);
-            }
-        }
-
+        let x1 = self.regs[rs1(i)];
         let mut next = pc.wrapping_add(4);
         r.cycles = 2;
         let mut retired = true;
         match op {
-            OP_LUI => self.write_rd(rd(i), imm_u(i), r),
-            OP_AUIPC => self.write_rd(rd(i), pc.wrapping_add(imm_u(i)), r),
-            OP_JAL => {
-                self.write_rd(rd(i), pc.wrapping_add(4), r);
-                next = pc.wrapping_add(imm_j(i));
-            }
-            OP_JALR => {
-                self.write_rd(rd(i), pc.wrapping_add(4), r);
-                next = jalr_target;
-            }
-            OP_BRANCH => {
-                r.branch_taken = Some(branch_take);
-                if branch_take {
-                    next = pc.wrapping_add(imm_b(i));
-                }
-            }
-            OP_LOAD => {
-                r.cycles = 3;
-                let word = self.rv_read_word(mem_addr, self.cycle);
-                let sh = (mem_addr & 3) * 8;
-                let v = match f3 {
-                    0 => ((word >> sh) as u8 as i8) as i32 as u32,
-                    4 => (word >> sh) & 0xFF,
-                    1 => ((word >> (sh & 16)) as u16 as i16) as i32 as u32,
-                    5 => (word >> (sh & 16)) & 0xFFFF,
-                    _ => word,
-                };
-                self.write_rd(rd(i), v, r);
-            }
-            OP_STORE => {
-                r.cycles = 3;
-                let lane = mem_addr & 3;
-                let (data, be) = match f3 {
-                    0 => ((x2 & 0xFF) * 0x0101_0101, 1u8 << lane),
-                    1 => (
-                        (x2 & 0xFFFF) * 0x0001_0001,
-                        if lane & 2 == 0 { 0b0011 } else { 0b1100 },
-                    ),
-                    _ => (x2, 0b1111),
-                };
-                self.rv_write(mem_addr, data, be, self.cycle);
-                r.store = Some((mem_addr, data, be));
-            }
             OP_IMM | OP_REG => {
-                let b = if op == OP_IMM { imm_i(i) } else { x2 };
+                let b = if op == OP_IMM {
+                    imm_i(i)
+                } else {
+                    self.regs[rs2(i)]
+                };
                 let sub = op == OP_REG && funct7(i) == 0x20;
                 let sh = b & 31;
                 let v = match f3 {
@@ -699,13 +615,91 @@ impl Soc {
                 };
                 self.write_rd(rd(i), v, r);
             }
+            OP_LUI => self.write_rd(rd(i), imm_u(i), r),
+            OP_AUIPC => self.write_rd(rd(i), pc.wrapping_add(imm_u(i)), r),
+            OP_JAL => {
+                let target = pc.wrapping_add(imm_j(i));
+                if target & 2 != 0 {
+                    return self.take_trap(0, target, r);
+                }
+                self.write_rd(rd(i), pc.wrapping_add(4), r);
+                next = target;
+            }
+            OP_JALR => {
+                let target = x1.wrapping_add(imm_i(i)) & !1;
+                if target & 2 != 0 {
+                    return self.take_trap(0, target, r);
+                }
+                self.write_rd(rd(i), pc.wrapping_add(4), r);
+                next = target;
+            }
+            OP_BRANCH => {
+                let x2 = self.regs[rs2(i)];
+                let take = match f3 {
+                    0 => x1 == x2,
+                    1 => x1 != x2,
+                    4 => (x1 as i32) < (x2 as i32),
+                    5 => (x1 as i32) >= (x2 as i32),
+                    6 => x1 < x2,
+                    _ => x1 >= x2, // 7; 2 and 3 are illegal
+                };
+                if take {
+                    let target = pc.wrapping_add(imm_b(i));
+                    if target & 2 != 0 {
+                        return self.take_trap(0, target, r);
+                    }
+                    next = target;
+                }
+                r.branch_taken = Some(take);
+            }
+            OP_LOAD => {
+                let addr = x1.wrapping_add(imm_i(i));
+                if misaligned(addr, f3) {
+                    return self.take_trap(4, addr, r);
+                }
+                r.cycles = 3;
+                let word = self.rv_read_word(addr, self.cycle);
+                let sh = (addr & 3) * 8;
+                let v = match f3 {
+                    0 => ((word >> sh) as u8 as i8) as i32 as u32,
+                    4 => (word >> sh) & 0xFF,
+                    1 => ((word >> (sh & 16)) as u16 as i16) as i32 as u32,
+                    5 => (word >> (sh & 16)) & 0xFFFF,
+                    _ => word,
+                };
+                self.write_rd(rd(i), v, r);
+            }
+            OP_STORE => {
+                let addr = x1.wrapping_add(imm_s(i));
+                if misaligned(addr, f3) {
+                    return self.take_trap(6, addr, r);
+                }
+                r.cycles = 3;
+                let x2 = self.regs[rs2(i)];
+                let lane = addr & 3;
+                let (data, be) = match f3 {
+                    0 => ((x2 & 0xFF) * 0x0101_0101, 1u8 << lane),
+                    1 => (
+                        (x2 & 0xFFFF) * 0x0001_0001,
+                        if lane & 2 == 0 { 0b0011 } else { 0b1100 },
+                    ),
+                    _ => (x2, 0b1111),
+                };
+                self.rv_write(addr, data, be, self.cycle);
+                r.store = Some((addr, data, be));
+            }
             OP_FENCE => {} // FENCE / FENCE.I: no-ops
             OP_SYSTEM => {
                 if f3 == 0 {
-                    if i == 0x3020_0073 {
-                        self.csr.mret();
-                        next = self.csr.mepc;
-                    } // WFI: no-op
+                    match i {
+                        0x0000_0073 => return self.take_trap(11, 0, r), // ECALL
+                        0x0010_0073 => return self.take_trap(3, pc, r), // EBREAK
+                        0x3020_0073 => {
+                            self.csr.mret();
+                            next = self.csr.mepc;
+                        }
+                        _ => {} // WFI: no-op
+                    }
                 } else {
                     retired = self.exec_csr(i, r);
                 }
@@ -908,6 +902,16 @@ impl Soc {
         // it); bring it up to now so that its log is current when this returns
         self.periph.uart.advance(self.cycle);
         stop
+    }
+}
+
+/// A load/store address that isn't aligned to its size (funct3[1:0]: byte, half, word).
+#[inline]
+fn misaligned(addr: u32, f3: u32) -> bool {
+    match f3 & 3 {
+        1 => addr & 1 != 0,
+        2 => addr & 3 != 0,
+        _ => false,
     }
 }
 
