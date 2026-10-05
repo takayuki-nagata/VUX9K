@@ -115,8 +115,12 @@ image copies from instruction RAM to data RAM at startup.
 - The board `vux9k` enforces the limits at link time: an image that outgrows 14 KB / 8 KB
   fails to link. The board `vux9k/vux9k/ext` (512 KB / 256 KB) is for the emulator's
   `extended` profile only; **it does not run on the board**.
-- The console is the SoC's UART, polled (no interrupt-driven UART API); the system timer
-  is the SoC timer (`mtime`, 18 ticks per microsecond).
+- The console is the SoC's UART. Its driver also has the interrupt-driven API
+  (`CONFIG_UART_INTERRUPT_DRIVEN`): RX on the machine external interrupt, TX refilled
+  from a kernel timer since the UART has no TX interrupt (`vux9k-zephyr-bsp/README.md`,
+  "UART"; `vux9k-zephyr-bsp/irq_echo/` is an example). The system timer is the SoC timer
+  (`mtime`, 18 ticks per microsecond); both boards run the kernel tickless at 1000
+  ticks/s, so timeouts have 1 ms resolution.
 
 ### Hack (C)
 
