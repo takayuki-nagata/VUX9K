@@ -104,12 +104,18 @@ fn next_alarm(c: u64) -> u64 {
 
 impl Uart {
     /// Apply every edge before cycle `to`, so the state is the one during `to`.
+    #[inline]
     pub fn advance(&mut self, to: u64) {
         // Nothing happens at the edges before `quiet_until` (called every instruction)
         if to <= self.quiet_until {
             self.now = self.now.max(to);
-            return;
+        } else {
+            self.advance_edges(to);
         }
+    }
+
+    #[inline(never)]
+    fn advance_edges(&mut self, to: u64) {
         self.quiet_until = 0; // unknown again unless the loop below finds the next edge
         while self.now < to {
             // Next edge at which something happens (all < `to` or we stop)
@@ -235,6 +241,7 @@ impl Uart {
     }
 
     /// True while the RX FIFO holds data during cycle `c` (the MEI line).
+    #[inline]
     pub fn rx_pending(&mut self, c: u64) -> bool {
         self.advance(c);
         !self.rx_fifo.is_empty()

@@ -86,6 +86,9 @@ pub struct Soc {
     dram: Vec<u32>,
     iram_mask: u32,
     dram_mask: u32,
+    /// From the profile, for the data bus: see `in_iram_window`; the IsaTest profile
+    isa_test: bool,
+    iram_window: u32,
     /// IsaTest profile: the first value stored to `TOHOST`.
     pub tohost: Option<u32>,
     /// mcycle value set by a CSR write in the current instruction (replaces the count)
@@ -213,6 +216,8 @@ impl Soc {
             dram: vec![0; dram_words],
             iram_mask: (iram_words - 1) as u32,
             dram_mask: (dram_words - 1) as u32,
+            isa_test: profile == Profile::IsaTest,
+            iram_window: (profile.iram_bytes() as u32).max(0x1_0000),
             tohost: None,
             mcycle_written: None,
             cov: None,
@@ -365,7 +370,7 @@ impl Soc {
     /// RV32 data read of the 32-bit word containing `addr` (soc_addr_decoder + soc_ram),
     /// by the instruction fetched in cycle `t`.
     fn rv_read_word(&mut self, addr: u32, t: u64) -> u32 {
-        if self.profile == Profile::IsaTest {
+        if self.isa_test {
             return self.iram[((addr >> 2) & self.iram_mask) as usize];
         }
         match addr >> 28 {
@@ -384,7 +389,7 @@ impl Soc {
     /// RV32 data store (in MEM_WAIT, the third cycle of the instruction fetched in `t`):
     /// `data` is the lane-replicated store data, `be` the byte enables.
     fn rv_write(&mut self, addr: u32, data: u32, be: u8, t: u64) {
-        if self.profile == Profile::IsaTest {
+        if self.isa_test {
             if addr == TOHOST && self.tohost.is_none() {
                 self.tohost = Some(data);
             }
@@ -413,8 +418,7 @@ impl Soc {
     /// the extended profile widens it to the I-RAM size).
     #[inline]
     fn in_iram_window(&self, addr: u32) -> bool {
-        let window = (self.profile.iram_bytes() as u32).max(0x1_0000);
-        addr < window
+        addr < self.iram_window
     }
 
     /// MMIO read by the instruction fetched in cycle `t`. The registered peripherals
@@ -489,6 +493,25 @@ impl Soc {
         self.mip_at(self.cycle)
     }
 
+    /// The interrupt the CPU takes in this FETCH cycle, if any. Only the enabled lines
+    /// are looked at: the others can't make one pending.
+    #[inline]
+    fn sample_interrupt(&mut self) -> Option<u32> {
+        let enabled = self.csr.mie;
+        if self.csr.mstatus & csr::MSTATUS_MIE == 0 || enabled == 0 {
+            return None;
+        }
+        let c = self.cycle;
+        let mut mip = 0;
+        if enabled & csr::MIP_MEIP != 0 && self.periph.uart.rx_pending(c) {
+            mip |= csr::MIP_MEIP;
+        }
+        if enabled & csr::MIP_MTIP != 0 && self.periph.timer.irq(c) {
+            mip |= csr::MIP_MTIP;
+        }
+        self.csr.pending_interrupt(mip)
+    }
+
     fn mtime(&self) -> u64 {
         self.periph.timer.mtime(self.cycle)
     }
@@ -521,14 +544,8 @@ impl Soc {
             ..Retire::default()
         };
         if self.riscv_mode {
-            // The interrupt is sampled in FETCH (unified_cpu r_irq); with none enabled
-            // there's no need to look at the lines
-            let irq = if self.csr.mstatus & csr::MSTATUS_MIE != 0 && self.csr.mie != 0 {
-                let mip = self.mip();
-                self.csr.pending_interrupt(mip)
-            } else {
-                None
-            };
+            // The interrupt is sampled in FETCH (unified_cpu r_irq)
+            let irq = self.sample_interrupt();
             self.step_rv(word, irq, &mut r);
         } else {
             self.step_hack(word, &mut r);

@@ -27,6 +27,7 @@ impl<T: Copy> Stepped<T> {
         }
     }
 
+    #[inline]
     fn at(&self, cycle: u64) -> T {
         if cycle >= self.from {
             self.new
@@ -61,11 +62,13 @@ impl Default for Timer {
 
 impl Timer {
     /// mtime during cycle `c`.
+    #[inline]
     pub fn mtime(&self, c: u64) -> u64 {
         c.wrapping_add(self.offset.at(c))
     }
 
     /// timer_irq during cycle `c` (registered: the comparison of cycle c-1).
+    #[inline]
     pub fn irq(&self, c: u64) -> bool {
         c > 0 && self.mtime(c - 1) >= self.mtimecmp.at(c - 1)
     }

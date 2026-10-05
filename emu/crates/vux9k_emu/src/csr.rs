@@ -150,6 +150,7 @@ impl Csrs {
     }
 
     /// The interrupt taken, if any, given the pending lines (rv32i_csrs: MEI > MSI > MTI).
+    #[inline]
     pub fn pending_interrupt(&self, mip: u32) -> Option<u32> {
         if self.mstatus & MSTATUS_MIE == 0 {
             return None;
