@@ -241,7 +241,9 @@ emu-py: emu
 	cp $(EMU_TARGET_DIR)/release/libvux9k_emu.so $(EMU_PY_DIR)/vux9k_emu.abi3.so
 
 # Emulator speed (MIPS driven from Python) and final-state digests: scripts/emu_bench.py.
-# Prints only; speed never fails a run (EMU_BENCH_ARGS: e.g. --compare base.json)
+# Prints only; speed never fails a run (EMU_BENCH_ARGS: e.g. --compare base.json). Workloads
+# whose image hasn't been built are skipped: in test-sim the targets before it build them all
+# (serially), and --compare fails unless every workload ran on both sides
 emu-bench: emu-py
 	$(PYTHON) scripts/emu_bench.py $(EMU_BENCH_ARGS)
 

@@ -184,6 +184,11 @@ def digest(soc: Any, profile: str) -> str:
         soc.uart_tx_log(),
     )
     h.update(repr(state).encode())
+    try:  # the SD card, when one is inserted: every command and the final image
+        h.update(repr(soc.sd_commands).encode())
+        h.update(soc.sd_image())
+    except RuntimeError:
+        h.update(b"no card")
     h.update(b"".join(soc.iram_word(a).to_bytes(4, "little") for a in range(0, iram, 4)))
     h.update(b"".join(soc.dram_word(i).to_bytes(4, "little") for i in range(dram // 4)))
     return h.hexdigest()
@@ -269,15 +274,24 @@ def main() -> int:
         for name, r in results.items():
             b = base.get(name)
             if b is None:
-                print(f"compare: {name}: not in {args.compare}")
                 continue
-            for key in ("cycles", "steps", "digest", "trace"):
-                if key in r and key in b and r[key] != b[key]:
+            for key in ("cycles", "steps", "digest"):
+                if r[key] != b[key]:
                     bad.append(f"{name}.{key}")
+            if "trace" in r and "trace" in b:
+                if r["trace"] != b["trace"]:
+                    bad.append(f"{name}.trace")
+            elif "trace" in r or "trace" in b:
+                print(f"compare: {name}: step() trace on one side only, not compared (--trace on both)")
+        # A workload on one side only was not compared: that is a failure, not a pass
+        missing = sorted(set(results) ^ {n for n in base if n in names})
+        if missing:
+            print(f"compare: NOT COMPARED (run on one side only) {', '.join(missing)}")
         if bad:
             print(f"compare: MISMATCH {', '.join(bad)}")
+        if bad or missing:
             return 1
-        print(f"compare: all digests match {args.compare}")
+        print(f"compare: all {len(results)} workloads match {args.compare}")
     return 0
 
 
