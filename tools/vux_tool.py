@@ -159,7 +159,8 @@ def modemmanager_hint(tty, sysfs="/sys", run="/run", proc="/proc"):
     interface back as a new tty after each load; ModemManager opens it at 57600 baud and the
     bridge applies that rate to the board's UART too, now or at the next open (see
     apply_line_settings). Harmless when ModemManager isn't running or every tty of the
-    board carries ID_MM_DEVICE_IGNORE=1 (tools/70-vux9k-board.rules).
+    board carries ID_MM_DEVICE_IGNORE=1 or ID_MM_PORT_IGNORE=1 (tools/70-vux9k-board.rules).
+    Only usb-serial ttys (ttyUSBn, as the board's ftdi_sio ports) are looked at.
     """
     try:
         pids = [p for p in os.listdir(proc) if p.isdigit()]
@@ -175,20 +176,23 @@ def modemmanager_hint(tty, sysfs="/sys", run="/run", proc="/proc"):
         return ""  # not a USB tty (e.g. the emulator)
     # usb-serial: <device>/<interface>/ttyUSBn/tty/ttyUSBn (ftdi_sio, as on the board)
     ttys = sorted({os.path.basename(t) for t in glob.glob(os.path.join(dev, "*", "*", "tty", "*"))})
-    probed = [
-        t
-        for t in ttys
-        if "E:ID_MM_DEVICE_IGNORE=1"
-        not in _read_text(
-            os.path.join(run, "udev", "data", "c" + _read_text(os.path.join(sysfs, "class", "tty", t, "dev")).strip())
-        ).splitlines()
-    ]
-    if not probed:
+    probed, unknown = [], []
+    for t in ttys:
+        devno = _read_text(os.path.join(sysfs, "class", "tty", t, "dev")).strip()
+        props = _read_text(os.path.join(run, "udev", "data", "c" + devno)).splitlines() if devno else []
+        if not props:
+            unknown.append(t)  # udev's database not visible here (e.g. a container)
+        elif not {"E:ID_MM_DEVICE_IGNORE=1", "E:ID_MM_PORT_IGNORE=1"} & set(props):
+            probed.append(t)
+    if not probed and not unknown:
         return ""
+    why = f"may probe the board's {', '.join(probed)}" if probed else ""
+    if unknown:
+        why += ("; " if why else "") + f"can't tell whether it ignores {', '.join(unknown)} (no udev data readable)"
     return (
-        f"ModemManager is running and may probe the board's {', '.join(probed)}: its probe sets 57600 baud, "
-        "which the board's USB bridge applies to the board's UART and garbles its output. Install "
-        "tools/70-vux9k-board.rules (instructions in the file) or stop ModemManager."
+        f"ModemManager is running and {why}: its probe sets 57600 baud, which the board's USB bridge "
+        "applies to the board's UART and garbles its output. Install tools/70-vux9k-board.rules "
+        "(instructions in the file) or stop ModemManager."
     )
 
 
@@ -215,10 +219,11 @@ def open_port(port_name="auto", baudrate=115200, timeout=0.2):
         if port is not None and serial is not None:
             try:
                 ser = serial.Serial(port, baudrate=baudrate, timeout=timeout)
-                apply_line_settings(ser)
-                return ser
             except Exception:
                 pass
+            else:
+                apply_line_settings(ser)
+                return ser
 
         # If pyftdi is available and by-id did not work, try pyftdi URL
         if pyftdi is not None:

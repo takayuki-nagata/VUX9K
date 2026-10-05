@@ -5,6 +5,9 @@ paths:
   - "scripts/hw_smoke.py"
   - "scripts/test_hardware.py"
   - "scripts/hw_irq_echo.py"
+  - "tools/vux_tool.py"
+  - "tools/70-vux9k-board.rules"
+  - "sim/emu/test_board_uart.py"
   - "firmware/hw_test/**"
   - "zephyr_workspace/boards/**"
 ---

@@ -120,6 +120,16 @@ def test_modemmanager_hint(tmp_path, mm_running, ignored, probed):
         assert f"probe the board's {probed}:" in hint and "70-vux9k-board.rules" in hint
 
 
+def test_modemmanager_hint_port_ignore_and_unreadable_udev(tmp_path):
+    paths = make_host(tmp_path, True, ("ttyUSB2", "ttyUSB3"))
+    data = tmp_path / "run" / "udev" / "data"
+    (data / "c188:2").write_text("E:ID_MM_CANDIDATE=1\nE:ID_MM_PORT_IGNORE=1\n")
+    assert vux_tool.modemmanager_hint("/dev/ttyUSB3", **paths) == ""
+    (data / "c188:2").unlink()
+    hint = vux_tool.modemmanager_hint("/dev/ttyUSB3", **paths)
+    assert "can't tell whether it ignores ttyUSB2" in hint and "may probe" not in hint
+
+
 def test_modemmanager_hint_ignores_non_usb_ports(tmp_path):
     paths = make_host(tmp_path, True, ())
     assert vux_tool.modemmanager_hint("/dev/pts/7", **paths) == ""

@@ -114,8 +114,9 @@ def run_on_board(fs, port, timeout):
 
     ser = vux_tool.open_port(port, baudrate=115200, timeout=0.05)
     try:
-        # drop what the previous image sent (the bridge hands it over right after the open);
-        # bounded, as an application can print without pause
+        # drop what the previous image sent: the bridge hands held output over within
+        # milliseconds of the open (measured 2026-10); bounded, as an application can print
+        # without pause
         stale_end = time.time() + 0.5
         while time.time() < stale_end:
             ser.read(4096)

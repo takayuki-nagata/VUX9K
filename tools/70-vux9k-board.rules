@@ -2,7 +2,7 @@
 # 0403:6010). ModemManager probes each new serial port; openFPGALoader hands the bridge's
 # JTAG interface back as a new tty after every load, ModemManager opens it at 57600 baud,
 # and the bridge applies that rate to the board's UART as well: the next session on the
-# board's serial port is garbled (docs/APP_DEVELOPMENT.md, "Preparing the board").
+# board's serial port is garbled (docs/APP_DEVELOPMENT.md, "1. Preparing the board").
 #
 #   sudo cp tools/70-vux9k-board.rules /etc/udev/rules.d/
 #   sudo udevadm control --reload
