@@ -84,6 +84,12 @@ def usb_hub_neighbours(tty, sysfs="/sys"):
     return neighbours
 
 
+def fail_msg(what, out):
+    """A failure message with the output, and why it looks like noise when it does."""
+    hint = vux_tool.garbled_hint(out)
+    return f"{what} Output: {out!r}" + (f"\n       -> {hint}" if hint else "")
+
+
 def print_banner(title):
     print("\n" + "=" * 70)
     print(f"  {title}")
@@ -115,6 +121,12 @@ def run_hardware_test_suite(port="auto", baud=115200):
             "USB-UART bridge drop output. Give the board its own USB port or hub."
         )
         print(f"\033[93m[WARN]\033[0m {hub_hint}")
+    mm_hint = vux_tool.modemmanager_hint(ser.port)
+    if mm_hint:
+        # every reconfiguration below would let ModemManager change the board's baud rate
+        ser.close()
+        print_test_result("0. Host Setup", False, mm_hint)
+        return False
 
     try:
         # -------------------------------------------------------------
@@ -125,7 +137,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
         msg = (
             "Connected and synchronized with Boot Manager"
             if passed
-            else f"Failed to synchronize prompt. Output: {resp!r}"
+            else fail_msg("Failed to synchronize prompt.", resp)
         )
         results.append((test_name, passed, msg))
         print_test_result(test_name, passed, msg)
@@ -139,7 +151,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
         test_name = "2. Hardware Self-Diagnostics ('t' / vux_tool.run_diag)"
         out = vux_tool.run_diag(ser, timeout=8.0)
         passed = ("[DIAG]" in out) and ("Diagnostics Complete" in out)
-        msg = "Executed onboard LED, UART, and SPI diagnostics" if passed else f"Failed diagnostics. Output: {out!r}"
+        msg = "Executed onboard LED, UART, and SPI diagnostics" if passed else fail_msg("Failed diagnostics.", out)
         results.append((test_name, passed, msg))
         print_test_result(test_name, passed, msg)
 
@@ -149,7 +161,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
         test_name = "3. MicroSD Card Sector 0 (MBR) Dump ('d' / vux_tool.dump_mbr)"
         out = vux_tool.dump_mbr(ser, timeout=8.0)
         passed = ("[SD]" in out) and (("55 AA" in out) or ("55aa" in out.lower()) or ("Signature:" in out))
-        msg = "Read 512-byte Sector 0 from physical MicroSD" if passed else f"Failed sector dump. Output: {out!r}"
+        msg = "Read 512-byte Sector 0 from physical MicroSD" if passed else fail_msg("Failed sector dump.", out)
         results.append((test_name, passed, msg))
         print_test_result(test_name, passed, msg)
 
@@ -186,7 +198,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
         msg = (
             "Verified Slot 0 header (Magic: VUX9, Mode: 1/RISC-V, Name: Boot Manager)"
             if passed
-            else f"Failed inspect. Output: {out!r}"
+            else fail_msg("Failed inspect.", out)
         )
         results.append((test_name_insp_s0, passed, msg))
         print_test_result(test_name_insp_s0, passed, msg)
@@ -271,7 +283,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
         msg = (
             "Verified Slot 2 header (Magic: VUX9, Mode: 0/Hack, Name: Hack Demo)"
             if passed
-            else f"Failed inspect. Output: {out!r}"
+            else fail_msg("Failed inspect.", out)
         )
         results.append((test_name_insp_s2, passed, msg))
         print_test_result(test_name_insp_s2, passed, msg)
@@ -285,7 +297,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
         msg = (
             "Verified multi-slot catalog listing with names and sizes"
             if passed
-            else f"Catalog incomplete. Output: {out!r}"
+            else fail_msg("Catalog incomplete.", out)
         )
         results.append((test_name_catalog, passed, msg))
         print_test_result(test_name_catalog, passed, msg)
@@ -312,7 +324,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
             msg = (
                 "Detected corrupted CRC32, bypassed auto-update, and preserved Boot Manager"
                 if passed
-                else f"Failed CRC check. Output: {out!r}"
+                else fail_msg("Failed CRC check.", out)
             )
             # Restore Slot 0 to the Boot Manager under test
             time.sleep(0.5)
@@ -338,7 +350,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
             msg = (
                 "Resident Loader rejected invalid Magic header and returned to Boot Manager"
                 if passed
-                else f"Failed Magic check. Output: {out!r}"
+                else fail_msg("Failed Magic check.", out)
             )
             results.append((test_name_magic, passed, msg))
             print_test_result(test_name_magic, passed, msg)
@@ -364,7 +376,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
             msg = (
                 f"Verified automatic Boot Manager self-update from Slot 0 (v{BM_VERSION + 1})"
                 if passed
-                else f"Failed self-update. Output: {out!r}"
+                else fail_msg("Failed self-update.", out)
             )
 
             # Restore Slot 0 to the Boot Manager under test
@@ -388,7 +400,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
             and ("[Rust App]" in out)
             and ("All Rust application tasks finished successfully!" in out)
         )
-        msg = "Executed the Zephyr Rust application tasks" if passed else f"Failed Slot 1 execution. Output: {out!r}"
+        msg = "Executed the Zephyr Rust application tasks" if passed else fail_msg("Failed Slot 1 execution.", out)
         if not passed and hub_hint:
             msg += f"\n       -> {hub_hint}"
         results.append((test_name_boot_s1, passed, msg))
@@ -403,7 +415,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
         )
         time.sleep(0.5)
         ser = vux_tool.open_port(port, baudrate=baud, timeout=0.1)
-        vux_tool.sync_prompt(ser, timeout=4.0)
+        resynced, resync_out = vux_tool.sync_prompt(ser, timeout=4.0)
 
         # -------------------------------------------------------------
         # Test 15: Boot Slot 2: Hack 16-bit Firmware Execution
@@ -421,14 +433,17 @@ def run_hardware_test_suite(port="auto", baud=115200):
                 if "ALL HACK C FIRMWARE TESTS PASSED" in out:
                     break
         passed = (
-            ("[RL] Slot 2" in out)
+            resynced
+            and ("[RL] Slot 2" in out)
             and ("Hack 16-bit C Firmware Test" in out)
             and ("ALL HACK C FIRMWARE TESTS PASSED" in out)
         )
         msg = (
             "Executed Hack 16-bit C firmware and verified 100% test pass"
             if passed
-            else f"Failed Slot 2 execution. Output: {out!r}"
+            else fail_msg("Failed Slot 2 execution.", out)
+            if resynced
+            else fail_msg("No Boot Manager prompt after reconfiguring the FPGA.", resync_out)
         )
         if not passed and hub_hint:
             msg += f"\n       -> {hub_hint}"

@@ -15,6 +15,7 @@ Provides unified communication with VUX9K Boot Manager on Tang Nano 9K:
 
 import argparse
 import binascii
+import glob
 import os
 import struct
 import sys
@@ -129,12 +130,92 @@ def find_tangnano_uart_port():
     return None
 
 
+# The board's USB-UART bridge (a BL702 that emulates an FT2232) keeps one line setting for
+# both of its interfaces: SET_BAUD, on either interface, only stores a rate, and SET_DATA, on
+# either, restarts the UART at the stored rate. Linux's ftdi_sio sends SET_DATA before
+# SET_BAUD when a port opens, so a freshly opened port runs at the rate stored last (57600
+# after ModemManager probed the JTAG tty, see modemmanager_hint) until the next SET_DATA.
+def apply_line_settings(ser):
+    """Make the bridge apply this port's own rate: set the line format twice (two SET_DATA)."""
+    if serial is None or not isinstance(ser, serial.Serial):
+        return  # the emulator's socket, or pyftdi (no kernel driver in between)
+    stopbits = ser.stopbits
+    ser.stopbits = serial.STOPBITS_TWO if stopbits == serial.STOPBITS_ONE else serial.STOPBITS_ONE
+    ser.stopbits = stopbits
+
+
+def _read_text(path):
+    try:
+        with open(path) as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+def modemmanager_hint(tty, sysfs="/sys", run="/run", proc="/proc"):
+    """Why ModemManager can garble the board's UART, or "" if it can't.
+
+    ModemManager probes every new serial port. openFPGALoader hands the bridge's JTAG
+    interface back as a new tty after each load; ModemManager opens it at 57600 baud and the
+    bridge applies that rate to the board's UART too, now or at the next open (see
+    apply_line_settings). Harmless when ModemManager isn't running or every tty of the
+    board carries ID_MM_DEVICE_IGNORE=1 (tools/70-vux9k-board.rules).
+    """
+    try:
+        pids = [p for p in os.listdir(proc) if p.isdigit()]
+    except OSError:
+        return ""
+    if not any(_read_text(os.path.join(proc, p, "comm")).strip() == "ModemManager" for p in pids):
+        return ""
+    name = os.path.basename(os.path.realpath(tty))
+    dev = os.path.realpath(os.path.join(sysfs, "class", "tty", name, "device"))
+    while dev != os.path.dirname(dev) and not os.path.isfile(os.path.join(dev, "idVendor")):
+        dev = os.path.dirname(dev)
+    if not os.path.isfile(os.path.join(dev, "idVendor")):
+        return ""  # not a USB tty (e.g. the emulator)
+    # usb-serial: <device>/<interface>/ttyUSBn/tty/ttyUSBn (ftdi_sio, as on the board)
+    ttys = sorted({os.path.basename(t) for t in glob.glob(os.path.join(dev, "*", "*", "tty", "*"))})
+    probed = [
+        t
+        for t in ttys
+        if "E:ID_MM_DEVICE_IGNORE=1"
+        not in _read_text(
+            os.path.join(run, "udev", "data", "c" + _read_text(os.path.join(sysfs, "class", "tty", t, "dev")).strip())
+        ).splitlines()
+    ]
+    if not probed:
+        return ""
+    return (
+        f"ModemManager is running and may probe the board's {', '.join(probed)}: its probe sets 57600 baud, "
+        "which the board's USB bridge applies to the board's UART and garbles its output. Install "
+        "tools/70-vux9k-board.rules (instructions in the file) or stop ModemManager."
+    )
+
+
+def garbled(data):
+    """True if data (bytes, or text decoded with errors="replace") holds what the Boot Manager
+    and the demos never send: non-ASCII or control bytes, i.e. the UART ran at another rate."""
+    codes = data if isinstance(data, (bytes, bytearray)) else [ord(c) for c in data]
+    return any(c >= 0x80 or (c < 0x20 and c not in (0x09, 0x0A, 0x0D, 0x1B)) for c in codes)
+
+
+def garbled_hint(data):
+    """A note for a failure message when the output is garbled, else ""."""
+    if not garbled(data):
+        return ""
+    return (
+        "the output is garbled: the board's USB bridge received it at another baud rate "
+        "(ModemManager probing the board? see tools/70-vux9k-board.rules)"
+    )
+
+
 def open_port(port_name="auto", baudrate=115200, timeout=0.2):
     if port_name == "auto":
         port = find_tangnano_uart_port()
         if port is not None and serial is not None:
             try:
                 ser = serial.Serial(port, baudrate=baudrate, timeout=timeout)
+                apply_line_settings(ser)
                 return ser
             except Exception:
                 pass
@@ -158,6 +239,7 @@ def open_port(port_name="auto", baudrate=115200, timeout=0.2):
             raise RuntimeError("pyserial is not installed!")
         # serial_for_url also takes URLs such as socket://localhost:PORT (the emulator)
         ser = serial.serial_for_url(port_name, baudrate=baudrate, timeout=timeout)
+        apply_line_settings(ser)
         return ser
 
 
@@ -776,6 +858,10 @@ def main():
     if args.command == "mkimg":
         cmd_mkimg(args)
         return
+    tty = find_tangnano_uart_port() if args.port == "auto" else args.port
+    hint = modemmanager_hint(tty) if tty and "://" not in tty else ""
+    if hint:
+        print(f"Warning: {hint}", file=sys.stderr)
     if args.command == "reset":
         cmd_reset(args)
     elif args.command == "monitor":

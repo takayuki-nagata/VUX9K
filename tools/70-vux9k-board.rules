@@ -1,0 +1,10 @@
+# Keep ModemManager away from the Tang Nano 9K's USB bridge (BL702, "SIPEED JTAG Debugger",
+# 0403:6010). ModemManager probes each new serial port; openFPGALoader hands the bridge's
+# JTAG interface back as a new tty after every load, ModemManager opens it at 57600 baud,
+# and the bridge applies that rate to the board's UART as well: the next session on the
+# board's serial port is garbled (docs/APP_DEVELOPMENT.md, "Preparing the board").
+#
+#   sudo cp tools/70-vux9k-board.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload
+#   sudo udevadm trigger --action=change --subsystem-match=tty
+ACTION=="add|change", SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6010", ATTRS{manufacturer}=="SIPEED", ENV{ID_MM_DEVICE_IGNORE}="1"

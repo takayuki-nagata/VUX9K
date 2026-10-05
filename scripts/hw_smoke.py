@@ -39,6 +39,7 @@ sys.path.insert(0, REPO_ROOT)
 IMEM_WORDS = 4096
 IMEM_CELL = re.compile(r"(^|\.)ram_inst\.i_mem\.([01])\.([0-7])$")
 RESULT = re.compile(rb"RESULT (PASS|FAIL) ([0-9A-F]{2})/([0-9A-F]{2}) ([0-9A-F]{8})\n")
+BANNER = b"\nhw_test\n"
 
 
 def read_hex(path):
@@ -97,17 +98,32 @@ def check_dram_zero(fw_dir):
                     sys.exit(f"{path} is not all zero; this script only rewrites I-RAM")
 
 
+def hw_test_result(buf):
+    """The RESULT line hw_test printed after its banner in buf, or None.
+
+    The board's USB bridge hands over output sent while the port was closed (the previous
+    seed's RESULT lines, a Boot Manager menu), so only a RESULT after this boot's banner counts.
+    """
+    start = buf.find(BANNER)
+    return RESULT.search(buf, start) if start >= 0 else None
+
+
 def run_on_board(fs, port, timeout):
+    """Load fs and return what the board sent from the start of the load on."""
     import tools.vux_tool as vux_tool
 
     ser = vux_tool.open_port(port, baudrate=115200, timeout=0.05)
     try:
-        ser.reset_input_buffer()
+        # drop what the previous image sent (the bridge hands it over right after the open);
+        # bounded, as an application can print without pause
+        stale_end = time.time() + 0.5
+        while time.time() < stale_end:
+            ser.read(4096)
         subprocess.run(["openFPGALoader", "-b", "tangnano9k", fs], check=True, capture_output=True)
         buf, end = b"", time.time() + timeout
         while time.time() < end:
             buf += ser.read(4096)
-            if RESULT.search(buf):
+            if hw_test_result(buf):
                 break
         return buf
     finally:
@@ -136,6 +152,12 @@ def main():
     if not seeds:
         sys.exit(f"no routed seeds under {args.seed_dir} (run `make timing`)")
     os.makedirs(args.out, exist_ok=True)
+    import tools.vux_tool as vux_tool
+
+    tty = vux_tool.find_tangnano_uart_port() if args.port == "auto" else args.port
+    mm_hint = vux_tool.modemmanager_hint(tty) if tty and "://" not in tty else ""
+    if mm_hint:
+        sys.exit(mm_hint)  # each load would let ModemManager change the board's baud rate
 
     results = {}
     for seed in seeds:
@@ -147,13 +169,15 @@ def main():
         out = run_on_board(fs, args.port, args.timeout)
         with open(os.path.join(args.out, f"seed_{seed}.log"), "wb") as f:
             f.write(out)
-        m = RESULT.search(out)
+        m = hw_test_result(out)
         if m:
             verdict = f"{m.group(1).decode()} {int(m.group(2), 16)}/{int(m.group(3), 16)}"
             mask = int(m.group(4), 16)
             failed = [f"T{n + 1:02X}" for n in range(32) if mask >> n & 1]
         else:
             verdict, failed = f"NO RESULT ({len(out)} bytes)", []
+            if vux_tool.garbled(out):
+                verdict += ": " + vux_tool.garbled_hint(out)
         results[seed] = (m is not None and m.group(1) == b"PASS", verdict, failed)
         print(f"seed {seed:>4}: {verdict}{'  failed: ' + ' '.join(failed) if failed else ''}", flush=True)
 

@@ -49,7 +49,8 @@ def burst(n: int, k: int) -> bytes:
 def run(ser, image: bytes, size: int, count: int) -> bool:
     ok, resp = vux_tool.sync_prompt(ser, timeout=4.0)
     if not ok:
-        print(f"[FAIL] no Boot Manager prompt: {resp!r}")
+        hint = vux_tool.garbled_hint(resp)
+        print(f"[FAIL] no Boot Manager prompt: {resp!r}" + (f"\n       -> {hint}" if hint else ""))
         return False
     vux_tool.flash_slot(ser, image, slot=SLOT, name="IRQ echo", mode="riscv")
     vux_tool.sync_prompt(ser, timeout=4.0)
@@ -95,6 +96,11 @@ def main():
     neighbours = usb_hub_neighbours(ser.port)
     if neighbours:
         print(f"[WARN] USB devices share the board's hub ({', '.join(neighbours)}); output can be lost")
+    mm_hint = vux_tool.modemmanager_hint(ser.port)
+    if mm_hint:
+        ser.close()
+        print(f"[FAIL] {mm_hint}")
+        sys.exit(1)
     try:
         passed = run(ser, image, args.size, args.count)
     except TimeoutError as e:
