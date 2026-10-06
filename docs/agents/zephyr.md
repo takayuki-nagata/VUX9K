@@ -61,10 +61,9 @@ hardware gives and what the driver makes up for:
 - `irq_tx_complete` and error interrupts are left out on purpose: the status register
   has no "transmitter empty" bit, and errors are only sticky flags.
 
-The TX interrupt and an interrupt-enable register are left to a later hardware revision's
-UART rework, whose register map isn't bound by this one's
-([APP_DEVELOPMENT.md](../APP_DEVELOPMENT.md), "Hardware revisions and compatibility"); they
-don't go into this revision.
+A TX interrupt and an interrupt-enable register would only come with a later hardware
+revision, whose register map isn't bound by this one's (docs/APP_DEVELOPMENT.md, "Hardware
+revisions and compatibility"); this revision doesn't add them.
 
 `zephyr_workspace/irq_echo/` exercises all of it: main sleeps on a semaphore the RX
 callback gives, and each line comes back upper-cased in one piece (longer than the TX

@@ -47,7 +47,7 @@ import sim_runner  # noqa: E402
 import test_sim  # noqa: E402
 
 MCY_DIR = REPO_ROOT / "build" / "mcy"
-# Modules worth mutating (Hack-only ones go away in Rev.B). soc_ram/soc_top need firmware
+# Modules worth mutating. soc_ram/soc_top need firmware
 # files at elaboration and aren't unit-sized.
 TARGETS = (
     "rv32i_alu",

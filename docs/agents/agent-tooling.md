@@ -43,17 +43,15 @@ when their trigger happens.
 - **A tool pin changes in ci.yml** (veryl, OSS CAD Suite, ruff, mypy, Rust): `NOISE`, the hook
   timings, the fmt/check commands.
 - **A rule changes in a guide**: `sync-points.md` and the two agents' bodies.
-- **At the end of every ROADMAP stage**, and before the ones known to move things:
-  - B2 (PSRAM): the controller's `vendor/` path dependency vs. `pre_edit.py`'s refused
-    paths; new RTL in `SOC_RTL_SRCS` and in `sim/runners/sim_runner.py`'s file lists; the
-    guides' `paths:`.
-  - B3 (large images, a new Boot Manager loader): the `bm-change` skill's budgets and
-    version numbers; once a Zephyr board runs from PSRAM on the board, the emulator-only
-    rule in AGENTS.md and zephyr.md.
-  - B6 (firmware target `riscv32im`): the per-crate `cargo check`, isa-tests.md.
-
-  The Hack CPU stays through these stages, so the guides, skills and targets that name it
-  stay too.
+- **At the end of every development stage**, and before the changes known to move things:
+  - An external RTL dependency (e.g. a PSRAM controller): its `vendor/` path dependency
+    vs. `pre_edit.py`'s refused paths; new RTL in `SOC_RTL_SRCS` and in
+    `sim/runners/sim_runner.py`'s file lists (and `SOC_RTL_PUBLIC`); the guides' `paths:`.
+  - A new Boot Manager loader or image format: the `bm-change` skill's budgets and version
+    numbers; once a Zephyr board runs from memory only the extended profile has today, the
+    emulator-only rule in AGENTS.md and zephyr.md.
+  - RV32M in the CPU: the firmware crates' `.cargo/config.toml` targets, zephyr.md's
+    libgcc multilib trap, isa-tests.md and sync-points.md's CSR row (`misa`).
 - **When a hook misfires** (blocks correct work, misses a mistake, or makes stops slow):
   fix the hook, not the work around it.
 
