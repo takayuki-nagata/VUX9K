@@ -142,7 +142,7 @@ The MBR gap (`LBA 64` - `LBA 2047`, ~1 MB) is partitioned into 10 fixed 32 KB pr
 |:---|:---|:---|:---|:---|:---|
 | - | `LBA 0` | `0x0000_0000` | 512 B | **MBR (Master Boot Record)** | Protected (Never modified) |
 | - | `LBA 1` - `63` | `0x0000_0200` | 31.5 KB | Reserved Partition Headers | Protected |
-| **0** | `LBA 64` - `127` | `0x0000_8000` | 32 KB | **Boot Manager SD Override** | Auto-booted by Resident Loader if valid |
+| **0** | `LBA 64` - `127` | `0x0000_8000` | 32 KB | **Boot Manager SD Override** | Installed by the Boot Manager as it starts, when the header's version is newer than its own |
 | **1** | `LBA 128` - `191` | `0x0001_0000` | 32 KB | **User Application 1 (Default)** | **Launched via physical Button S2 or key `1`** |
 | **2** | `LBA 192` - `255` | `0x0001_8000` | 32 KB | **User Application 2** | Launched via key `2` |
 | **3** - **8**| `LBA 256` - `639` | `0x0002_0000` | 192 KB | **User Applications 3 to 8** | Launched via keys `3` to `8` |

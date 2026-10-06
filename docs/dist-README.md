@@ -31,6 +31,16 @@ python3 tools/vux_tool.py flash-sd demos/zephyr-demo.bin --mode riscv --slot 1 -
 python3 tools/vux_tool.py boot --slot 1
 ```
 
+Upgrading a board from an earlier release: write this `bitstream/pack.fs` to the flash
+(`openFPGALoader -b tangnano9k -f bitstream/pack.fs`), then put this Boot Manager in
+slot 0 with the version from `MANIFEST.json`. The applications already on the card keep
+working. Section 2 of `docs/APP_DEVELOPMENT.md` has the details.
+
+```sh
+python3 tools/vux_tool.py flash-sd boot-manager.bin --mode riscv --slot 0 --name "Boot Manager" \
+    --version <boot_manager_version from MANIFEST.json>
+```
+
 On the emulator:
 
 ```sh
