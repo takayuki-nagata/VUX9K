@@ -4,7 +4,7 @@
 
 The SoC features a multi-cycle Unified CPU core capable of seamlessly executing both standard **32-bit RISC-V RV32I** instructions and **16-bit Nand2Tetris Hack** machine code, integrated with a hardware MicroSD SPI master (3 MHz after card init), full-duplex UART with a receive interrupt, 64-bit CLINT timer, GPIO, and an on-chip **Bare-Metal Rust Boot Manager** capable of loading and flashing multi-sector dual-ISA images from the MicroSD card (MBR gap).
 
-Around it: **Zephyr RTOS** board support for the real board (C or Rust applications, an interrupt-driven UART driver), a **cycle-accurate Rust emulator** checked cycle by cycle against the RTL, and [releases](https://github.com/takayuki-nagata/VUX9K/releases) with everything needed to write applications without building the SoC ([`docs/APP_DEVELOPMENT.md`](docs/APP_DEVELOPMENT.md)).
+Around it: **Zephyr RTOS** board support for the real board (C or Rust applications, an interrupt-driven UART driver), a **cycle-accurate Rust emulator** checked instruction by instruction, cycle counts included, against the RTL, and [releases](https://github.com/takayuki-nagata/VUX9K/releases) with everything needed to write applications without building the SoC ([`docs/APP_DEVELOPMENT.md`](docs/APP_DEVELOPMENT.md)).
 
 ---
 
@@ -329,8 +329,9 @@ reference: they pin every tool version CI builds and tests with.
    ```bash
    cargo install cargo-llvm-cov --version 0.9.1 --locked   # make coverage-rust
    ```
-2. **OSS CAD Suite** (Yosys, nextpnr, Icarus Verilog, Verilator, openFPGALoader):
-   [YosysHQ/oss-cad-suite-build](https://github.com/YosysHQ/oss-cad-suite-build)
+2. **OSS CAD Suite** (Yosys, nextpnr, Icarus Verilog, Verilator, eqy, mcy, openFPGALoader):
+   [YosysHQ/oss-cad-suite-build](https://github.com/YosysHQ/oss-cad-suite-build). The
+   `Makefile` looks for it in `~/.local/oss-cad-suite/bin` (`OSS_CAD_SUITE_BIN`).
 3. **Veryl Compiler**:
    ```bash
    cargo install veryl --version 0.21.0 --locked
@@ -338,10 +339,13 @@ reference: they pin every tool version CI builds and tests with.
 4. **Python Environment** ([uv](https://docs.astral.sh/uv/)): `make setup` creates `.venv`
    (Python 3.13), installs the test and lint packages, and points Git at `.githooks/`
    (the pre-commit hook runs `make check`).
-5. **Hack Toolchain** (`has`, `m2h`, msp430-gcc): `make install-hack-tools`.
+5. **Hack Toolchain** (`has`, `m2h`, msp430-gcc): `make install-hack-tools`, after
+   `make setup` (it installs `m2h` into `.venv`). It puts `has` and `msp430-gcc` in
+   `~/.local/bin`, which must be on your `PATH`.
 6. **Zephyr** (`make build-zephyr-demo` and the Zephyr tests): Zephyr v3.7.2 and Zephyr
    SDK 0.16.8 with the `riscv64-zephyr-elf` toolchain, per Zephyr's Getting Started Guide,
-   plus Zephyr's `scripts/requirements-base.txt` in `.venv`. The `Makefile` looks for them
+   plus Zephyr's `scripts/requirements-base.txt` in `.venv`, and the host packages CI
+   installs (`device-tree-compiler`, `ninja-build`, `gcc-riscv64-linux-gnu` on Debian/Ubuntu). The `Makefile` looks for them
    in `~/zephyrproject/zephyr` and `~/.local/zephyr-sdk-0.16.8`; set `ZEPHYR_BASE` and
    `ZEPHYR_SDK_INSTALL_DIR` for other places.
 
@@ -394,8 +398,12 @@ make check check-rtl-syntax lint-rtl
 # 8. Nightly tier: the long flows, the Zephyr demo on the netlist, new random seeds
 make test-slow
 
-# 9. RTL refactor proof, timing over several PnR seeds, coverage and mutation testing
-make eqy timing coverage mutation
+# 9. Long runs, one at a time: RTL refactor proof, timing over several PnR seeds,
+#    RTL/firmware coverage, mutation testing
+make eqy
+make timing
+make coverage
+make mutation
 ```
 
 Which tier runs when, and what each needs, is in [`AGENTS.md`](AGENTS.md) ("Test tiers").
