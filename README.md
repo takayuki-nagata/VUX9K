@@ -2,7 +2,9 @@
 
 **VUX9K** (Veryl Unified eXecution on Tang Nano 9K) is an open-source **Dual-ISA (RISC-V RV32I & Nand2Tetris Hack 16-bit) System-on-Chip (SoC)** written 100% in **[Veryl](https://github.com/veryl-lang/veryl)** targeting the **Sipeed Tang Nano 9K** FPGA board (Gowin GW1NR-9).
 
-The SoC features a multi-cycle Unified CPU core capable of seamlessly executing both standard **32-bit RISC-V RV32I** instructions and **16-bit Nand2Tetris Hack** machine code, integrated with a hardware MicroSD SPI master, full-duplex UART, 64-bit CLINT timer, GPIO, and an on-chip **Bare-Metal Rust Boot Manager** capable of loading and flashing multi-sector dual-ISA images from the MicroSD card (MBR gap).
+The SoC features a multi-cycle Unified CPU core capable of seamlessly executing both standard **32-bit RISC-V RV32I** instructions and **16-bit Nand2Tetris Hack** machine code, integrated with a hardware MicroSD SPI master (3 MHz after card init), full-duplex UART with a receive interrupt, 64-bit CLINT timer, GPIO, and an on-chip **Bare-Metal Rust Boot Manager** capable of loading and flashing multi-sector dual-ISA images from the MicroSD card (MBR gap).
+
+Around it: **Zephyr RTOS** board support for the real board (C or Rust applications, an interrupt-driven UART driver), a **cycle-accurate Rust emulator** checked cycle by cycle against the RTL, and [releases](https://github.com/takayuki-nagata/VUX9K/releases) with everything needed to write applications without building the SoC ([`docs/APP_DEVELOPMENT.md`](docs/APP_DEVELOPMENT.md)).
 
 ---
 
@@ -67,7 +69,7 @@ The RTL modules in this repository were originally authored in VHDL-2008 and hav
 - **UART Controller (`uart_controller`)**: Ported from [`takayuki-nagata/uart_controller`](https://github.com/takayuki-nagata/uart_controller)
   - Parameterized baud rate clock timer (18.0 MHz -> 115200 bps), 8N1 serial framing, and dual 32-entry synchronous TX/RX FIFOs.
 - **Arbitrary-Precision Math Engine & REPL (`vendor/bc_clone_rs`)**: Submodule from [`takayuki-nagata/bc_clone_rs`](https://github.com/takayuki-nagata/bc_clone_rs)
-  - Embedded `bc_core` arbitrary-precision arithmetic engine with 10/10 math test suite running atop Zephyr RTOS.
+  - Embedded `bc_core` arbitrary-precision arithmetic engine with 10/10 math test suite running atop Zephyr RTOS. At about 260 KB it runs only on the emulator's `extended` profile (`make build-zephyr`), **not on the board**.
 - **Hack Toolchain & C Firmware (`hack_demo`)**: Powered by [`takayuki-nagata/hack_tools`](https://github.com/takayuki-nagata/hack_tools) (`has` assembler & `m2h` transpiler)
   - 16-bit C and Hack assembly firmware testing recursive arithmetic, Fibonacci, array manipulations, and MMIO UART output.
 
@@ -159,9 +161,17 @@ Subsequent 512-byte sectors continue the payload until the full binary length is
 
 ## Host Tooling & Boot Manager CLI
 
+**Host setup.** If ModemManager runs on the host (most desktop distributions start it),
+install [`tools/70-vux9k-board.rules`](tools/70-vux9k-board.rules) as its comment shows:
+otherwise ModemManager probes the board's JTAG port after every bitstream load, and the
+board's USB bridge applies the probe's 57600 baud to the board's serial port too, so the
+next session reads noise. Give the board its own USB port or hub: another full-speed device
+busy on the same hub makes the bridge drop output. Both are described in
+[`docs/APP_DEVELOPMENT.md`](docs/APP_DEVELOPMENT.md) (sections 1 and 5).
+
 ### 1. Host Utility: `vux_tool.py`
 
-[`tools/vux_tool.py`](tools/vux_tool.py) provides host-side management over UART (supports `--port` e.g. `/dev/ttyUSB3` or `auto`):
+[`tools/vux_tool.py`](tools/vux_tool.py) provides host-side management over UART (supports `--port` e.g. `/dev/ttyUSB3` or `auto`; it warns when ModemManager can probe the board):
 
 ```bash
 # 1. Hardware Self-Diagnostics (Tests onboard LEDs, User Button S2, 64-bit CLINT timer, MicroSD SPI init)
@@ -194,6 +204,9 @@ python3 tools/vux_tool.py monitor
 
 # 8. Trigger a hardware FPGA reset (openFPGALoader --reset)
 python3 tools/vux_tool.py reset
+
+# 9. Build an SD card image with slots, for the emulator (--sd), without a board
+python3 tools/vux_tool.py mkimg sd.img --slot 1:build/zephyr-demo/zephyr/zephyr.bin:riscv:Demo
 ```
 
 ### 2. On-Chip Bare-Metal Boot Manager CLI
@@ -307,22 +320,30 @@ those after it has been tested on the board ([`docs/RELEASING.md`](docs/RELEASIN
 ## Quickstart & Build Guide
 
 ### Prerequisites
-1. **Rust Toolchain**:
+The install steps of [`.github/workflows/ci.yml`](.github/workflows/ci.yml) are the
+reference: they pin every tool version CI builds and tests with.
+
+1. **Rust Toolchain**: [rustup](https://rustup.rs/); `firmware/rust-toolchain.toml` pins
+   the firmware's toolchain with the `riscv32i-unknown-none-elf` target and `llvm-tools`
+   (rustup installs it on first use).
    ```bash
-   rustup target add riscv32i-unknown-none-elf
    cargo install cargo-llvm-cov --version 0.9.1 --locked   # make coverage-rust
    ```
-2. **OSS CAD Suite** (Yosys, nextpnr, Icarus Verilog, openFPGALoader):
+2. **OSS CAD Suite** (Yosys, nextpnr, Icarus Verilog, Verilator, openFPGALoader):
    [YosysHQ/oss-cad-suite-build](https://github.com/YosysHQ/oss-cad-suite-build)
 3. **Veryl Compiler**:
    ```bash
-   cargo install veryl --version 0.21.0
+   cargo install veryl --version 0.21.0 --locked
    ```
-4. **Python Environment**:
-   ```bash
-   uv venv --python 3.13 .venv
-   uv pip install cocotb pytest pyftdi pyserial
-   ```
+4. **Python Environment** ([uv](https://docs.astral.sh/uv/)): `make setup` creates `.venv`
+   (Python 3.13), installs the test and lint packages, and points Git at `.githooks/`
+   (the pre-commit hook runs `make check`).
+5. **Hack Toolchain** (`has`, `m2h`, msp430-gcc): `make install-hack-tools`.
+6. **Zephyr** (`make build-zephyr-demo` and the Zephyr tests): Zephyr v3.7.2 and Zephyr
+   SDK 0.16.8 with the `riscv64-zephyr-elf` toolchain, per Zephyr's Getting Started Guide,
+   plus Zephyr's `scripts/requirements-base.txt` in `.venv`. The `Makefile` looks for them
+   in `~/zephyrproject/zephyr` and `~/.local/zephyr-sdk-0.16.8`; set `ZEPHYR_BASE` and
+   `ZEPHYR_SDK_INSTALL_DIR` for other places.
 
 ### Building & Flashing
 
@@ -366,7 +387,18 @@ make test-hw
 
 # 6. Hardware Target: CPU self-test on every routed seed's placement (after `make timing`)
 make hw-smoke
+
+# 7. Static checks (seconds; the pre-commit hook runs `make check`)
+make check check-rtl-syntax lint-rtl
+
+# 8. Nightly tier: the long flows, the Zephyr demo on the netlist, new random seeds
+make test-slow
+
+# 9. RTL refactor proof, timing over several PnR seeds, coverage and mutation testing
+make eqy timing coverage mutation
 ```
+
+Which tier runs when, and what each needs, is in [`AGENTS.md`](AGENTS.md) ("Test tiers").
 
 ### Test Suite Architecture
 
@@ -399,6 +431,7 @@ Short tests run on Icarus, long SoC/GLS runs on Verilator (`SIM_UNIT` / `SIM_SOC
 | **Zephyr UART Interrupts** | `make sim-zephyr-irq-echo-rtl` | ~1 min | The interrupt-driven UART echo booted from SD on the RTL: a 64-byte line, longer than both FIFOs, comes back with no overrun |
 | **Static Timing (STA)**| `make sta` | ~15 sec | Exhaustive post-PnR timing analysis, Fmax verification, and critical path breakdown (`build/synth/soc_sta.json`) |
 | **Real Hardware** | `make test-hw` | ~60 sec | Automated physical hardware execution on Tang Nano 9K via `scripts/test_hardware.py` (15 tests) |
+| **Real Hardware, Release Tree** | `make test-hw-dist DIST=<dir>` | ~60 sec | The same 15 tests with a `make dist` tree's bitstream, Boot Manager and demos, nothing rebuilt: how a release candidate is tested ([`docs/RELEASING.md`](docs/RELEASING.md)) |
 | **Board UART Interrupts** | `make test-hw-irq-echo` | ~20 sec | The interrupt-driven UART echo on the board (`scripts/hw_irq_echo.py`): flashed to slot 3 through the running Boot Manager, five 256-byte lines, then the FPGA is reconfigured from `build/synth/pack.fs` |
 
 ### Real Hardware Test Suite (15 Automated Checks)
@@ -406,21 +439,21 @@ Short tests run on Icarus, long SoC/GLS runs on Verilator (`SIM_UNIT` / `SIM_SOC
 1. **UART Connection & Prompt Synchronization** (`vux> ` prompt sync)
 2. **Hardware Self-Diagnostics** (`t` / `vux_tool.run_diag`: LED animation, user button S2, MicroSD SPI init, 64-bit CLINT timer)
 3. **MicroSD Sector 0 (MBR) Dump** (`d` / `vux_tool.dump_mbr`: 512-byte read & `0x55AA` signature validation)
-4. **Flash Slot 0: Boot Manager** (`w` / `vux_tool.flash_slot`: 23 sectors to LBA 64)
+4. **Flash Slot 0: Boot Manager** (`w` / `vux_tool.flash_slot`: the Boot Manager image to LBA 64)
 5. **Header Verification: Slot 0** (`s0` / `vux_tool.inspect_slot`: Magic `VUX9`, Mode 1/RISC-V)
-6. **Flash Slot 1: Default RISC-V App** (`w` / `vux_tool.flash_slot`: 4 sectors to LBA 128)
+6. **Flash Slot 1: Default RISC-V App** (`w` / `vux_tool.flash_slot`: the Zephyr Rust demo to LBA 128)
 7. **Header Verification: Slot 1** (`s1` / `vux_tool.inspect_slot`: Magic `VUX9`, Mode 1/RISC-V)
-8. **Flash Slot 2: Hack 16-bit Firmware** (`w` / `vux_tool.flash_slot`: 6 sectors to LBA 192)
+8. **Flash Slot 2: Hack 16-bit Firmware** (`w` / `vux_tool.flash_slot`: the Hack demo to LBA 192)
 9. **Header Verification: Slot 2** (`s2` / `vux_tool.inspect_slot`: Magic `VUX9`, Mode 0/Hack)
 10. **Program Slots Catalog Listing** (`l` / `vux_tool.list_slots`: Multi-slot catalog listing)
 11. **Negative Test: CRC32 Corrupted Payload Rejection** (Slot 0, `crc_override`: rejects a corrupted image before it's accepted)
 12. **Negative Test: Invalid Magic Header Rejection** (Slot 3, `magic_override`: rejects a header without `VUX9` magic)
-13. **Boot Manager Self-Update & Version Rollback** (Flashes Slot 0 with a newer `version`, verifies in-place I-RAM update, then rolls back to the original version)
+13. **Boot Manager Self-Update & Version Rollback** (Flashes Slot 0 with a newer `version`, verifies that the Boot Manager installs it at the next start, then writes Slot 0 back with the original version)
 14. **Boot Slot 1: Zephyr Rust App Execution** (`1` / `vux_tool.boot_slot`: the Zephyr Rust demo, `make build-zephyr-demo`)
-15. **Boot Slot 2: Hack 16-bit Firmware Execution** (`2` / `vux_tool.boot_slot`: Hack C firmware execution and test pass)
+15. **Boot Slot 2: Hack 16-bit Firmware Execution** (`2`, at the Boot Manager prompt that must come back after the FPGA is reconfigured: Hack C firmware execution and test pass)
 
 > [!NOTE]
-> After steps 14 and 15, `test_hardware.py` reloads the SRAM bitstream via `openFPGALoader`: a launched application never returns to the Boot Manager, and reconfiguring the FPGA is the way back. Before the tests, it warns when other full/low-speed USB devices share the board's USB hub, which makes the board's USB-UART bridge drop output (see `docs/APP_DEVELOPMENT.md`).
+> After steps 14 and 15, `test_hardware.py` reloads the SRAM bitstream via `openFPGALoader`: a launched application never returns to the Boot Manager, and reconfiguring the FPGA is the way back. Before the tests, it warns when other full/low-speed USB devices share the board's USB hub, which makes the board's USB-UART bridge drop output, and it refuses to start while ModemManager could probe the board, since each reconfiguration would then change the bridge's baud rate (see "Host setup" above and `docs/APP_DEVELOPMENT.md`).
 
 ### Board Smoke Test of Routed Seeds (`make hw-smoke`)
 
@@ -478,7 +511,7 @@ VUX9K/
 │   ├── soc_addr_decoder.veryl      # Data-address decoder (one instance per read/write address)
 │   └── soc_top.veryl               # Tang Nano 9K SoC top-level wrapper
 ├── firmware/                       # Cargo workspace: bare-metal Rust boot firmware
-│   ├── Cargo.toml                  # Workspace manifest (members: boot_manager, resident_loader)
+│   ├── Cargo.toml                  # Workspace manifest (members: boot_manager, resident_loader, fw_common, hw_test)
 │   ├── boot_manager/                   # Boot Manager & drivers (14KB at 0x0000_0000)
 │   │   ├── Cargo.toml
 │   │   ├── bootstrap/                  # Assembly start.s & linker script link.x
@@ -490,14 +523,20 @@ VUX9K/
 ├── zephyr_workspace/               # Zephyr module: vux9k boards, SoC, UART driver, dts (Apache-2.0, own README)
 │   ├── app/                        # Zephyr Rust demo for the real board (rust_demo staticlib)
 │   └── irq_echo/                   # Zephyr interrupt-driven UART echo (C) for the real board
-├── docs/                           # APP_DEVELOPMENT.md (application developers), RELEASING.md
+├── docs/                           # APP_DEVELOPMENT.md (application developers), RELEASING.md, dist-README.md
+│   └── agents/                     # Topic guides for AI agents (indexed by AGENTS.md)
 ├── emu/                            # Rust emulator: core, CLI (vux9k-emu), Python module (vux9k_emu)
 ├── sim/                            # cocotb & pytest testbenches (run via sim/runners/test_sim.py)
+│   ├── unit/                       # cocotb unit tests, one RTL module each
+│   ├── integration/                # SoC-level cocotb tests, SD card and serial models
+│   ├── runners/                    # pytest entry point and the cocotb runner (sim_runner.py)
 │   ├── emu/                        # pytest tests on the emulator (firmware, demos, lockstep compare)
 │   └── sd_transcripts/             # SD card exchanges both card models must reproduce
 ├── coverage/                       # thresholds.toml: minimum coverage per image
 ├── scripts/                        # Build/CI plumbing (elf2bin.py, run_riscv_tests.py, test_hardware.py, run_pnr.py, report_sta.py, ...)
-├── tools/                          # End-user CLI: vux_tool.py (UART flashing, diagnostics, monitor)
+│   ├── riscv_tests/, act4/         # riscv-tests and riscv-arch-test (ACT4) configuration
+│   └── mcy/                        # mutation testing (mcy) driver
+├── tools/                          # End-user CLI: vux_tool.py (UART flashing, diagnostics, monitor); 70-vux9k-board.rules (udev, ModemManager)
 ├── vendor/                         # bc_clone_rs (git submodule); riscv-tests (fetched on demand by run_riscv_tests.py, gitignored)
 └── build/                          # Unified build output (gitignored) - every generated artifact lands here
     ├── veryl/                      # veryl build --out-dir output: generated .sv/.map for soc/, soc/cpu/, soc/uart/, sim/
