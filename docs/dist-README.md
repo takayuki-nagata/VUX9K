@@ -15,7 +15,7 @@ files' hashes. Source: https://github.com/takayuki-nagata/VUX9K
 | `zephyr/vux9k-zephyr-bsp.tar.gz` | Zephyr board support (module) with a Rust application template |
 | `hack/` | Hack demo's C source, a template for Hack applications |
 | `emu/vux9k-emu`, `emu/vux9k_emu.abi3.so` | The emulator: command line and Python module (Linux x86_64) |
-| `docs/APP_DEVELOPMENT.md` | The developer guide |
+| `docs/APP_DEVELOPMENT.md` | The developer guide ("Hardware revisions and compatibility" says what stays compatible between releases) |
 
 ## Try it
 

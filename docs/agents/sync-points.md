@@ -24,7 +24,7 @@ column, the rest of its row belongs to the same piece of work. Reviews check thi
 | The VUX9 slot header | `fw_common::header` **and** `SlotHeader`/constants in `tools/vux_tool.py`; regenerate `firmware/fw_common/tests/vux9_vectors/` | firmware.md, "Firmware rules" |
 | The UART flashing protocol, `build_vux9_image()`, the SD boot chain, `sim/integration/` UART/SD models | run `sim-gls-hw-flow` by hand (not in `test-sim`) | test-tiers.md |
 | The SD card model | Python (`sim/integration/sdcard_model.py`) **and** Rust (emulator); `sim/sd_transcripts/` green on both | rtl-workflow.md, "The emulator must follow the RTL" |
-| Anything an application sees (memory map, MMIO registers, CSRs, the slot format) | README's tables; check it against docs/APP_DEVELOPMENT.md section 6: a patch release must not break applications or slots, anything else says so in its tag message | dist-release.md |
+| Anything an application or a slot relies on (RV32/Hack address spaces and registers, CSRs, slot header, SD sector map, Resident Loader entry and mailbox, start-up state) | README's tables; a change that breaks applications or slots says so in its commit message, so the next release raises minor/major and its tag message tells | dist-release.md, "Distribution and releases: `make dist`, tags vouch for a board test" |
 | A CSR (new access in firmware, or the CPU's set) | `csr_exists` in `rv32i_trap_unit` **and** `rv32i_csrs`; README "RV32 CSRs" | isa-tests.md, "`make test-isa`" |
 | A failing/fixed ISA test | `EXPECTED_FAILURES` / `EXPECTED_FAILURES_ACT4` (an XPASS fails the run) | isa-tests.md |
 | `tohost` address | `scripts/riscv_tests/link.ld` **and** the tb's `TOHOST_ADDR` | isa-tests.md, "`make test-isa`" |
