@@ -10,6 +10,9 @@ whether a rebuild would reproduce the same bits.
 Versions are tags `vMAJOR.MINOR.PATCH`. They are independent of the Boot Manager's own
 `BOOT_MGR_VERSION` (bump that when the Boot Manager changes, so boards install it from
 slot 0) and of the VUX9 header version (the slot format).
+A patch release keeps applications and slots working; a release that breaks them,
+including one for a later hardware revision, raises the minor or major version and says
+so in its tag message (docs/APP_DEVELOPMENT.md, section 6).
 
 ## 1. Get the release candidate
 

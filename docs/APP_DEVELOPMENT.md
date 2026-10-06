@@ -15,7 +15,8 @@ Contents:
 3. [Building an application](#3-building-an-application)
 4. [Testing on the emulator](#4-testing-on-the-emulator)
 5. [Running on the board](#5-running-on-the-board)
-6. [Reference](#6-reference)
+6. [Hardware revisions and compatibility](#6-hardware-revisions-and-compatibility)
+7. [Reference](#7-reference)
 
 ## 1. Preparing the board
 
@@ -238,7 +239,28 @@ hub.
 the first session after loading the bitstream: the bridge runs at a baud rate
 ModemManager set. Install the udev rule (section 1).
 
-## 6. Reference
+## 6. Hardware revisions and compatibility
+
+This guide and the README's memory map, registers, CSRs and slot format describe this
+hardware revision of the SoC, which the v0.2.x releases implement. Within those
+releases, a patch release doesn't break applications or slots: an application that uses
+only what is documented, and a slot written with an earlier v0.2.x `vux_tool.py`, keep
+running.
+
+A later hardware revision makes no such promise. Its memory map, registers, slot format,
+SD card layout and loaders may all change, and its release says how to rebuild and
+rewrite applications for it. Applications that reach the hardware only through Zephyr's
+APIs are the easiest to move: they may need no more than a rebuild for that revision's
+board. Applications that use addresses or registers directly may need changes.
+
+Even on this revision, only the documented addresses, registers and bits are an
+interface. The address aliases, what an undocumented address or register offset reads,
+and the absence of access faults are how the hardware happens to behave
+([Memory & MMIO Register Map](../README.md#memory--mmio-register-map)); don't rely on
+them. The board `vux9k/vux9k/ext` and the emulator's `extended` profile remain
+emulator-only.
+
+## 7. Reference
 
 In the repository's [README](../README.md):
 [Memory & MMIO Register Map](../README.md#memory--mmio-register-map),
