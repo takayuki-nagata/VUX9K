@@ -83,15 +83,7 @@ jobs:
           cp "$X/vux9k-$TAG/bitstream/pack.fs" "assets/vux9k-$TAG-pack.fs"
           cp "$X/vux9k-$TAG/zephyr/vux9k-zephyr-bsp.tar.gz" "assets/vux9k-zephyr-bsp-$TAG.tar.gz"
           (cd assets && sha256sum -- * > SHA256SUMS)
-          {
-            echo "Built by CI from $SHA and tested on a Tang Nano 9K:"
-            echo
-            echo '```'
-            sed '1{/^v/d}' "$RUNNER_TEMP/tag-message.txt"
-            echo '```'
-            echo
-            echo 'Getting started: `docs/APP_DEVELOPMENT.md` in the archive. Tool versions: `MANIFEST.json`.'
-          } > notes.md
+          python3 scripts/release_check.py notes "$RUNNER_TEMP/tag-message.txt" --commit "$SHA" > notes.md
           cat notes.md
           ls -l assets
 

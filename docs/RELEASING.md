@@ -47,23 +47,33 @@ release: its slots, written with its own `vux_tool.py`, must boot under the cand
 bitstream; its tool must work with the candidate's Boot Manager and the candidate's tool
 with its Boot Manager; and its bitstream must install the candidate's Boot Manager from
 slot 0 (skipped when the Boot Manager version is unchanged). It overwrites SD slots 0-4
-and leaves the candidate's bitstream in SRAM. Add its result to the tag message next to
-test-hw and hw-smoke (e.g. `test-hw-upgrade: from v0.1.0, 28 PASS 0 FAIL`).
+and leaves the candidate's bitstream in SRAM. Its result goes in the tag message next to
+test-hw and hw-smoke (e.g. `test-hw-upgrade: from v0.1.0, 29 PASS 0 FAIL 0 SKIP`).
 
 ## 3. Tag
 
 ```sh
-python3 scripts/release_check.py template build/candidate/dist --version v0.1.0 > build/tag-message.txt
-$EDITOR build/tag-message.txt      # fill in test-hw and hw-smoke, add test-hw-upgrade
-git tag -a v0.1.0 $SHA -F build/tag-message.txt --cleanup=verbatim
-git push origin v0.1.0
+python3 scripts/release_check.py template build/candidate/dist --version vX.Y.Z > build/tag-message.txt
+$EDITOR build/tag-message.txt      # fill in the results, compatibility and the release notes
+python3 scripts/release_check.py verify build/candidate/dist build/tag-message.txt --commit $SHA
+git tag -a vX.Y.Z $SHA -F build/tag-message.txt --cleanup=verbatim
+git push origin vX.Y.Z
 ```
+
+The message is three parts separated by blank lines: the version, the fields (one
+`key: value` per line), and the release notes in Markdown. Fill in every `<fill in>`:
+- `test-hw`, `hw-smoke` and `test-hw-upgrade`: the board results of step 2.
+- `compatibility`: whether the previous release's applications and slots keep working
+  (test-hw-upgrade is the evidence); if they don't, why the minor or major version went up.
+- The release notes: what changed since the previous release, how to upgrade, and any
+  host setup a user must redo.
 
 `release.yml` then checks that the tag is annotated and on `main`, downloads the CI
 artifact of the tagged commit, runs `release_check.py verify` (SHA256SUMS, a clean build
 of that commit, `pack.fs` equal to the tested one, results filled in) and publishes:
 the archive `vux9k-<tag>-linux-x86_64.tar.gz`, the bitstream and the Zephyr BSP on their
-own, and `SHA256SUMS`, with the tag message as release notes.
+own, and `SHA256SUMS`, with release notes from `release_check.py notes`: the fields in a
+code block, then the tag's release notes.
 
 ## Trying the workflow without publishing
 
@@ -85,5 +95,5 @@ Delete the tag afterwards (`git push origin :dryrun-1 && git tag -d dryrun-1`).
   produce the same `pack.fs`; only a tested one is published.
 - **`pack.fs` mismatch:** the tag names a bitstream other than CI's for that commit, e.g.
   the board test used a local build. Test the CI artifact itself.
-- To retry a tag, delete it (`git push origin :v0.1.0`, `git tag -d v0.1.0`) and push it
+- To retry a tag, delete it (`git push origin :vX.Y.Z`, `git tag -d vX.Y.Z`) and push it
   again, or run `release.yml` by hand with `dry_run` off.
