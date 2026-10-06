@@ -25,6 +25,14 @@ def run_program(build, steps):
     return soc
 
 
+def test_uart_send_at_a_past_cycle_is_refused():
+    soc = run_program(lambda a: [a.nop() for _ in range(4)], 4)
+    with pytest.raises(ValueError, match="before the current cycle"):
+        soc.uart_send(b"x", at=soc.cycle - 1)
+    soc.uart_send(b"x", at=soc.cycle)
+    soc.uart_send(b"y")
+
+
 def test_csr_write_and_read_back():
     def prog(a):
         a.li("t0", 0x8000)

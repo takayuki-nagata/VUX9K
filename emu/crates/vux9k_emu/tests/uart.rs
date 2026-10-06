@@ -59,6 +59,24 @@ fn rx_byte_is_readable_1486_cycles_after_its_start_bit() {
 }
 
 #[test]
+fn rx_byte_may_start_in_the_past_while_its_fifo_push_is_still_ahead() {
+    let mut u = Uart::default();
+    u.advance(2000);
+    // Its push edge is the end of cycle 2000, the one the UART is in
+    u.host_send(&[0x5A], 2000 - 1485, false);
+    assert!(u.rx_pending(2001));
+    assert_eq!(u.read(DATA, 2001), 0x5A);
+}
+
+#[test]
+#[should_panic(expected = "already passed")]
+fn rx_byte_whose_fifo_push_has_passed_is_refused() {
+    let mut u = Uart::default();
+    u.advance(2000);
+    u.host_send(&[0x5A], 2000 - 1486, false);
+}
+
+#[test]
 fn overrun_and_frame_error_are_sticky_until_a_status_read() {
     let mut u = Uart::default();
     let bytes: Vec<u8> = (0..=FIFO_DEPTH as u8).collect();

@@ -249,9 +249,17 @@ impl Uart {
 
     /// The host sends `bytes` on the RX line, back to back, starting no earlier than
     /// cycle `c`. `bad_stop` sends them with a low stop bit (framing error).
+    /// Panics if a byte would reach the RX FIFO at an edge `advance` has already passed.
     pub fn host_send(&mut self, bytes: &[u8], c: u64, bad_stop: bool) {
         for &byte in bytes {
             let start = self.rx_line_free.max(c);
+            // Applied late, its edge would move `now` back and shift every later edge
+            assert!(
+                start + RX_PUSH_DELAY >= self.now,
+                "UART byte starting in cycle {start} reaches the RX FIFO before cycle {}, \
+                 which the UART has already passed",
+                self.now
+            );
             self.rx_line.push_back(RxFrame {
                 byte,
                 start,

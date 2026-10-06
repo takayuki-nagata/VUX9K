@@ -142,11 +142,18 @@ impl Soc {
 
     /// The host sends `data` on the UART RX line from now on, back to back
     /// (`bad_stop`: with a low stop bit, a framing error).
-    /// `at`: start no earlier than this cycle instead of now.
+    /// `at`: start no earlier than this cycle instead of now (not before the current cycle).
     #[pyo3(signature = (data, bad_stop = false, at = None))]
-    fn uart_send(&mut self, data: &[u8], bad_stop: bool, at: Option<u64>) {
-        let c = at.unwrap_or(self.inner.cycle);
+    fn uart_send(&mut self, data: &[u8], bad_stop: bool, at: Option<u64>) -> PyResult<()> {
+        let now = self.inner.cycle;
+        let c = at.unwrap_or(now);
+        if c < now {
+            return Err(PyValueError::new_err(format!(
+                "uart_send: at={c} is before the current cycle {now}"
+            )));
+        }
         self.inner.periph.uart.host_send(data, c, bad_stop);
+        Ok(())
     }
 
     /// Cycle by which everything sent so far has reached the RX FIFO.
