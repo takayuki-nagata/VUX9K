@@ -43,10 +43,17 @@ when their trigger happens.
 - **A tool pin changes in ci.yml** (veryl, OSS CAD Suite, ruff, mypy, Rust): `NOISE`, the hook
   timings, the fmt/check commands.
 - **A rule changes in a guide**: `sync-points.md` and the two agents' bodies.
-- **At the end of every ROADMAP stage**, and before the ones known to move things: B0
-  (Hack removal deletes files and targets the guides and skills name), B2 (`vendor/` path
-  dependency for the PSRAM controller vs. `pre_edit.py`; new RTL in `SOC_RTL_SRCS`), B3
-  (firmware target `riscv32im`: the per-crate `cargo check`).
+- **At the end of every ROADMAP stage**, and before the ones known to move things:
+  - B2 (PSRAM): the controller's `vendor/` path dependency vs. `pre_edit.py`'s refused
+    paths; new RTL in `SOC_RTL_SRCS` and in `sim/runners/sim_runner.py`'s file lists; the
+    guides' `paths:`.
+  - B3 (large images, a new Boot Manager loader): the `bm-change` skill's budgets and
+    version numbers; once a Zephyr board runs from PSRAM on the board, the emulator-only
+    rule in AGENTS.md and zephyr.md.
+  - B6 (firmware target `riscv32im`): the per-crate `cargo check`, isa-tests.md.
+
+  The Hack CPU stays through these stages, so the guides, skills and targets that name it
+  stay too.
 - **When a hook misfires** (blocks correct work, misses a mistake, or makes stops slow):
   fix the hook, not the work around it.
 
