@@ -29,6 +29,10 @@ candidate, and its bitstream installing the candidate's Boot Manager). Keep in s
 - The distribution is for applications: no Resident Loader image, no firmware hex for the
   emulator (applications start there with `--no-firmware --load IMAGE --mode riscv|hack`,
   the same image and mode as `vux_tool.py flash-sd`), no SD images.
+- `test_hw_upgrade.py` drives the previous release's `tools/vux_tool.py` through its Python
+  functions (`open_port`, `flash_slot`, `list_slots`, `boot_slot` and their arguments):
+  renaming or changing them breaks the next release's upgrade test, so keep them, or make
+  the script handle both.
 - What applications may rely on is docs/APP_DEVELOPMENT.md, "Hardware revisions and
   compatibility": a patch release keeps applications and slots working; a release that
   breaks them raises minor/major and its tag message says so.

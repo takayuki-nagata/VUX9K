@@ -90,7 +90,9 @@ load) ModemManager's reopens can switch the rate even in the middle of an open s
   only the baud rate would not help (`SET_BAUD` alone isn't applied).
 - Output the board sent while no host had the port open is handed over at the next open.
   Anything that waits for a verdict must anchor it to the run it started: `hw_smoke.py`
-  takes a `RESULT` line only after this boot's `hw_test` banner, `test_hw_upgrade.py` only
-  the output after the previous image's last prompt.
+  takes a `RESULT` line only after this boot's `hw_test` banner, `test_hw_upgrade.py` drains
+  what arrives in the first 0.5 s after the open (before the load) and then reads only past
+  the previous image's last prompt (the drain, not the anchor, keeps out a whole stale
+  startup).
 - Noise with non-ASCII bytes is a host-side rate problem until proven otherwise:
   `vux_tool.garbled_hint` adds that note to the test failures.

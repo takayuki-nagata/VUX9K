@@ -91,7 +91,7 @@ equal and nothing is installed; when a newer one is, the Boot Manager prints
 flash (section 1) and use its `tools/vux_tool.py`; the slots already on the card keep
 working. Then write its `boot-manager.bin` to slot 0 as above, with its version. A Boot
 Manager installed from slot 0 also runs on an older bitstream, but it can use only the
-hardware that bitstream has: on the v0.1.0 bitstream, the v0.2.0 Boot Manager reads the
+hardware that bitstream has: on the v0.1.0 bitstream, a later Boot Manager reads the
 card at about 400 kHz instead of 3 MHz. To go back to an older release, write its Boot
 Manager to slot 0 before loading its bitstream; otherwise the older Boot Manager installs
 the newer one from slot 0 every time it starts.

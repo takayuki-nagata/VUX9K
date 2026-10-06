@@ -6,8 +6,10 @@
 `test_hardware.py --dist DIR` flashes slot 0 relative to the Boot Manager it tests, so the
 version must be the one DIR ships (MANIFEST.json), not the working tree's main.rs: a dist
 of another release has another Boot Manager. `test_hw_upgrade.py` (previous release ->
-candidate) judges each load by the startup output of that boot only, although the bridge may
-still hand over the previous image's lines first.
+candidate) judges each load by its startup output: the bridge hands over what the previous
+image sent while the port was closed at the open, which the script drains before the load,
+and the check then starts after the previous image's last prompt. A whole stale startup
+(banner and prompt) arriving after the drain would pass; the drain is what rules it out.
 """
 
 import json

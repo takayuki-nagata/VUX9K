@@ -30,7 +30,7 @@ tar -xzf build/candidate/vux9k-dist.tar.gz -C build/candidate    # -> build/cand
 ```sh
 make test-hw-dist DIST=build/candidate/dist
 gh release download <previous tag> -p 'vux9k-*-linux-x86_64.tar.gz' -D build/previous
-tar -xzf build/previous/vux9k-*-linux-x86_64.tar.gz -C build/previous
+tar -xzf build/previous/vux9k-<previous tag>-linux-x86_64.tar.gz -C build/previous
 make test-hw-upgrade OLD=build/previous/vux9k-<previous tag> NEW=build/candidate/dist
 git switch --detach $SHA && make timing hw-smoke
 ```

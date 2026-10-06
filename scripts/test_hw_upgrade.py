@@ -24,7 +24,8 @@ open_port, which re-applies the line settings after the open). Steps:
                      Manager; it boots
   5. BM update       NEW tool writes slot 0 = NEW Boot Manager; the OLD bitstream installs
                      it on every load ("[UPDATE] Verified ...", "Booted newly updated", NEW
-                     banner); slots 1 and 2 boot (SKIP if the Boot Manager is unchanged)
+                     banner); slots 1 and 2 boot (SKIP if the Boot Manager is unchanged,
+                     FAIL if NEW's is older)
   6. final state     NEW bitstream, no "[UPDATE]"
 
 Every check is PASS, FAIL or SKIP with a reason; a summary table ends the run and any
@@ -245,7 +246,13 @@ def run(old, new, port, loader):
     def step1():
         # slot 0 may hold a newer Boot Manager from an earlier run, which this first load
         # installs: write the OLD one first, so slots 1-2 are written under the OLD Boot Manager
-        r.reconfigure(o)
+        seg = r.reconfigure(o)
+        r.record(
+            f"load {o.label} pack.fs (any Boot Manager)",
+            "openFPGALoader",
+            "PASS" if seg is not None else "FAIL",
+            "banner and prompt" if seg is not None else tail(r.last_output),
+        )
         r.flash(o, 0, o, "boot_manager", names[0], "riscv", version=o.bm_version)
         r.load(o)
         r.flash(o, 1, o, "zephyr_demo", names[1], "riscv")
@@ -275,7 +282,10 @@ def run(old, new, port, loader):
         r.boot(o, 4, ZEPHYR_MARKERS, ZEPHYR_TIMEOUT)
 
     def step5():
-        if n.bm_version <= o.bm_version:
+        if n.bm_version < o.bm_version:  # a regression, or OLD and NEW swapped
+            r.record("update", "-", "FAIL", f"NEW Boot Manager v{n.bm_version} is older than OLD v{o.bm_version}")
+            return
+        if n.bm_version == o.bm_version:
             r.record("update", "-", "SKIP", f"Boot Manager unchanged (OLD v{o.bm_version}, NEW v{n.bm_version})")
             return
         r.load(n)
@@ -321,7 +331,7 @@ def main():
 
     try:
         old, new = Dist("OLD", args.old), Dist("NEW", args.new)
-    except (Mismatch, OSError, KeyError) as e:
+    except (Mismatch, OSError, KeyError, ValueError) as e:
         sys.exit(f"test_hw_upgrade: {e}")
     print(f"OLD {args.old}: Boot Manager v{old.bm_version}\nNEW {args.new}: Boot Manager v{new.bm_version}")
     loader = shutil.which(args.loader) or os.path.expanduser("~/.local/oss-cad-suite/bin/openFPGALoader")
