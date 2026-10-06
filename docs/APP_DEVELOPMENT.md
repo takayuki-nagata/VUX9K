@@ -234,6 +234,10 @@ USB-UART bridge (BL702) does this when another full-speed USB device is busy on 
 USB hub. It is on the host side, not in the SoC. Plug the board into its own USB port or
 hub.
 
+**If the output is noise** (about half the expected bytes, mostly non-ASCII), usually in
+the first session after loading the bitstream: the bridge runs at a baud rate
+ModemManager set. Install the udev rule (section 1).
+
 ## 6. Reference
 
 In the repository's [README](../README.md):

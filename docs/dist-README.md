@@ -20,7 +20,9 @@ files' hashes. Source: https://github.com/takayuki-nagata/VUX9K
 ## Try it
 
 On the board (needs openFPGALoader, Python 3 with pyserial, and a FAT-formatted microSD
-card in the board):
+card in the board). If ModemManager runs on your host, install
+`tools/70-vux9k-board.rules` first, as its comment shows; without it the board's serial
+output can turn into noise after each bitstream load.
 
 ```sh
 openFPGALoader -b tangnano9k bitstream/pack.fs
