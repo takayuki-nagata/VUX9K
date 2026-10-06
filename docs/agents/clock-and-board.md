@@ -8,6 +8,7 @@ paths:
   - "tools/vux_tool.py"
   - "tools/70-vux9k-board.rules"
   - "sim/emu/test_board_uart.py"
+  - "sim/emu/test_hw_dist.py"
   - "firmware/hw_test/**"
   - "zephyr_workspace/boards/**"
 ---

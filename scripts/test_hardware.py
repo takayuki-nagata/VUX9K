@@ -11,6 +11,7 @@ CRC/magic rejection, Boot Manager self-update, and booting the Zephyr and Hack d
 """
 
 import argparse
+import json
 import os
 import re
 import shutil
@@ -32,6 +33,13 @@ def boot_manager_version():
     return int(m.group(1))
 
 
+def dist_boot_manager_version(dist):
+    """The Boot Manager version a `make dist` tree ships (its MANIFEST.json)."""
+    with open(os.path.join(dist, "MANIFEST.json")) as f:
+        return int(json.load(f)["boot_manager_version"])
+
+
+# With --dist, main() replaces it with the dist's version
 BM_VERSION = boot_manager_version()
 
 # What the suite flashes: the local build outputs, or with --dist DIR a `make dist` tree
@@ -488,6 +496,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
 
 
 def main():
+    global BM_VERSION
     parser = argparse.ArgumentParser(description="VUX9K Automated Hardware Test Suite")
     parser.add_argument("--port", default="auto", help="Serial/FTDI port URL (default: auto)")
     parser.add_argument("--baud", type=int, default=115200, help="UART baud rate (default: 115200)")
@@ -495,6 +504,7 @@ def main():
     args = parser.parse_args()
 
     if args.dist:
+        BM_VERSION = dist_boot_manager_version(args.dist)
         for key, rel in DIST_FILES.items():
             FILES[key] = os.path.join(args.dist, rel)
             if not os.path.isfile(FILES[key]):
