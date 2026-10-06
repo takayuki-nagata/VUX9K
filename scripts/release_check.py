@@ -86,17 +86,25 @@ Fill in, from the board (docs/RELEASING.md, step 2):
   test-hw          `make test-hw-dist DIST=<this dist>`, e.g. 15/15 PASS
   hw-smoke         `make timing hw-smoke` at this commit, e.g. 5/5 seeds 11/11
   test-hw-upgrade  `make test-hw-upgrade OLD=<previous release> NEW=<this dist>`,
-                   e.g. from v0.1.0, 29 PASS 0 FAIL 0 SKIP
+                   e.g. from v0.1.0, 29 PASS, 0 FAIL, 0 SKIP
   compatibility    whether the previous release's applications and slots still work;
                    if not, why the minor or major version went up
 and replace the last line with the release notes in Markdown.
 """
 
 
+# A signed tag's %(contents) ends with its signature; it is not part of the notes
+SIGNATURE = re.compile(r"^-----BEGIN [A-Z ]*SIGNATURE-----$")
+
+
 def split(message):
     """(version lines, field lines, notes): paragraphs are separated by blank lines; the
     notes are everything after the fields, with their own blank lines."""
     lines = message.splitlines()
+    for k, line in enumerate(lines):
+        if SIGNATURE.match(line.strip()):
+            del lines[k:]
+            break
     paras: list[list[str]] = []
     i = 0
     while len(paras) < 2 and i < len(lines):
@@ -128,6 +136,9 @@ def verify(dist, message, commit, allow_dirty=False):
         raise Mismatch("the dist was built from a tree with uncommitted changes")
     if m["git_sha"] != commit:
         raise Mismatch(f"the dist is of {m['git_sha']}, the tag points to {commit}")
+    version = split(message)[0]
+    if len(version) != 1 or not version[0].startswith("v"):
+        raise Mismatch("tag message: the first paragraph must be the version alone, then a blank line")
     fields = parse(message)
     for key, _ in FIELDS:
         value = fields.get(key, "")
@@ -162,9 +173,9 @@ def selftest(dist):
     body = "## Notes\n\ntest-hw: a line in the notes is not a field\n\nsecond paragraph"
     filled = template(dist, "v0.0.0-selftest").replace(NOTES_FILL, body).replace(FILL, "selftest")
     verify(dist, filled, m["git_sha"], allow_dirty=True)
-    published = notes(filled, m["git_sha"])
+    published = notes(filled + "-----BEGIN PGP SIGNATURE-----\n\nxyz\n-----END PGP SIGNATURE-----\n", m["git_sha"])
     fence = published.split("```")
-    if len(fence) != 3 or "test-hw-upgrade: selftest" not in fence[1] or body not in fence[2]:
+    if len(fence) != 3 or "test-hw-upgrade: selftest" not in fence[1] or body not in fence[2] or "xyz" in published:
         raise Mismatch(f"selftest: notes didn't put the fields in a code block and the notes after it:\n{published}")
     bad = facts["pack_sha256"][:-1] + ("0" if facts["pack_sha256"][-1] != "0" else "1")
     for broken, why in (
@@ -175,6 +186,7 @@ def selftest(dist):
         (filled.replace("test-hw-upgrade: selftest\n", ""), "a missing test-hw-upgrade"),
         (filled.replace("compatibility: selftest", f"compatibility: {FILL}"), "an unfilled compatibility"),
         (filled.replace("test-hw: selftest\n", ""), "test-hw only in the notes"),
+        (filled.replace("v0.0.0-selftest\n\n", "v0.0.0-selftest\n"), "no blank line after the version"),
     ):
         try:
             verify(dist, broken, m["git_sha"], allow_dirty=True)

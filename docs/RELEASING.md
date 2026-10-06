@@ -48,7 +48,7 @@ bitstream; its tool must work with the candidate's Boot Manager and the candidat
 with its Boot Manager; and its bitstream must install the candidate's Boot Manager from
 slot 0 (skipped when the Boot Manager version is unchanged). It overwrites SD slots 0-4
 and leaves the candidate's bitstream in SRAM. Its result goes in the tag message next to
-test-hw and hw-smoke (e.g. `test-hw-upgrade: from v0.1.0, 29 PASS 0 FAIL 0 SKIP`).
+test-hw and hw-smoke (e.g. `test-hw-upgrade: from v0.1.0, 29 PASS, 0 FAIL, 0 SKIP`).
 
 ## 3. Tag
 
@@ -61,7 +61,8 @@ git push origin vX.Y.Z
 ```
 
 The message is three parts separated by blank lines: the version, the fields (one
-`key: value` per line), and the release notes in Markdown. Fill in every `<fill in>`:
+`key: value` per line), and the release notes in Markdown (`--cleanup=verbatim` keeps
+their `#` headings, which git would otherwise strip as comments). Fill in every `<fill in>`:
 - `test-hw`, `hw-smoke` and `test-hw-upgrade`: the board results of step 2.
 - `compatibility`: whether the previous release's applications and slots keep working
   (test-hw-upgrade is the evidence); if they don't, why the minor or major version went up.
