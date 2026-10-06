@@ -452,6 +452,7 @@ Short tests run on Icarus, long SoC/GLS runs on Verilator (`SIM_UNIT` / `SIM_SOC
 | **Static Timing (STA)**| `make sta` | ~15 sec | Exhaustive post-PnR timing analysis, Fmax verification, and critical path breakdown (`build/synth/soc_sta.json`) |
 | **Real Hardware** | `make test-hw` | ~60 sec | Automated physical hardware execution on Tang Nano 9K via `scripts/test_hardware.py` (15 tests) |
 | **Real Hardware, Release Tree** | `make test-hw-dist DIST=<dir>` | ~60 sec | The same 15 tests with a `make dist` tree's bitstream, Boot Manager and demos, nothing rebuilt: how a release candidate is tested ([`docs/RELEASING.md`](docs/RELEASING.md)) |
+| **Real Hardware, Upgrade** | `make test-hw-upgrade OLD=<dir> NEW=<dir>` | ~5 min | From a previous release's `make dist` tree to a candidate's (`scripts/test_hw_upgrade.py`): the old release's slots and `vux_tool.py` with the new bitstream and Boot Manager and the reverse, and the old bitstream installing the new Boot Manager from slot 0; overwrites SD slots 0-4, leaves the new bitstream in SRAM |
 | **Board UART Interrupts** | `make test-hw-irq-echo` | ~20 sec | The interrupt-driven UART echo on the board (`scripts/hw_irq_echo.py`): flashed to slot 3 through the running Boot Manager, five 256-byte lines, then the FPGA is reconfigured from `build/synth/pack.fs` |
 
 ### Real Hardware Test Suite (15 Automated Checks)

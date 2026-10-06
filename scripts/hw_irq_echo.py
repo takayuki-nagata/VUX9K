@@ -8,7 +8,8 @@ flashes it to SD slot 3 through the running Boot Manager, boots it, and sends bu
 longer than both 32-byte UART FIFOs; each must come back upper-cased with
 "rx=<n> drop=0 err=0" (no byte lost in the app or by the UART). The application never
 returns to the Boot Manager, so the FPGA is reconfigured from --pack-fs at the end.
-Slot 3 is otherwise only used by test_hardware.py's test 12, which overwrites it.
+Slot 3 is otherwise only used by test_hardware.py's test 12 and test_hw_upgrade.py,
+which overwrite it.
 """
 
 import argparse

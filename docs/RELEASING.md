@@ -29,6 +29,9 @@ tar -xzf build/candidate/vux9k-dist.tar.gz -C build/candidate    # -> build/cand
 
 ```sh
 make test-hw-dist DIST=build/candidate/dist
+gh release download <previous tag> -p 'vux9k-*-linux-x86_64.tar.gz' -D build/previous
+tar -xzf build/previous/vux9k-*-linux-x86_64.tar.gz -C build/previous
+make test-hw-upgrade OLD=build/previous/vux9k-<previous tag> NEW=build/candidate/dist
 git switch --detach $SHA && make timing hw-smoke
 ```
 
@@ -39,11 +42,19 @@ suite. The candidate's seed is one of them (`MANIFEST.json`); if the local `pack
 the same SHA-256 as the candidate's, hw-smoke tested exactly its placement (note it in
 the tag).
 
+`test-hw-upgrade` (`scripts/test_hw_upgrade.py`) tests the way up from the previous
+release: its slots, written with its own `vux_tool.py`, must boot under the candidate's
+bitstream; its tool must work with the candidate's Boot Manager and the candidate's tool
+with its Boot Manager; and its bitstream must install the candidate's Boot Manager from
+slot 0 (skipped when the Boot Manager version is unchanged). It overwrites SD slots 0-4
+and leaves the candidate's bitstream in SRAM. Add its result to the tag message next to
+test-hw and hw-smoke (e.g. `test-hw-upgrade: from v0.1.0, 28 PASS 0 FAIL`).
+
 ## 3. Tag
 
 ```sh
 python3 scripts/release_check.py template build/candidate/dist --version v0.1.0 > build/tag-message.txt
-$EDITOR build/tag-message.txt      # fill in test-hw and hw-smoke
+$EDITOR build/tag-message.txt      # fill in test-hw and hw-smoke, add test-hw-upgrade
 git tag -a v0.1.0 $SHA -F build/tag-message.txt --cleanup=verbatim
 git push origin v0.1.0
 ```

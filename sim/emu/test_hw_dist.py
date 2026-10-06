@@ -5,12 +5,16 @@
 
 `test_hardware.py --dist DIR` flashes slot 0 relative to the Boot Manager it tests, so the
 version must be the one DIR ships (MANIFEST.json), not the working tree's main.rs: a dist
-of another release has another Boot Manager.
+of another release has another Boot Manager. `test_hw_upgrade.py` (previous release ->
+candidate) judges each load by the startup output of that boot only, although the bridge may
+still hand over the previous image's lines first.
 """
 
 import json
 import os
 import sys
+
+import pytest
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "scripts")):
@@ -18,6 +22,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "scripts")):
         sys.path.insert(0, _p)
 
 import test_hardware  # noqa: E402
+import test_hw_upgrade  # noqa: E402
 
 
 def make_dist(tmp_path, bm_version):
@@ -57,3 +62,43 @@ def test_dist_boot_manager_version_comes_from_the_manifest(tmp_path, monkeypatch
 def test_without_dist_the_version_comes_from_main_rs(monkeypatch):
     seen = run_main(monkeypatch, [])
     assert seen["bm"] == test_hardware.boot_manager_version()
+
+
+BANNER_12 = "\n=====\n  VUX9K Dual-ISA RISC-V / Hack SoC Boot Manager (v12)\n=====\n\nAvailable Commands:\nvux> "
+BANNER_13 = BANNER_12.replace("(v12)", "(v13)")
+UPDATE_13 = (
+    "\n[UPDATE] Verified valid Boot Manager update (v13, CRC32: 0x1234ABCD). Auto-updating Lower I-RAM"
+    " via Resident Loader...\n\n\n[UPDATE] Booted newly updated Boot Manager!\n\n"
+)
+# what the bridge may still hand over from the image before the load
+STALE_UPDATE = UPDATE_13 + BANNER_13 + "1\n[RL] Slot 1\n[Rust App] done\n"
+
+
+@pytest.mark.parametrize(
+    "text, version, update_to, ok",
+    [
+        (BANNER_12, 12, None, True),
+        (BANNER_12, 13, None, False),
+        (UPDATE_13 + BANNER_13, 13, None, False),  # an update where none may happen
+        (UPDATE_13 + BANNER_13, 13, 13, True),
+        (BANNER_13, 13, 13, False),  # the newer one already in BRAM: nothing installed
+        (UPDATE_13.replace("v13,", "v14,") + BANNER_13, 13, 13, False),
+        (STALE_UPDATE + BANNER_12, 12, None, True),  # the previous boot's update doesn't count
+        (STALE_UPDATE + UPDATE_13 + BANNER_13, 13, 13, True),
+        (STALE_UPDATE + BANNER_12[:-5], 12, None, False),  # no prompt yet
+    ],
+)
+def test_upgrade_startup_check(text, version, update_to, ok):
+    seg = test_hw_upgrade.startup_segment(text)
+    assert test_hw_upgrade.check_startup(seg, version, update_to)[0] is ok
+
+
+def test_upgrade_loads_each_tool_as_its_own_module():
+    path = os.path.join(REPO_ROOT, "tools", "vux_tool.py")
+    a = test_hw_upgrade.load_tool(path, "vux_tool_test_a")
+    b = test_hw_upgrade.load_tool(path, "vux_tool_test_b")
+    try:
+        assert a is not b and a.flash_slot is not b.flash_slot
+        assert a.build_vux9_image(b"\x13\0\0\0", slot=1)[0] == b.build_vux9_image(b"\x13\0\0\0", slot=1)[0]
+    finally:
+        del sys.modules["vux_tool_test_a"], sys.modules["vux_tool_test_b"]

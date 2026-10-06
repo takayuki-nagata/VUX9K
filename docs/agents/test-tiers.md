@@ -4,6 +4,8 @@ paths:
   - ".github/workflows/ci.yml"
   - "sim/integration/**"
   - "tools/vux_tool.py"
+  - "scripts/test_hardware.py"
+  - "scripts/test_hw_upgrade.py"
   - "firmware/boot_manager/**"
   - "firmware/resident_loader/**"
 ---
@@ -52,3 +54,20 @@ layout change (as opposed to content change), even though the fast tests all
 pass, precisely because it is the one test exercising the longest real
 UART/SD interaction chain and is therefore most likely to surface a subtle
 path- or timing-related regression the fast tests can't reach.
+
+## The board tier: what runs on the Tang Nano 9K
+
+None of these run in CI; they need the board. The host setup they check is in
+clock-and-board.md, "Board UART output that is noise: ModemManager and the bridge's shared baud rate".
+- `make hw-smoke` (after `make timing`): `hw_test` on every routed seed's placement. After
+  RTL changes, before flashing.
+- `make test-hw`: the 15-test suite (`scripts/test_hardware.py`) on a local build;
+  `make test-hw-dist DIST=<dir>` the same on a `make dist` tree, Boot Manager version from
+  its `MANIFEST.json`.
+- `make test-hw-upgrade OLD=<dir> NEW=<dir>` (`scripts/test_hw_upgrade.py`; OLD the
+  previous release's dist, NEW the candidate's): the previous release's slots and
+  `vux_tool.py` with the candidate's bitstream and Boot Manager and the reverse, and the
+  old bitstream installing the new Boot Manager from slot 0. A release gate
+  (docs/RELEASING.md, step 2); also worth a run after changing the slot header, the `w`
+  protocol, the mailbox or the self-update. It overwrites SD slots 0-4.
+- `make test-hw-irq-echo`: the Zephyr interrupt-driven UART echo (zephyr.md).
