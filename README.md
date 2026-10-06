@@ -1,5 +1,17 @@
 # VUX9K
 
+[![CI](https://img.shields.io/github/actions/workflow/status/takayuki-nagata/VUX9K/ci.yml?branch=main&event=push&label=CI)](https://github.com/takayuki-nagata/VUX9K/actions/workflows/ci.yml?query=branch%3Amain+event%3Apush)
+[![nightly](https://img.shields.io/github/actions/workflow/status/takayuki-nagata/VUX9K/ci.yml?branch=main&event=schedule&label=nightly)](https://github.com/takayuki-nagata/VUX9K/actions/workflows/ci.yml?query=event%3Aschedule)
+[![release](https://img.shields.io/github/v/release/takayuki-nagata/VUX9K)](https://github.com/takayuki-nagata/VUX9K/releases/latest)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue)](#license)
+<br>
+[![HDL: Veryl](https://img.shields.io/badge/HDL-Veryl-orange)](https://github.com/veryl-lang/veryl)
+[![ISA: RISC-V RV32I](https://img.shields.io/badge/ISA-RISC--V%20RV32I-283272?logo=riscv)](https://riscv.org/)
+[![ISA: Nand2Tetris Hack](https://img.shields.io/badge/ISA-Nand2Tetris%20Hack-555555)](https://www.nand2tetris.org/)
+[![board: Tang Nano 9K](https://img.shields.io/badge/board-Tang%20Nano%209K%20%28GW1NR--9%29-blue)](https://wiki.sipeed.com/hardware/en/tang/Tang-Nano-9K/Nano-9K.html)
+[![RTOS: Zephyr](https://img.shields.io/badge/RTOS-Zephyr-7929d2?logo=zephyrproject)](https://www.zephyrproject.org/)
+[![firmware: Rust](https://img.shields.io/badge/firmware-Rust-b7410e?logo=rust)](https://www.rust-lang.org/)
+
 **VUX9K** (Veryl Unified eXecution on Tang Nano 9K) is an open-source **Dual-ISA (RISC-V RV32I & Nand2Tetris Hack 16-bit) System-on-Chip (SoC)** written 100% in **[Veryl](https://github.com/veryl-lang/veryl)** targeting the **Sipeed Tang Nano 9K** FPGA board (Gowin GW1NR-9).
 
 The SoC features a multi-cycle Unified CPU core capable of seamlessly executing both standard **32-bit RISC-V RV32I** instructions and **16-bit Nand2Tetris Hack** machine code, integrated with a hardware MicroSD SPI master (3 MHz after card init), full-duplex UART with a receive interrupt, 64-bit CLINT timer, GPIO, and an on-chip **Bare-Metal Rust Boot Manager** capable of loading and flashing multi-sector dual-ISA images from the MicroSD card (MBR gap).
