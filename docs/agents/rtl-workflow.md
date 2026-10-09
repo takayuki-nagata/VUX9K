@@ -51,6 +51,13 @@ sides flattened below `<top>` (~6 min per top on 4 cores). Notes:
   sides; R3–R5's extractions prove equivalent with no hand-written exclusions.
   `EQY_NOMATCH="<patterns>"` still adds `gold-/gate-nomatch` lines if ever needed
   (excluding names only removes cut points: partitions grow, the proof stays sound).
+- A refactor that adds a `<top>` input whose constant value reproduces the old
+  behavior (a ready input that is 1 everywhere so far) is proven with
+  `EQY_GATE_TIE="instr_ready=1 data_ready=1"` (`--gate-tie`): on the gate side
+  only, each named input stops being a port and is driven by the constant
+  (Yosys `delete -port` + `connect -set`), so the ports match. That proves the
+  tied design equal to the old one; what it does with the input at other values
+  is the next, tested commit's job.
 - Proofs are local to each partition, so a change that is only unreachable
   because of how *another* block drives it (e.g. `fifo_sync` accepting a write
   on an empty-and-read cycle, which `uart_controller` never produces) still

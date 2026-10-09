@@ -493,12 +493,15 @@ sim-sd-quirks: veryl firmware
 # Formal equivalence of the working tree's RTL against EQY_BASE (scripts/run_eqy.py), for
 # behavior-preserving refactors: `make eqy EQY_BASE=<commit> EQY_TOP=unified_cpu|soc_top`.
 # soc_ram is a black box on both sides. Not part of test-sim (it depends on the base commit).
+# EQY_GATE_TIE="name=1 ..." ties new top inputs of the gate to constants (run_eqy.py --gate-tie).
 EQY_BASE ?= HEAD
 EQY_TOP ?= unified_cpu
 EQY_NOMATCH ?=
+EQY_GATE_TIE ?=
 
 eqy: veryl
-	$(PYTHON) scripts/run_eqy.py --base $(EQY_BASE) --top $(EQY_TOP) --veryl $(VERYL) $(if $(EQY_NOMATCH),--nomatch $(EQY_NOMATCH))
+	$(PYTHON) scripts/run_eqy.py --base $(EQY_BASE) --top $(EQY_TOP) --veryl $(VERYL) $(if $(EQY_NOMATCH),--nomatch $(EQY_NOMATCH)) \
+		$(if $(EQY_GATE_TIE),--gate-tie $(EQY_GATE_TIE))
 
 # Mutation testing with mcy (scripts/mcy/mutation.py): manual only, not in any tier.
 # `make mutation MCY_TOP=rv32i_alu` (or all); results in build/mcy/<module>/summary.md

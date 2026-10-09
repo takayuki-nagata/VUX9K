@@ -19,6 +19,14 @@ $readmemh() initial block needs firmware.hex, and its RAM arrays are too large
 to prove anything about usefully. Changes inside soc_ram are therefore not
 checked; its ports must match.
 
+--gate-tie NAME=VALUE (make eqy EQY_GATE_TIE="NAME=VALUE ...") is for a refactor
+that adds a top input whose constant value reproduces the old behavior (e.g. a
+ready input that is 1 everywhere the design is used so far). On the gate side
+only, the port is removed and the net of that name is driven by the constant, so
+both sides have the same ports. That proves the tied design equal to the old
+one; what the design does with the input at other values is untested here and
+belongs to the next, tested commit.
+
 Everything lands in build/eqy/: gold-<sha>/ (cached per base commit) and
 <top>/ (snapshot of both sides, the .eqy file and eqy's work directory).
 Exit code: 0 when equivalent, non-zero otherwise.
@@ -27,6 +35,7 @@ Exit code: 0 when equivalent, non-zero otherwise.
 import argparse
 import io
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -89,9 +98,51 @@ def snapshot(src_root: Path, dst: Path) -> list[Path]:
     return out
 
 
-def eqy_config(top: str, gold: list[Path], gate: list[Path], depth: int, nomatch: list[str]) -> str:
-    def side(name, files):
+def parse_ties(ties: list[str]) -> dict[str, str]:
+    """NAME=VALUE pairs of --gate-tie; VALUE is a Verilog constant, 0/1 meaning 1'b0/1'b1."""
+    out = {}
+    for tie in ties:
+        name, sep, value = tie.partition("=")
+        if not sep or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) or not value:
+            raise SystemExit(f"run_eqy.py: --gate-tie wants NAME=VALUE, got {tie!r}")
+        if value in ("0", "1"):
+            value = f"1'b{value}"
+        if not re.fullmatch(r"[0-9]+'[bdh][0-9a-fA-F_]+", value):
+            raise SystemExit(f"run_eqy.py: --gate-tie {name}: {value!r} is not a constant like 1'b1 or 4'h3")
+        out[name] = value
+    return out
+
+
+def check_ties(top: str, files: list[Path], ties: dict[str, str]) -> None:
+    """Each tied name must be an input of <top> in the gate's generated .sv."""
+    header = re.compile(rf"^module {re.escape(top)}\b.*?^\);", re.MULTILINE | re.DOTALL)
+    for f in files:
+        match = header.search(f.read_text())
+        if match:
+            break
+    else:
+        raise SystemExit(f"run_eqy.py: module {top} not found in the gate RTL")
+    for name in ties:
+        port = re.search(rf"^\s*(input|output|inout)\b[^\n]*?\b{name}\s*,?\s*(//.*)?$", match.group(0), re.MULTILINE)
+        if not port:
+            raise SystemExit(f"run_eqy.py: --gate-tie {name}: {top} (gate) has no port {name}")
+        if port.group(1) != "input":
+            raise SystemExit(f"run_eqy.py: --gate-tie {name}: {top}'s port {name} is an {port.group(1)}, not an input")
+
+
+def eqy_config(
+    top: str, gold: list[Path], gate: list[Path], depth: int, nomatch: list[str], ties: dict[str, str]
+) -> str:
+    def side(name, files, ties):
         blackboxes = " ".join(BLACKBOX)
+        # A tied input stops being a port: `delete -port` turns it into a plain wire
+        # (its uses inside the flattened top stay connected to it) and `connect -set`
+        # drives that wire with the constant. Both work on the current module, hence
+        # the `cd`; the assert repeats check_ties() inside Yosys.
+        tie = "".join(
+            f"cd {top}\nselect -assert-count 1 i:{port}\ndelete -port {port}\nconnect -set {port} {value}\ncd ..\n"
+            for port, value in ties.items()
+        )
         return (
             f"[{name}]\n"
             f"read_verilog -sv {' '.join(str(f) for f in files)}\n"
@@ -99,8 +150,7 @@ def eqy_config(top: str, gold: list[Path], gate: list[Path], depth: int, nomatch
             f"hierarchy -top {top} -purge_lib\n"  # drop black boxes <top> doesn't instantiate
             # Flattened, so changes to submodule interfaces (a removed port, logic moved
             # between modules) are internal nets rather than mismatched module boundaries
-            f"prep -flatten -top {top}\n"
-            "memory_map\n"
+            f"prep -flatten -top {top}\n" + tie + "memory_map\n"
         )
 
     # Names eqy must not use to pair up gold and gate nets, e.g. the ports of a newly
@@ -114,9 +164,9 @@ def eqy_config(top: str, gold: list[Path], gate: list[Path], depth: int, nomatch
     # names of a net stay one net on both sides.
     options = "\n[options]\ninsbuf off\n"
     return (
-        side("gold", gold)
+        side("gold", gold, {})
         + "\n"
-        + side("gate", gate)
+        + side("gate", gate, ties)
         + options
         + match
         + f"\n[strategy sby]\nuse sby\ndepth {depth}\nengine smtbmc bitwuzla\n"
@@ -136,7 +186,16 @@ def main():
         default=[],
         help="Net-name patterns not to match between gold and gate (e.g. 'wr_decode.*' for a new instance)",
     )
+    parser.add_argument(
+        "--gate-tie",
+        nargs="*",
+        default=[],
+        metavar="NAME=VALUE",
+        help="Gate-only top input to remove and drive with a constant (e.g. instr_ready=1), "
+        "for a refactor that adds an input whose constant value keeps the old behavior",
+    )
     args = parser.parse_args()
+    ties = parse_ties(args.gate_tie)
     if isinstance(sys.stdout, io.TextIOWrapper):
         sys.stdout.reconfigure(line_buffering=True)  # keep our lines in order with eqy's output
 
@@ -149,9 +208,12 @@ def main():
     work.mkdir(parents=True, exist_ok=True)
     gold = snapshot(gold_src, work / "gold")
     gate = snapshot(gate_src, work / "gate")
+    check_ties(args.top, gate, ties)
     config = work / f"{args.top}.eqy"
-    config.write_text(eqy_config(args.top, gold, gate, args.depth, args.nomatch))
+    config.write_text(eqy_config(args.top, gold, gate, args.depth, args.nomatch, ties))
 
+    if ties:
+        print(f"=== eqy: gate inputs tied: {', '.join(f'{n}={v}' for n, v in ties.items())} ===")
     print(f"=== eqy: {args.top} of the working tree vs {args.base} (log: {work / args.top / 'logfile.txt'}) ===")
     result = subprocess.run(["eqy", "-f", "-j", str(args.jobs), config.name], cwd=work)
     verdict = "EQUIVALENT" if result.returncode == 0 else "NOT PROVEN EQUIVALENT"
