@@ -61,6 +61,8 @@ UNIT_GLS = [
     ("unified_cpu", "test_rv32i_branches"),
     ("uart_controller", "test_uart_controller"),
     ("auto_mode_detector", "test_auto_mode_detector"),
+    ("soc_xmem_stub", "test_soc_xmem_stub"),  # its block RAM (SPX9) and byte-lane read-modify-write
+    ("soc_xmem_bridge", "test_soc_xmem_bridge"),
 ]
 
 # Full SoC, all on the tb_soc_top.sv clock wrapper (set up via sim/integration/soc_env.py)

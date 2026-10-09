@@ -15,6 +15,11 @@ details) go to console.txt.
 
 Environment: MAX_CYCLES (default 2000000); TRACE=1 logs PC/instruction every cycle;
 WAITS=1 sets the testbench's wait_mode (wait cycles on both buses, run_riscv_tests.py --waits).
+With WAITS=1 the verdict line ends with the testbench's wait counters ("waits: instr=N
+data=M", cycles the CPU spent waiting in FETCH / in a data access), and a run in which no
+FETCH waited is a FAIL whatever tohost says: wait_mode didn't reach the CPU. A test may
+make too few data accesses for one of them to wait, so run_riscv_tests.py checks the data
+count over the whole suite.
 """
 
 import os
@@ -58,7 +63,8 @@ async def run_program(dut):
     max_cycles = int(os.environ.get("MAX_CYCLES", "2000000"))
     cocotb.start_soon(Clock(dut.clk, PERIOD_NS, unit="ns").start())
 
-    dut.wait_mode.value = int(os.environ.get("WAITS", "") not in ("", "0"))
+    waits = os.environ.get("WAITS", "") not in ("", "0")
+    dut.wait_mode.value = int(waits)
     dut.rst.value = 0  # active-low
     await ClockCycles(dut.clk, 2)
     await FallingEdge(dut.clk)
@@ -82,6 +88,11 @@ async def run_program(dut):
             verdict = f"[FAIL] tohost=0x{code:08x} (TESTNUM={code >> 1}) at cycle {cycles}"
     else:
         verdict = f"[FAIL] Simulation timeout after {max_cycles} cycles at PC={int(dut.pc_out.value):08x}"
+    if waits:
+        instr_waits, data_waits = int(dut.instr_waits.value), int(dut.data_waits.value)
+        if instr_waits == 0:
+            verdict = "[FAIL] wait_mode set but no FETCH waited (tohost not looked at)"
+        verdict += f" waits: instr={instr_waits} data={data_waits}"
     dut._log.info(verdict)
     write_verdict(verdict)
     if printed:

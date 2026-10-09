@@ -39,7 +39,10 @@ self-test is scripts/act4/selftest_fail.S; their known gaps are EXPECTED_FAILURE
 `--waits` (RTL or --gls, either suite) sets the testbench's wait_mode: instr_ready and
 data_ready drop on pseudo-random cycles, so every test also runs through the CPU's stall
 logic. Its run directories get a -waits suffix (runs-waits/, runs-act4-gls-waits/, ...),
-and the cycle limits are WAITS_CYCLE_FACTOR times longer.
+and the cycle limits are WAITS_CYCLE_FACTOR times longer. Each verdict carries the
+testbench's wait counters: a test in which no FETCH waited fails (hex_runner.py), and the
+run fails if no data access waited in the whole suite, so a wait_mode that doesn't reach
+the CPU can't pass as a plain run.
 """
 
 import argparse
@@ -388,12 +391,21 @@ def report(label, names, results, expected, all_names):
     stale = [n for n in expected if all_names is not None and n not in all_names]
     for name in stale:
         print(f"[ERROR] expected-failure entry {name} does not match any test")
+    no_data_waits = WAITS and data_waits(results) == 0
+    if no_data_waits:
+        print("[ERROR] --waits: no data access waited in any test (wait_mode not reaching data_ready?)")
 
     total = sum(counts.values())
     print("\n" + "=" * 60)
     print(f"{label} results: " + ", ".join(f"{v} {k}" for k, v in counts.items()) + f" (total {total})")
     print("=" * 60)
-    return total > 0 and counts["FAIL"] == 0 and counts["XPASS"] == 0 and not stale
+    return total > 0 and counts["FAIL"] == 0 and counts["XPASS"] == 0 and not stale and not no_data_waits
+
+
+def data_waits(results):
+    """The data wait cycles of all results (hex_runner.py's "waits: instr=N data=M")"""
+    found = (re.search(r"waits: instr=\d+ data=(\d+)", detail) for _, detail in results)
+    return sum(int(m.group(1)) for m in found if m)
 
 
 def run_suite(only=None, jobs=1):

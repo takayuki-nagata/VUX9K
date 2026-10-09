@@ -1,9 +1,9 @@
 // Copyright (c) 2026 Takayuki Nagata
 // SPDX-License-Identifier: MIT
 
-// Stand-in for the PSRAM controller behind soc_xmem_bridge, until the PSRAM replaces it:
+// The wait-state window's memory behind soc_xmem_bridge, a stand-in until the PSRAM:
 // a 2 KB RAM (soc_pkg::XMEM_WORDS words, repeating across the window) with exactly the
-// controller's request/response contract (psram_controller, docs/integration.md §3):
+// request/response contract of the PSRAM controller the window will be replaced with:
 // - a request is taken in a cycle with req_valid && req_ready, and the requester holds
 //   req_valid and the request fields unchanged until then;
 // - req_ready is high while idle and low while a request is in flight;

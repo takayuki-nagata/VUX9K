@@ -49,15 +49,22 @@ sides flattened below `<top>` (~6 min per top on 4 cores). Notes:
   partitioning, or false mismatches in whole groups (`reg_file.rs1_data.*`,
   `rv_decode.imm_reg.*`). With it off, all names of a net stay one net on both
   sides; R3–R5's extractions prove equivalent with no hand-written exclusions.
-  `EQY_NOMATCH="<patterns>"` still adds `gold-/gate-nomatch` lines if ever needed
-  (excluding names only removes cut points: partitions grow, the proof stays sound).
+  `EQY_NOMATCH="<patterns>"` adds `gold-/gate-nomatch` lines where a name still
+  misleads (excluding names only removes cut points: partitions grow, the proof stays
+  sound); the ready refactor below needed one.
 - A refactor that adds a `<top>` input whose constant value reproduces the old
   behavior (a ready input that is 1 everywhere so far) is proven with
   `EQY_GATE_TIE="instr_ready=1 data_ready=1"` (`--gate-tie`): on the gate side
   only, each named input stops being a port and is driven by the constant
   (Yosys `delete -port` + `connect -set`), so the ports match. That proves the
   tied design equal to the old one; what it does with the input at other values
-  is the next, tested commit's job.
+  is the next, tested commit's job. The ready refactor also needed
+  `EQY_NOMATCH="pc_select.mem_wait"`: with the inputs tied, opt_merge shares the
+  FSM's `state == MEM_WAIT` compare with the net of that name in the gate only, and
+  as a cut point it became a free input of partitions `r_store_we`/`r_load_we`, which
+  then failed. And `auto_mode_detector` got an enable input rather than a muxed
+  `first_instr`: the mux split the `instr_in` alias gold keeps ("conflicting matches
+  for gold bit \instr_in[0] … \mode_detect.first_instr[0]"), which no exclusion fixes.
 - Proofs are local to each partition, so a change that is only unreachable
   because of how *another* block drives it (e.g. `fifo_sync` accepting a write
   on an empty-and-read cycle, which `uart_controller` never produces) still

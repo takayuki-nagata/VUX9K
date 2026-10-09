@@ -21,6 +21,7 @@ fifo = 100.0
 lsu = 100.0
 npc = 100.0
 sd = 100.0
+stall = 100.0
 trap = 100.0
 uart_rx = 100.0
 xbridge = 100.0

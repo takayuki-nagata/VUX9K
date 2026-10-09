@@ -9,7 +9,8 @@
 // latch, a console word next to it (the ACT4 tests print their failure details there)
 // and a free-running mtime for the `time` CSR, counting cycles as timer_core does.
 // With wait_mode set, an LFSR also holds instr_ready/data_ready low on some cycles
-// (make test-isa-waits), so the suites run through the CPU's stall logic.
+// (make test-isa-waits), so the suites run through the CPU's stall logic; instr_waits/
+// data_waits count the cycles the CPU actually waited, which the cocotb side checks.
 //
 // The program comes from `program.hex` in the simulator's cwd (a bare name, like
 // soc_ram's firmware.hex): run_riscv_tests.py links each test's image there, in
@@ -25,6 +26,8 @@ module tb_hex_runner (
 
     console_byte : output logic<8> , // the last byte stored to CONSOLE_ADDR
     console_count: output logic<32>, // bytes stored there so far (the cocotb side follows it)
+    instr_waits  : output logic<32>, // cycles in FETCH with instr_ready low
+    data_waits   : output logic<32>, // cycles in a data access (MEM_WAIT) with data_ready low
     pc_out       : output logic<32>, // for tracing
     instr_in     : output logic<32>, // for tracing
 ) {
@@ -43,6 +46,8 @@ module tb_hex_runner (
     var mtime      : logic<64>;
     var instr_ready: logic    ;
     var data_ready : logic    ;
+    var fetch_req  : logic    ;
+    var data_req   : logic    ;
 
     #[allow(initial_assign)]
     var ram: logic<32> [RAM_WORDS];
@@ -76,9 +81,9 @@ module tb_hex_runner (
         mem_read_req   : _    ,
         mem_byte_we           ,
         active_mode    : _    ,
-        fetch_req      : _    ,
+        fetch_req             ,
         fetch_addr     : _    ,
-        data_req       : _    ,
+        data_req              ,
     );
 
     // Wait cycles (wait_mode): a 16-bit Fibonacci LFSR (taps 16,14,13,11, period 65535)
@@ -97,13 +102,21 @@ module tb_hex_runner (
 
     always_ff (clk, rst) {
         if_reset {
-            lfsr       = 16'hACE1;
-            instr_wait = 2'd0;
-            data_wait  = 2'd0;
+            lfsr        = 16'hACE1;
+            instr_wait  = 2'd0;
+            data_wait   = 2'd0;
+            instr_waits = 32'd0;
+            data_waits  = 32'd0;
         } else {
             lfsr       = {lfsr[14:0], lfsr[15] ^ lfsr[13] ^ lfsr[12] ^ lfsr[10]};
             instr_wait = if instr_ready ? 2'd0 : instr_wait + 2'd1;
             data_wait  = if data_ready ? 2'd0 : data_wait + 2'd1;
+            if fetch_req && !instr_ready {
+                instr_waits = instr_waits + 32'd1;
+            }
+            if data_req && !data_ready {
+                data_waits = data_waits + 32'd1;
+            }
         }
     }
 

@@ -469,6 +469,8 @@ synth-units: veryl
 	$(YOSYS) -p "read_verilog -sv $(CPU_RTL_SRCS); synth_gowin -top unified_cpu $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/unified_cpu_syn.v"
 	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/uart/clk_timer.sv $(VERYL_OUT_DIR)/soc/uart/shift_registers.sv $(VERYL_OUT_DIR)/soc/uart/fifo_sync.sv $(VERYL_OUT_DIR)/soc/uart/uart_tx.sv $(VERYL_OUT_DIR)/soc/uart/uart_rx.sv $(VERYL_OUT_DIR)/soc/uart/uart_controller.sv; synth_gowin -top uart_controller $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/uart_controller_syn.v"
 	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_pkg.sv $(VERYL_OUT_DIR)/soc/cpu/auto_mode_detector.sv; synth_gowin -top auto_mode_detector $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/auto_mode_detector_syn.v"
+	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/soc_pkg.sv $(VERYL_OUT_DIR)/soc/soc_xmem_stub.sv; synth_gowin -top soc_xmem_stub $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/soc_xmem_stub_syn.v"
+	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/soc_xmem_bridge.sv; synth_gowin -top soc_xmem_bridge $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/soc_xmem_bridge_syn.v"
 
 # The unit tests with another random seed each day (test-slow); the seed is in the log
 sim-unit-random: veryl

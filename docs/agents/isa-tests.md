@@ -89,7 +89,11 @@ are easy to break without noticing:
   instruction also goes through the CPU's stall logic. The memory itself doesn't wait (the
   CPU holds its addresses while it waits); RAM, `tohost` and the console take a store only
   when `mem_write && data_ready`, since a waiting store holds `mem_write`. `wait_mode` = 0
-  is the plain harness. Directed stall cases at the ports: `sim/unit/test_unified_cpu_stall.py`.
+  is the plain harness, so a `--waits` run that never waited would pass looking like one:
+  the tb counts the cycles the CPU waited (`instr_waits` in FETCH, `data_waits` in a data
+  access), a test with no FETCH wait fails, and the run fails if no data access waited in
+  any test (one test may make too few accesses to hit one). Directed stall cases at the
+  ports: `sim/unit/test_unified_cpu_stall.py`.
 
 ## `make test-act4`: riscv-arch-test (ACT4) on the same harness
 

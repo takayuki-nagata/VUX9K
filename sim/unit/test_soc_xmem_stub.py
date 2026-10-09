@@ -1,11 +1,12 @@
 # Copyright (c) 2026 Takayuki Nagata
 # SPDX-License-Identifier: MIT
 
-"""soc_xmem_stub: the memory controller's request/response contract (the module's header,
-psram_controller docs/integration.md §3) with soc_pkg's latencies: acceptance only while
-idle, one rsp_valid per request after XMEM_READ_LATENCY / XMEM_WRITE_LATENCY cycles,
-back-to-back requests in the response cycle, byte strobes, the 2 KB repeating; then random
-traffic against a model, checked every cycle."""
+"""soc_xmem_stub: the request/response contract of the PSRAM controller the window will be
+replaced with (the module's header), with soc_pkg's latencies: a request is held until
+accepted and accepted only while idle; one response per request, rsp_valid for one cycle,
+XMEM_READ_LATENCY (35) cycles after acceptance for a read and XMEM_WRITE_LATENCY (34) for a
+write; req_ready high again in the response cycle (back-to-back requests); byte strobes; the
+2 KB repeating. Then random traffic against a model, checked every cycle."""
 
 import random
 

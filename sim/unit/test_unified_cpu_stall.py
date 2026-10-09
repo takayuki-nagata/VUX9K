@@ -15,12 +15,16 @@ presenting the request (pc_out, the store's address/data/byte enables with mem_w
 the load's address) with no mem_read_req. Register writes and minstret are observed
 through the stores the programs make. Only the CPU's ports are used, so this also runs
 on the gate-level netlist.
+
+Functional coverage (group "stall"): every access kind completing with and without a wait,
+and a FETCH that waits with an interrupt pending. Each test samples what it applied.
 """
 
 import random
 from typing import NamedTuple
 
 import cocotb
+import fcov
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, FallingEdge, Timer
 from rv32_asm import Asm
@@ -30,6 +34,19 @@ RV_INSTR_GARBAGE = 0xFFFFFFFF  # illegal in RV32; the mode detector would take i
 HACK_INSTR_GARBAGE = 0x00000013  # an RV32 nop: the mode detector would take it for RV32
 DATA_GARBAGE = 0xDEADBEEF
 IRQ_LINES = ("timer_irq_in", "ext_irq_in", "sw_irq_in")
+KINDS = ("fetch", "load", "store", "hack_m_read")
+
+
+# (kind, waited, irq pending while it waited). The CPU looks at interrupts only in the
+# FETCH that completes, so a pending one is a case of the stall logic only while a FETCH
+# waits: no bins for one during a data wait, or "during" a wait of 0 cycles.
+@fcov.point(
+    "stall.access",
+    [(k, w, False) for k in KINDS for w in ("0", "1+")] + [("fetch", "1+", True)],
+    xf=lambda kind, waited, irq: (kind, "1+" if waited else "0", bool(irq)),
+)
+def sample_access(kind, waited, irq):
+    pass
 
 
 class Cycle(NamedTuple):
@@ -226,12 +243,15 @@ async def test_stalled_fetch_holds_state(dut):
     start_clock(dut)
     imem, labels = fetch_program()
     base = await run(dut, imem)
+    sample_access("fetch", 0, False)
     for pc in (0, labels["target"]):
         start = fetch_cycle(base.trace, pc)
         for n in (1, 2, 4):
             stalled = await run(dut, imem, instr_ready=low_during(start, n))
+            sample_access("fetch", n, False)
             check_stalled(base, stalled, start, n, f"FETCH of 0x{pc:x} stalled {n}")
             assert stalled.dmem.get(0x200) == 0x16B
+    fcov.export()
 
 
 def irq_program():
@@ -283,6 +303,7 @@ async def test_stalled_fetch_samples_irq_in_last_cycle(dut):
     )
     for what, pending, taken in cases:
         r = await run(dut, imem, instr_ready=stall, irq=lambda c, p=pending: ("timer_irq_in",) if p(c) else ())
+        sample_access("fetch", n, any(pending(c) for c in range(start, last)))
         if taken:
             assert r.dmem.get(0x204) == target, f"{what}: mepc {r.dmem.get(0x204)}, expected 0x{target:x}"
             assert r.dmem.get(0x208) == 0x80000007, f"{what}: mcause {r.dmem.get(0x208)}"
@@ -290,6 +311,7 @@ async def test_stalled_fetch_samples_irq_in_last_cycle(dut):
         else:
             assert 0x204 not in r.dmem, f"{what}: the interrupt was taken (mepc {r.dmem.get(0x204)})"
             assert r.dmem.get(0x200) == 1, f"{what}: main path result {r.dmem.get(0x200)}"
+    fcov.export()
 
 
 def load_program():
@@ -334,12 +356,15 @@ async def test_stalled_load(dut):
     # csrr s0 retires after its read, then the lw: two between the reads
     assert base.dmem.get(0x204) == 2, f"minstret delta {base.dmem.get(0x204)}"
     assert base.dmem.get(0x208) == 0xFFFFFFA3, f"lb result {base.dmem.get(0x208)}"
+    sample_access("load", 0, False)
     for addr in (0x100, 0x101):
         start = mem_cycle(base.trace, read=addr)
         for n in (1, 3, 4):
             stalled = await run(dut, imem, LOAD_DATA, data_ready=low_during(start, n))
+            sample_access("load", n, False)
             check_stalled(base, stalled, start, n, f"load of 0x{addr:x} stalled {n}")
             assert stalled.dmem.get(0x204) == 2, f"minstret counted the stalled load {stalled.dmem.get(0x204)} times"
+    fcov.export()
 
 
 def store_program():
@@ -366,14 +391,17 @@ async def test_stalled_store(dut):
     imem, _ = store_program()
     base = await run(dut, imem)
     assert base.dmem.get(0x200) == 0x11223344 and base.dmem.get(0x204) == 0x4400, base.dmem
+    sample_access("store", 0, False)
     for addr in (0x200, 0x205):
         start = mem_cycle(base.trace, write=addr)
         for n in (1, 2, 4):
             stalled = await run(dut, imem, data_ready=low_during(start, n))
+            sample_access("store", n, False)
             check_stalled(base, stalled, start, n, f"store to 0x{addr:x} stalled {n}")
             held = sum(1 for c in stalled.trace if c.mem_write and c.waddr == addr)
             assert held == n + 1, f"store to 0x{addr:x}: mem_write for {held} cycles, expected {n + 1}"
             assert sum(1 for w in stalled.writes if w[1] == addr) == 1
+    fcov.export()
 
 
 def hack_word(lo, hi):
@@ -404,14 +432,18 @@ async def test_stalled_hack_m_read(dut):
     base = await run(dut, imem, data, hack=True)
     assert int(dut.active_mode.value) == 0, "positive control: not in Hack mode"
     assert base.dmem.get(6) == 0x1234, f"M[6] = {base.dmem.get(6)}"
+    sample_access("hack_m_read", 0, False)
     start = mem_cycle(base.trace, read=5)
     for n in (1, 3):
         stalled = await run(dut, imem, data, data_ready=low_during(start, n), hack=True)
+        sample_access("hack_m_read", n, False)
         check_stalled(base, stalled, start, n, f"Hack M read stalled {n}")
         assert stalled.dmem.get(6) == 0x1234
     stalled = await run(dut, imem, data, instr_ready=low_during(0, 2), hack=True)
+    sample_access("fetch", 2, False)
     assert int(dut.active_mode.value) == 0, "a stalled first FETCH set RV32 mode"
     check_stalled(base, stalled, 0, 2, "Hack first FETCH stalled 2")
+    fcov.export()
 
 
 def random_program():
@@ -435,6 +467,21 @@ def random_program():
     a.label("done")
     a.j("done")
     return program_imem(a), a.labels
+
+
+def store_waits(trace):
+    """The cycles each completed store waited: a store holds mem_write while data_ready is
+    low, and mem_write is low between two stores (FETCH, EXECUTE)"""
+    out, held = [], 0
+    for c in trace:
+        if c.mem_write and not c.data_ready:
+            held += 1
+        elif c.mem_write:
+            out.append(held)
+            held = 0
+        else:
+            held = 0
+    return out
 
 
 def random_ready(rng, cycles):
@@ -464,3 +511,8 @@ async def test_random_stalls(dut):
         assert [w[1:] for w in r.writes] == [w[1:] for w in base.writes], "the writes differ from the run without waits"
         for i, c in enumerate(r.trace):
             assert not (c.read_req and not c.data_ready), f"cycle {i}: mem_read_req while data_ready is low"
+        waits = store_waits(r.trace)
+        assert len(waits) == len(r.writes), f"{len(waits)} stores seen, {len(r.writes)} writes"
+        for w in waits:
+            sample_access("store", w, False)
+    fcov.export()
