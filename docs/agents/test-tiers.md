@@ -17,7 +17,7 @@ What `test-sim` and `test-slow` cover, and which long tests to run by hand for w
 ## Test tiers: what `test-sim` does and doesn't cover
 
 `make test-sim` (every push/PR in CI) runs the unit suites (RTL + GLS), `test-isa`
-(+ `test-isa-gls`), and the SoC tests: `sim-soc-fast` (+ `-icarus`), `sim-soc-mmio`,
+(+ `test-isa-gls`, `test-isa-waits`), and the SoC tests: `sim-soc-fast` (+ `-icarus`), `sim-soc-mmio`,
 `sim-boot` (CLI), `sim-hack-rtl`, `sim-sd-quirks`, `sim-hw-flow` (RTL flashing
 flow), `sim-zephyr-demo-rtl`, `sim-zephyr-irq-echo-rtl` and `sim-soc-gls-fast`. `make test-slow` (CI nightly + manual `workflow_dispatch`) adds
 `sim-gls-hw-flow`, `sim-hw-flow-icarus`, `sim-lockstep-slow`, `sim-zephyr-demo-gls` and

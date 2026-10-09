@@ -83,6 +83,13 @@ are easy to break without noticing:
   It is the ISA-wide check for constructs Yosys reads differently from the simulators
   (the `as i32` compare in veryl.md), which the RTL runs and `make eqy` can't see. On
   Verilator, ~70 s with the compile; in `test-sim`.
+- **`make test-isa-waits` runs riscv-tests and ACT4 with wait cycles** (`--waits`, results
+  in `runs[-act4]-waits/`; `test-sim`): the tb's `wait_mode` input lets an LFSR drop
+  `instr_ready`/`data_ready` on about half the cycles, at most three in a row, so every
+  instruction also goes through the CPU's stall logic. The memory itself doesn't wait (the
+  CPU holds its addresses while it waits); RAM, `tohost` and the console take a store only
+  when `mem_write && data_ready`, since a waiting store holds `mem_write`. `wait_mode` = 0
+  is the plain harness. Directed stall cases at the ports: `sim/unit/test_unified_cpu_stall.py`.
 
 ## `make test-act4`: riscv-arch-test (ACT4) on the same harness
 

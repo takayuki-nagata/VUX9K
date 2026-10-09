@@ -45,7 +45,7 @@ never breaks Veryl itself; only external tooling that hardcodes paths to the
 Run in this order (each depends on the previous succeeding):
 ```
 make firmware        # Cargo workspace build -> build/firmware/
-make sim-unit         # broadest RTL path coverage (27 unit test modules)
+make sim-unit         # broadest RTL path coverage (28 unit test modules)
 make test-isa
 make build-hack        # hack_demo/
 make sim-hack-rtl

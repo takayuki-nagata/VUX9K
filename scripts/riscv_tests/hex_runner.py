@@ -13,7 +13,8 @@ The cocotb test itself passes whatever the verdict; it only fails if the harness
 Bytes the program stores to the testbench's console word (the ACT4 tests' failure
 details) go to console.txt.
 
-Environment: MAX_CYCLES (default 2000000); TRACE=1 logs PC/instruction every cycle.
+Environment: MAX_CYCLES (default 2000000); TRACE=1 logs PC/instruction every cycle;
+WAITS=1 sets the testbench's wait_mode (wait cycles on both buses, run_riscv_tests.py --waits).
 """
 
 import os
@@ -57,6 +58,7 @@ async def run_program(dut):
     max_cycles = int(os.environ.get("MAX_CYCLES", "2000000"))
     cocotb.start_soon(Clock(dut.clk, PERIOD_NS, unit="ns").start())
 
+    dut.wait_mode.value = int(os.environ.get("WAITS", "") not in ("", "0"))
     dut.rst.value = 0  # active-low
     await ClockCycles(dut.clk, 2)
     await FallingEdge(dut.clk)

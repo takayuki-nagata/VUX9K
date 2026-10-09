@@ -35,6 +35,11 @@ scripts/act4/): self-checking ELFs with the Sail reference model's results built
 which stop through the same `tohost` (1 = PASS, 3 = FAIL) and print their failure details
 to the testbench's console word (console.txt in the run directory). Their harness
 self-test is scripts/act4/selftest_fail.S; their known gaps are EXPECTED_FAILURES_ACT4.
+
+`--waits` (RTL or --gls, either suite) sets the testbench's wait_mode: instr_ready and
+data_ready drop on pseudo-random cycles, so every test also runs through the CPU's stall
+logic. Its run directories get a -waits suffix (runs-waits/, runs-act4-gls-waits/, ...),
+and the cycle limits are WAITS_CYCLE_FACTOR times longer.
 """
 
 import argparse
@@ -73,6 +78,8 @@ SUITES = ("rv32ui", "rv32mi")
 # The ACT4 tests are longer (a branch test checks 400+ cases); main() sets their cap.
 MAX_CYCLES = 200000
 MAX_CYCLES_ACT4 = 5000000
+# --waits holds the buses on about half of the cycles, which can double a test's length
+WAITS_CYCLE_FACTOR = 3
 # sim/tb_hex_runner.veryl's RAM (256 KB); the image must fit
 RAM_WORDS = 65536
 
@@ -245,6 +252,7 @@ def build_act4_selftest():
 BACKEND = "rtl"
 GLS = False
 SUITE = "riscv-tests"
+WAITS = False
 
 
 def simulate(hexf, backend, gls):
@@ -275,6 +283,7 @@ def simulate_rtl(hexf, gls):
     # HDL_COVERAGE=1 (make coverage): a run directory of its own, holding coverage.dat
     runs = "runs-gls" if gls else "runs-cov" if os.environ.get("HDL_COVERAGE", "") not in ("", "0") else "runs"
     runs = runs.replace("runs", "runs-act4") if SUITE == "act4" else runs
+    runs += "-waits" if WAITS else ""
     # A mutant's runs (make mutation: VUX9K_RTL_OVERRIDE, see sim_runner) stay in its own directory
     base = Path(os.environ["VUX9K_MUT_BUILD_DIR"]) if os.environ.get("VUX9K_RTL_OVERRIDE") else Path(BUILD_DIR)
     test_dir = base / runs / name
@@ -297,7 +306,7 @@ def simulate_rtl(hexf, gls):
                     "hex_runner",
                     gls=gls,
                     test_dir=test_dir,
-                    extra_env={"MAX_CYCLES": str(MAX_CYCLES)},
+                    extra_env={"MAX_CYCLES": str(MAX_CYCLES), "WAITS": "1" if WAITS else "0"},
                 )
             finally:
                 os.dup2(saved[0], 1)
@@ -411,15 +420,21 @@ def main():
     parser.add_argument("--gls", action="store_true", help="gate-level unified_cpu netlist (make synth-units)")
     parser.add_argument("-j", "--jobs", type=int, default=os.cpu_count(), help="parallel tests (default: CPUs)")
     parser.add_argument("--suite", choices=("riscv-tests", "act4"), default="riscv-tests")
+    parser.add_argument("--waits", action="store_true", help="pseudo-random wait cycles on the CPU's buses")
     args = parser.parse_args()
-    global BACKEND, GLS, SUITE, MAX_CYCLES
+    global BACKEND, GLS, SUITE, MAX_CYCLES, WAITS
     BACKEND = args.backend
     GLS = args.gls
     SUITE = args.suite
+    WAITS = args.waits
     if SUITE == "act4":
         MAX_CYCLES = MAX_CYCLES_ACT4
+    if WAITS:
+        MAX_CYCLES *= WAITS_CYCLE_FACTOR
     if GLS and BACKEND != "rtl":
         parser.error("--gls needs --backend rtl")
+    if WAITS and BACKEND != "rtl":
+        parser.error("--waits needs --backend rtl")
 
     check_tools()
     os.makedirs(BUILD_DIR, exist_ok=True)
