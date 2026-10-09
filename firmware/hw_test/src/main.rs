@@ -6,6 +6,9 @@
 //! one instruction pattern (xorshift32 operands) into a checksum and compares it with
 //! the value the emulator computes (which `make sim-lockstep` ties to the RTL); a
 //! bitstream whose timing fails on the board gets them wrong, even when STA passed.
+//! The `xmem` tests do the same for the wait-state window (`map::XMEM_BASE`): a memory
+//! test over all of it, every load/store width, code run from it, and the cycles each
+//! kind of access waits.
 //!
 //! Output, one short line each: `T<nn> <name> <checksum> PASS|FAIL`, then
 //! `RESULT PASS|FAIL <passed>/<total> <mask>` (hex; bit n-1 of the mask set = test n
@@ -251,19 +254,237 @@ fn t_regs(a: u32, b: u32) -> u32 {
     r
 }
 
+const XMEM_WORDS: usize = map::XMEM_BYTES / 4;
+
+fn xmem_word(i: usize) -> *mut u32 {
+    (map::XMEM_BASE + i * 4) as *mut u32
+}
+
+/// An address-dependent word (xorshift of the address).
+fn xmem_pattern(addr: u32, seed: u32) -> u32 {
+    let mut x = addr ^ 0xA5C3_0F96 ^ seed;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    x
+}
+
+/// Every window word, in three passes of writing all words then reading them all back:
+/// f(addr) through the base; !f(addr) read through the alias 2 KB up; the word's own
+/// address written through aliases (2 KB up, and the top of the region) and read
+/// through the base.
+fn t_xmem(seed: u32) -> u32 {
+    let alias = |i: usize| -> *mut u32 {
+        let up = if i & 1 == 0 {
+            map::XMEM_BYTES
+        } else {
+            0x0FFF_F800
+        };
+        (map::XMEM_BASE + up + i * 4) as *mut u32
+    };
+    // added, not xored: !f cancels f in an xor over all words
+    let mut acc = 0u32;
+    unsafe {
+        for i in 0..XMEM_WORDS {
+            write_volatile(xmem_word(i), xmem_pattern(xmem_word(i) as u32, seed));
+        }
+        for i in 0..XMEM_WORDS {
+            acc = acc.rotate_left(5).wrapping_add(read_volatile(xmem_word(i)));
+        }
+        for i in 0..XMEM_WORDS {
+            write_volatile(xmem_word(i), !xmem_pattern(xmem_word(i) as u32, seed));
+        }
+        for i in 0..XMEM_WORDS {
+            acc = acc
+                .rotate_left(5)
+                .wrapping_add(read_volatile(xmem_word(i).byte_add(map::XMEM_BYTES)));
+        }
+        for i in 0..XMEM_WORDS {
+            write_volatile(alias(i), xmem_word(i) as u32);
+        }
+        for i in 0..XMEM_WORDS {
+            acc = acc.rotate_left(5).wrapping_add(read_volatile(xmem_word(i)));
+        }
+    }
+    acc
+}
+
+/// Window loads and stores of every width: a byte and a halfword stored into a word
+/// with known contents (the window merges the lanes), read back as a word and by
+/// sign- and zero-extending loads.
+fn t_xmem_lanes(a: u32, b: u32) -> u32 {
+    let w = xmem_word((b >> 3) as usize & (XMEM_WORDS - 1)) as usize;
+    let lane = (b & 3) as usize;
+    let half = (b & 2) as usize;
+    unsafe {
+        write_volatile(w as *mut u32, a);
+        write_volatile((w + lane) as *mut u8, (b >> 8) as u8);
+        let r = read_volatile(w as *const u32);
+        write_volatile((w + (half ^ 2)) as *mut u16, (b >> 16) as u16);
+        let s = read_volatile(w as *const u32);
+        let c = read_volatile((w + (lane ^ 1)) as *const i8) as u32;
+        let d = read_volatile((w + (lane ^ 2)) as *const u8) as u32;
+        let e = read_volatile((w + half) as *const i16) as u32;
+        let f = read_volatile((w + (half ^ 2)) as *const u16) as u32;
+        r ^ s.rotate_left(8)
+            ^ c.rotate_left(13)
+            ^ d.rotate_left(17)
+            ^ e.rotate_left(3)
+            ^ f.rotate_left(24)
+    }
+}
+
+// Copied into the window and run there by t_xmem_exec (position independent): a loop
+// with a backward branch, a jal and auipc (the address it runs at), and a store and
+// load of the data word in front of it. Called at xmem_code_start as fn(a, b) -> u32.
+global_asm!(
+    ".section .text.xmem_code, \"ax\"",
+    ".option push",
+    ".option norelax",
+    ".balign 4",
+    "xmem_copy_start:",
+    "3:  .word 0",
+    "xmem_code_start:",
+    "    andi t0, a1, 7",
+    "1:  slli t1, a0, 3",
+    "    srli t2, a0, 29",
+    "    or a0, t1, t2",
+    "    xor a0, a0, a1",
+    "    addi a1, a1, 0x35",
+    "    addi t0, t0, -1",
+    "    bgez t0, 1b",
+    "    jal t1, 2f",
+    "2:  auipc t2, %pcrel_hi(3b)",
+    "    sub t1, t2, t1",
+    "    add a0, a0, t1",
+    "    xor a0, a0, t2",
+    "    sw a0, %pcrel_lo(2b)(t2)",
+    "    lw t1, %pcrel_lo(2b)(t2)",
+    "    slli t1, t1, 1",
+    "    xor a0, a0, t1",
+    "    ret",
+    "xmem_code_end:",
+    // the reference `ret` in I-RAM for t_xmem_time
+    "iram_ret:",
+    "    ret",
+    ".option pop",
+);
+
+extern "C" {
+    static xmem_copy_start: u32;
+    static xmem_code_start: u32;
+    static xmem_code_end: u32;
+    fn iram_ret();
+}
+
+/// Where t_xmem_exec puts its routine.
+const XMEM_CODE_OFF: usize = 0x100;
+
+/// The window routine, called at the base or (b bit 8) through the alias 2 KB up.
+fn xmem_call(a: u32, b: u32) -> u32 {
+    let up = if b & 0x100 != 0 { map::XMEM_BYTES } else { 0 };
+    let entry = core::ptr::addr_of!(xmem_code_start) as usize
+        - core::ptr::addr_of!(xmem_copy_start) as usize;
+    let f: extern "C" fn(u32, u32) -> u32 =
+        unsafe { core::mem::transmute(map::XMEM_BASE + up + XMEM_CODE_OFF + entry) };
+    f(a, b)
+}
+
+fn fence_i() {
+    unsafe {
+        asm!(
+            ".option push",
+            ".option arch, +zifencei",
+            "fence.i",
+            ".option pop"
+        )
+    };
+}
+
+/// Code fetched from the window: the routine above copied there (data reads of I-RAM),
+/// `fence.i`, then folded over xorshift pairs like the instruction tests.
+fn t_xmem_exec(seed: u32) -> u32 {
+    unsafe {
+        let start = core::ptr::addr_of!(xmem_copy_start);
+        let words = core::ptr::addr_of!(xmem_code_end).offset_from(start) as usize;
+        for i in 0..words {
+            write_volatile(
+                xmem_word(XMEM_CODE_OFF / 4 + i),
+                read_volatile(start.add(i)),
+            );
+        }
+    }
+    fence_i();
+    checksum(seed, xmem_call)
+}
+
+static mut TIME_WORD: u32 = 0;
+
+/// Cycles a window access adds over the same access to D-RAM (a load or store) or
+/// I-RAM (the fetch of a `ret`), from `cycle` around each: fetch << 16 | load << 8 |
+/// store, i.e. soc_pkg's XMEM_READ_LATENCY and XMEM_WRITE_LATENCY.
+fn t_xmem_time(_: u32) -> u32 {
+    let x = xmem_word(0x40 / 4);
+    let xret = xmem_word(0x44 / 4);
+    let (c0, c1, c2, c3, c4, c5, c6): (u32, u32, u32, u32, u32, u32, u32);
+    unsafe {
+        write_volatile(xret, 0x0000_8067); // ret
+        fence_i();
+        asm!(
+            ".option push",
+            ".option arch, +zicsr",
+            "rdcycle {c0}",
+            "lw {t}, 0({d})",
+            "rdcycle {c1}",
+            "lw {t}, 0({x})",
+            "rdcycle {c2}",
+            "sw {t}, 0({d})",
+            "rdcycle {c3}",
+            "sw {t}, 0({x})",
+            "rdcycle {c4}",
+            "jalr ra, 0({ri})",
+            "rdcycle {c5}",
+            "jalr ra, 0({rx})",
+            "rdcycle {c6}",
+            ".option pop",
+            d = in(reg) core::ptr::addr_of_mut!(TIME_WORD), x = in(reg) x,
+            ri = in(reg) iram_ret as *const () as usize, rx = in(reg) xret, t = out(reg) _,
+            c0 = out(reg) c0, c1 = out(reg) c1, c2 = out(reg) c2, c3 = out(reg) c3,
+            c4 = out(reg) c4, c5 = out(reg) c5, c6 = out(reg) c6, out("ra") _)
+    };
+    let load = (c2 - c1).wrapping_sub(c1 - c0);
+    let store = (c4 - c3).wrapping_sub(c3 - c2);
+    let fetch = (c6 - c5).wrapping_sub(c5 - c4);
+    fetch << 16 | (load & 0xFF) << 8 | store & 0xFF
+}
+
+/// A test folds `f(a, b)` over xorshift pairs (`checksum`), or runs once (given its
+/// test number as a seed).
+#[derive(Clone, Copy)]
+enum Test {
+    Pairs(fn(u32, u32) -> u32),
+    Once(fn(u32) -> u32),
+}
+
+use Test::{Once, Pairs};
+
 /// (name, test, checksum the emulator computes)
-const TESTS: [(&str, fn(u32, u32) -> u32, u32); 11] = [
-    ("add", t_add, 0xC02B_9A30),
-    ("sub", t_sub, 0x1C9E_5AB3),
-    ("logic", t_logic, 0x0F9E_3961),
-    ("slt", t_slt, 0xC90C_3502),
-    ("shift", t_shift, 0x6E0C_CF4F),
-    ("branch", t_branch, 0x351C_F7CF),
-    ("subloop", t_subloop, 0x52E7_9264),
-    ("subloop_tight", t_subloop_tight, 0x74D7_A346),
-    ("raw", t_raw, 0x086D_086D),
-    ("mem", t_mem, 0xED19_E792),
-    ("regs", t_regs, 0xC561_39A6),
+const TESTS: [(&str, Test, u32); 15] = [
+    ("add", Pairs(t_add), 0xC02B_9A30),
+    ("sub", Pairs(t_sub), 0x1C9E_5AB3),
+    ("logic", Pairs(t_logic), 0x0F9E_3961),
+    ("slt", Pairs(t_slt), 0xC90C_3502),
+    ("shift", Pairs(t_shift), 0x6E0C_CF4F),
+    ("branch", Pairs(t_branch), 0x351C_F7CF),
+    ("subloop", Pairs(t_subloop), 0x52E7_9264),
+    ("subloop_tight", Pairs(t_subloop_tight), 0x74D7_A346),
+    ("raw", Pairs(t_raw), 0x086D_086D),
+    ("mem", Pairs(t_mem), 0xED19_E792),
+    ("regs", Pairs(t_regs), 0xC561_39A6),
+    ("xmem", Once(t_xmem), 0x344F_9E49),
+    ("xmem_lanes", Pairs(t_xmem_lanes), 0x4490_6ED7),
+    ("xmem_exec", Once(t_xmem_exec), 0x1E2A_EC76),
+    ("xmem_time", Once(t_xmem_time), 0x0023_2322),
 ];
 
 #[no_mangle]
@@ -275,7 +496,10 @@ pub extern "C" fn main() -> ! {
     for (i, &(name, f, expected)) in TESTS.iter().enumerate() {
         let n = i as u8 + 1;
         set_leds(n);
-        let got = checksum(n as u32, f);
+        let got = match f {
+            Pairs(f) => checksum(n as u32, f),
+            Once(f) => f(n as u32),
+        };
         Uart.put_str("T");
         Uart.put_hex_byte(n);
         Uart.put_str(" ");

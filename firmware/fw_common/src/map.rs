@@ -50,6 +50,10 @@ pub const DRAM_BASE: usize = 0x2000_0000;
 pub const LOADER_WORDS: usize = 0x2000_1FF8;
 /// The Boot Manager -> Resident Loader mailbox (crate::mailbox).
 pub const MAILBOX: usize = 0x2000_1FFC;
+/// The wait-state window (soc_pkg::RV_REGION_XMEM, XMEM_WORDS): code and data, every
+/// access slower than I-RAM/D-RAM; its `XMEM_BYTES` repeat across 0x8xxx_xxxx.
+pub const XMEM_BASE: usize = 0x8000_0000;
+pub const XMEM_BYTES: usize = 2048;
 
 // ----- Clock ----------------------------------------------------------------------
 /// mtime ticks at the SoC clock, 18 MHz (soc_pkg::CLK_HZ).

@@ -21,6 +21,6 @@ def test_hw_test_passes_on_the_emulator():
     out = wait_for(soc, b"RESULT", timeout_cycles=200_000_000)
     out += wait_for(soc, b"\n", timeout_cycles=1_000_000, start=len(out))
     lines = [ln for ln in out.splitlines() if ln.startswith("T")]
-    assert len(lines) == 11, out
+    assert len(lines) == 15, out
     assert all(ln.endswith(" PASS") for ln in lines), out
-    assert re.search(r"RESULT PASS 0B/0B 00000000$", out, re.M), out
+    assert re.search(r"RESULT PASS 0F/0F 00000000$", out, re.M), out

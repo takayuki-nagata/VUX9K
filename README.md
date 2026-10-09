@@ -491,7 +491,9 @@ stay exactly those of the seed; the SD card and the boot chain are not involved.
 
 `hw_test` runs eleven instruction-pattern checksums (add, sub, logic, slt, shifts,
 branches, dependent sub/branch loops, back-to-back dependencies, loads/stores of every
-width, all registers) against the values the emulator computes, one line each, then
+width, all registers) and four on the wait-state RAM (a memory test over all of it with
+its aliases, byte/halfword lanes, code copied there and run, the cycles each access
+waits) against the values the emulator computes, one line each, then
 `RESULT PASS|FAIL <passed>/<total> <failure mask>`, repeated every 2 s: the host's
 USB-UART bridge drops output when another full-speed device shares its USB hub
 (see `docs/APP_DEVELOPMENT.md`), and the repeated line alone carries the verdict. Its LEDs: 0x01 from the first instruction, the test number while
