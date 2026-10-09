@@ -39,6 +39,8 @@ async def run_program(dut, words, *, irq_after=None, irq_lines=("timer_irq_in",)
         ("mtime_in", 0),
         ("boot_mode_valid", 0),
         ("boot_mode", 0),
+        ("instr_ready", 1),
+        ("data_ready", 1),
     ):
         getattr(dut, sig).value = val
     dut.rst.value = 0

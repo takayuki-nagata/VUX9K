@@ -27,6 +27,8 @@ async def test_unified_cpu_hack_and_riscv(dut):
     dut.boot_mode.value = 0
     dut.ext_irq_in.value = 0
     dut.sw_irq_in.value = 0
+    dut.instr_ready.value = 1
+    dut.data_ready.value = 1
     dut.instr_in.value = (0x000F << 16) | 0x000F  # Hack @15 (Load 15 into A/x1)
 
     await ClockCycles(dut.clk, 2)
@@ -207,6 +209,8 @@ async def test_first_instruction_selects_mode(dut):
         "boot_mode",
     ):
         getattr(dut, sig).value = 0
+    dut.instr_ready.value = 1
+    dut.data_ready.value = 1
     others = sorted({op ^ (1 << b) for op in RV_FIRST_OPCODES for b in range(2, 7)} - set(RV_FIRST_OPCODES))
     cases = [(op, 1) for op in RV_FIRST_OPCODES] + [(op, 0) for op in others]
     for word, want in cases:

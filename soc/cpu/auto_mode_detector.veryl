@@ -10,6 +10,7 @@ pub module auto_mode_detector (
     boot_mode_valid: input  logic    ,
     boot_mode      : input  logic    , // 1: RV32, 0: Hack
     first_instr    : input  logic<32>,
+    instr_valid    : input  logic    , // first_instr holds a fetched instruction this cycle
     is_riscv_mode  : output logic    ,
 ) {
     var mode_latched: logic   ;
@@ -42,7 +43,7 @@ pub module auto_mode_detector (
                 is_riscv_mode = 1'b1;
             }
         } else {
-            if !mode_latched {
+            if !mode_latched && instr_valid {
                 if first_instr != 32'd0 {
                     if first_instr[1:0] == 2'b11 && is_rv32i_opcode {
                         is_riscv_mode = 1'b1;

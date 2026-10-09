@@ -18,6 +18,7 @@ async def test_auto_mode_detection(dut):
     dut.soft_rst.value = 0
     dut.boot_mode_valid.value = 0
     dut.boot_mode.value = 0
+    dut.instr_valid.value = 1
     dut.rst.value = 0
     dut.first_instr.value = 0x00000013
     await ClockCycles(dut.clk, 2)
@@ -63,6 +64,7 @@ async def test_auto_mode_explicit_on_soft_reset(dut):
     dut.soft_rst.value = 0
     dut.boot_mode_valid.value = 0
     dut.boot_mode.value = 0
+    dut.instr_valid.value = 1
     dut.first_instr.value = 0x00000013
     dut.rst.value = 0
     await ClockCycles(dut.clk, 2)
@@ -127,6 +129,7 @@ async def test_random_against_model(dut):
     dut.boot_mode_valid.value = 0
     dut.boot_mode.value = 0
     dut.first_instr.value = 0
+    dut.instr_valid.value = 1
     dut.rst.value = 0
     await FallingEdge(dut.clk)
     dut.rst.value = 1
@@ -135,14 +138,16 @@ async def test_random_against_model(dut):
         word = random_word()
         soft = random.random() < 0.08
         valid, boot = random.getrandbits(1), random.getrandbits(1)
+        fetched = int(random.random() < 0.75)  # 0: a waiting FETCH, the word isn't an instruction
         dut.first_instr.value, dut.soft_rst.value = word, int(soft)
         dut.boot_mode_valid.value, dut.boot_mode.value = valid, boot
+        dut.instr_valid.value = fetched
         await FallingEdge(dut.clk)
         if soft:
             latched, mode = (1, boot) if valid else (0, 1)
-        elif not latched and detect(word) is not None:
+        elif not latched and fetched and detect(word) is not None:
             latched, mode = 1, detect(word)
-        ctx = f"word=0x{word:08x} soft={int(soft)} valid={valid} boot={boot}"
+        ctx = f"word=0x{word:08x} soft={int(soft)} valid={valid} boot={boot} instr_valid={fetched}"
         assert int(dut.is_riscv_mode.value) == mode, ctx
         if random.random() < 0.01:  # a power-on reset now and then
             dut.rst.value = 0

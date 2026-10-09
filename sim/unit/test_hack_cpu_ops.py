@@ -36,6 +36,8 @@ async def test_hack_cpu_comprehensive(dut):
     dut.boot_mode.value = 0
     dut.ext_irq_in.value = 0
     dut.sw_irq_in.value = 0
+    dut.instr_ready.value = 1
+    dut.data_ready.value = 1
     dut.instr_in.value = make_hack_a(1)  # First instruction @1
 
     await ClockCycles(dut.clk, 2)
@@ -240,6 +242,8 @@ async def _reset_hack(dut):
         "boot_mode",
     ):
         getattr(dut, sig).value = 0
+    dut.instr_ready.value = 1
+    dut.data_ready.value = 1
     dut.instr_in.value = make_hack_a(1)
     await ClockCycles(dut.clk, 2)
     await FallingEdge(dut.clk)
@@ -445,6 +449,8 @@ async def test_random_programs_against_interpreter(dut):
     cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start())
     for sig in ("soft_rst", "timer_irq_in", "mtime_in", "boot_mode_valid", "boot_mode", "ext_irq_in", "sw_irq_in"):
         getattr(dut, sig).value = 0
+    dut.instr_ready.value = 1
+    dut.data_ready.value = 1
     for _ in range(25):
         prog = random_hack_program(random.randint(20, 80))
         words = [prog[i] | (prog[i + 1] if i + 1 < len(prog) else 0) << 16 for i in range(0, len(prog), 2)]

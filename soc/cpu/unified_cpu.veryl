@@ -10,22 +10,27 @@ pub module unified_cpu #(
     rst     : input reset,
     soft_rst: input logic,
     // ISA to start in after this soft reset, if valid (else detected from the first instruction)
-    boot_mode_valid: input  logic    ,
-    boot_mode      : input  logic    , // 1: RV32, 0: Hack
-    instr_in       : input  logic<32>,
-    data_in        : input  logic<32>,
-    timer_irq_in   : input  logic    ,
-    ext_irq_in     : input  logic    ,
-    sw_irq_in      : input  logic    ,
-    mtime_in       : input  logic<64>, // the timer's mtime (time CSR)
-    pc_out         : output logic<32>,
-    data_addr      : output logic<32>,
-    data_waddr     : output logic<32>,
-    data_out       : output logic<32>,
-    mem_write      : output logic    ,
-    mem_read_req   : output logic    ,
-    mem_byte_we    : output logic<4> ,
-    active_mode    : output logic    , // 0: Hack 16-bit, 1: RISC-V 32-bit
+    boot_mode_valid: input logic    ,
+    boot_mode      : input logic    , // 1: RV32, 0: Hack
+    instr_in       : input logic<32>,
+    // 1: the FETCH in this cycle completes (instr_in is valid); 0: FETCH waits
+    instr_ready: input logic    ,
+    data_in    : input logic<32>,
+    // 1: the MEM_WAIT access in this cycle completes (data_in is valid for a read,
+    // the write is taken); 0: MEM_WAIT waits, holding the request
+    data_ready  : input  logic    ,
+    timer_irq_in: input  logic    ,
+    ext_irq_in  : input  logic    ,
+    sw_irq_in   : input  logic    ,
+    mtime_in    : input  logic<64>, // the timer's mtime (time CSR)
+    pc_out      : output logic<32>,
+    data_addr   : output logic<32>,
+    data_waddr  : output logic<32>,
+    data_out    : output logic<32>,
+    mem_write   : output logic    ,
+    mem_read_req: output logic    ,
+    mem_byte_we : output logic<4> ,
+    active_mode : output logic    , // 0: Hack 16-bit, 1: RISC-V 32-bit
 ) {
     enum CpuState {
         FETCH,
@@ -41,9 +46,10 @@ pub module unified_cpu #(
     var r_hack_d     : logic   <32>; // D value waiting for HACK_WR_D
     var is_riscv_mode: logic       ;
     // A data read completes in MEM_WAIT: an RV32 load, or a Hack comp reading M
-    // (Hack mode enters MEM_WAIT only for that). Peripherals with read side effects
-    // (UART RX pop) act on this, not on the address alone.
-    assign mem_read_req = state == CpuState::MEM_WAIT && (if is_riscv_mode ? r_load_we : 1'b1);
+    // (Hack mode enters MEM_WAIT only for that), in the cycle data_ready is 1.
+    // Peripherals with read side effects (UART RX pop) act on this, not on the
+    // address alone.
+    assign mem_read_req = state == CpuState::MEM_WAIT && data_ready && (if is_riscv_mode ? r_load_we : 1'b1);
     var pc_reg       : logic<32>;
     var pc_plus_4_reg: logic<32>;
     var next_pc      : logic<32>;
@@ -157,7 +163,9 @@ pub module unified_cpu #(
         boot_mode_valid: boot_mode_valid,
         boot_mode      : boot_mode      ,
         first_instr    : instr_in       ,
-        is_riscv_mode  : is_riscv_mode  ,
+        // instr_in is not an instruction yet while a FETCH waits
+        instr_valid  : !(state == CpuState::FETCH && !instr_ready),
+        is_riscv_mode: is_riscv_mode                              ,
     );
 
     // Hack Translator (16-bit Front-End)
@@ -371,7 +379,7 @@ pub module unified_cpu #(
 
             // Writeback
             if state == CpuState::MEM_WAIT {
-                if r_load_we {
+                if r_load_we && data_ready {
                     rf_rd_addr = r_load_rd;
                     rf_we      = 1'b1;
                     rf_wr_data = load_val;
@@ -443,9 +451,10 @@ pub module unified_cpu #(
     );
     assign csr_access = exec_rv && rv_op == rv32i_pkg::Opcode::SYSTEM && !trap_entry;
     // An RV32 instruction retires when it completes without trapping: in EXECUTE, or
-    // in MEM_WAIT for loads and stores (minstret)
+    // in the completing MEM_WAIT cycle for loads and stores (minstret)
     let rv_mem_op: logic = rv_op == rv32i_pkg::Opcode::LOAD || rv_op == rv32i_pkg::Opcode::STORE;
-    assign rv_retire = (exec_rv && !trap_entry && !rv_mem_op) || (is_riscv_mode && state == CpuState::MEM_WAIT);
+    assign rv_retire = (exec_rv && !trap_entry && !rv_mem_op)
+        || (is_riscv_mode && state == CpuState::MEM_WAIT && data_ready);
 
     // Next PC (both ISAs), with the branch/jump conditions it depends on
     inst pc_select: next_pc_unit (
@@ -512,15 +521,18 @@ pub module unified_cpu #(
         } else {
             case state {
                 CpuState::FETCH: {
-                    // Latch fetched instruction from synchronous BRAM
-                    ir_reg        = instr_in;
-                    r_store_we    = 1'b0;
-                    r_load_we     = 1'b0;
-                    r_hack_mem_we = 1'b0;
-                    pc_plus_4_reg = (pc_reg as u32 + 4) as u32;
-                    r_irq         = irq_pending && is_riscv_mode;
-                    r_irq_cause   = irq_cause;
-                    state         = CpuState::EXECUTE;
+                    // Latch the fetched instruction once it is there; while the fetch
+                    // waits nothing changes, so the interrupt is sampled in its last cycle
+                    if instr_ready {
+                        ir_reg        = instr_in;
+                        r_store_we    = 1'b0;
+                        r_load_we     = 1'b0;
+                        r_hack_mem_we = 1'b0;
+                        pc_plus_4_reg = (pc_reg as u32 + 4) as u32;
+                        r_irq         = irq_pending && is_riscv_mode;
+                        r_irq_cause   = irq_cause;
+                        state         = CpuState::EXECUTE;
+                    }
                 }
                 CpuState::EXECUTE: {
                     if trap_entry || trap_return {
@@ -567,16 +579,20 @@ pub module unified_cpu #(
                     }
                 }
                 CpuState::MEM_WAIT: {
-                    r_store_we = 1'b0;
-                    r_load_we  = 1'b0;
-                    if is_riscv_mode {
-                        r_hack_mem_we = 1'b0;
-                        pc_reg        = pc_plus_4_reg;
-                        state         = CpuState::FETCH;
-                    } else {
-                        // Latch memory read data for Hack ALU pipeline stage
-                        r_hack_data = data_in;
-                        state       = CpuState::HACK_WB;
+                    // While the access waits nothing changes: r_store_we/r_load_we
+                    // hold the request (mem_write stays asserted)
+                    if data_ready {
+                        r_store_we = 1'b0;
+                        r_load_we  = 1'b0;
+                        if is_riscv_mode {
+                            r_hack_mem_we = 1'b0;
+                            pc_reg        = pc_plus_4_reg;
+                            state         = CpuState::FETCH;
+                        } else {
+                            // Latch memory read data for Hack ALU pipeline stage
+                            r_hack_data = data_in;
+                            state       = CpuState::HACK_WB;
+                        }
                     }
                 }
                 CpuState::HACK_WB: {

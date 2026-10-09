@@ -123,7 +123,9 @@ pub module soc_top (
         boot_mode_valid: boot_mode_valid,
         boot_mode      : boot_mode      ,
         instr_in       : instr_data     ,
+        instr_ready    : 1'b1           , // every memory here answers in one cycle
         data_in        : cpu_data_in    ,
+        data_ready     : 1'b1           ,
         timer_irq_in   : timer_irq      ,
         ext_irq_in     : !uart_empty    , // machine external interrupt: UART RX data waiting
         sw_irq_in      : 1'b0           ,
