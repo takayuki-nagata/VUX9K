@@ -12,6 +12,7 @@
 lint_off -rule UNUSEDSIGNAL -file "*/soc_ram.sv" -match "*'i_addr'*"
 lint_off -rule UNUSEDSIGNAL -file "*/soc_ram.sv" -match "*'d_addr'*"
 lint_off -rule UNUSEDSIGNAL -file "*/soc_addr_decoder.sv" -match "*'addr'*"
+lint_off -rule UNUSEDSIGNAL -file "*/soc_xmem_stub.sv" -match "*'req_addr'*"
 lint_off -rule UNUSEDSIGNAL -file "*/tb_hex_runner.sv" -match "*'data_addr'*"
 // Hack's ALU result is 16 bits; the port is the CPU's 32-bit datapath
 lint_off -rule UNUSEDSIGNAL -file "*/next_pc_unit.sv" -match "*'hack_comp'*"

@@ -23,6 +23,8 @@ npc = 100.0
 sd = 100.0
 trap = 100.0
 uart_rx = 100.0
+xbridge = 100.0
+xmem = 100.0
 
 # Host Rust lines (make coverage-rust, scripts/coverage_rust.py, cargo-llvm-cov): the
 # emulator from its cargo tests plus the Python-driven runs of an instrumented build

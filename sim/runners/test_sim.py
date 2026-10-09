@@ -43,6 +43,8 @@ UNIT = [
     ("timer_core", "test_timer_core"),
     ("gpio_controller", "test_gpio_controller"),
     ("soc_addr_decoder", "test_soc_addr_decoder"),
+    ("soc_xmem_stub", "test_soc_xmem_stub"),
+    ("soc_xmem_bridge", "test_soc_xmem_bridge"),
     ("sdcard_spi", "test_sdcard_spi"),
     ("soc_ram", "test_soc_ram"),
     ("tb_gowin_bram", "test_gowin_bram"),  # SP/SDPB cell models (no netlist uses them)

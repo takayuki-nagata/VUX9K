@@ -3,7 +3,7 @@
 
 """soc_addr_decoder: the data-address map of README ("Memory & MMIO Register Map", "Address
 decoding and aliases"), in RV32 and Hack mode, against a model; at most one select is ever
-active."""
+active. Hack never selects the wait-state window (xmem)."""
 
 import random
 
@@ -11,7 +11,7 @@ import cocotb
 from cocotb.triggers import Timer
 from unit_models import rand32
 
-SELECTS = ("ram", "uart", "timer", "sd", "gpio")
+SELECTS = ("ram", "uart", "timer", "sd", "gpio", "xmem")
 
 
 def model(addr, hack):
@@ -27,6 +27,8 @@ def model(addr, hack):
         return "ram"
     if region == 0x4:
         return {0: "uart", 1: "timer", 2: "sd", 3: "gpio"}.get(page)
+    if region == 0x8:  # the wait-state window (RV32 only)
+        return "xmem"
     return None
 
 
@@ -64,5 +66,5 @@ async def test_random(dut):
         hack = random.random() < 0.3
         addr = rand32()
         if random.random() < 0.5:  # aim at the mapped areas
-            addr = (random.choice((0x0, 0x2, 0x4)) << 28 | addr & 0x0FFF_FFFF) if not hack else 0x6000 | addr & 0xF
+            addr = (random.choice((0x0, 0x2, 0x4, 0x8)) << 28 | addr & 0x0FFF_FFFF) if not hack else 0x6000 | addr & 0xF
         await check(dut, addr, hack)

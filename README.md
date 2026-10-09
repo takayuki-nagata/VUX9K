@@ -99,11 +99,13 @@ The RTL modules in this repository were originally authored in VHDL-2008 and hav
 | `0x4000_1000` - `0x4000_100F` | 16 B | **System Timer (CLINT)** | 64-bit `mtime` (`0x0`/`0x4`) and `mtimecmp` (`0x8`/`0xC`) registers |
 | `0x4000_2000` - `0x4000_200F` | 16 B | **MicroSD SPI Master** | SPI TX/RX data (`0x0`), CS (`0x4`), busy (`0x8`), SCLK divider (`0xC`): half period in clocks, bits 7:0, resets to 23 (391 kHz, for card init); writes below 3 (3 MHz, the fastest the MISO synchronizer can read) set 3. The Boot Manager initializes the card at 23 and switches to 3 when the card is ready. Writes while busy are ignored (all registers): wait for busy to clear first. Only power-on resets the registers, not a CPU soft reset |
 | `0x4000_3000` - `0x4000_300F` | 16 B | **GPIO Controller** | 6 onboard active-low LEDs (`0x00`=ON, `0x3F`=OFF) & user buttons (Button S2 on pin 3); offset `0x8` is the ISA for the next soft reset (bit 8 valid, bit 0: 1 = RV32, 0 = Hack; valid clears once a soft reset has used it); offset `0xC` is a soft-reset trigger — writing `0x5A5A_A55A` (or its short form `0x0000_A55A`) pulses `cpu_soft_rst`, resetting the CPU FSM/PC/CSRs to `RESET_VECTOR` without a full FPGA reload |
+| `0x8000_0000` - `0x8000_07FF` | 2 KB | **Wait-state RAM** | Code and data (RV32 only). Every access waits like the PSRAM that is to replace it: a fetch or load takes 35 cycles more than from I-RAM/D-RAM, a store 34 more. The 2 KB repeat across `0x8xxx_xxxx`. No initial contents: write before reading. A stand-in until the PSRAM, it will grow and its timing may change |
 
 **Address decoding and aliases.** This describes how the hardware behaves, not an interface: applications use only the documented addresses and registers (the tables in this README; [Hardware revisions and compatibility](docs/APP_DEVELOPMENT.md#6-hardware-revisions-and-compatibility)). Only the address bits needed to tell the regions apart are decoded, so every region repeats and nothing raises an access fault:
 - `0x2xxx_xxxx` is D-RAM repeating every 8 KB (`0x2000_2100` is the same word as `0x2000_0100`).
 - Data reads of `0x0000_0000`-`0x0000_FFFF` return I-RAM, repeating every 16 KB; data writes there go to I-RAM. Other `0x0xxx_xxxx` addresses read D-RAM aliases and ignore writes.
 - In `0x4xxx_xxxx`, bits `[15:12]` pick the peripheral and bits `[3:0]` the register; the rest are ignored.
+- `0x8xxx_xxxx` is the wait-state RAM repeating every 2 KB. Instructions are fetched from it too; a fetch from any other address outside I-RAM returns the I-RAM word of its low address bits.
 - Anything else reads as 0 and ignores writes.
 
 **Writing code into I-RAM.** Stores to I-RAM (`0x0000_0000`-`0x0000_3FFF`) are how the loaders place SD slot payloads. A store to the word holding the *very next* instruction is not supported: the store and that instruction's fetch hit the same block-RAM word in the same cycle, and the fetched word is undefined (the synthesis flow drops collision handling, see `SYNTH_GOWIN_OPTS` in the `Makefile`). Copy code into a region you are not executing from, and execute `fence.i` before jumping to it, as RISC-V requires anyway.
@@ -296,7 +298,8 @@ build/emu/target/release/vux9k-emu --no-firmware --load build/zephyr-demo/zephyr
 
 Interactive modes run at the SoC's 18 MHz, so the firmware's timeouts behave as on
 hardware; `--trace FILE` logs every instruction. Profiles: `real` (default: 16 KB
-I-RAM, 8 KB D-RAM, as the board) and `extended` (512 KB / 256 KB, same MMIO) —
+I-RAM, 8 KB D-RAM and the 2 KB wait-state RAM, as the board) and `extended`
+(512 KB / 256 KB, same MMIO and wait-state RAM) —
 **the extended profile is not real hardware**; it exists for programs too big for the
 board, such as bc. Python tests drive the emulator through the `vux9k_emu` module
 (`make emu-py`; helpers in `sim/emu/vux9k.py`).
@@ -426,7 +429,7 @@ Short tests run on Icarus, long SoC/GLS runs on Verilator (`SIM_UNIT` / `SIM_SOC
 
 | Level | Command | Typical Time | Verification Scope |
 |:---|:---|:---|:---|
-| **RTL Unit Tests** | `make sim-unit` | ~1 min | 28 cocotb modules: CPU (ALU, decoder, regfile, CSRs, LSU, next-PC, trap unit, mode detector, Hack translator and ops, RV32I smoke, branches, trap path, CSRs through the CPU, bus wait states), UART, timer, GPIO, SD SPI master, address decoder, RAM, and the SP/SDPB block-RAM cell models. Each has boundary-value and random tests against a Python model (fixed seed; *slow*: `sim-unit-random`, a new seed each day) |
+| **RTL Unit Tests** | `make sim-unit` | ~1 min | 30 cocotb modules: CPU (ALU, decoder, regfile, CSRs, LSU, next-PC, trap unit, mode detector, Hack translator and ops, RV32I smoke, branches, trap path, CSRs through the CPU, bus wait states), UART, timer, GPIO, SD SPI master, address decoder, RAM, the wait-state RAM and its bus bridge, and the SP/SDPB block-RAM cell models. Each has boundary-value and random tests against a Python model (fixed seed; *slow*: `sim-unit-random`, a new seed each day) |
 | **ISA Tests** | `make test-isa` | ~20 sec | riscv-tests `rv32ui`/`rv32mi` on `tb_hex_runner`, whose RAM has the SoC's synchronous timing (56 pass; 2 known gaps, hardware misaligned access and PMP, tracked as expected failures in `scripts/run_riscv_tests.py`) |
 | **GLS ISA Tests** | `make test-isa-gls` | ~1.5 min | The same riscv-tests on the gate-level `unified_cpu` netlist |
 | **ACT4 Tests** | `make test-act4` (`-gls`, `-emu`) | ~2 min each | riscv-arch-test 4.1.0: self-checking tests whose expected values the Sail reference model computed for this CPU's configuration (`scripts/act4/`), on RTL, netlist and emulator (73 pass; 4 known differences from the Sail configuration, tracked in `scripts/run_riscv_tests.py`). `make act4-elfs` generates them with the upstream image (docker or podman) |
@@ -531,6 +534,8 @@ VUX9K/
 │   ├── soc_ram.veryl               # Harvard 16KB I-RAM + 8KB D-RAM memory
 │   ├── soc_pkg.veryl               # SoC constants: clock-derived dividers, data-address map
 │   ├── soc_addr_decoder.veryl      # Data-address decoder (one instance per read/write address)
+│   ├── soc_xmem_bridge.veryl       # CPU side of the wait-state RAM: fetch/load/store -> req/rsp, CPU ready
+│   ├── soc_xmem_stub.veryl         # 2 KB wait-state RAM with the PSRAM controller's interface and latency
 │   └── soc_top.veryl               # Tang Nano 9K SoC top-level wrapper
 ├── firmware/                       # Cargo workspace: bare-metal Rust boot firmware
 │   ├── Cargo.toml                  # Workspace manifest (members: boot_manager, resident_loader, fw_common, hw_test)

@@ -61,11 +61,14 @@ module tb_soc_top #(
     // none of these names). Cycle 0 is the first cycle out of reset (raw_rst high),
     // the emulator's cycle 0. Records, one per line, numbers in hex:
     //   P id                     trace_id changed: a new program starts
-    //   F cycle pc               FETCH (not while cpu_soft_rst holds the CPU)
+    //   F cycle pc               first cycle of a FETCH (not while cpu_soft_rst holds
+    //                            the CPU; a FETCH waiting on the window, !instr_ready,
+    //                            goes on without a new record)
     //   M cycle isa              active_mode from this cycle on (1 = RV32); it latches
     //                            the auto-detected ISA at the end of a FETCH
     //   R cycle rd data          register file write, x0 excluded (Hack: A = x1, D = x2)
-    //   W cycle addr data be     CPU bus write
+    //   W cycle addr data be     CPU bus write, in the cycle it completes
+    //                            (mem_write && data_ready: a waiting store holds mem_write)
     //   T cycle cause            trap entry
     //   U cycle level            uart_tx pin change
     integer fd = 0;
@@ -74,6 +77,7 @@ module tb_soc_top #(
     logic last_tx = 1'b1;
     logic last_mode = 1'b0;
     logic mode_known = 1'b0;
+    logic fetch_waited = 1'b0;  // the previous cycle was a FETCH that waited
     always @(posedge clk) begin
         if (trace_id != 0 && fd == 0) fd = $fopen("lockstep.trace", "w");
         if (fd != 0) begin
@@ -86,14 +90,15 @@ module tb_soc_top #(
                     $fwrite(fd, "M %h %h\n", cyc, soc.active_mode);
                 mode_known = 1'b1;
                 last_mode = soc.active_mode;
-                if (int'(soc.cpu_inst.state) == 0 && !soc.cpu_soft_rst)  // CpuState_FETCH
+                if (int'(soc.cpu_inst.state) == 0 && !soc.cpu_soft_rst && !fetch_waited)  // CpuState_FETCH
                     $fwrite(fd, "F %h %h\n", cyc, soc.cpu_inst.pc_reg);
+                fetch_waited = int'(soc.cpu_inst.state) == 0 && !soc.instr_ready && !soc.cpu_soft_rst;
                 // The register file's own ports: one write per cycle, port 1 first
                 if (soc.cpu_inst.reg_file.we && soc.cpu_inst.reg_file.rd_addr != 0)
                     $fwrite(fd, "R %h %h %h\n", cyc, soc.cpu_inst.reg_file.rd_addr, soc.cpu_inst.reg_file.wr_data);
                 else if (soc.cpu_inst.reg_file.we2 && soc.cpu_inst.reg_file.rd2_addr != 0)
                     $fwrite(fd, "R %h %h %h\n", cyc, soc.cpu_inst.reg_file.rd2_addr, soc.cpu_inst.reg_file.wr2_data);
-                if (soc.mem_write)
+                if (soc.mem_write && soc.data_ready)
                     $fwrite(fd, "W %h %h %h %h\n", cyc, soc.data_waddr, soc.cpu_data_out, soc.cpu_inst.mem_byte_we);
                 if (soc.cpu_inst.trap_entry)
                     $fwrite(fd, "T %h %h\n", cyc, soc.cpu_inst.trap_cause);
@@ -103,6 +108,7 @@ module tb_soc_top #(
             end else begin
                 cyc = 0;
                 mode_known = 1'b0;
+                fetch_waited = 1'b0;
             end
             last_tx = uart_tx;
         end

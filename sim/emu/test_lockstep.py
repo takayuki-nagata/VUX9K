@@ -24,13 +24,16 @@ from collections import namedtuple
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "integration"))
-from lockstep_programs import UART_BIT, UART_FRAME, programs  # noqa: E402
+from lockstep_programs import UART_BIT, UART_FRAME, XMEM_WAIT, programs  # noqa: E402
 from vux9k import REPO_ROOT, start_soc  # noqa: E402
 
 TRACE = os.environ.get("LOCKSTEP_TRACE", "")
 DIFF_DIR = os.path.join(REPO_ROOT, "build", "sim", "diff")
 
 Instr = namedtuple("Instr", "cycle riscv pc regs writes trap")
+# Longest instruction in cycles: a window load fetched from the window (2 FETCH/EXECUTE + 1
+# MEM_WAIT + two waits of soc_pkg::XMEM_READ_LATENCY), with room to spare
+LONGEST = 3 + 2 * XMEM_WAIT + 7
 
 
 def _parse_trace(path):
@@ -163,7 +166,7 @@ def test_lockstep(trace, pid, prog):
 
     # The RTL trace ends mid-instruction at prog.cycles: compare what both completed
     n = min(len(rtl), len(emu))
-    while n and (rtl[n - 1].cycle >= prog.cycles - 8 or emu[n - 1].cycle >= prog.cycles - 8):
+    while n and (rtl[n - 1].cycle >= prog.cycles - LONGEST or emu[n - 1].cycle >= prog.cycles - LONGEST):
         n -= 1
     for k in range(n):
         a, b = rtl[k], emu[k]

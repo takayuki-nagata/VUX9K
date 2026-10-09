@@ -18,6 +18,7 @@ from lockstep_programs import UART_BIT, programs
 from soc_env import CLK_PERIOD_PS, REPO_ROOT, load_imem, read_hex_words, soc_of, start_soc
 
 SLOW = os.environ.get("LOCKSTEP_SLOW", "") not in ("", "0")
+XMEM_WORDS = 512  # soc_pkg::XMEM_WORDS
 
 
 def _firmware():
@@ -28,7 +29,8 @@ def _firmware():
 
 
 def _power_on_memories(soc, imem_words):
-    """What $readmemh loaded at time 0 (earlier programs changed it), plus the program."""
+    """What $readmemh loaded at time 0 (earlier programs changed it), plus the program;
+    the window zeroed."""
     iram, lanes = _firmware()
     load_imem(soc, iram)
     if imem_words:
@@ -37,6 +39,9 @@ def _power_on_memories(soc, imem_words):
         mem = getattr(soc.ram_inst, f"d_mem{lane}")
         for i, v in enumerate(words):
             mem[i].value = v
+    xmem = soc.xmem_inst.mem
+    for i in range(XMEM_WORDS):
+        xmem[i].value = 0  # no initial contents in the RTL; the emulator starts it zeroed
     regs = soc.cpu_inst.reg_file.registers
     for i in range(32):
         regs[i].value = 0  # no reset in rv32i_regfile; the emulator starts from 0

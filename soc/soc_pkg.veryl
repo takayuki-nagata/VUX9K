@@ -30,6 +30,17 @@ pub package soc_pkg {
     const MMIO_PAGE_SD   : logic<4> = 4'h2;
     const MMIO_PAGE_GPIO : logic<4> = 4'h3;
 
+    // RV32 region 8: the wait-state window (soc_xmem_bridge in front of soc_xmem_stub,
+    // a 2 KB RAM standing in for the PSRAM). Its XMEM_WORDS words repeat across the
+    // region. A request accepted in cycle 0 gets its response (rsp_valid) in cycle
+    // XMEM_READ_LATENCY or XMEM_WRITE_LATENCY, the PSRAM controller's latencies; the
+    // emulator copies both (emu/crates/vux9k_emu/src/soc.rs).
+    const RV_REGION_XMEM    : logic<4> = 4'h8;
+    const XMEM_ADDR_BITS    : u32      = 9; // word address bits
+    const XMEM_WORDS        : u32      = 1 << XMEM_ADDR_BITS;
+    const XMEM_READ_LATENCY : u32      = 35;
+    const XMEM_WRITE_LATENCY: u32      = 34;
+
     // Hack data address map (16-bit word addresses): RAM below HACK_MMIO_BASE,
     // MMIO in the 16 words from HACK_MMIO_BASE (UART in the first 4, GPIO after)
     const HACK_MMIO_BASE: logic<16> = 16'h6000;

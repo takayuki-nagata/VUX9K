@@ -1,0 +1,97 @@
+// Copyright (c) 2026 Takayuki Nagata
+// SPDX-License-Identifier: MIT
+
+// Stand-in for the PSRAM controller behind soc_xmem_bridge, until the PSRAM replaces it:
+// a 2 KB RAM (soc_pkg::XMEM_WORDS words, repeating across the window) with exactly the
+// controller's request/response contract (psram_controller, docs/integration.md §3):
+// - a request is taken in a cycle with req_valid && req_ready, and the requester holds
+//   req_valid and the request fields unchanged until then;
+// - req_ready is high while idle and low while a request is in flight;
+// - exactly one response per request: rsp_valid high for one cycle, XMEM_READ_LATENCY
+//   (read) or XMEM_WRITE_LATENCY (write) cycles after the accepting one, with rsp_rdata
+//   valid in that cycle for a read; req_ready is high again in that cycle, so the next
+//   request can be taken back to back;
+// - addresses are byte addresses (req_addr[1:0] ignored); req_wstrb[i] writes byte i.
+// One 32-bit array, so it maps to a single block RAM: byte enables are a
+// read-modify-write in the first two cycles of the write's wait, not four byte-lane
+// arrays (four block RAMs). No initial contents, like the PSRAM.
+pub module soc_xmem_stub (
+    clk      : input  clock    ,
+    rst      : input  reset    ,
+    req_valid: input  logic    ,
+    req_ready: output logic    ,
+    req_we   : input  logic    ,
+    req_addr : input  logic<32>,
+    req_wdata: input  logic<32>,
+    req_wstrb: input  logic<4> ,
+    rsp_valid: output logic    ,
+    rsp_rdata: output logic<32>,
+) {
+    const IDX_BITS: u32 = soc_pkg::XMEM_ADDR_BITS;
+    // Counter loads: the response follows the cycle in which the count is 1
+    const READ_COUNT : logic<6> = (soc_pkg::XMEM_READ_LATENCY - 1) as 6;
+    const WRITE_COUNT: logic<6> = (soc_pkg::XMEM_WRITE_LATENCY - 1) as 6;
+
+    var mem    : logic<32>       [soc_pkg::XMEM_WORDS];
+    var busy   : logic                                ;
+    var count  : logic<6>                             ;
+    var rd_step: logic                                ; // first cycle after the acceptance: read the word
+    var wr_step: logic                                ; // second cycle of a write: write the merged word
+    var we_q   : logic                                ;
+    var idx_q  : logic<IDX_BITS>                      ;
+    var wdata_q: logic<32>                            ;
+    var wstrb_q: logic<4>                             ;
+    var word_q : logic<32>                            ; // the addressed word as read in rd_step
+
+    let accept: logic = req_valid && !busy;
+
+    assign req_ready = !busy;
+    assign rsp_rdata = word_q;
+
+    always_ff (clk, rst) {
+        if_reset {
+            busy      = 1'b0;
+            count     = 6'd0;
+            rd_step   = 1'b0;
+            wr_step   = 1'b0;
+            we_q      = 1'b0;
+            idx_q     = '0;
+            wdata_q   = 32'd0;
+            wstrb_q   = 4'd0;
+            rsp_valid = 1'b0;
+        } else {
+            rsp_valid = 1'b0;
+            rd_step   = accept;
+            wr_step   = rd_step && we_q;
+            if accept {
+                busy    = 1'b1;
+                we_q    = req_we;
+                idx_q   = req_addr[IDX_BITS + 1:2];
+                wdata_q = req_wdata;
+                wstrb_q = req_wstrb;
+                count   = if req_we ? WRITE_COUNT : READ_COUNT;
+            } else if busy {
+                if count == 6'd1 {
+                    busy      = 1'b0;
+                    rsp_valid = 1'b1;
+                }
+                count = count - 6'd1;
+            }
+        }
+    }
+
+    // The old word with the strobed bytes replaced
+    let merged: logic<32> = {
+        if wstrb_q[3] ? wdata_q[31:24] : word_q[31:24], if wstrb_q[2] ? wdata_q[23:16] : word_q[23:16],
+        if wstrb_q[1] ? wdata_q[15:8] : word_q[15:8], if wstrb_q[0] ? wdata_q[7:0] : word_q[7:0]
+    };
+
+    always_ff (clk) {
+        if rd_step {
+            word_q = mem[idx_q];
+        }
+        if wr_step {
+            mem[idx_q] = merged;
+        }
+    }
+}

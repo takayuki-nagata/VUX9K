@@ -4,7 +4,8 @@
 // Data-address decoder, one instance each for the read (data_addr) and write
 // (data_waddr) addresses. Only the bits needed to tell the regions apart are
 // decoded, so regions repeat (README, "Address decoding and aliases"); an address
-// matching nothing selects nothing (reads 0, writes are ignored).
+// matching nothing selects nothing (reads 0, writes are ignored). xmem is the
+// wait-state window (RV32 only; soc_xmem_bridge serves it, not soc_ram).
 pub module soc_addr_decoder (
     addr     : input  logic<32>,
     hack_mode: input  logic    , // 1: Hack 16-bit word addresses, 0: RV32 byte addresses
@@ -13,6 +14,7 @@ pub module soc_addr_decoder (
     timer    : output logic    ,
     sd       : output logic    ,
     gpio     : output logic    ,
+    xmem     : output logic    ,
 ) {
     always_comb {
         ram   = 1'b0;
@@ -20,6 +22,7 @@ pub module soc_addr_decoder (
         timer = 1'b0;
         sd    = 1'b0;
         gpio  = 1'b0;
+        xmem  = 1'b0;
 
         if hack_mode {
             if addr[15:4] == soc_pkg::HACK_MMIO_BASE[15:4] {
@@ -44,6 +47,8 @@ pub module soc_addr_decoder (
                     page == soc_pkg::MMIO_PAGE_GPIO : gpio  = 1'b1;
                     default                         : {}
                 }
+            } else if region == soc_pkg::RV_REGION_XMEM {
+                xmem = 1'b1;
             }
         }
     }

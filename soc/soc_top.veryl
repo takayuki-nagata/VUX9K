@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: MIT
 
 // Tang Nano 9K Top-Level SoC Wrapper in Veryl
-// Integrates CPU, RAMs, UART, Machine Timer, SD Card SPI, GPIO, and Address Decoder
+// Integrates CPU, RAMs, UART, Machine Timer, SD Card SPI, GPIO, and Address Decoder,
+// and the wait-state window (soc_xmem_bridge + soc_xmem_stub) at RV32 region 8
 
 pub module soc_top (
     clk  : input clock,
@@ -55,14 +56,32 @@ pub module soc_top (
     let rst            : reset = raw_rst as reset;
 
     // Bus Interconnect Signals
-    var instr_addr: logic<32>;
-    var instr_data: logic<32>;
+    var instr_addr  : logic<32>;
+    var instr_data  : logic<32>;
+    var cpu_instr_in: logic<32>; // instr_data, or the window's word for a window fetch
 
     var data_addr   : logic<32>;
     var data_waddr  : logic<32>;
     var cpu_data_out: logic<32>;
     var cpu_data_in : logic<32>;
     var mem_write   : logic    ;
+
+    // Wait-state window: the CPU's request phases, the bridge's readies and read word
+    var fetch_req     : logic    ;
+    var fetch_addr    : logic<32>;
+    var data_req      : logic    ;
+    var instr_ready   : logic    ;
+    var data_ready    : logic    ;
+    var xmem_rdata    : logic<32>;
+    var xmem_req_valid: logic    ;
+    var xmem_req_ready: logic    ;
+    var xmem_req_we   : logic    ;
+    var xmem_req_addr : logic<32>;
+    var xmem_req_wdata: logic<32>;
+    var xmem_req_wstrb: logic<4> ;
+    var xmem_rsp_valid: logic    ;
+    var xmem_rsp_rdata: logic<32>;
+    var xmem_fetch_sel: logic    ;
 
     // Memory & MMIO Read Signals
     var ram_data_out  : logic<32>;
@@ -82,11 +101,13 @@ pub module soc_top (
     var timer_sel : logic;
     var sd_sel    : logic;
     var gpio_sel  : logic;
+    var xmem_sel  : logic;
     var ram_wsel  : logic;
     var uart_wsel : logic;
     var timer_wsel: logic;
     var sd_wsel   : logic;
     var gpio_wsel : logic;
+    var xmem_wsel : logic;
 
     var uart_we    : logic   ;
     var uart_re    : logic   ;
@@ -111,6 +132,7 @@ pub module soc_top (
     var last_sd_sel   : logic   ;
     var last_gpio_sel : logic   ;
     var last_uart_sel : logic   ;
+    var last_xmem_sel : logic   ;
     var last_addr_low : logic<4>;
 
     // Instantiate Unified Dual-ISA CPU Core (Veryl)
@@ -122,10 +144,10 @@ pub module soc_top (
         soft_rst       : cpu_soft_rst   ,
         boot_mode_valid: boot_mode_valid,
         boot_mode      : boot_mode      ,
-        instr_in       : instr_data     ,
-        instr_ready    : 1'b1           , // every memory here answers in one cycle
+        instr_in       : cpu_instr_in   ,
+        instr_ready    : instr_ready    , // 1 except while a window access waits
         data_in        : cpu_data_in    ,
-        data_ready     : 1'b1           ,
+        data_ready     : data_ready     ,
         timer_irq_in   : timer_irq      ,
         ext_irq_in     : !uart_empty    , // machine external interrupt: UART RX data waiting
         sw_irq_in      : 1'b0           ,
@@ -138,6 +160,54 @@ pub module soc_top (
         mem_read_req   : mem_read_req   ,
         mem_byte_we    : cpu_byte_we    ,
         active_mode    : active_mode    ,
+        fetch_req      : fetch_req      ,
+        fetch_addr     : fetch_addr     ,
+        data_req       : data_req       ,
+    );
+
+    // Wait-state window. A fetch from it (RV32, region 8 at pc_reg) takes the bridge's
+    // word; every other fetch reads I-RAM, which also answers for addresses outside
+    // I-RAM (README, "Address decoding and aliases"). Hack never selects the window.
+    assign xmem_fetch_sel = active_mode && fetch_addr[31:28] == soc_pkg::RV_REGION_XMEM;
+    assign cpu_instr_in   = if xmem_fetch_sel ? xmem_rdata : instr_data;
+
+    inst xmem_bridge: soc_xmem_bridge (
+        clk        : clk           ,
+        rst        : rst           ,
+        soft_rst   : cpu_soft_rst  ,
+        fetch_req  : fetch_req     ,
+        fetch_sel  : xmem_fetch_sel,
+        fetch_addr : fetch_addr    ,
+        data_req   : data_req      ,
+        data_sel   : xmem_wsel     , // data_waddr: the registered access address in MEM_WAIT
+        data_addr  : data_waddr    ,
+        data_we    : mem_write     ,
+        data_wdata : cpu_data_out  ,
+        data_wstrb : cpu_byte_we   ,
+        instr_ready: instr_ready   ,
+        data_ready : data_ready    ,
+        rdata      : xmem_rdata    ,
+        req_valid  : xmem_req_valid,
+        req_ready  : xmem_req_ready,
+        req_we     : xmem_req_we   ,
+        req_addr   : xmem_req_addr ,
+        req_wdata  : xmem_req_wdata,
+        req_wstrb  : xmem_req_wstrb,
+        rsp_valid  : xmem_rsp_valid,
+        rsp_rdata  : xmem_rsp_rdata,
+    );
+
+    inst xmem_inst: soc_xmem_stub (
+        clk      : clk           ,
+        rst      : rst           ,
+        req_valid: xmem_req_valid,
+        req_ready: xmem_req_ready,
+        req_we   : xmem_req_we   ,
+        req_addr : xmem_req_addr ,
+        req_wdata: xmem_req_wdata,
+        req_wstrb: xmem_req_wstrb,
+        rsp_valid: xmem_rsp_valid,
+        rsp_rdata: xmem_rsp_rdata,
     );
 
     // Instantiate UART Controller (Veryl)
@@ -232,6 +302,7 @@ pub module soc_top (
         timer    : timer_sel   ,
         sd       : sd_sel      ,
         gpio     : gpio_sel    ,
+        xmem     : xmem_sel    ,
     );
     inst wr_decode: soc_addr_decoder (
         addr     : data_waddr  ,
@@ -241,6 +312,7 @@ pub module soc_top (
         timer    : timer_wsel  ,
         sd       : sd_wsel     ,
         gpio     : gpio_wsel   ,
+        xmem     : xmem_wsel   ,
     );
 
     always_comb {
@@ -266,6 +338,7 @@ pub module soc_top (
             last_sd_sel    = 1'b0;
             last_gpio_sel  = 1'b0;
             last_uart_sel  = 1'b0;
+            last_xmem_sel  = 1'b0;
             last_addr_low  = 4'd0;
         } else {
             last_ram_sel   = ram_sel;
@@ -273,6 +346,7 @@ pub module soc_top (
             last_sd_sel    = sd_sel;
             last_gpio_sel  = gpio_sel;
             last_uart_sel  = uart_sel;
+            last_xmem_sel  = xmem_sel;
             last_addr_low  = data_addr[3:0];
         }
     }
@@ -286,6 +360,6 @@ pub module soc_top (
     always_comb {
         cpu_data_in = (if last_ram_sel ? ram_data_out : 32'd0) | (if last_uart_sel ? uart_data_bus : 32'd0)
             | (if last_timer_sel ? timer_data_out : 32'd0) | (if last_sd_sel ? sd_data_out : 32'd0)
-            | (if last_gpio_sel ? gpio_data_out : 32'd0);
+            | (if last_gpio_sel ? gpio_data_out : 32'd0) | (if last_xmem_sel ? xmem_rdata : 32'd0);
     }
 }

@@ -24,6 +24,7 @@ UART = 0x4000_0000  # +0 data, +4 status {frame_err, overrun, tx_full, rx_empty}
 TIMER = 0x4000_1000  # +0/+4 mtime lo/hi, +8/+C mtimecmp lo/hi
 GPIO = 0x4000_3000  # +0 LEDs, +4 button, +C soft-reset magic
 DRAM = 0x2000_0000
+XMEM = 0x8000_0000  # wait-state window: 2 KB repeating across region 8
 RESET_MARKER_ADDR = DRAM + 0x200
 RESET_MARKER = 0xC0FFEE42
 GPIO_SOFT_RESET = 0x0000_A55A
@@ -102,9 +103,31 @@ def mmio_program() -> list[int]:
     a.li("t0", 0x4000_4000)
     a.lw("t3", 0, "t0")
     _expect(a, "t3", 0, 6)
-    a.li("t0", 0x8000_0000)
+    a.li("t0", 0x9000_0000)
     a.lw("t3", 0, "t0")
     _expect(a, "t3", 0, 7)
+
+    # 18-20: the wait-state window: a word and a byte store read back through an alias
+    # 2 KB up and one at the top of the region; code copied there runs (fence.i first)
+    a.li("s6", XMEM)
+    a.li("t0", 0xCAFE_BABE)
+    a.sw("t0", 0x20, "s6")
+    a.li("t0", 0x11)
+    a.sb("t0", 0x22, "s6")
+    a.li("t0", XMEM + 0x800)
+    a.lw("t3", 0x20, "t0")
+    _expect(a, "t3", 0xCA11_BABE, 18)
+    a.li("t0", 0x8FFF_F800)
+    a.lbu("t3", 0x22, "t0")
+    _expect(a, "t3", 0x11, 19)
+    a.li("t0", rv32_asm.i_type(0x5A, "zero", 0, "a2", 0x13))  # addi a2, zero, 0x5A
+    a.sw("t0", 0x100, "s6")
+    a.li("t0", rv32_asm.i_type(0, "ra", 0, "zero", 0x67))  # ret
+    a.sw("t0", 0x104, "s6")
+    a.word(0x0000_100F)  # fence.i
+    a.addi("t0", "s6", 0x100)
+    a.jalr("ra", "t0", 0)
+    _expect(a, "a2", 0x5A, 20)
 
     # 8-9: mtime advances; mtimecmp reads back
     a.li("s4", TIMER)

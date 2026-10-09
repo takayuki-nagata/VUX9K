@@ -410,3 +410,139 @@ fn hpm_csrs_exist_in_their_ranges() {
         assert!(!exists(addr), "{addr:#x}");
     }
 }
+
+// ----- the wait-state window (soc_xmem_bridge + soc_xmem_stub, RV32 region 8) ---------
+use vux9k_emu::soc::{XMEM_READ_LATENCY, XMEM_WRITE_LATENCY};
+
+/// lui + addi loading `v` into `rd`.
+fn li(rd: u32, v: u32) -> [u32; 2] {
+    let lo = ((v << 20) as i32) >> 20;
+    [lui(rd, v.wrapping_sub(lo as u32) >> 12), addi(rd, rd, lo)]
+}
+const FENCE_I: u32 = 0x0000_100F;
+
+#[test]
+fn xmem_loads_stores_aliases_and_wait_cycles() {
+    let mut soc = load(
+        Profile::Real,
+        &[
+            lui(1, 0x80000), // 0x8000_0000
+            addi(2, 0, -2),
+            s(0x10, 2, 1, 2), // sw -2
+            addi(3, 0, 0x5A),
+            s(0x11, 3, 1, 0), // sb 0x5A into byte 1: the window has byte enables
+            lui(4, 0x80001),  // 0x8000_1000: the 2 KB repeat
+            i(0x03, 0x10, 4, 2, 5), // lw x5 = 0xFFFF_5AFE
+            i(0x03, 0x11, 1, 4, 6), // lbu x6 = 0x5A
+            i(0x03, 0x12, 1, 1, 7), // lh x7 = -1
+        ],
+    );
+    run_n(&mut soc, 9);
+    assert_eq!(soc.regs[5], 0xFFFF_5AFE);
+    assert_eq!(soc.regs[6], 0x5A);
+    assert_eq!(soc.regs[7], 0xFFFF_FFFF);
+    assert_eq!(
+        soc.xmem_word(0x8FFF_F810),
+        0xFFFF_5AFE,
+        "repeats across region 8"
+    );
+    let stores = 2 * (3 + XMEM_WRITE_LATENCY) as u64;
+    let loads = 3 * (3 + XMEM_READ_LATENCY) as u64;
+    assert_eq!(soc.cycle, 4 * 2 + stores + loads);
+    // Region 9 is unmapped: reads 0, writes ignored, no wait
+    let mut soc = load(
+        Profile::Real,
+        &[lui(1, 0x90000), s(0, 1, 1, 2), i(0x03, 0, 1, 2, 2)],
+    );
+    run_n(&mut soc, 3);
+    assert_eq!((soc.regs[2], soc.cycle), (0, 2 + 3 + 3));
+    // The riscv-tests profile has no window: no waits there either
+    let mut soc = load(
+        Profile::IsaTest,
+        &[lui(1, 0x80000), s(0, 1, 1, 2), i(0x03, 0, 1, 2, 2)],
+    );
+    run_n(&mut soc, 3);
+    assert_eq!(soc.cycle, 2 + 3 + 3);
+}
+
+/// I-RAM code that copies `routine` to 0x8000_0000, sets x9 to the return address and
+/// jumps there; returns the program and the number of steps up to the jump.
+fn xmem_call(routine: &[u32]) -> (Vec<u32>, usize) {
+    let mut w = vec![lui(1, 0x80000)];
+    for (k, word) in routine.iter().enumerate() {
+        w.extend(li(2, *word));
+        w.push(s(4 * k as i32, 2, 1, 2));
+    }
+    w.push(FENCE_I);
+    let ret = 4 * (w.len() as u32 + 2);
+    w.push(addi(9, 0, ret as i32));
+    w.push(i(0x67, 0, 1, 0, 0)); // jalr x0, 0(x1)
+    let steps = w.len();
+    w.push(jal(0, 0)); // ret: spin
+    (w, steps)
+}
+
+#[test]
+fn xmem_fetch_waits_and_runs_late() {
+    // csrr x8, mcycle; csrr x10, time; jalr x0, 0(x9)
+    let (prog, steps) = xmem_call(&[
+        csr(2, 8, 0xB00, 0),
+        csr(2, 10, 0xC01, 0),
+        i(0x67, 0, 9, 0, 0),
+    ]);
+    let mut soc = load(Profile::Real, &prog);
+    run_n(&mut soc, steps);
+    assert_eq!(soc.pc, 0x8000_0000);
+    let (c0, mc0) = (soc.cycle, soc.csr.mcycle);
+    let r = soc.step();
+    let w = XMEM_READ_LATENCY as u64;
+    assert_eq!(
+        (r.cycle, r.cycles as u64),
+        (c0, 2 + w),
+        "Retire::cycle is the first FETCH cycle"
+    );
+    assert_eq!(
+        soc.regs[8] as u64,
+        mc0 + w + 1,
+        "mcycle as read in EXECUTE, after the wait"
+    );
+    let r = soc.step();
+    assert_eq!(
+        soc.regs[10] as u64,
+        r.cycle + w + 1,
+        "mtime as read in EXECUTE"
+    );
+    soc.step();
+    assert_eq!(soc.pc, 4 * steps as u32, "returned to I-RAM");
+    assert_eq!(soc.cycle, c0 + 3 * (2 + w));
+}
+
+#[test]
+fn xmem_fetch_samples_the_interrupt_in_its_last_cycle() {
+    // An interrupt pending from the last FETCH cycle on is taken; one from the cycle
+    // after it is not (the next instruction takes it)
+    for (late, trap) in [(0, true), (1, false)] {
+        let (mut prog, steps) = xmem_call(&[addi(11, 0, 1), i(0x67, 0, 9, 0, 0)]);
+        prog.resize(0x40, 0x13);
+        prog.push(jal(0, 0)); // handler at 0x100: spin
+        let mut soc = load(Profile::Real, &prog);
+        run_n(&mut soc, steps);
+        soc.csr.mtvec = 0x100;
+        soc.csr.mie = 1 << 7;
+        soc.csr.mstatus = 1 << 3;
+        let c0 = soc.cycle;
+        let w = XMEM_READ_LATENCY as u64;
+        // timer_irq in cycle c is mtime(c-1) >= mtimecmp, and mtime(c) == c here
+        let cmp = c0 + w - 1 + late;
+        soc.periph.timer.write(0xC, (cmp >> 32) as u32, c0 - 3);
+        soc.periph.timer.write(0x8, cmp as u32, c0 - 2);
+        let r = soc.step();
+        assert_eq!(
+            r.trap.is_some(),
+            trap,
+            "mtimecmp at the last FETCH cycle + {late}"
+        );
+        assert_eq!(r.cycles as u64, 2 + w);
+        assert_eq!(soc.regs[11], if trap { 0 } else { 1 });
+    }
+}

@@ -76,6 +76,9 @@ module tb_hex_runner (
         mem_read_req   : _    ,
         mem_byte_we           ,
         active_mode    : _    ,
+        fetch_req      : _    ,
+        fetch_addr     : _    ,
+        data_req       : _    ,
     );
 
     // Wait cycles (wait_mode): a 16-bit Fibonacci LFSR (taps 16,14,13,11, period 65535)

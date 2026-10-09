@@ -11,11 +11,19 @@
 //! - ISA detection: soc/cpu/auto_mode_detector.veryl
 //! - address decode and memories: soc/soc_addr_decoder.veryl, soc/soc_ram.veryl,
 //!   soc/soc_top.veryl; the IsaTest profile follows sim/tb_hex_runner.veryl.
+//! - the wait-state window: soc/soc_xmem_bridge.veryl, soc/soc_xmem_stub.veryl.
 //!
 //! Timing: `cycle` counts SoC clocks (18 MHz) since reset release. An instruction starts
 //! with its FETCH cycle; `Soc::step` executes one instruction and advances `cycle` by
 //! its cost (RV: 2, +1 MEM_WAIT for loads/stores; Hack: 2, +2 when the comp reads M,
 //! +1 when it writes both A and D). A trap costs 2 (it is taken in EXECUTE).
+//! Window accesses (RV32 only) wait on top of that: a fetch from the window stays in
+//! FETCH `XMEM_READ_LATENCY` cycles more, a window load or store in MEM_WAIT
+//! `XMEM_READ_LATENCY` / `XMEM_WRITE_LATENCY` more. Nothing in the CPU moves while a
+//! fetch waits (it samples the interrupt in its last FETCH cycle), so an instruction
+//! fetched with a wait `w` runs exactly like one fetched `w` cycles later: its interrupt
+//! sampling, counter reads and MMIO access times all shift by `w`. Its `Retire::cycle`
+//! is still the first FETCH cycle, and `Retire::cycles` includes the wait.
 
 use std::collections::HashSet;
 
@@ -25,6 +33,19 @@ use crate::profile::Profile;
 
 /// riscv-tests' `tohost` (scripts/riscv_tests/link.ld), IsaTest profile only.
 pub const TOHOST: u32 = 0xF000_0000;
+
+// The wait-state window, copied from soc/soc_pkg.veryl (keep in sync, see
+// docs/agents/sync-points.md): RV32 region XMEM_REGION, XMEM_WORDS words repeating
+// across it; a request accepted in the first FETCH/MEM_WAIT cycle is answered
+// XMEM_*_LATENCY cycles later, which is how many cycles the access adds.
+/// RV32 region (`addr[31:28]`) of the window: soc_pkg::RV_REGION_XMEM.
+pub const XMEM_REGION: u32 = 0x8;
+/// Words in the window: soc_pkg::XMEM_WORDS.
+pub const XMEM_WORDS: usize = 512;
+/// Extra cycles of a window fetch or load: soc_pkg::XMEM_READ_LATENCY.
+pub const XMEM_READ_LATENCY: u32 = 35;
+/// Extra cycles of a window store: soc_pkg::XMEM_WRITE_LATENCY.
+pub const XMEM_WRITE_LATENCY: u32 = 34;
 
 /// The ISA of an application image (a VUX9 slot header's mode).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -84,6 +105,9 @@ pub struct Soc {
     pub steps: u64,
     iram: Vec<u32>,
     dram: Vec<u32>,
+    /// The wait-state window (empty in the IsaTest profile). The RTL's has no initial
+    /// contents; here it starts zeroed.
+    xmem: Vec<u32>,
     iram_mask: u32,
     dram_mask: u32,
     /// From the profile, for the data bus: see `in_iram_window`; the IsaTest profile
@@ -214,6 +238,7 @@ impl Soc {
             steps: 0,
             iram: vec![0; iram_words],
             dram: vec![0; dram_words],
+            xmem: vec![0; profile.xmem_bytes() / 4],
             iram_mask: (iram_words - 1) as u32,
             dram_mask: (dram_words - 1) as u32,
             isa_test: profile == Profile::IsaTest,
@@ -360,11 +385,34 @@ impl Soc {
         self.dram[(idx & self.dram_mask) as usize]
     }
 
+    /// The window word at RV32 address `addr` (it repeats every `XMEM_WORDS` words).
+    pub fn xmem_word(&self, addr: u32) -> u32 {
+        self.xmem[Self::xmem_index(addr)]
+    }
+
     // ----- fetch and data bus -------------------------------------------------------
 
+    /// The instruction word at `pc` and the cycles its FETCH waits. soc_top fetches
+    /// from the window in RV32 mode (at region 8); every other fetch reads I-RAM, also
+    /// for addresses outside it.
     #[inline]
-    fn fetch(&self, pc: u32) -> u32 {
-        self.iram[((pc >> 2) & self.iram_mask) as usize]
+    fn fetch(&self, pc: u32) -> (u32, u32) {
+        if self.riscv_mode && self.in_xmem(pc) {
+            (self.xmem[Self::xmem_index(pc)], XMEM_READ_LATENCY)
+        } else {
+            (self.iram[((pc >> 2) & self.iram_mask) as usize], 0)
+        }
+    }
+
+    /// RV32 addresses served by the wait-state window (soc_addr_decoder's `xmem`).
+    #[inline]
+    fn in_xmem(&self, addr: u32) -> bool {
+        addr >> 28 == XMEM_REGION && !self.xmem.is_empty()
+    }
+
+    #[inline]
+    fn xmem_index(addr: u32) -> usize {
+        (addr >> 2) as usize & (XMEM_WORDS - 1)
     }
 
     /// RV32 data read of the 32-bit word containing `addr` (soc_addr_decoder + soc_ram),
@@ -382,11 +430,12 @@ impl Soc {
                 }
             }
             4 => self.mmio_read(addr, t),
+            _ if self.in_xmem(addr) => self.xmem[Self::xmem_index(addr)],
             _ => 0,
         }
     }
 
-    /// RV32 data store (in MEM_WAIT, the third cycle of the instruction fetched in `t`):
+    /// RV32 data store (in MEM_WAIT, from the third cycle of the instruction fetched in `t`):
     /// `data` is the lane-replicated store data, `be` the byte enables.
     fn rv_write(&mut self, addr: u32, data: u32, be: u8, t: u64) {
         if self.isa_test {
@@ -410,6 +459,10 @@ impl Soc {
                 self.dram[idx] = merge_bytes(self.dram[idx], data, be);
             }
             4 => self.mmio_write(addr, data, t + 2),
+            _ if self.in_xmem(addr) => {
+                let idx = Self::xmem_index(addr);
+                self.xmem[idx] = merge_bytes(self.xmem[idx], data, be);
+            }
             _ => {}
         }
     }
@@ -535,10 +588,15 @@ impl Soc {
     /// Execute one instruction (or take a trap) and return what it did.
     pub fn step(&mut self) -> Retire {
         let pc = self.pc;
-        let word = self.fetch(pc);
+        let start = self.cycle;
+        let (word, wait) = self.fetch(pc);
+        // A waiting FETCH changes nothing until its last cycle: run the instruction as one
+        // fetched then (mcycle counts the wait); its cost and Retire::cycle are fixed below
+        self.cycle += wait as u64;
+        self.csr.mcycle = self.csr.mcycle.wrapping_add(wait as u64);
         self.detect_mode(word);
         let mut r = Retire {
-            cycle: self.cycle,
+            cycle: start,
             riscv: self.riscv_mode,
             pc,
             ..Retire::default()
@@ -557,6 +615,7 @@ impl Soc {
             None => self.csr.mcycle = self.csr.mcycle.wrapping_add(r.cycles as u64),
         }
         self.cycle += r.cycles as u64;
+        r.cycles += wait;
         self.steps += 1;
         if let Some(cov) = self.cov.as_mut() {
             cov.insert(cov_key(r.riscv, r.pc, r.instr));
@@ -674,7 +733,11 @@ impl Soc {
                 if misaligned(addr, f3) {
                     return self.take_trap(4, addr, r);
                 }
-                r.cycles = 3;
+                r.cycles = 3 + if self.in_xmem(addr) {
+                    XMEM_READ_LATENCY
+                } else {
+                    0
+                };
                 let word = self.rv_read_word(addr, self.cycle);
                 let sh = (addr & 3) * 8;
                 let v = match f3 {
@@ -691,7 +754,11 @@ impl Soc {
                 if misaligned(addr, f3) {
                     return self.take_trap(6, addr, r);
                 }
-                r.cycles = 3;
+                r.cycles = 3 + if self.in_xmem(addr) {
+                    XMEM_WRITE_LATENCY
+                } else {
+                    0
+                };
                 let x2 = self.regs[rs2(i)];
                 let lane = addr & 3;
                 let (data, be) = match f3 {

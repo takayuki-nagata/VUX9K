@@ -31,6 +31,13 @@ pub module unified_cpu #(
     mem_read_req: output logic    ,
     mem_byte_we : output logic<4> ,
     active_mode : output logic    , // 0: Hack 16-bit, 1: RISC-V 32-bit
+    // The access the CPU waits on, for a memory that can make it wait (soc_xmem_bridge):
+    // a fetch of fetch_addr while in FETCH (pc_reg: unlike pc_out a register, so a
+    // ready derived from it stays off the next-PC path), and an RV32 load or store of
+    // data_waddr (registered) with mem_write/data_out/mem_byte_we while in MEM_WAIT
+    fetch_req : output logic    ,
+    fetch_addr: output logic<32>,
+    data_req  : output logic    ,
 ) {
     enum CpuState {
         FETCH,
@@ -136,6 +143,9 @@ pub module unified_cpu #(
     var rv_alu_op      : rv32i_pkg::AluOp     ; // ALU operation of OP / OP-IMM
 
     assign active_mode = is_riscv_mode;
+    assign fetch_req   = state == CpuState::FETCH;
+    assign fetch_addr  = pc_reg;
+    assign data_req    = is_riscv_mode && state == CpuState::MEM_WAIT;
     // pc_reg is already final in HACK_WR_D (updated in the cycle before it)
     assign pc_out = if state == CpuState::FETCH || state == CpuState::HACK_WR_D ? pc_reg : next_pc;
     let rv_mem_addr: logic<32> = rf_rs1_data + rv_imm;

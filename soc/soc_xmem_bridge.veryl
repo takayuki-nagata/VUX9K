@@ -1,0 +1,71 @@
+// Copyright (c) 2026 Takayuki Nagata
+// SPDX-License-Identifier: MIT
+
+// The CPU's side of the wait-state window (RV32 region soc_pkg::RV_REGION_XMEM): turns a
+// fetch (FETCH) or a data access (RV32 MEM_WAIT) in the window into one request of the
+// memory controller's request/response contract (soc_xmem_stub's header) and tells the
+// CPU when it completes. Outside the window instr_ready/data_ready are 1: everything else
+// answers in one cycle.
+// - The request is raised in the first cycle of the CPU's FETCH/MEM_WAIT and held, with
+//   the same fields, until accepted: the CPU holds its address and data while it waits.
+// - busy (accepted, no response yet) drops req_valid, so the access the CPU is still
+//   waiting on is never requested twice; the response's cycle completes it (ready).
+// - ready comes from registers only (fetch_addr is pc_reg, data_addr the registered
+//   access address, rsp_valid a register), never from the CPU's next-PC or address
+//   adders: it gates the CPU's FSM.
+// - No new request while the CPU is held in soft reset. None is in flight then: the
+//   GPIO store that starts it completed outside the window, as did its fetch.
+pub module soc_xmem_bridge (
+    clk     : input clock,
+    rst     : input reset,
+    soft_rst: input logic,
+
+    // CPU side
+    fetch_req  : input  logic    , // the CPU is in FETCH
+    fetch_sel  : input  logic    , // fetch_addr is in the window
+    fetch_addr : input  logic<32>,
+    data_req   : input  logic    , // the CPU is in an RV32 MEM_WAIT
+    data_sel   : input  logic    , // data_addr is in the window
+    data_addr  : input  logic<32>,
+    data_we    : input  logic    , // 1: store, 0: load
+    data_wdata : input  logic<32>,
+    data_wstrb : input  logic<4> ,
+    instr_ready: output logic    ,
+    data_ready : output logic    ,
+    rdata      : output logic<32>, // the read word, valid in the cycle a window access completes
+
+    // Memory controller side
+    req_valid: output logic    ,
+    req_ready: input  logic    ,
+    req_we   : output logic    ,
+    req_addr : output logic<32>,
+    req_wdata: output logic<32>,
+    req_wstrb: output logic<4> ,
+    rsp_valid: input  logic    ,
+    rsp_rdata: input  logic<32>,
+) {
+    var busy: logic;
+
+    let fetch_win: logic = fetch_req && fetch_sel;
+    let data_win : logic = data_req && data_sel;
+    let done     : logic = busy && rsp_valid;
+
+    assign req_valid   = (fetch_win || data_win) && !busy && !soft_rst;
+    assign req_we      = data_win && data_we;
+    assign req_addr    = if data_win ? data_addr : fetch_addr;
+    assign req_wdata   = data_wdata;
+    assign req_wstrb   = data_wstrb;
+    assign instr_ready = !fetch_win || done;
+    assign data_ready  = !data_win || done;
+    assign rdata       = rsp_rdata;
+
+    always_ff (clk, rst) {
+        if_reset {
+            busy = 1'b0;
+        } else if req_valid && req_ready {
+            busy = 1'b1;
+        } else if rsp_valid {
+            busy = 1'b0;
+        }
+    }
+}

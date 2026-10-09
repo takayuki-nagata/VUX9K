@@ -11,8 +11,9 @@ instruction (fetch cycle, ISA, PC, register writes, bus writes, traps) and every
 UART TX byte with its cycle.
 
 A program is the power-on state (firmware preload from build/firmware, words over
-I-RAM, SD sectors) plus host stimulus at exact cycles (cycle 0 = first cycle out of
-reset): UART bytes sent back to back from a cycle, and S2 button levels.
+I-RAM, SD sectors; the wait-state window zeroed, as the emulator starts it) plus host
+stimulus at exact cycles (cycle 0 = first cycle out of reset): UART bytes sent back to
+back from a cycle, and S2 button levels.
 """
 
 import os
@@ -24,6 +25,8 @@ from rv32_asm import Asm, b_type, i_type, r_type
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 UART_BIT = 156  # soc_pkg::UART_CNT: 18 MHz / 115200
 UART_FRAME = 10 * UART_BIT
+XMEM = 0x8000_0000  # the wait-state window: soc_pkg::RV_REGION_XMEM, 2 KB repeating
+XMEM_WAIT = 35  # soc_pkg::XMEM_READ_LATENCY: the longest wait of one access
 
 
 @dataclass
@@ -42,17 +45,18 @@ def _csr_read(rd, csr):
 
 
 # --- constrained-random RV32I ----------------------------------------------------------
-# x2 (sp) = D-RAM base for loads/stores, x30 = timer base, x31 = loop counter; the rest
-# are random. No traps: aligned accesses only, branches only forward or counted loops.
+# x2 (sp) = base for loads/stores (D-RAM, or the window), x30 = timer base, x31 = loop
+# counter; the rest are random. No traps: aligned accesses only, branches only forward or
+# counted loops.
 _R_OPS = [(0, 0), (0x20, 0), (0, 1), (0, 2), (0, 3), (0, 4), (0, 5), (0x20, 5), (0, 6), (0, 7)]
 _I_OPS = [0, 2, 3, 4, 6, 7]  # addi slti sltiu xori ori andi
 _DEST = [f"x{i}" for i in range(1, 30) if i != 2]
 
 
-def random_rv(seed: int, blocks: int = 300) -> list:
+def random_rv(seed: int, blocks: int = 300, base: int = 0x2000_0800) -> list:
     rnd = random.Random(seed)
     a = Asm()
-    a.li("sp", 0x20000800)
+    a.li("sp", base)
     a.li("x30", 0x40001000)
     for r in _DEST:
         a.li(r, rnd.getrandbits(32))
@@ -121,6 +125,100 @@ def random_rv(seed: int, blocks: int = 300) -> list:
     a.j("end")
     words = a.assemble()
     assert len(words) <= 0x3800 // 4, f"random program of {len(words)} words overlaps the Resident Loader"
+    return words
+
+
+# --- the wait-state window ----------------------------------------------------------------
+XMEM_IRQS = 4  # timer interrupts taken while running from the window
+
+
+def xmem() -> list:
+    """The window at 0x8000_0000: stores and loads of every size, through aliases; a
+    routine copied there (fence.i) and run, which sends a UART byte, reads the timer and
+    mcycle and accesses the window itself; then a loop in the window, nearly all of whose
+    cycles are fetch waits, until four timer interrupts (mtimecmp a different distance
+    ahead each time) have been taken: each becomes pending while a fetch waits, so its
+    sampling point (the fetch's last cycle) decides which instruction takes it."""
+    a = Asm()
+    a.li("s0", XMEM)
+    a.li("s1", 0x4000_0000)  # UART
+    a.li("s2", 0x4000_1000)  # timer
+    a.li("s10", 0x2000_0800)  # D-RAM
+    # Stores of every size, loads back, an alias 2 KB up and one at the top of the region
+    a.li("t0", 0x1122_3344)
+    a.sw("t0", 0x40, "s0")
+    a.li("t1", 0xA5)
+    a.sb("t1", 0x41, "s0")
+    a.li("t1", 0xBEEF)
+    a.sh("t1", 0x46, "s0")
+    a.lw("t2", 0x40, "s0")
+    a.lb("t3", 0x41, "s0")
+    a.lbu("t4", 0x41, "s0")
+    a.lh("t5", 0x46, "s0")
+    a.word(i_type(0x46, "s0", 5, "t6", 0x03))  # lhu
+    a.li("s3", XMEM + 0x800)
+    a.lw("t2", 0x40, "s3")
+    a.li("s4", 0x8FFF_F800)
+    a.sw("t0", 0x44, "s4")
+    a.lw("t3", 0x44, "s0")
+    a.sw("t3", 0x40, "s10")  # a D-RAM store between window accesses
+
+    # The routine, assembled at its window address
+    r = Asm(origin=XMEM + 0x100)
+    r.sb("a0", 0, "s1")  # UART TX
+    r.lw("t0", 0, "s2")  # mtime, read in the EXECUTE cycle after the wait
+    r.csrr("t1", "mcycle")
+    r.lw("t2", 0x40, "s0")  # window load from window code
+    r.sw("t1", 0x48, "s0")
+    r.jalr("zero", "ra", 0)
+    r.label("spin")  # the interrupt loop: count until the handler has run XMEM_IRQS times
+    r.addi("s6", "s6", 1)
+    r.li("t1", XMEM_IRQS)
+    r.bltu("s5", "t1", "spin")
+    r.jalr("zero", "ra", 0)
+    routine = r.assemble()
+    for k, w in enumerate(routine):
+        a.li("t0", w)
+        a.sw("t0", 0x100 + 4 * k, "s0")
+    a.word(0x0000_100F)  # fence.i
+    a.li("a0", ord("W"))
+    a.li("t0", XMEM + 0x100)
+    a.jalr("ra", "t0", 0)
+    a.lw("t4", 0x48, "s0")
+
+    # Timer interrupts while the window loop runs
+    a.la("t0", "handler")
+    a.csrw("mtvec", "t0")
+    a.li("s7", 211)  # first distance in cycles; the handler adds 37 per interrupt
+    a.call("arm")
+    a.li("t0", 0x80)  # MTIE
+    a.csrw("mie", "t0")
+    a.li("t0", 8)
+    a.csrs("mstatus", "t0")
+    a.li("t0", r.labels["spin"])
+    a.jalr("ra", "t0", 0)
+    a.label("done")
+    a.j("done")
+
+    a.label("arm")  # mtimecmp = mtime + s7
+    a.li("t0", -1)
+    a.sw("t0", 0xC, "s2")
+    a.lw("t0", 0, "s2")
+    a.add("t0", "t0", "s7")
+    a.sw("t0", 8, "s2")
+    a.sw("zero", 0xC, "s2")
+    a.ret()
+
+    a.label("handler")  # count, re-arm a little further away, back into the window
+    a.csrr("s8", "mepc")
+    a.addi("s5", "s5", 1)
+    a.addi("s7", "s7", 37)
+    a.mv("s9", "ra")
+    a.call("arm")
+    a.mv("ra", "s9")
+    a.mret()
+    words = a.assemble()
+    assert len(words) <= 0x3800 // 4
     return words
 
 
@@ -348,6 +446,10 @@ def programs() -> list:
     )
     progs.append(Program("hack_soft_reset", cycles=20_000, imem_words=hack_soft_reset()))
     progs.append(Program("sd_clkdiv", cycles=30_000, imem_words=sd_clkdiv()))
+    # The window programs finish by cycle ~2,600 / ~4,000 (window waits included); xmem
+    # then takes timer interrupts in I-RAM until the end
+    progs.append(Program("xmem", cycles=5_000, imem_words=xmem()))
+    progs.append(Program("random_rv_xmem_4", cycles=8_000, imem_words=random_rv(4, base=XMEM + 0x400)))
     seeds = os.environ.get("LOCKSTEP_SEEDS", "")
     for s in [int(x) for x in seeds.split(",") if x]:
         progs.append(Program(f"random_rv_{s}", cycles=200_000, imem_words=random_rv(s, blocks=1500), slow=True))
