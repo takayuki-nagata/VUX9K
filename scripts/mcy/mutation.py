@@ -137,6 +137,11 @@ ACCEPTED: dict[str, dict[str, str]] = {
         " r_hack_data in RV32 mode's MEM_WAIT. Only a Hack instruction with M as operand reads it, in"
         " HACK_WB, after its own MEM_WAIT has reloaded it from data_in; the ISA mode changes only through a"
         " reset, which zeroes it. Equivalent from reset, beyond dprove's reach on the whole CPU",
+        "cnot1 A[27] ctrl 1 @ rv32i_csrs.sv:124.18-175.12 rv32i_csrs.sv:124.22-124.30": "flips bit 27 of"
+        " mepc's next value when its bit 1 is set, which never happens: trap entry stores the PC of an RV32"
+        " instruction (4-byte aligned; traps never happen in Hack mode, where pc_reg can have bit 1 set)"
+        " and CSR writes mask mepc with 0xFFFF_FFFC. Equivalent from reset,"
+        " beyond dprove's reach on the whole CPU",
     },
     "fifo_sync": {
         "const1 A[1] @ $auto$proc_dff.cc:proc_dff": "sets bit 1 of a memory word while rst is asserted. The"

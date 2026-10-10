@@ -14,7 +14,7 @@ use nothing but the CPU's ports and therefore also run on the gate-level netlist
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, FallingEdge
-from rv32_asm import Asm
+from rv32_asm import Asm, j_type
 
 HANDLER = 0x200
 MAX_CYCLES = 400
@@ -388,3 +388,165 @@ async def test_mret_returns_to_mepc(dut):
     words[target // 4] = 0x0000006F  # target: j .
     pcs, _ = await run_program(dut, words)
     assert target in pcs, f"mret did not jump to mepc; last PCs {[hex(p) for p in pcs[-4:]]}"
+
+
+@cocotb.test()
+async def test_wfi_is_a_nop(dut):
+    """WFI executes as a no-op: no trap, and the next instruction runs"""
+    a = Asm()
+    a.la("t0", "bad")
+    a.csrw("mtvec", "t0")  # any trap fails the test
+    a.li("s2", 0)
+    a.word(0x10500073)  # wfi
+    a.li("s2", 1)
+    a.beqz("s2", "bad")
+    a.label("ok")
+    a.j("ok")
+    a.label("bad")
+    a.j("bad")
+    await expect_ok(dut, (a.assemble(), a.labels))
+
+
+@cocotb.test()
+async def test_system_funct3_100_is_illegal(dut):
+    """SYSTEM with funct3 = 100 (no such CSR instruction) is illegal even on an existing CSR, mtval = the word"""
+    word = (0x340 << 20) | (0b100 << 12) | (5 << 7) | 0x73  # mscratch, rs1 = x0, rd = t0
+
+    def body(a):
+        a.label("insn")
+        a.word(word)
+
+    await expect_ok(dut, trap_program(body, 2, mtval=lambda a, r: a.li(r, word)))
+
+
+# Above the riscv-tests' 256 KB window: the trap path's upper address bits are this test's job
+HIGH_CODE = 0x0034_0400  # bits 21, 20, 18 and 10
+HIGH_MTVEC = 0x0028_0800  # bits 21, 19 and 11
+
+
+@cocotb.test()
+async def test_trap_and_mret_at_high_addresses(dut):
+    """EBREAKs at addresses above 256 KB: mtvec, mepc, mtval and mret keep every address bit.
+
+    The handler at HIGH_MTVEC checks mcause, mepc = mtval = the ebreak's address (in s2),
+    and returns past it; the second return waits one more instruction after writing mepc.
+    """
+    main = Asm()
+    main.li("t0", HIGH_MTVEC)
+    main.csrw("mtvec", "t0")
+    main.li("s1", 0)
+    main.li("t0", HIGH_CODE)
+    main.jalr("zero", "t0", 0)
+
+    code = Asm(origin=HIGH_CODE)
+    for n in (1, 2):
+        code.la("s2", f"insn{n}")
+        code.label(f"insn{n}")
+        code.ebreak()
+        code.li("t0", n)
+        code.bne("s1", "t0", "bad")  # the handler ran once more
+    code.label("ok")
+    code.j("ok")
+    code.label("bad")
+    code.j("bad")
+
+    handler = Asm(origin=HIGH_MTVEC)
+    handler.csrr("t0", "mcause")
+    handler.li("t1", 3)
+    handler.bne("t0", "t1", "bad")
+    handler.csrr("t0", "mtval")
+    handler.bne("t0", "s2", "bad")
+    handler.csrr("t0", "mepc")
+    handler.bne("t0", "s2", "bad")
+    handler.addi("t0", "t0", 4)
+    handler.csrw("mepc", "t0")
+    handler.addi("s1", "s1", 1)
+    handler.li("t1", 2)
+    handler.beq("s1", "t1", "late")
+    handler.mret()
+    handler.label("late")
+    handler.nop()
+    handler.mret()
+    handler.label("bad")
+    handler.j("bad")
+
+    mem = {}
+    for asm in (main, code, handler):
+        mem.update({asm.origin + 4 * i: w for i, w in enumerate(asm.assemble())})
+    pcs, _ = await run_program(dut, mem, max_cycles=600)
+    last = [hex(p) for p in pcs[-4:]]
+    assert HIGH_MTVEC in pcs, f"never entered the handler at mtvec; last PCs {last}"
+    assert code.labels["bad"] not in pcs and handler.labels["bad"] not in pcs, f"a check failed; last PCs {last}"
+    assert code.labels["ok"] in pcs, f"never reached 'ok'; last PCs {last}"
+
+
+@cocotb.test()
+async def test_r_type_extension_is_illegal(dut):
+    """An R-type word with a funct7 RV32I doesn't use (MUL, from the M extension) is illegal, mtval = the word"""
+    word = (0x01 << 25) | (7 << 20) | (6 << 15) | (0 << 12) | (5 << 7) | 0x33  # mul t0, t1, t2
+
+    def body(a):
+        a.label("insn")
+        a.word(word)
+
+    await expect_ok(dut, trap_program(body, 2, mtval=lambda a, r: a.li(r, word)))
+
+
+TRAP_CODE = 0x7FFF_FF00  # bits 8-30 set
+TRAP_MTVEC = 0x2AAA_AAA8
+MISALIGNED_ADDRESSES = (0xFFFF_FFFF, 0x5555_5555, 0xAAAA_AAAB, 0x0002_0101)
+COUNTER_HIGH = (0x0000_0000, 0xAAAA_AAAA, 0x5555_5555, 0xFFFF_FFFF)  # each bit both ways, with each other bit
+
+
+@cocotb.test()
+async def test_trap_values_keep_every_bit(dut):
+    """Misaligned loads (mtval = the address, each bit both ways) and a misaligned JAL
+    (mtval = its target) far up the address space: the handler at a patterned mtvec
+    checks mcause, mepc and mtval in full, and that trap entry leaves the counters'
+    upper halves (a different pattern each time) alone, and returns past the trapping
+    instruction"""
+    main = Asm()
+    main.li("t0", TRAP_MTVEC)
+    main.csrw("mtvec", "t0")
+    main.csrw("mcycle", "zero")  # no carry into the upper halves below
+    main.csrw("minstret", "zero")
+    main.li("t0", TRAP_CODE)
+    main.jalr("zero", "t0", 0)
+
+    code = Asm(origin=TRAP_CODE)
+    for n, addr in enumerate(MISALIGNED_ADDRESSES):
+        code.li("s5", COUNTER_HIGH[n])  # the counters' upper halves, unchanged by the trap
+        code.csrw("mcycleh", "s5")
+        code.csrw("minstreth", "s5")
+        code.li("s4", 4)  # expected mcause
+        code.li("s3", addr)  # expected mtval
+        code.la("s2", f"insn{n}")  # expected mepc
+        code.li("t0", addr)
+        code.label(f"insn{n}")
+        code.lw("zero", 0, "t0")
+    code.li("s4", 0)
+    code.la("s2", "jal")
+    code.la("s3", "jal")
+    code.addi("s3", "s3", 6)
+    code.label("jal")
+    code.word(j_type(6, "zero"))  # jal x0, .+6: misaligned target
+    code.label("ok")
+    code.j("ok")
+
+    handler = Asm(origin=TRAP_MTVEC)
+    for csr, want in (("mcause", "s4"), ("mepc", "s2"), ("mtval", "s3"), ("mcycleh", "s5"), ("minstreth", "s5")):
+        handler.csrr("t1", csr)
+        handler.bne("t1", want, "bad")
+    handler.addi("t1", "s2", 4)
+    handler.csrw("mepc", "t1")
+    handler.mret()
+    handler.label("bad")
+    handler.j("bad")
+
+    mem = {}
+    for asm in (main, code, handler):
+        mem.update({asm.origin + 4 * i: w for i, w in enumerate(asm.assemble())})
+    pcs, _ = await run_program(dut, mem, max_cycles=900)
+    last = [hex(p) for p in pcs[-4:]]
+    assert handler.labels["bad"] not in pcs, f"a trap CSR was wrong; last PCs {last}"
+    assert code.labels["ok"] in pcs, f"never reached 'ok'; last PCs {last}"

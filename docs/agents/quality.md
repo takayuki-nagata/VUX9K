@@ -33,7 +33,18 @@ Things that went wrong while building it, and must stay fixed:
 - `unified_cpu`'s mutants run one at a time (`run_riscv_tests.py` regenerates shared
   files); expect hours for `MCY_SIZE=100`.
 
-Reading the survivors (2026-10: at size 50, 20 for `unified_cpu`, none is open in any module):
+Reading the survivors (2026-10: at size 50, 20 for `unified_cpu`, none is open in any module;
+`unified_cpu` at size 100 then sampled other mutants and left 21 open: 20 closed by tests,
+one `ACCEPTED` as equivalent):
+- **A `unified_cpu` run measures only the CPU-level tests** (`test_sim.UNIT`'s `unified_cpu`
+  entries) and the riscv-tests, never the submodules' own unit tests: a CSR, trap-unit or
+  next-PC behavior that `test_rv32i_csrs.py` checks is still a survivor here until a program
+  on the whole CPU observes it (`test_unified_cpu_csrs.py`, `test_unified_cpu_traps.py`).
+  The sample changes with any RTL edit, so a larger or later run finds gaps an earlier
+  clean one never drew.
+- **`cnot1` flips the bit when the control bit is 1, `cnot0` when it is 0.** A test that
+  only uses all-ones values never triggers a `cnot0`: give each bit both values alongside
+  the others (a pattern and its complement, 0x5555…/0xAAAA…).
 - **Equivalence is decided twice.** `equiv_induct` starts from any state, so a mutant that
   differs only in states the module can't reach (sdcard_spi's `bit_idx` counting
   0,1,6,3,4,5,2,7 is still 8 steps) fails it. For modules with `clk` and `rst` a proof
@@ -54,8 +65,8 @@ Reading the survivors (2026-10: at size 50, 20 for `unified_cpu`, none is open i
   without `rdy`, fifo_sync's `rdata` while empty), each with its reason; `summary.md` shows them apart from the open
   ones and names entries no survivor matched any more. A survivor that is merely untested
   gets a test, not an entry (the `cov:exclude` rule). `unified_cpu`'s riscv-tests run in a
-  256 KB window: what the upper address and PC bits do is the unit test's job
-  (`test_unified_cpu.py`).
+  256 KB window: what the upper address and PC bits do is the unit tests' job
+  (`test_unified_cpu.py`, `test_unified_cpu_traps.py`, `test_hack_cpu_ops.py`).
 - `--replay <id>` reruns a module's tests on one mutant of the last run (`--node` picks
   the pytest node), keeping `mutated.v` and the output in `replay/<id>/`; `--summarize`
   rewrites the summaries after editing `ACCEPTED`. mcy's seed is fixed, so ids repeat

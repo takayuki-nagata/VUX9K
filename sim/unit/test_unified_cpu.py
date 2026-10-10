@@ -184,3 +184,68 @@ async def test_high_pc_continues_after_load_and_store(dut):
     for base in bases:
         assert base + 4 in pcs and base + 8 in pcs, f"no pc + 4 after the load/store at 0x{base:08x}"
     assert done in pcs, f"never got back; last PCs {[hex(p) for p in pcs[-4:]]}"
+
+
+# The RV32I opcodes the mode detector accepts as a first instruction (with bits [1:0] = 11)
+RV_FIRST_OPCODES = (0x33, 0x13, 0x03, 0x23, 0x63, 0x6F, 0x67, 0x37, 0x17, 0x73)
+
+
+@cocotb.test()
+async def test_first_instruction_selects_mode(dut):
+    """With no boot mode given, the first instruction word picks the ISA: each RV32I
+    opcode above selects RISC-V; a word one opcode bit away from one of them that isn't
+    an RV32I opcode itself (bit 15 clear, non-zero) is a Hack A-instruction"""
+    cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start())
+    for sig in (
+        "soft_rst",
+        "data_in",
+        "timer_irq_in",
+        "ext_irq_in",
+        "sw_irq_in",
+        "mtime_in",
+        "boot_mode_valid",
+        "boot_mode",
+    ):
+        getattr(dut, sig).value = 0
+    others = sorted({op ^ (1 << b) for op in RV_FIRST_OPCODES for b in range(2, 7)} - set(RV_FIRST_OPCODES))
+    cases = [(op, 1) for op in RV_FIRST_OPCODES] + [(op, 0) for op in others]
+    for word, want in cases:
+        dut.rst.value = 0
+        dut.instr_in.value = word
+        await ClockCycles(dut.clk, 2)
+        await FallingEdge(dut.clk)
+        dut.rst.value = 1
+        await ClockCycles(dut.clk, 3)
+        await FallingEdge(dut.clk)
+        got = int(dut.active_mode.value)
+        assert got == want, f"first word 0x{word:08x}: active_mode {got}, want {want} ({'RV32' if want else 'Hack'})"
+
+
+async def count_cycles_high(dut, signal, counts):
+    """counts[0] += 1 for every cycle (sampled at the falling edge) with `signal` high after reset"""
+    while True:
+        await FallingEdge(dut.clk)
+        if str(dut.rst.value) == "1" and str(getattr(dut, signal).value) == "1":
+            counts[0] += 1
+
+
+@cocotb.test()
+async def test_mem_read_req_only_for_loads(dut):
+    """mem_read_req (a read with side effects, e.g. popping the UART RX FIFO) is asserted
+    for one cycle per load, and never for stores, ALU or CSR instructions or branches"""
+    loads = 3
+    a = Asm()
+    a.li("t0", 0x100)
+    for k in range(loads):
+        a.lw("t1", 4 * k, "t0")
+        a.sw("t1", 4 * k + 64, "t0")
+        a.addi("t2", "t1", 1)
+        a.csrr("t3", "mscratch")
+        a.beq("zero", "t0", "done")  # not taken
+    a.label("done")
+    a.j("done")
+    counts = [0]
+    cocotb.start_soon(count_cycles_high(dut, "mem_read_req", counts))
+    pcs, _ = await run_program(dut, a.assemble(), max_cycles=300)
+    assert a.labels["done"] in pcs, "never reached the end of the program"
+    assert counts[0] == loads, f"mem_read_req was high for {counts[0]} cycles, expected {loads} (one per load)"

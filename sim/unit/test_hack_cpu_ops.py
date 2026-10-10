@@ -319,7 +319,7 @@ async def test_hack_jump_jle(dut):
         assert jumped == taken, f"D;JLE with {label}: jumped={jumped}, expected {taken}"
 
 
-async def _run_then_store_d(dut, instr, *, m=0, pulses):
+async def _run_then_store_d(dut, instr, *, m=0, pulses, mask=0xFFFF):
     """Execute instr, then M=D; return the (data_addr, data_out) of each mem_write pulse.
 
     `pulses` is how many writes to wait for: instr's own M write (if it has one) and
@@ -335,7 +335,7 @@ async def _run_then_store_d(dut, instr, *, m=0, pulses):
         await FallingEdge(dut.clk)
         now = int(dut.mem_write.value)
         if now and not prev:
-            writes.append((int(dut.data_addr.value) & 0xFFFF, int(dut.data_out.value) & 0xFFFF))
+            writes.append((int(dut.data_addr.value) & mask, int(dut.data_out.value) & mask))
             if len(writes) == pulses:
                 break
         prev = now
@@ -482,3 +482,76 @@ async def test_random_programs_against_interpreter(dut):
             f"expected {expected[first : first + 3] if first is not None else expected[len(writes) :][:3]}; "
             f"program {[hex(i) for i in prog]}"
         )
+
+
+# Hack registers are 32 bits wide in this CPU (README, "Hack Mode Address Space"): values
+# from data_in, ALU results and both register write ports keep their upper half.
+FULL = 0xFFFF_FFFF
+WIDE = ((0x8421_5A3C, 0x7BDE_A5C3, 0x3C3C_F00F), (0x7BDE_A5C3, 0x8421_5A3C, 0xC3C3_0FF0))
+
+
+async def _load_wide(dut, dest, value):
+    """A=M (dest 0b100) or D=M (0b010) with data_in = value; returns (A, D) afterwards"""
+    writes = await _run_then_store_d(dut, make_hack_c(a=1, c=0x30, d=dest, j=0), m=value, pulses=1, mask=FULL)
+    return writes[-1]
+
+
+@cocotb.test()
+async def test_hack_registers_are_32_bit(dut):
+    """Every comp in its A and M form on 32-bit D, A and M (a value and its complement),
+    and the dual destinations AD=/AMD=: results keep all 32 bits"""
+    await _reset_hack(dut)
+    for d0, m0, a0 in WIDE:
+        for c, f in HACK_COMP.items():
+            await _load_wide(dut, 0b100, a0)
+            got = await _load_wide(dut, 0b010, d0)
+            assert got == (a0, d0), f"A=M/D=M: (A, D) = {tuple(map(hex, got))}, expected {hex(a0)}, {hex(d0)}"
+            for form, y in ((1, m0), (0, a0)):
+                if form == 0:
+                    await _load_wide(dut, 0b010, d0)
+                writes = await _run_then_store_d(dut, make_hack_c(a=form, c=c, d=0b010, j=0), m=m0, pulses=1, mask=FULL)
+                want = f(d0, y) & FULL
+                assert writes[-1] == (a0, want), (
+                    f"D=comp {c:06b} ({'M' if form else 'A'} form, D={d0:#x}, y={y:#x}): "
+                    f"(A, D) = {tuple(map(hex, writes[-1]))}, expected D = {want:#x}"
+                )
+        for c in (0b000010, 0b110001, 0b000000):  # D+M, !M, D&M
+            want = HACK_COMP[c](d0, m0) & FULL
+            for dest, pulses in ((0b110, 1), (0b111, 2)):
+                await _load_wide(dut, 0b100, a0)
+                await _load_wide(dut, 0b010, d0)
+                writes = await _run_then_store_d(
+                    dut, make_hack_c(a=1, c=c, d=dest, j=0), m=m0, pulses=pulses, mask=FULL
+                )
+                if pulses == 2:
+                    assert writes[0] == (a0, want), f"dest {dest:03b} comp {c:06b}: M write {writes[0]}"
+                assert writes[-1] == (want, want), (
+                    f"dest {dest:03b} comp {c:06b}: (A, D) = {tuple(map(hex, writes[-1]))}, expected both {want:#x}"
+                )
+
+
+@cocotb.test()
+async def test_hack_pc_keeps_upper_bits(dut):
+    """A jump to an A above 0x7FFF (a 32-bit A) puts pc_out above 0xFFFF; execution goes on
+    at pc + 2 with every bit kept, and so does the fetch address while a memory access waits"""
+    await _reset_hack(dut)
+    await _load_wide(dut, 0b100, 0x8001)
+    pcs: list[int] = []
+
+    async def trace():
+        while True:
+            await FallingEdge(dut.clk)
+            pcs.append(int(dut.pc_out.value))
+
+    tracer = cocotb.start_soon(trace())
+    dut.instr_in.value = make_hack_c(a=0, c=0b101010, d=0, j=0b111)  # 0;JMP
+    await ClockCycles(dut.clk, 2)
+    await _load_wide(dut, 0b010, 0x1234)  # D=M, then M=D: two memory accesses
+    dut.instr_in.value = make_hack_c(a=0, c=0b001100, d=0, j=0)  # D (no destination)
+    await ClockCycles(dut.clk, 2)
+    tracer.cancel()
+    for pc in (0x10002, 0x10004, 0x10006):
+        assert pc in pcs, f"pc_out never {pc:#x}: {[hex(p) for p in pcs]}"
+    after = pcs[pcs.index(0x10002) :]
+    # pc_out is the fetch address, in a memory access's wait cycle too
+    assert all(pc >> 16 == 1 for pc in after), f"pc_out lost bit 16: {[hex(p) for p in after]}"
