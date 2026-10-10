@@ -133,10 +133,16 @@ ACCEPTED: dict[str, dict[str, str]] = {
         " every rdy; data differs only without rdy",
     },
     "unified_cpu": {
-        "const0 B[23] @ unified_cpu.sv:577.21-585.24 unified_cpu.sv:577.25-577.38": "clears bit 23 of"
+        "const0 B[23] @ unified_cpu.sv:603.25-611.28 unified_cpu.sv:603.29-603.42": "clears bit 23 of"
         " r_hack_data in RV32 mode's MEM_WAIT. Only a Hack instruction with M as operand reads it, in"
         " HACK_WB, after its own MEM_WAIT has reloaded it from data_in; the ISA mode changes only through a"
         " reset, which zeroes it. Equivalent from reset, beyond dprove's reach on the whole CPU",
+        "cnot1 A[20] ctrl 16 @ unified_cpu.sv:538.13-632.20 unified_cpu.sv:596.20-596.20": "flips bit 20 of"
+        " r_hack_data while it holds outside MEM_WAIT and its bit 16 is set. Its value counts only in"
+        " HACK_WB, right after MEM_WAIT reloaded it from data_in; in EXECUTE and MEM_WAIT it reaches only"
+        " data_out without mem_write (a Hack M write in EXECUTE has no M operand) and, in EXECUTE, the pc_out"
+        " of an instruction that goes to MEM_WAIT, an I-RAM read no FETCH uses. Differs only outside the"
+        " interface's contract",
         "cnot1 A[27] ctrl 1 @ rv32i_csrs.sv:124.18-175.12 rv32i_csrs.sv:124.22-124.30": "flips bit 27 of"
         " mepc's next value when its bit 1 is set, which never happens: trap entry stores the PC of an RV32"
         " instruction (4-byte aligned; traps never happen in Hack mode, where pc_reg can have bit 1 set)"

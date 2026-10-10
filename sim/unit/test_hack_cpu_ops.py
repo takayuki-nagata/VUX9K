@@ -505,7 +505,7 @@ async def _load_wide(dut, dest, value):
 @cocotb.test()
 async def test_hack_registers_are_32_bit(dut):
     """Every comp in its A and M form on 32-bit D, A and M (a value and its complement),
-    and the dual destinations AD=/AMD=: results keep all 32 bits"""
+    and the dual destinations AD=/AMD= in both forms: results keep all 32 bits"""
     await _reset_hack(dut)
     for d0, m0, a0 in WIDE:
         for c, f in HACK_COMP.items():
@@ -521,19 +521,22 @@ async def test_hack_registers_are_32_bit(dut):
                     f"D=comp {c:06b} ({'M' if form else 'A'} form, D={d0:#x}, y={y:#x}): "
                     f"(A, D) = {tuple(map(hex, writes[-1]))}, expected D = {want:#x}"
                 )
-        for c in (0b000010, 0b110001, 0b000000):  # D+M, !M, D&M
-            want = HACK_COMP[c](d0, m0) & FULL
-            for dest, pulses in ((0b110, 1), (0b111, 2)):
-                await _load_wide(dut, 0b100, a0)
-                await _load_wide(dut, 0b010, d0)
-                writes = await _run_then_store_d(
-                    dut, make_hack_c(a=1, c=c, d=dest, j=0), m=m0, pulses=pulses, mask=FULL
-                )
-                if pulses == 2:
-                    assert writes[0] == (a0, want), f"dest {dest:03b} comp {c:06b}: M write {writes[0]}"
-                assert writes[-1] == (want, want), (
-                    f"dest {dest:03b} comp {c:06b}: (A, D) = {tuple(map(hex, writes[-1]))}, expected both {want:#x}"
-                )
+        # The M form keeps D for HACK_WR_D in HACK_WB, the A form in EXECUTE
+        for form, y in ((1, m0), (0, a0)):
+            for c in (0b000010, 0b110001, 0b000000):  # D+y, !y, D&y
+                want = HACK_COMP[c](d0, y) & FULL
+                for dest, pulses in ((0b110, 1), (0b111, 2)):
+                    await _load_wide(dut, 0b100, a0)
+                    await _load_wide(dut, 0b010, d0)
+                    writes = await _run_then_store_d(
+                        dut, make_hack_c(a=form, c=c, d=dest, j=0), m=m0, pulses=pulses, mask=FULL
+                    )
+                    what = f"dest {dest:03b} comp {c:06b} ({'M' if form else 'A'} form)"
+                    if pulses == 2:
+                        assert writes[0] == (a0, want), f"{what}: M write {writes[0]}"
+                    assert writes[-1] == (want, want), (
+                        f"{what}: (A, D) = {tuple(map(hex, writes[-1]))}, expected both {want:#x}"
+                    )
 
 
 @cocotb.test()
