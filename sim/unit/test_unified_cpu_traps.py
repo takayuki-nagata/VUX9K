@@ -496,15 +496,19 @@ TRAP_CODE = 0x7FFF_FF00  # bits 8-30 set
 TRAP_MTVEC = 0x2AAA_AAA8
 MISALIGNED_ADDRESSES = (0xFFFF_FFFF, 0x5555_5555, 0xAAAA_AAAB, 0x0002_0101)
 COUNTER_HIGH = (0x0000_0000, 0xAAAA_AAAA, 0x5555_5555, 0xFFFF_FFFF)  # each bit both ways, with each other bit
+# The lower halves: bits 8-31 likewise (the check leaves no time for a carry into bit 8)
+COUNTER_LOW = (0xFFFF_FF00, 0x5555_5500, 0xAAAA_AA00, 0x0000_0000)
+# Cycles from writing the lower halves to the handler reading them, with room to spare
+COUNTER_LOW_SLACK = 256
 
 
 @cocotb.test()
 async def test_trap_values_keep_every_bit(dut):
     """Misaligned loads (mtval = the address, each bit both ways) and a misaligned JAL
     (mtval = its target) far up the address space: the handler at a patterned mtvec
-    checks mcause, mepc and mtval in full, and that trap entry leaves the counters'
-    upper halves (a different pattern each time) alone, and returns past the trapping
-    instruction"""
+    checks mcause, mepc and mtval in full, and that trap entry leaves the counters
+    alone (a different pattern each time: the upper halves exactly, the lower ones at
+    most COUNTER_LOW_SLACK past theirs), and returns past the trapping instruction"""
     main = Asm()
     main.li("t0", TRAP_MTVEC)
     main.csrw("mtvec", "t0")
@@ -515,6 +519,10 @@ async def test_trap_values_keep_every_bit(dut):
 
     code = Asm(origin=TRAP_CODE)
     for n, addr in enumerate(MISALIGNED_ADDRESSES):
+        # The lower halves first: the previous ones (from 0xFFFF_FF00) may carry until then
+        code.li("s6", COUNTER_LOW[n])  # the lower halves, a little more by then
+        code.csrw("mcycle", "s6")
+        code.csrw("minstret", "s6")
         code.li("s5", COUNTER_HIGH[n])  # the counters' upper halves, unchanged by the trap
         code.csrw("mcycleh", "s5")
         code.csrw("minstreth", "s5")
@@ -524,6 +532,8 @@ async def test_trap_values_keep_every_bit(dut):
         code.li("t0", addr)
         code.label(f"insn{n}")
         code.lw("zero", 0, "t0")
+    code.csrw("mcycle", "s6")  # the last trap's handler took its share of the slack
+    code.csrw("minstret", "s6")
     code.li("s4", 0)
     code.la("s2", "jal")
     code.la("s3", "jal")
@@ -537,6 +547,11 @@ async def test_trap_values_keep_every_bit(dut):
     for csr, want in (("mcause", "s4"), ("mepc", "s2"), ("mtval", "s3"), ("mcycleh", "s5"), ("minstreth", "s5")):
         handler.csrr("t1", csr)
         handler.bne("t1", want, "bad")
+    for csr in ("mcycle", "minstret"):
+        handler.csrr("t1", csr)
+        handler.sub("t1", "t1", "s6")
+        handler.li("t2", COUNTER_LOW_SLACK)
+        handler.bgeu("t1", "t2", "bad")
     handler.addi("t1", "s2", 4)
     handler.csrw("mepc", "t1")
     handler.mret()
@@ -546,7 +561,7 @@ async def test_trap_values_keep_every_bit(dut):
     mem = {}
     for asm in (main, code, handler):
         mem.update({asm.origin + 4 * i: w for i, w in enumerate(asm.assemble())})
-    pcs, _ = await run_program(dut, mem, max_cycles=900)
+    pcs, _ = await run_program(dut, mem, max_cycles=1400)
     last = [hex(p) for p in pcs[-4:]]
     assert handler.labels["bad"] not in pcs, f"a trap CSR was wrong; last PCs {last}"
     assert code.labels["ok"] in pcs, f"never reached 'ok'; last PCs {last}"

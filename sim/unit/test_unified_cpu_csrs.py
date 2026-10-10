@@ -80,7 +80,8 @@ async def test_csrs_reset_and_hold_masked_writes(dut):
     """Reset values; then three rounds of writing a different pattern to every writable
     CSR and reading them all back (twice, a load in between: a register that flips while
     it holds is caught whatever the hold time's parity). Masks: mstatus MIE/MPIE (MPP
-    reads M), mie the three enables, mtvec/mepc 4-byte aligned."""
+    reads M), mie the three enables, mtvec/mepc 4-byte aligned. mtvec, written last, holds
+    each pattern while every other CSR is written."""
 
     def body(a):
         check_reset_values(a)
@@ -99,8 +100,10 @@ async def test_csrs_reset_and_hold_masked_writes(dut):
                         continue
                     a.csrr("t0", csr)
                     expect(a, "t0", (v & mask) | ones)
-        # mtvec last (a trap now would land in the pattern, never at "ok")
-        for v in PATTERNS[:3]:
+        # mtvec last (a trap now would land in the pattern, never at "ok"): held across
+        # a load and across each write to another CSR, read after every one (a bit that
+        # flips per write would be back after an even number)
+        for v in PATTERNS:
             a.li("t0", v)
             a.csrw("mtvec", "t0")
             a.csrr("t1", "mtvec")
@@ -108,10 +111,16 @@ async def test_csrs_reset_and_hold_masked_writes(dut):
             a.csrr("t2", "mtvec")
             expect(a, "t1", v & 0xFFFF_FFFC)
             expect(a, "t2", v & 0xFFFF_FFFC)
+            a.li("t0", ~v & 0xFFFF_FFFF)
+            for csr, _, _ in WRITABLE:
+                if csr != "mtvec":
+                    a.csrw(csr, "t0")
+                    a.csrr("t1", "mtvec")
+                    expect(a, "t1", v & 0xFFFF_FFFC)
         a.la("t0", "bad")
         a.csrw("mtvec", "t0")
 
-    await expect_ok(dut, program(body), max_cycles=4000)
+    await expect_ok(dut, program(body), max_cycles=8000)
 
 
 @cocotb.test()

@@ -44,7 +44,9 @@ one `ACCEPTED` as equivalent):
   clean one never drew.
 - **`cnot1` flips the bit when the control bit is 1, `cnot0` when it is 0.** A test that
   only uses all-ones values never triggers a `cnot0`: give each bit both values alongside
-  the others (a pattern and its complement, 0x5555…/0xAAAA…).
+  the others (a pattern and its complement, 0x5555…/0xAAAA…). A mutant that flips a held
+  register on every write elsewhere is back after an even number of writes: read it
+  after each one.
 - **Equivalence is decided twice.** `equiv_induct` starts from any state, so a mutant that
   differs only in states the module can't reach (sdcard_spi's `bit_idx` counting
   0,1,6,3,4,5,2,7 is still 8 steps) fails it. For modules with `clk` and `rst` a proof
