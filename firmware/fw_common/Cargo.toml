@@ -14,3 +14,8 @@ description = "Hardware-independent Boot Manager logic, tested on the host"
 fat-write = []
 
 [dependencies]
+
+# fw_common::fat on an image file (sim/emu/test_fat_images.py)
+[[example]]
+name = "fat_host"
+required-features = ["fat-write"]

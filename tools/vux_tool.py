@@ -906,6 +906,168 @@ def cmd_reset(args):
         sys.exit(1)
 
 
+FAT_PART_LBA = 2048  # where SD cards start their first partition
+FAT_RESERVED = 32
+FAT_DATE_1980 = (1 << 5) | 1  # 1980-01-01 as a FAT date; images carry no time
+FAT_EOC = 0x0FFFFFFF
+
+
+def fat_short_name(name):
+    """name as an 11-byte 8.3 directory name (upper case, space-padded); ValueError if it
+    isn't one (fw_common::fat::to_short_name accepts the same)."""
+    base, dot, ext = name.upper().rpartition(".")
+    if not dot:
+        base, ext = ext, ""
+    allowed = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!#$%&'()-@^_`{}~")
+    if not (1 <= len(base) <= 8 and len(ext) <= 3 and (ext or not dot)) or not set(base + ext) <= allowed:
+        raise ValueError(f"{name!r} is not an 8.3 name")
+    return base.ljust(8).encode() + ext.ljust(3).encode()
+
+
+def _fat_entry(name11, attr, cluster, size):
+    return struct.pack(
+        "<11sBBBHHHHHHHI",
+        name11,
+        attr,
+        0,  # NTRes
+        0,  # creation time, tenths
+        0,  # creation time
+        FAT_DATE_1980,  # creation date
+        FAT_DATE_1980,  # access date
+        cluster >> 16,
+        0,  # write time
+        FAT_DATE_1980,  # write date
+        cluster & 0xFFFF,
+        size,
+    )
+
+
+def build_fat32_image(files, part_sectors=8192, cluster_sectors=1, label="VUX9K"):
+    """A card image: an MBR with one FAT32 partition (type 0x0C) at LBA 2048 holding
+    `files` ({"DIR/NAME.EXT": bytes}; 8.3 names, directories made as needed). FAT32 by its
+    BPB (FATSz16 = 0, TotSec32) even when it has fewer clusters than FAT32 normally
+    needs, as fw_common::fat accepts: small images for the emulator and the tests. Two
+    FATs, FSInfo with the real free count, backup boot sector; reproducible byte for
+    byte (fixed volume ID, 1980-01-01 dates)."""
+    if cluster_sectors not in (1, 2, 4, 8, 16, 32, 64, 128):
+        raise ValueError("cluster_sectors must be a power of two up to 128")
+    # FAT size: enough entries for the clusters left after the FATs themselves
+    fat_sectors = 1
+    while True:
+        clusters = (part_sectors - FAT_RESERVED - 2 * fat_sectors) // cluster_sectors
+        if (clusters + 2) * 4 <= fat_sectors * SECTOR:
+            break
+        fat_sectors += 1
+    cluster_bytes = cluster_sectors * SECTOR
+    fat = [0x0FFFFFF8, FAT_EOC]
+    data = {}  # cluster -> bytes
+
+    def alloc(content):
+        """Clusters for content (at least one); returns the first."""
+        n = max(1, -(-len(content) // cluster_bytes))
+        first = len(fat)
+        if first + n > clusters + 2:
+            raise ValueError("files don't fit the image")
+        for i in range(n):
+            fat.append(first + i + 1 if i < n - 1 else FAT_EOC)
+            data[first + i] = content[i * cluster_bytes : (i + 1) * cluster_bytes]
+        return first
+
+    # The tree: {name11: bytes | dict}
+    tree: dict[bytes, object] = {}
+    for path, content in files.items():
+        parts = [fat_short_name(p) for p in path.replace("\\", "/").split("/") if p]
+        node = tree
+        for part in parts[:-1]:
+            child = node.setdefault(part, {})
+            if not isinstance(child, dict):
+                raise ValueError(f"{path}: a file is in the way")
+            node = child
+        if parts[-1] in node:
+            raise ValueError(f"{path} given twice")
+        node[parts[-1]] = bytes(content)
+
+    def write_dir(node, own, parent, root=False):
+        """Directory `node` into cluster(s) from `own` (pre-allocated first cluster)."""
+        entries = []
+        if root:
+            entries.append(_fat_entry(label.upper().ljust(11)[:11].encode(), 0x08, 0, 0))
+        else:
+            entries.append(_fat_entry(b".          ", 0x10, own, 0))
+            entries.append(_fat_entry(b"..         ", 0x10, parent, 0))
+        for name, child in node.items():
+            if isinstance(child, dict):
+                first = alloc(b"")
+                entries.append(_fat_entry(name, 0x10, first, 0))
+                write_dir(child, first, 0 if root else own)
+            else:
+                first = alloc(child) if child else 0
+                entries.append(_fat_entry(name, 0x20, first, len(child)))
+        raw = b"".join(entries)
+        # The directory's own clusters: the first is `own`, more are chained on
+        n = max(1, -(-len(raw) // cluster_bytes))
+        chain = [own] + [alloc(b"") for _ in range(n - 1)]
+        for a, b in zip(chain, chain[1:], strict=False):
+            fat[a] = b
+        for i, c in enumerate(chain):
+            data[c] = raw[i * cluster_bytes : (i + 1) * cluster_bytes]
+
+    root_cluster = alloc(b"")
+    write_dir(tree, root_cluster, 0, root=True)
+    used = len(fat) - 2
+
+    boot = bytearray(SECTOR)
+    boot[0:3] = b"\xeb\x58\x90"
+    boot[3:11] = b"VUX9K   "
+    struct.pack_into("<HBHBHHBHHHII", boot, 11, SECTOR, cluster_sectors, FAT_RESERVED, 2, 0, 0, 0xF8, 0, 63, 255,
+                     FAT_PART_LBA, part_sectors)  # fmt: skip
+    struct.pack_into("<IHHIHH", boot, 36, fat_sectors, 0, 0, root_cluster, 1, 6)
+    struct.pack_into(
+        "<BBBI11s8s", boot, 64, 0x80, 0, 0x29, VUX_MAGIC, label.upper().ljust(11)[:11].encode(), b"FAT32   "
+    )
+    boot[510:512] = b"\x55\xaa"
+    fsinfo = bytearray(SECTOR)
+    struct.pack_into("<I", fsinfo, 0, 0x41615252)
+    struct.pack_into("<IIII", fsinfo, 484, 0x61417272, clusters - used, len(fat), 0)
+    struct.pack_into("<I", fsinfo, 508, 0xAA550000)
+
+    part = bytearray(part_sectors * SECTOR)
+    for lba, sector in ((0, boot), (1, fsinfo), (6, boot), (7, fsinfo)):
+        part[lba * SECTOR : (lba + 1) * SECTOR] = sector
+    fat_raw = struct.pack(f"<{len(fat)}I", *fat)
+    for copy in range(2):
+        at = (FAT_RESERVED + copy * fat_sectors) * SECTOR
+        part[at : at + len(fat_raw)] = fat_raw
+    data_at = (FAT_RESERVED + 2 * fat_sectors) * SECTOR
+    for c, content in data.items():
+        at = data_at + (c - 2) * cluster_bytes
+        part[at : at + len(content)] = content
+
+    mbr = bytearray(SECTOR)
+    mbr[446:462] = struct.pack("<B3sB3sII", 0, b"\xfe\xff\xff", 0x0C, b"\xfe\xff\xff", FAT_PART_LBA, part_sectors)
+    mbr[510:512] = b"\x55\xaa"
+    return bytes(mbr) + bytes((FAT_PART_LBA - 1) * SECTOR) + bytes(part)
+
+
+def cmd_mkfat(args):
+    files = {}
+    for spec in args.file:
+        dest, sep, src = spec.partition("=")
+        if not sep:
+            print(f"Invalid --file {spec!r}: expected PATH=FILE (e.g. VUX9K/STAGE2.BIN=stage2.bin)")
+            sys.exit(2)
+        with open(src, "rb") as f:
+            files[dest] = f.read()
+    try:
+        img = build_fat32_image(files, part_sectors=args.size_mb * 2048, cluster_sectors=args.cluster_sectors)
+    except ValueError as e:
+        print(f"Cannot build the image: {e}")
+        sys.exit(2)
+    with open(args.output, "wb") as f:
+        f.write(img)
+    print(f"Wrote {args.output}: FAT32, {args.size_mb} MB partition, {len(files)} files")
+
+
 def build_sd_image(slots, mbr=True):
     """Raw SD card image (sector n at byte 512 n), as `flash-sd` would leave the card.
 
@@ -992,10 +1154,26 @@ def main():
     )
     sub_img.add_argument("--no-mbr", action="store_true", help="Leave sector 0 without the 0x55AA signature")
 
+    # mkfat
+    sub_fat = subparsers.add_parser("mkfat", help="Build a FAT32 SD card image (for the emulator's --sd)")
+    sub_fat.add_argument("output", help="Image file to write")
+    sub_fat.add_argument(
+        "--file",
+        action="append",
+        default=[],
+        metavar="PATH=FILE",
+        help="Put FILE at PATH (8.3 names, e.g. VUX9K/STAGE2.BIN); repeatable",
+    )
+    sub_fat.add_argument("--size-mb", type=int, default=4, help="Partition size in MB (default: 4)")
+    sub_fat.add_argument("--cluster-sectors", type=int, default=1, help="Sectors per cluster (default: 1)")
+
     args = parser.parse_args()
 
     if args.command == "mkimg":
         cmd_mkimg(args)
+        return
+    if args.command == "mkfat":
+        cmd_mkfat(args)
         return
     tty = find_tangnano_uart_port() if args.port == "auto" else args.port
     hint = modemmanager_hint(tty) if tty and "://" not in tty else ""

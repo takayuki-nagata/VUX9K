@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: MIT
 
 //! Host tests of fw_common::fat on the card images in tests/fat_images/ (made by
-//! mkfs.fat and mtools: sim/emu/test_fat_images.py), and on copies of them with one
-//! field broken.
+//! mkfs.fat and mtools, and by vux_tool: sim/emu/test_fat_images.py), and on copies of
+//! them with one field broken.
 
 extern crate std;
 use std::string::String;
@@ -97,7 +97,8 @@ fn manifest(name: &str) -> Vec<(String, u32, u32)> {
         .collect()
 }
 
-const IMAGES: [&str; 2] = ["mkfs_s1", "mkfs_s8_1fat"];
+/// mkfs.fat/mtools images, and vux_tool's build_fat32_image ones.
+const IMAGES: [&str; 4] = ["mkfs_s1", "mkfs_s8_1fat", "vuxtool_s1", "vuxtool_s8"];
 
 fn mount(img: Vec<u8>) -> Result<Volume<MemDisk>, FatError> {
     Volume::mount(disk(img))

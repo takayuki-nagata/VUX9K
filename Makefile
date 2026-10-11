@@ -182,8 +182,9 @@ test-fw-host:
 	cd firmware && $(CARGO) test -p fw_common --target $(HOST_TARGET) --features fat-write
 	cd firmware && $(CARGO) build -p fw_common --target $(HOST_TARGET)
 
-# The FAT32 images fw_common's host tests read, rebuilt with mkfs.fat and mtools and checked
-# with fsck.fat (sim/emu/test_fat_images.py). Fails, rather than skips, without dosfstools/mtools.
+# The FAT32 images fw_common's host tests read (from mkfs.fat/mtools and vux_tool), rebuilt and
+# checked with fsck.fat and mtools, also after fw_common's writes (sim/emu/test_fat_images.py).
+# Fails, rather than skips, without dosfstools/mtools.
 test-fat:
 	VUX9K_REQUIRE_FAT_TOOLS=1 $(PYTHON) -m pytest -q sim/emu/test_fat_images.py
 

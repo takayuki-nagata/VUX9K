@@ -53,10 +53,14 @@ release/{boot_manager,resident_loader}`.
   `upload_v2` and compares its lines, the pytest runs the sender against their device
   lines. Change both sides and the reference device together.
 - **`fw_common::fat` is tested on images from the real tools**: `tests/fat_images/` holds
-  card images that mkfs.fat and mtools made (stored sparse, with a `.files` list of what
-  must read back), rebuilt and checked with `fsck.fat` by `sim/emu/test_fat_images.py`
+  card images that mkfs.fat and mtools made and that `vux_tool.build_fat32_image` (the
+  `mkfat` command) makes (stored sparse, with a `.files` list of what must read back),
+  rebuilt and checked with `fsck.fat` and mtools by `sim/emu/test_fat_images.py`
   (`make test-fat`, which fails instead of skipping without dosfstools/mtools;
-  `VUX9_VECTORS_UPDATE=1` rewrites them, byte-for-byte reproducibly). The host tests
+  `VUX9_VECTORS_UPDATE=1` rewrites them, byte-for-byte reproducibly). The same test runs
+  fw_common's writes on every image through the `fat_host` example and runs `fsck.fat`
+  after each; its only note allowed then is FSInfo's free count being unknown, which is
+  what fw_common sets. The host tests
   (`tests/fat.rs`) read them and break copies of them one field at a time. A volume is
   FAT32 by its BPB (`FATSz16 == 0`), so the images can be a few MB; mkfs.fat then keeps the
   sector count in TotSec16. Callbacks are `&mut dyn FnMut`: generic ones gave each call
