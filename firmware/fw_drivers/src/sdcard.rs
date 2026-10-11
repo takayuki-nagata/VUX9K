@@ -4,6 +4,7 @@
 use crate::timer::Timer;
 use fw_common::header::SECTOR;
 use fw_common::map;
+use fw_common::upload::Disk;
 
 const SD_DATA: *mut u32 = map::SD_DATA as *mut u32;
 const SD_CS: *mut u32 = map::SD_CS as *mut u32;
@@ -301,5 +302,15 @@ impl SdCard {
 
         Self::deselect();
         matches
+    }
+}
+
+impl Disk for SdCard {
+    fn init(&mut self) -> bool {
+        SdCard::ensure_init()
+    }
+
+    fn write(&mut self, sector: u32, data: &[u8; SECTOR]) -> bool {
+        SdCard::write_block(sector, data)
     }
 }

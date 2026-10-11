@@ -10,20 +10,15 @@ use core::panic::PanicInfo;
 // Include assembly bootstrap
 global_asm!(include_str!("../bootstrap/start.s"));
 
-mod gpio;
-mod sdcard;
-mod timer;
-mod uart;
-
 use fw_common::header::{HEADER_LEN, SECTOR};
 use fw_common::mailbox::{self, SLOT_UPDATED_BOOT_MAGIC};
 use fw_common::update::{precheck, Precheck};
-use fw_common::upload::{self, Disk, Host};
-use fw_common::{map, mul_u32, slot, slot_sector, SlotHeader};
-use gpio::Gpio;
-use sdcard::SdCard;
-use timer::Timer;
-use uart::Uart;
+use fw_common::upload;
+use fw_common::{map, slot, slot_sector, SlotHeader};
+use fw_drivers::gpio::Gpio;
+use fw_drivers::sdcard::SdCard;
+use fw_drivers::timer::Timer;
+use fw_drivers::uart::Uart;
 
 const MAILBOX_REG: *mut u32 = map::MAILBOX as *mut u32;
 
@@ -356,38 +351,6 @@ fn boot_slot(slot: u32) -> ! {
     enter_resident_loader(mailbox::launch(slot, SdCard::is_sdhc()));
 }
 
-#[inline(never)]
-fn read_uart_byte_timeout(timeout_ms: u32) -> Option<u8> {
-    let start = Timer::get_mtime32();
-    let limit = mul_u32(timeout_ms, map::TICKS_PER_MS);
-    while Timer::get_mtime32().wrapping_sub(start) < limit {
-        if let Some(b) = Uart::read_byte() {
-            return Some(b);
-        }
-    }
-    None
-}
-
-impl Host for Uart {
-    fn recv(&mut self, timeout_ms: u32) -> Option<u8> {
-        read_uart_byte_timeout(timeout_ms)
-    }
-
-    fn drain(&mut self) {
-        while Uart::read_byte().is_some() {}
-    }
-}
-
-impl Disk for SdCard {
-    fn init(&mut self) -> bool {
-        SdCard::ensure_init()
-    }
-
-    fn write(&mut self, sector: u32, data: &[u8; SECTOR]) -> bool {
-        SdCard::write_block(sector, data)
-    }
-}
-
 #[no_mangle]
 pub extern "C" fn main() -> ! {
     Gpio::set_leds(0x3F);
@@ -458,7 +421,7 @@ pub extern "C" fn main() -> ! {
                 }
                 b's' => {
                     Uart::print_str("s\n");
-                    let slot = match read_uart_byte_timeout(50) {
+                    let slot = match Uart::read_byte_timeout(50) {
                         Some(b @ b'0'..=b'9') => (b - b'0') as u32,
                         _ => 0,
                     };

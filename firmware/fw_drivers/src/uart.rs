@@ -3,8 +3,10 @@
 
 // MMIO UART Driver with standard formatting and non-blocking RX
 
+use crate::timer::Timer;
 use fw_common::fmt::Sink;
-use fw_common::map;
+use fw_common::upload::Host;
+use fw_common::{map, mul_u32};
 
 const UART_DATA: *mut u8 = map::UART_DATA as *mut u8;
 const UART_STATUS: *const u32 = map::UART_STATUS as *const u32;
@@ -34,6 +36,19 @@ impl Uart {
         }
     }
 
+    /// The next received byte, or None after `timeout_ms`.
+    #[inline(never)]
+    pub fn read_byte_timeout(timeout_ms: u32) -> Option<u8> {
+        let start = Timer::get_mtime32();
+        let limit = mul_u32(timeout_ms, map::TICKS_PER_MS);
+        while Timer::get_mtime32().wrapping_sub(start) < limit {
+            if let Some(b) = Self::read_byte() {
+                return Some(b);
+            }
+        }
+        None
+    }
+
     pub fn print_str(s: &str) {
         Uart.put_str(s);
     }
@@ -54,5 +69,15 @@ impl Uart {
 impl Sink for Uart {
     fn put(&mut self, b: u8) {
         Uart::write_byte(b);
+    }
+}
+
+impl Host for Uart {
+    fn recv(&mut self, timeout_ms: u32) -> Option<u8> {
+        Uart::read_byte_timeout(timeout_ms)
+    }
+
+    fn drain(&mut self) {
+        while Uart::read_byte().is_some() {}
     }
 }

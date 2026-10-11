@@ -13,7 +13,8 @@ Read before changing anything under `firmware/` or the slot format in `tools/vux
 
 ## Cargo workspace gotcha: rustflags paths are workspace-root-relative
 
-`firmware/` is a Cargo workspace (`boot_manager` + `resident_loader` members, plus
+`firmware/` is a Cargo workspace (`boot_manager` + `resident_loader` members, `fw_drivers`
+(the MMIO drivers), plus
 `fw_common`: the firmware's hardware-independent logic, no MMIO, tested on the host
 with `cargo test -p fw_common --target <host triple> --features fat-write` — `make test-fw-host`. The Resident
 Loader takes only constants and `crc32_update` from it: it has ~100 bytes left of its
@@ -31,6 +32,8 @@ release/{boot_manager,resident_loader}`.
 ## Firmware rules (Boot Manager, Resident Loader, `fw_common`)
 
 - **Addresses come from `fw_common::map`** (MMIO, mailbox, RL entry, mtime rate);
+  the MMIO drivers (UART, GPIO, mtime, SD) are in `fw_drivers`, which also implements
+  `fw_common`'s traits for them;
   logic that needs no MMIO goes into `fw_common` behind a trait and gets a host test
   (`upload` is the `w` exchange over `Host`/`Disk`; a 10/13-sector upload bug hid in
   the Boot Manager until it moved there). The emulator's SD card is lenient about

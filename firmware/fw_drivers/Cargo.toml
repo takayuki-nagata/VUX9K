@@ -1,0 +1,12 @@
+# Copyright (c) 2026 Takayuki Nagata
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "fw_drivers"
+version = "0.1.0"
+edition = "2021"
+authors = ["Takayuki Nagata"]
+license = "MIT"
+
+[dependencies]
+fw_common = { path = "../fw_common" }

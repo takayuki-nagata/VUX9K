@@ -7,11 +7,19 @@ name = "boot_manager"
 version = "0.1.0"
 dependencies = [
  "fw_common",
+ "fw_drivers",
 ]
 
 [[package]]
 name = "fw_common"
 version = "0.1.0"
+
+[[package]]
+name = "fw_drivers"
+version = "0.1.0"
+dependencies = [
+ "fw_common",
+]
 
 [[package]]
 name = "hw_test"

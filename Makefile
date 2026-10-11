@@ -112,7 +112,8 @@ check-rtl-syntax: veryl
 
 # ===== Firmware (Rust Boot Manager & Resident Loader) =====
 
-FIRMWARE_SRCS = $(wildcard firmware/boot_manager/src/*.rs) $(wildcard firmware/boot_manager/bootstrap/*) firmware/boot_manager/Cargo.toml firmware/Cargo.toml
+FIRMWARE_SRCS = $(wildcard firmware/boot_manager/src/*.rs) $(wildcard firmware/boot_manager/bootstrap/*) firmware/boot_manager/Cargo.toml firmware/Cargo.toml \
+	$(wildcard firmware/fw_drivers/src/*.rs) firmware/fw_drivers/Cargo.toml
 LOADER_SRCS = $(wildcard firmware/resident_loader/src/*.rs) firmware/resident_loader/link.x firmware/resident_loader/Cargo.toml
 
 $(FIRMWARE_BUILD_DIR)/firmware.hex: $(FIRMWARE_SRCS) $(LOADER_SRCS)
@@ -169,7 +170,7 @@ coverage-fw: emu-py firmware build-hack build-zephyr-demo build-zephyr
 	else cp hack_demo/src/main.asm $(FW_COV_DIR)/hack_demo.asm; fi
 	VUX9K_COV_DIR=$(FW_COV_DIR)/hits $(PYTHON) -m pytest -q sim/emu
 	$(PYTHON) scripts/coverage_fw.py --hits $(FW_COV_DIR)/hits \
-		--elf boot_manager=$(FW_TARGET)/coverage/boot_manager=firmware/boot_manager/,firmware/fw_common/ \
+		--elf boot_manager=$(FW_TARGET)/coverage/boot_manager=firmware/boot_manager/,firmware/fw_common/,firmware/fw_drivers/ \
 		--elf resident_loader=$(FW_TARGET)/coverage/resident_loader=firmware/resident_loader/ \
 		--elf zephyr_demo=$(ZEPHYR_DEMO_BUILD_DIR)/zephyr/zephyr.elf=zephyr_workspace/app/ \
 		--hack hack_demo=$(FW_COV_DIR)/hack_demo.asm=$(HACK_BUILD_DIR)/firmware.bin \

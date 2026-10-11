@@ -10,3 +10,4 @@ license = "MIT"
 
 [dependencies]
 fw_common = { path = "../fw_common" }
+fw_drivers = { path = "../fw_drivers" }
