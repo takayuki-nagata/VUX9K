@@ -1,0 +1,7 @@
+# sim/emu/test_upload_v2.py (VUX9_VECTORS_UPDATE=1 regenerates)
+max 2048
+fail none
+sender yes
+dev [READY-V2]
+host 01080000
+dev [ERR] Bad length: 2049

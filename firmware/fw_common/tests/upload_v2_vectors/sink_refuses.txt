@@ -1,0 +1,7 @@
+# sim/emu/test_upload_v2.py (VUX9_VECTORS_UPDATE=1 regenerates)
+max 2048
+fail begin
+sender yes
+dev [READY-V2]
+host 64000000
+dev [ERR] Cannot store 100 bytes

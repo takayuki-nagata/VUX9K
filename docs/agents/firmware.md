@@ -43,6 +43,12 @@ release/{boot_manager,resident_loader}`.
   `build_vux9_v4_image`) follows the same rule, with its vectors in
   `firmware/fw_common/tests/vux9_v4_vectors/` (same command); v3 stays until the Boot
   Manager is replaced.
+- **Transfer v2 exists twice**: `fw_common::upload::upload_v2` (the device) and
+  `vux_tool.send_upload_v2` (the host). `firmware/fw_common/tests/upload_v2_vectors/` holds
+  transcripts from a reference device in `sim/emu/test_upload_v2.py`
+  (`VUX9_VECTORS_UPDATE=1` regenerates them): the host test replays their host bytes into
+  `upload_v2` and compares its lines, the pytest runs the sender against their device
+  lines. Change both sides and the reference device together.
 - **Raise `BOOT_MGR_VERSION` with every Boot Manager change**: boards install a slot-0
   image only if its header version is greater. Tests read it from `main.rs`
   (`sim/emu/bm_env.py`, `scripts/test_hardware.py`); don't hard-code it.

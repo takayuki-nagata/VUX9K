@@ -586,6 +586,61 @@ def build_vux9_image(
     return raw_data, meta
 
 
+UPLOAD_V2_BLOCK = 512
+
+
+class UploadError(Exception):
+    """A transfer v2 that failed: the device's [ERR] line, or what the host saw."""
+
+
+def _upload_line(ser, deadline):
+    """The device's next transfer line ([READY...], [LEN:...], [OK]..., [ERR]...); other
+    lines (echo, banners) are skipped."""
+    buf = b""
+    while time.monotonic() < deadline:
+        buf += ser.read_until(b"\n")
+        if buf.endswith(b"\n"):
+            line = buf.decode("ascii", errors="replace").strip()
+            buf = b""
+            if line.startswith(("[READY", "[LEN:", "[OK]", "[ERR]")):
+                return line
+    raise UploadError(f"no answer from the device (received {buf!r})")
+
+
+def _upload_expect(ser, want, deadline):
+    line = _upload_line(ser, deadline)
+    if line.startswith("[ERR]") or not line.startswith(want):
+        raise UploadError(line)
+    return line
+
+
+def send_upload_v2(ser, data, progress_cb=None, timeout=10.0, crc_override=None):
+    """Send data with transfer v2 (fw_common::upload::upload_v2), once the device's command
+    for it has been given: the length, 512-byte blocks each after the device's
+    [READY-BLK:i], then the CRC-32. Returns the device's [OK] line; raises UploadError
+    with its [ERR] line. timeout applies to each line."""
+
+    def deadline():
+        return time.monotonic() + timeout
+
+    _upload_expect(ser, "[READY-V2]", deadline())
+    ser.write(struct.pack("<I", len(data)))
+    ser.flush()
+    _upload_expect(ser, f"[LEN:{len(data)}]", deadline())
+    blocks = range(0, len(data), UPLOAD_V2_BLOCK)
+    for i, at in enumerate(blocks):
+        _upload_expect(ser, f"[READY-BLK:{i}]", deadline())
+        ser.write(data[at : at + UPLOAD_V2_BLOCK])
+        ser.flush()
+        if progress_cb:
+            progress_cb(i, len(blocks))
+    _upload_expect(ser, "[READY-CRC]", deadline())
+    crc = crc_override if crc_override is not None else binascii.crc32(data) & 0xFFFFFFFF
+    ser.write(struct.pack("<I", crc))
+    ser.flush()
+    return _upload_expect(ser, "[OK]", deadline())
+
+
 def flash_slot(
     ser,
     file_or_bytes,

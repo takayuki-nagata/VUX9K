@@ -1,0 +1,12 @@
+# sim/emu/test_upload_v2.py (VUX9_VECTORS_UPDATE=1 regenerates)
+max 2048
+fail finish
+sender yes
+dev [READY-V2]
+host 64000000
+dev [LEN:100]
+dev [READY-BLK:0]
+host 030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8
+dev [READY-CRC]
+host 096b31aa
+dev [ERR] Commit failed

@@ -12,6 +12,7 @@ use std::vec::Vec;
 use fw_common::fmt::Sink;
 use fw_common::header::{slot_sector, ImageHeader, SlotHeader, FIRST_SECTOR_PAYLOAD, HEADER_LEN};
 use fw_common::update::{precheck, Precheck, MAX_IMAGE};
+use fw_common::upload::{upload_v2, UploadSink};
 use fw_common::{crc32_update, mailbox, mul_u32};
 
 fn hex(s: &str) -> Vec<u8> {
@@ -497,4 +498,104 @@ fn upload_reports_card_errors() {
         "{out}"
     );
     assert_eq!(d.written.len(), 2, "stops at the failed sector");
+}
+
+/// The sink of a transcript: fails the call its `fail` line names.
+struct FakeSink {
+    fail: std::string::String,
+    begun: Option<u32>,
+    data: Vec<u8>,
+    blocks: u32,
+    finished: Option<bool>,
+}
+impl UploadSink for FakeSink {
+    fn begin(&mut self, len: u32) -> bool {
+        self.begun = Some(len);
+        self.fail != "begin"
+    }
+    fn block(&mut self, index: u32, data: &[u8]) -> bool {
+        assert_eq!(index, self.blocks, "blocks in order");
+        assert!(data.len() == 512 || self.data.len() + data.len() == self.begun.unwrap() as usize);
+        self.blocks += 1;
+        if self.fail == std::format!("block:{index}") {
+            return false;
+        }
+        self.data.extend_from_slice(data);
+        true
+    }
+    fn finish(&mut self, ok: bool) -> bool {
+        assert_eq!(self.finished, None, "finish once");
+        self.finished = Some(ok);
+        self.fail != "finish"
+    }
+}
+
+/// Every transcript of tests/upload_v2_vectors/ (made by sim/emu/test_upload_v2.py, which
+/// also runs vux_tool's sender against them): its host bytes into upload_v2, its device
+/// lines out.
+#[test]
+fn upload_v2_follows_every_transcript() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/upload_v2_vectors");
+    let mut cases = 0;
+    for entry in std::fs::read_dir(&dir).unwrap() {
+        let path = entry.unwrap().path();
+        let text = std::fs::read_to_string(&path).unwrap();
+        let (mut max, mut fail) = (0u32, std::string::String::new());
+        let (mut host_bytes, mut lines) = (Vec::new(), std::string::String::new());
+        for line in text.lines().filter(|l| !l.starts_with('#')) {
+            let (key, value) = line.split_once(' ').unwrap();
+            match key {
+                "max" => max = value.parse().unwrap(),
+                "fail" => fail = value.into(),
+                "sender" => {}
+                "host" => host_bytes.extend(hex(value)),
+                "dev" => {
+                    lines.push_str(value);
+                    lines.push('\n');
+                }
+                _ => panic!("{}: {line}", path.display()),
+            }
+        }
+        let mut host = FakeHost {
+            input: host_bytes.iter().copied().collect(),
+            output: Vec::new(),
+            drained: false,
+        };
+        let mut sink = FakeSink {
+            fail,
+            begun: None,
+            data: Vec::new(),
+            blocks: 0,
+            finished: None,
+        };
+        let got = upload_v2(&mut host, &mut sink, max);
+        assert!(host.drained);
+        assert_eq!(
+            std::string::String::from_utf8(host.output).unwrap(),
+            lines,
+            "{}",
+            path.display()
+        );
+        let ok = lines.contains("[OK]");
+        assert_eq!(got.is_some(), ok, "{}", path.display());
+        if ok {
+            assert_eq!(got, sink.begun);
+            assert_eq!(sink.data, host_bytes[4..host_bytes.len() - 4]);
+        }
+        // finish once the sink has begun (Some(true) only when the CRC matched)
+        assert_eq!(
+            sink.finished.is_some(),
+            sink.begun.is_some() && sink.fail != "begin",
+            "{}",
+            path.display()
+        );
+        assert_eq!(
+            sink.finished == Some(true),
+            ok || sink.fail == "finish",
+            "{}",
+            path.display()
+        );
+        cases += 1;
+    }
+    assert!(cases >= 15, "transcripts missing from {}", dir.display());
 }

@@ -1,0 +1,12 @@
+# sim/emu/test_upload_v2.py (VUX9_VECTORS_UPDATE=1 regenerates)
+max 2048
+fail none
+sender no
+dev [READY-V2]
+host 03000000
+dev [LEN:3]
+dev [READY-BLK:0]
+host 030a11
+dev [READY-CRC]
+host 0102
+dev [ERR] CRC timeout
