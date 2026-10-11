@@ -148,7 +148,7 @@ jobs:
           export ZEPHYR_SDK_INSTALL_DIR=$HOME/.local/zephyr-sdk-0.16.8
           make test-sim
 
-      - name: Run Slow Simulation Tier (GLS flashing flow, Icarus full flow)
+      - name: Run Slow Simulation Tier (GLS flashing flow, Icarus full flow, PSRAM on Icarus)
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: |
           export PATH=$PWD/.venv/bin:$HOME/.cargo/bin:$HOME/.local/bin:$HOME/.local/msp430-gcc/bin:$HOME/.local/zephyr-sdk-0.16.8/riscv64-zephyr-elf/bin:$PATH

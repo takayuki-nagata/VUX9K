@@ -131,8 +131,14 @@ Which SoC build has what (`sim_runner.psram_word_model`, `sources_for`):
   the words in `lockstep_programs.XMEM_USED` (one VPI write per word: never all 2M), as the
   emulator starts its window zeroed. Both signals are in `SOC_RTL_PUBLIC`.
 - **Icarus RTL and Icarus GLS** (`tb_soc_top`): the real controller, and `tb_soc_top.sv`
-  puts the W955 model on the pins. Its power-up (~3,610 cycles) is not accelerated: the
-  first window access waits for it.
+  puts the W955 model on the pins (instance `psram`). Its power-up (~3,610 cycles) is not
+  accelerated: the first window access waits for it. The model reports protocol/timing
+  violations only by counting them in `error_count`, so a test that touches the window calls
+  `soc_env.check_psram_pins(dut)` after its accesses (`test_soc_rv32i`'s `test_soc_mmio_map`);
+  it skips the check, saying so in the log, on Verilator, which has no W955 model. The window
+  test on Icarus is `make sim-psram-icarus` (test-slow; `sim-soc-mmio` in `test-sim` is
+  Verilator). Full-SoC Icarus GLS with the W955 model is too slow to use (>30 min for
+  `test_soc_gls_fast`).
 - **Verilator GLS**: the netlist's real controller with nothing on its pins (no Verilator GLS
   test touches the window).
 Synthesis, `lint-rtl` and `check-rtl-syntax` never define `VUX9K_PSRAM_MODEL`.
@@ -149,6 +155,16 @@ files `sim-unit` deletes; `coverage-fcov` reads it from there. Both memories sta
 the test reads only words it wrote, each first written with all four strobes. A change to the
 controller (a new submodule tag) or to the word model reruns it; if it fails, the word model
 follows the controller, not the other way round.
+
+The same test runs on the controller's netlist (`test_sim.py::test_psram_contract_gls`, in
+`make sim-psram-icarus`, test-slow): `make synth-units` synthesizes `psram_psram_controller`
+alone at `soc_pkg::CLK_HZ` (the Makefile reads it from `soc_pkg.veryl`, as `chparam`; a netlist
+keeps no parameters) into `build/synth/psram_controller_syn.v`, and the GLS build defines
+`VUX9K_GLS`, under which `tb_psram_contract`'s `u_ctl` is that netlist without the `CLK_HZ`
+override; the word model, the W955 model and the tb stay RTL. Its run directory is the default
+`build/sim/icarus-gls/tb_psram_contract/run_test_psram_contract/`, so its `fcov.yml` never
+reaches `coverage-fcov`. The test reads only the tb's ports and `u_w955`, nothing inside the
+controller, so it needs no GLS variant.
 
 ## SoC cocotb tests: clock in HDL, never wait with `ClockCycles`
 

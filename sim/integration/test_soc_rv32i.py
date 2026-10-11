@@ -18,7 +18,7 @@ import cocotb
 sys.path.append(os.path.dirname(__file__))
 import rv32_asm
 from rv32_asm import Asm
-from soc_env import load_imem, start_soc
+from soc_env import check_psram_pins, load_imem, start_soc
 
 UART = 0x4000_0000  # +0 data, +4 status {frame_err, overrun, tx_full, rx_empty}
 TIMER = 0x4000_1000  # +0/+4 mtime lo/hi, +8/+C mtimecmp lo/hi
@@ -455,6 +455,7 @@ async def test_soc_mmio_map(dut):
 
     led = int(dut.led.value)
     assert led == (~LED_PATTERN & 0x3F), f"LED pins 0b{led:06b}, expected active-low 0x{LED_PATTERN:02X}"
+    check_psram_pins(dut)  # after the window checks (18-22): the real controller's pin protocol
     dut._log.info("SoC memory map and MMIO peripherals verified")
 
 

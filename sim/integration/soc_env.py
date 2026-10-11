@@ -116,6 +116,21 @@ async def start_soc(dut, *, sd_sectors=None, mbr=True, btn=1, accelerate_por=Tru
     return ser, sd_model
 
 
+def check_psram_pins(dut) -> bool:
+    """Assert that tb_soc_top's W955D8MBYA pin model counted no protocol/timing error.
+
+    Call it after the test's window accesses. Only Icarus builds have the model (instance
+    `psram`, on the real controller's pins); Verilator builds have the word model or nothing
+    on the pins, and the check is skipped there. Returns whether it was made.
+    """
+    if "icarus" not in cocotb.SIM_NAME.lower():
+        dut._log.info("No W955D8MBYA pin model in this build (%s): its error count not checked", cocotb.SIM_NAME)
+        return False
+    errors = int(dut.psram.error_count.value)
+    assert errors == 0, f"W955D8MBYA model counted {errors} protocol/timing errors (see the log)"
+    return True
+
+
 def load_imem(soc, words):
     """Overwrite soc_ram's I-RAM from word 0 (call while the CPU is held in reset)."""
     for idx, word in enumerate(words):

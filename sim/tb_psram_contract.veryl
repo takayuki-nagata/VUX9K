@@ -7,6 +7,10 @@
 // the same clock, reset and host requests. sim/unit/test_psram_contract.py drives the
 // requests and checks that both answer alike in every cycle. The W955 model's protocol
 // and timing checkers count violations in u_w955.error_count.
+//
+// Gate-level builds (sim_runner defines VUX9K_GLS) take the controller's netlist from
+// `make synth-units` instead (build/synth/psram_controller_syn.v, synthesized at
+// soc_pkg::CLK_HZ): same module name and ports, but a netlist has no CLK_HZ parameter.
 module tb_psram_contract (
     clk  : input clock          ,
     rst_n: input reset_async_low,
@@ -41,9 +45,32 @@ module tb_psram_contract (
     var psram_dq     : tri logic<16>;
     var psram_rwds   : tri logic<2> ;
 
+    #[ifndef(VUX9K_GLS)]
     inst u_ctl: psram::psram_controller #(
         CLK_HZ: soc_pkg::CLK_HZ,
     ) (
+        clk                           ,
+        rst_n                         ,
+        req_valid                     ,
+        req_ready      : ctl_req_ready,
+        req_we                        ,
+        req_addr                      ,
+        req_wdata                     ,
+        req_wstrb                     ,
+        rsp_valid      : ctl_rsp_valid,
+        rsp_rdata      : ctl_rsp_rdata,
+        init_done      : ctl_init_done,
+        O_psram_ck     : psram_ck     ,
+        O_psram_ck_n   : psram_ck_n   ,
+        O_psram_cs_n   : psram_cs_n   ,
+        O_psram_reset_n: psram_reset_n,
+        IO_psram_dq    : psram_dq     ,
+        IO_psram_rwds  : psram_rwds   ,
+        dbg_sample     : _            ,
+    );
+
+    #[ifdef(VUX9K_GLS)]
+    inst u_ctl: $sv::psram_psram_controller (
         clk                           ,
         rst_n                         ,
         req_valid                     ,

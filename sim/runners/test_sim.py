@@ -104,6 +104,14 @@ def test_psram_contract():
     run("tb_psram_contract", "test_psram_contract", sim="icarus", test_dir=PSRAM_CONTRACT_RUN_DIR)
 
 
+# The same on the controller's netlist (`make synth-units`; the Makefile's sim-psram-icarus,
+# test-slow). Its run directory, build/sim/icarus-gls/..., is not one coverage-fcov reads.
+@pytest.mark.unit
+@pytest.mark.gls
+def test_psram_contract_gls():
+    run("tb_psram_contract", "test_psram_contract", gls=True, sim="icarus")
+
+
 @pytest.mark.unit
 @pytest.mark.gls
 @pytest.mark.parametrize("toplevel,module", UNIT_GLS, ids=_ids(UNIT_GLS))

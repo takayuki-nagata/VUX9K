@@ -20,10 +20,22 @@ What `test-sim` and `test-slow` cover, and which long tests to run by hand for w
 (+ `test-isa-gls`, `test-isa-waits`), and the SoC tests: `sim-soc-fast` (+ `-icarus`), `sim-soc-mmio`,
 `sim-boot` (CLI), `sim-hack-rtl`, `sim-sd-quirks`, `sim-hw-flow` (RTL flashing
 flow), `sim-zephyr-demo-rtl`, `sim-zephyr-irq-echo-rtl` and `sim-soc-gls-fast`. `make test-slow` (CI nightly + manual `workflow_dispatch`) adds
-`sim-gls-hw-flow`, `sim-hw-flow-icarus`, `sim-lockstep-slow`, `sim-zephyr-demo-gls` and
+`sim-gls-hw-flow`, `sim-hw-flow-icarus`, `sim-lockstep-slow`, `sim-zephyr-demo-gls`,
+`sim-psram-icarus` (below) and
 `sim-unit-random` (the unit tests with the date as random seed). Until 2026-09 the flashing flow ran in
 no tier at all (25–35 min RTL / many hours GLS on Icarus); on Verilator it's ~16 s
 RTL / ~3–6 min GLS, which is what made it affordable per PR.
+
+`sim-psram-icarus` runs the real PSRAM controller on the IP's pin-level W955D8MBYA model where
+`test-sim` doesn't: `test_soc_rv32i` on Icarus RTL (the window checks 18–22 through the real
+controller, then `soc_env.check_psram_pins`: the W955 model counted no protocol/timing error;
+~30 s) and the PSRAM contract test on the controller's netlist from `make synth-units`
+(`test_sim.py::test_psram_contract_gls`). `test-sim` has the controller only in
+`sim-psram-contract` (RTL) and in `sim-soc-fast-icarus`, which has no window checks. The
+gate-level side is the controller alone because a full-SoC Icarus GLS run with the W955 model
+(`test_soc_gls_fast` on the whole netlist) did not finish in 30 min; Verilator GLS has nothing
+on the PSRAM pins (sim.md, "The PSRAM word model and its contract test"). Run it after a new
+controller tag or a change to the window's bridge.
 
 `test_soc_hardware_flow.py` is the only test that drives the full multi-step UART
 flashing protocol end-to-end through `tools/vux_tool.py`'s `build_vux9_image()`:

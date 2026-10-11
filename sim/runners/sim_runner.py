@@ -72,6 +72,7 @@ TB_HEX_RUNNER = VERYL_OUT_DIR / "sim" / "tb_hex_runner.sv"
 TB_GOWIN_BRAM = VERYL_OUT_DIR / "sim" / "tb_gowin_bram.sv"
 # The word model's contract test (sim/tb_psram_contract.veryl): the PSRAM controller on the
 # pin-level W955D8MBYA model, next to sim/psram_word_model.veryl. Icarus only (the W955 model).
+# Its GLS build has the controller's netlist from `make synth-units` (sources_for).
 PSRAM_CONTRACT_SOURCES = (
     [VERYL_OUT_DIR / "soc" / "soc_pkg.sv"]
     + PSRAM_IP_SOURCES
@@ -168,8 +169,9 @@ def sources_for(toplevel: str, gls: bool, sim: str = "icarus") -> list[Path]:
     if toplevel == "tb_gowin_bram":
         return [_gowin_cells_with_net_inputs(), TB_GOWIN_BRAM]
     if toplevel == "tb_psram_contract":
-        if gls:
-            raise ValueError("tb_psram_contract has no gate-level build")
+        if gls:  # the controller's netlist in place of its RTL; the models and the tb stay RTL
+            rtl = [p for p in PSRAM_CONTRACT_SOURCES if p not in PSRAM_IP_SOURCES]
+            return [_gowin_cells_with_net_inputs(), SYNTH_DIR / "psram_controller_syn.v", *rtl]
         return list(PSRAM_CONTRACT_SOURCES)
     if gls:
         # Wrappers simulate around the netlist of what they wrap
@@ -311,6 +313,8 @@ def run(
         defines = {}
         if toplevel == "tb_soc_top":
             defines = {"VUX9K_GLS": 1} if gls else {"VUX9K_RTL_TRACE": 1}
+        elif toplevel == "tb_psram_contract" and gls:
+            defines = {"VUX9K_GLS": 1}  # u_ctl is the netlist (no CLK_HZ parameter)
         if psram_word_model(toplevel, gls, sim):
             defines["VUX9K_PSRAM_MODEL"] = 1
         stamp = build_dir / ".build_args"

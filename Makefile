@@ -39,7 +39,7 @@ HACK_BUILD_DIR := $(BUILD_DIR)/hack
 ZEPHYR_BUILD_DIR ?= $(BUILD_DIR)/zephyr
 SYNTH_DIR := $(BUILD_DIR)/synth
 
-.PHONY: all lint-rtl check-rtl-syntax coverage-fcov mutation act4-elfs test-act4 test-act4-gls test-act4-emu test-isa-waits emu emu-py emu-test emu-bench test-isa-emu test-emu test-fw-host firmware-size coverage-fw coverage-rust coverage-rust-tool sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hw-dist test-hw-upgrade dist check-dist test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware hwtest hw-smoke sim-unit sim-psram-contract sim-unit-random sim-boot sim-soc sim test-isa test-isa-gls zephyr-bc-lib build-zephyr build-zephyr-demo build-zephyr-irq-echo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-demo-gls sim-zephyr-irq-echo-rtl test-hw-irq-echo sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
+.PHONY: all lint-rtl check-rtl-syntax coverage-fcov mutation act4-elfs test-act4 test-act4-gls test-act4-emu test-isa-waits emu emu-py emu-test emu-bench test-isa-emu test-emu test-fw-host firmware-size coverage-fw coverage-rust coverage-rust-tool sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hw-dist test-hw-upgrade dist check-dist test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware hwtest hw-smoke sim-unit sim-psram-contract sim-psram-icarus sim-unit-random sim-boot sim-soc sim test-isa test-isa-gls zephyr-bc-lib build-zephyr build-zephyr-demo build-zephyr-irq-echo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-demo-gls sim-zephyr-irq-echo-rtl test-hw-irq-echo sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
 
 all: test-ci
 
@@ -339,6 +339,15 @@ sim-psram-contract: veryl
 	rm -f $(BUILD_DIR)/sim/psram_contract/run_*/fcov.yml
 	$(PYTEST_SIM) "$(SIM_TESTS)::test_psram_contract"
 
+# The real PSRAM controller on the W955D8MBYA pin model beyond the contract test (test-slow):
+# the SoC's window checks (test_soc_rv32i) on Icarus RTL, where the W955 model must count no
+# protocol/timing error, and the contract test on the controller's netlist. Full-SoC Icarus
+# GLS (test_soc_gls_fast with the W955 model) did not finish in 30 min, so the controller's
+# netlist is simulated alone.
+sim-psram-icarus: veryl synth-units
+	@echo "=== Running the SoC window checks (Icarus RTL) and the PSRAM contract on the controller's netlist ==="
+	SIM=icarus $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_rv32i]" "$(SIM_TESTS)::test_psram_contract_gls"
+
 # Functional coverage of sim-unit's (fixed-seed) run and of sim-psram-contract: every cover
 # group at its minimum in coverage/thresholds.toml's [fcov]. Summary in
 # build/coverage/fcov/summary.md
@@ -481,6 +490,14 @@ synth-units: veryl
 	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/uart/clk_timer.sv $(VERYL_OUT_DIR)/soc/uart/shift_registers.sv $(VERYL_OUT_DIR)/soc/uart/fifo_sync.sv $(VERYL_OUT_DIR)/soc/uart/uart_tx.sv $(VERYL_OUT_DIR)/soc/uart/uart_rx.sv $(VERYL_OUT_DIR)/soc/uart/uart_controller.sv; synth_gowin -top uart_controller $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/uart_controller_syn.v"
 	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_pkg.sv $(VERYL_OUT_DIR)/soc/cpu/auto_mode_detector.sv; synth_gowin -top auto_mode_detector $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/auto_mode_detector_syn.v"
 	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/soc_xmem_bridge.sv; synth_gowin -top soc_xmem_bridge $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/soc_xmem_bridge_syn.v"
+	$(YOSYS) -p "read_verilog -sv $(PSRAM_RTL_SRCS); chparam -set CLK_HZ $(SOC_CLK_HZ) psram_psram_controller; synth_gowin -top psram_psram_controller $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/psram_controller_syn.v"
+
+# soc_pkg::CLK_HZ, for the PSRAM controller's netlist above (soc_top's instance sets it; a
+# netlist keeps no parameters, so tb_psram_contract's GLS build can't)
+SOC_CLK_HZ := $(shell sed -n 's/^ *const CLK_HZ *: *u32 *= *\([0-9_]*\);.*/\1/p' soc/soc_pkg.veryl | tr -d _)
+ifeq ($(SOC_CLK_HZ),)
+$(error CLK_HZ not found in soc/soc_pkg.veryl)
+endif
 
 # The unit tests with another random seed each day (test-slow); the seed is in the log
 sim-unit-random: veryl
@@ -640,10 +657,11 @@ test-sim: check lint-rtl emu-test test-isa-emu firmware test-fw-host firmware-si
 	@echo "========================================================================"
 
 # Nightly / on demand (CI schedule + workflow_dispatch): the gate-level flashing flow, the
-# full flow on 4-state Icarus, and the unit tests with a new random seed
-test-slow: sim-gls-hw-flow sim-hw-flow-icarus sim-lockstep-slow sim-zephyr-demo-gls sim-unit-random
+# full flow on 4-state Icarus, the real PSRAM controller on its pin model (SoC RTL, controller
+# netlist), and the unit tests with a new random seed
+test-slow: sim-gls-hw-flow sim-hw-flow-icarus sim-lockstep-slow sim-zephyr-demo-gls sim-psram-icarus sim-unit-random
 	@echo "========================================================================"
-	@echo "  [SLOW] GLS FLASHING FLOW, ICARUS FULL-FLOW & LONG LOCKSTEP PASSED!    "
+	@echo "  [SLOW] GLS FLOW, ICARUS FLOW, PSRAM ON ICARUS & LONG LOCKSTEP PASSED!    "
 	@echo "========================================================================"
 
 test: test-sim sta

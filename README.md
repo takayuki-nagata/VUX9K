@@ -445,6 +445,7 @@ Short tests run on Icarus, long SoC/GLS runs on Verilator (`SIM_UNIT` / `SIM_SOC
 | **GLS SoC Boot** | `make sim-soc-gls-fast` | ~1.5 min | Full Gowin netlist boots to the Boot Manager prompt (Safe Mode) |
 | *slow* **GLS End-to-End** | `make sim-gls-hw-flow` | ~3-6 min | The end-to-end flow on the full Gowin netlist |
 | *slow* **Icarus End-to-End** | `make sim-hw-flow-icarus` | ~15 min | The end-to-end flow on 4-state Icarus |
+| *slow* **PSRAM on Icarus** | `make sim-psram-icarus` | a few min | The SoC MMIO program's PSRAM window checks with the real controller on the pin-level W955D8MBYA model (no protocol/timing error in it), and the PSRAM word model's contract test against the controller's Gowin netlist |
 | **Emulator** | `make emu-test` / `test-isa-emu` | ~10 sec | Rust unit tests of the emulator; riscv-tests on it (same results as `test-isa`) |
 | **Emulator Speed** | `make emu-bench` | ~10 sec | MIPS from Python and final-state digests (`--compare` with a saved run); prints only |
 | **Firmware on the Emulator** | `make test-emu` | ~30 sec | Boot Manager CLI and error paths, flashing through `vux_tool.py`, Resident Loader E1-E6, self-update, Hack demo, Zephyr demo and interrupt-driven UART echo from SD, bc (extended profile), SD transcripts |
