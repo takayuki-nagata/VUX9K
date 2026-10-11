@@ -340,6 +340,21 @@ fn mount_rejects_what_is_not_fat32() {
 }
 
 #[test]
+fn mount_rejects_too_many_clusters_and_unmirrored_fats() {
+    // 0x100F_BFE0 clusters (over FAT32's 0x0FFF_FFF5) with a FAT big enough for them, on a
+    // partition that still ends below LBA 2^32: only the cluster cap refuses it
+    let mut img = image("mkfs_s1");
+    patch(&mut img, PART + 19, &[0, 0]);
+    patch(&mut img, PART + 32, &0x1050_0000u32.to_le_bytes());
+    patch(&mut img, PART + 36, &0x0020_2000u32.to_le_bytes());
+    assert_eq!(mount(img).err(), Some(FatError::BadBpb));
+    // ExtFlags bit 7: only one FAT copy is active
+    let mut img = image("mkfs_s1");
+    patch(&mut img, PART + 40, &[0x80, 0]);
+    assert_eq!(mount(img).err(), Some(FatError::BadBpb));
+}
+
+#[test]
 fn total_sectors_from_either_field() {
     // TotSec32 instead of TotSec16 (which mkfs.fat uses when the count fits)
     let mut img = image("mkfs_s1");
@@ -726,36 +741,199 @@ mod write {
         }
     }
 
+    /// Install `new` on `img` with the card cut off after `limit` writes (None: never);
+    /// the image as the cut left it, and whether the install finished.
+    fn cut_install(img: Vec<u8>, new: &[u8], limit: Option<u32>) -> (Vec<u8>, bool) {
+        let mut vol = Volume::mount(MemDisk {
+            write_limit: limit,
+            ..disk(img)
+        })
+        .unwrap();
+        let done = install(&mut vol, PSRAM, new).is_ok();
+        (std::mem::take(&mut vol.device().img), done)
+    }
+
+    /// The writes a whole install of `new` on `img` makes.
+    fn install_writes(img: Vec<u8>, new: &[u8]) -> u32 {
+        let mut vol = mount(img).unwrap();
+        install(&mut vol, PSRAM, new).unwrap();
+        vol.device().writes
+    }
+
+    /// After a cut: every file and directory a directory points to is a valid chain of
+    /// allocated clusters of the right length (lost clusters are allowed, and FAT copies
+    /// may differ if the cut fell between them).
+    fn reachable_ok(img: &[u8]) {
+        let l = layout(img);
+        reachable(img, &l, l.root, &mut BTreeSet::new());
+    }
+
+    /// One version of `versions` boots, with its payload.
+    fn boots_one_of(img: Vec<u8>, versions: &[(u32, &[u8])], what: &str) {
+        let (_, version, payload) = boot(img).unwrap_or_else(|e| panic!("{what}: {e:?}"));
+        assert!(
+            versions
+                .iter()
+                .any(|&(v, p)| v == version && p[HEADER_LEN..] == payload[..]),
+            "{what}: booted version {version}"
+        );
+    }
+
     #[test]
     fn power_loss_at_any_write_leaves_a_bootable_second_stage() {
         for name in IMAGES {
+            let img = image(name);
+            let (bin_version, _, bin) = boot(img.clone()).unwrap();
+            let mut first = std::vec![0u8; HEADER_LEN];
+            first.extend_from_slice(&bin);
+            let _ = bin_version;
             let new = v4_image(3000, 3, 9);
-            let mut full = mount(image(name)).unwrap();
-            install(&mut full, PSRAM, &new).unwrap();
-            let total = full.device().writes;
+            let total = install_writes(img.clone(), &new);
             assert!(total > 5 && total < 200, "{name}: {total} writes");
-            let before = boot(image(name)).unwrap().1;
             for limit in 0..total {
-                let mut vol = Volume::mount(MemDisk {
-                    write_limit: Some(limit),
-                    ..disk(image(name))
-                })
-                .unwrap();
-                assert!(install(&mut vol, PSRAM, &new).is_err(), "{name} {limit}");
-                let img = vol.device().img.clone();
-                let (_, version, payload) = boot(img.clone()).expect("bootable");
+                let (cut, done) = cut_install(img.clone(), &new, Some(limit));
+                assert!(!done, "{name} {limit}");
+                reachable_ok(&cut);
+                let before = boot(img.clone()).unwrap().1;
+                let (_, version, payload) = boot(cut.clone()).expect("bootable");
                 assert!(version == before || (version == 9 && payload == new[HEADER_LEN..]));
-                // A later install recovers (removing the stale .NEW) and nothing is lost
-                // that a directory still points to
-                let mut vol = mount(img).unwrap();
-                install(&mut vol, PSRAM, &new).unwrap();
-                assert_eq!(
-                    boot(vol.device().img.clone()).unwrap().1,
-                    9,
-                    "{name} {limit}"
-                );
+                // A later install recovers (removing the stale .NEW)
+                let (fixed, done) = cut_install(cut, &new, None);
+                assert!(done);
+                reachable_ok(&fixed);
+                assert_eq!(boot(fixed).unwrap().1, 9, "{name} {limit}");
             }
         }
+    }
+
+    #[test]
+    fn power_loss_during_the_recovery_install_too() {
+        // A cut install, then a second install cut at each of its writes: a bootable
+        // image (the old one, or one of the two new ones) survives every pair of cuts.
+        // Small images and one card keep the pairs (at most 60 x 60) few.
+        let img = image("mkfs_s1");
+        let (_, old_version, _) = boot(img.clone()).unwrap();
+        let a = v4_image(600, 6, 20);
+        let b = v4_image(700, 7, 21);
+        let total = install_writes(img.clone(), &a);
+        assert!(total < 60, "{total} writes");
+        let old = {
+            let mut vol = mount(img.clone()).unwrap();
+            let f = file(&mut vol, &BIN).unwrap();
+            let mut data = std::vec![0u8; f.size as usize];
+            vol.read_to(&f, &mut data).unwrap();
+            data
+        };
+        let ok: [(u32, &[u8]); 3] = [(old_version, &old), (20, &a), (21, &b)];
+        for first in 0..total {
+            let (cut1, _) = cut_install(img.clone(), &a, Some(first));
+            let total2 = install_writes(cut1.clone(), &b);
+            assert!(total2 < 60, "{total2} writes");
+            for second in 0..total2 {
+                let (cut2, done) = cut_install(cut1.clone(), &b, Some(second));
+                assert!(!done);
+                reachable_ok(&cut2);
+                boots_one_of(cut2, &ok, &std::format!("cuts {first}, {second}"));
+            }
+        }
+    }
+
+    #[test]
+    fn power_loss_while_the_directory_grows() {
+        // VUX9K's clusters full to the last slot: .NEW needs one more directory cluster.
+        // Free clusters hold old bytes (as after earlier files were removed): a directory
+        // cluster linked before it is zeroed reads as entries pointing nowhere.
+        let mut img = full_dir_image("mkfs_s1");
+        let l = layout(&img);
+        for c in 2..l.clusters + 2 {
+            if le32(&img, l.fat + 4 * c as usize) == 0 {
+                let at = l.data + (c as usize - 2) * l.cluster;
+                img[at..at + l.cluster].fill(0x41);
+            }
+        }
+        let dir_len = |img: &[u8]| chain(img, &l, first_cluster(img, b"VUX9K      ")).len();
+        let before = dir_len(&img);
+        let new = v4_image(600, 8, 30);
+        let total = install_writes(img.clone(), &new);
+        let (grown, _) = cut_install(img.clone(), &new, None);
+        assert_eq!(dir_len(&grown), before + 1);
+        let old = boot(img.clone()).unwrap().1;
+        for limit in 0..total {
+            let (cut, _) = cut_install(img.clone(), &new, Some(limit));
+            // A stale cluster linked in would show as garbage entries here
+            reachable_ok(&cut);
+            let v = boot(cut).unwrap().1;
+            assert!(v == old || v == 30, "cut {limit}");
+        }
+    }
+
+    /// `name` with VUX9K's directory clusters filled to their last slot (empty files).
+    fn full_dir_image(name: &str) -> Vec<u8> {
+        let fill = |n: u32| {
+            let mut vol = mount(image(name)).unwrap();
+            let dir = vol.open("VUX9K").unwrap();
+            for i in 0..n {
+                let f = std::format!("Z{i:03}    DAT");
+                vol.create(&dir, f.as_bytes().try_into().unwrap(), b"")
+                    .unwrap();
+            }
+            std::mem::take(&mut vol.device().img)
+        };
+        let img = image(name);
+        let l = layout(&img);
+        let dir_len = |img: &[u8]| chain(img, &l, first_cluster(img, b"VUX9K      ")).len();
+        let before = dir_len(&img);
+        // The first count of files that grows the directory, minus one
+        let n = (1..1000).find(|&n| dir_len(&fill(n)) > before).unwrap();
+        fill(n - 1)
+    }
+
+    #[test]
+    fn install_over_a_broken_bin_keeps_old() {
+        let mut img = image("mkfs_s1");
+        let l = layout(&img);
+        let c = first_cluster(&img, b"STAGE2  BIN") as usize;
+        img[l.data + (c - 2) * l.cluster + HEADER_LEN] ^= 1;
+        assert_eq!(boot(img.clone()).unwrap().0, Which::Old);
+        let new = v4_image(500, 9, 40);
+        let (img, done) = cut_install(img, &new, None);
+        assert!(done);
+        consistent(&img, true);
+        assert_eq!(boot(img.clone()).unwrap().1, 40);
+        let mut vol = mount(img).unwrap();
+        let old = file(&mut vol, &OLD).unwrap();
+        assert_eq!(
+            load_file(&mut vol, &old, PSRAM, &mut |_, _| ())
+                .unwrap()
+                .version,
+            1,
+            "the good .OLD stays"
+        );
+    }
+
+    #[test]
+    fn data_given_back_when_the_directory_cannot_grow() {
+        // A full directory and one free cluster: the file's data takes it, then the
+        // directory can't grow
+        let img = full_dir_image("mkfs_s8_1fat");
+        let l = layout(&img);
+        let free = |img: &[u8]| {
+            (2..l.clusters + 2)
+                .filter(|&c| le32(img, l.fat + 4 * c as usize) == 0)
+                .count()
+        };
+        let mut vol = mount(img).unwrap();
+        let root = vol.root();
+        let hog = std::vec![0u8; (free(&vol.device().img) - 1) * l.cluster];
+        vol.create(&root, b"HOG     DAT", &hog).unwrap();
+        assert_eq!(free(&vol.device().img), 1);
+        let dir = vol.open("VUX9K").unwrap();
+        assert_eq!(
+            vol.create(&dir, b"LAST    DAT", b"x"),
+            Err(FatError::DiskFull)
+        );
+        assert_eq!(free(&vol.device().img), 1, "the data's cluster came back");
+        consistent(&vol.device().img, true);
     }
 
     #[test]

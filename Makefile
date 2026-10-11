@@ -219,7 +219,7 @@ coverage-rust: coverage-rust-tool firmware hwtest build-hack build-zephyr build-
 	cd firmware && export CARGO_TARGET_DIR=$(CURDIR)/$(RUST_COV_DIR)/fw-target && \
 		$(CARGO) llvm-cov test -p fw_common --target $(HOST_TARGET) --features fat-write \
 			--json --summary-only --output-path $(RUST_COV_REPORT)/fw_common.json && \
-		$(CARGO) llvm-cov report -p fw_common --target $(HOST_TARGET) --features fat-write --lcov --output-path $(RUST_COV_REPORT)/fw_common.info
+		$(CARGO) llvm-cov report -p fw_common --target $(HOST_TARGET) --lcov --output-path $(RUST_COV_REPORT)/fw_common.info
 	$(PYTHON) scripts/coverage_rust.py $(RUST_COV_REPORT)/emu.json $(RUST_COV_REPORT)/fw_common.json \
 		--thresholds coverage/thresholds.toml --summary $(RUST_COV_DIR)/summary.md
 

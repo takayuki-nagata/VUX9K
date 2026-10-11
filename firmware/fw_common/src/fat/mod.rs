@@ -60,6 +60,8 @@ pub enum FatError {
 /// FAT32 entries are 28 bits; values from here on end a chain.
 const EOC_MIN: u32 = 0x0FFF_FFF8;
 const ENTRY_MASK: u32 = 0x0FFF_FFFF;
+/// Clusters 2..=0x0FFF_FFF6 can exist.
+const MAX_CLUSTERS: u32 = 0x0FFF_FFF5;
 
 fn le16(b: &[u8], at: usize) -> u32 {
     u16::from_le_bytes([b[at], b[at + 1]]) as u32
@@ -150,6 +152,11 @@ impl<D: BlockDevice> Volume<D> {
             return Err(FatError::BadBpb);
         }
         let clusters = (total - meta as u32) >> cluster_shift;
+        // Cluster numbers from 0x0FFFFFF7 on are the bad-cluster and end-of-chain marks;
+        // a FAT that isn't mirrored (ExtFlags bit 7: one active copy) isn't supported
+        if clusters > MAX_CLUSTERS || buf[40] & 0x80 != 0 {
+            return Err(FatError::BadBpb);
+        }
         // The FAT must have an entry for every cluster (128 per sector), and the data
         // area must end on the card's 32-bit LBAs
         if (fat_sectors as u64) << 7 < clusters as u64 + 2

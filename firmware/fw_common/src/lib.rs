@@ -5,8 +5,8 @@
 //! layout and VUX9 boot header (v3) and file header (v4), CRC32, the self-update
 //! checks, the `w` upload exchange and transfer v2, the Boot Manager -> Resident
 //! Loader mailbox, FAT32 (`fat`), and number formatting. No MMIO here (the drivers pass themselves in as traits), so all of it is tested on
-//! the host: `cargo test -p fw_common --target x86_64-unknown-linux-gnu`
-//! (make test-fw-host).
+//! the host: `cargo test -p fw_common --target x86_64-unknown-linux-gnu --features
+//! fat-write` (make test-fw-host).
 //!
 //! The Resident Loader must fit in 2 KB (make firmware-size): it takes only
 //! constants from here (`map`, `mailbox`), and keeps its own small loops.

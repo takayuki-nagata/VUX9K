@@ -915,6 +915,9 @@ FAT_EOC = 0x0FFFFFFF
 def fat_short_name(name):
     """name as an 11-byte 8.3 directory name (upper case, space-padded); ValueError if it
     isn't one (fw_common::fat::to_short_name accepts the same)."""
+    if not name.isascii():
+        # str.upper() would turn some non-ASCII letters into ASCII ones ("ß" -> "SS")
+        raise ValueError(f"{name!r} is not an 8.3 name")
     base, dot, ext = name.upper().rpartition(".")
     if not dot:
         base, ext = ext, ""
@@ -1155,7 +1158,7 @@ def main():
     sub_img.add_argument("--no-mbr", action="store_true", help="Leave sector 0 without the 0x55AA signature")
 
     # mkfat
-    sub_fat = subparsers.add_parser("mkfat", help="Build a FAT32 SD card image (for the emulator's --sd)")
+    sub_fat = subparsers.add_parser("mkfat", help="Build a FAT32 SD card image file (one partition, 8.3 names)")
     sub_fat.add_argument("output", help="Image file to write")
     sub_fat.add_argument(
         "--file",

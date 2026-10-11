@@ -291,7 +291,7 @@ def test_no_stale_images():
 def test_short_names_and_bad_trees():
     assert vux_tool.fat_short_name("stage2.bin") == b"STAGE2  BIN"
     assert vux_tool.fat_short_name("VUX9K") == b"VUX9K      "
-    for bad in ("", ".BIN", "A.", "123456789", "A.1234", "A B", "A*"):
+    for bad in ("", ".BIN", "A.", "123456789", "A.1234", "A B", "A*", "ß.BIN", "Ä"):
         with pytest.raises(ValueError):
             vux_tool.fat_short_name(bad)
     with pytest.raises(ValueError, match="in the way"):

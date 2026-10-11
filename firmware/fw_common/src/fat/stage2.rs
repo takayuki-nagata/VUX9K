@@ -8,11 +8,14 @@
 //!
 //! 1. remove a `STAGE2.NEW` left over from an interrupted install;
 //! 2. write `STAGE2.NEW` and read it back (CRC);
-//! 3. remove `STAGE2.OLD`;
-//! 4. rename `STAGE2.BIN` to `STAGE2.OLD`;
-//! 5. rename `STAGE2.NEW` to `STAGE2.BIN`.
+//! 3. if `STAGE2.BIN` loads: remove `STAGE2.OLD` and rename `.BIN` to `.OLD`;
+//!    else (missing or broken, e.g. after an install cut between 3 and 4): remove `.BIN`
+//!    and keep `.OLD`, the one that still boots;
+//! 4. rename `STAGE2.NEW` to `STAGE2.BIN`.
 //!
-//! Until 4, `.BIN` is the previous image; from 4 to 5, `.OLD` is.
+//! Until 3 renames it, `.BIN` is a bootable image (or, when it isn't, `.OLD` is and is
+//! kept); from then to 4, `.OLD` is. So one cut install after another never leaves only
+//! `.NEW`.
 
 use super::{BlockDevice, DirEntry, FatError, Volume};
 use crate::header::{ImageError, ImageHeader, HEADER_LEN};
@@ -151,11 +154,15 @@ pub fn install<D: BlockDevice>(
     if len != image.len() || back != crate::crc32_update(image, 0xFFFF_FFFF) {
         return Err(FatError::Verify.into());
     }
-    if let Some(old) = vol.find(&dir, &OLD)? {
-        vol.remove(&old)?;
-    }
     if let Some(bin) = vol.find(&dir, &BIN)? {
-        vol.rename(&dir, &bin, &OLD)?;
+        if load_file(vol, &bin, window, &mut |_, _| ()).is_ok() {
+            if let Some(old) = vol.find(&dir, &OLD)? {
+                vol.remove(&old)?;
+            }
+            vol.rename(&dir, &bin, &OLD)?;
+        } else {
+            vol.remove(&bin)?;
+        }
     }
     vol.rename(&dir, &new, &BIN)?;
     Ok(())

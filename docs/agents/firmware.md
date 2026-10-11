@@ -70,9 +70,12 @@ release/{boot_manager,resident_loader}`.
   data and chain reach the card before its directory entry, a removed file's entry goes
   before its chain, so an interrupted change only leaves clusters nothing uses.
   `fat::stage2::install` replaces `\VUX9K\STAGE2.BIN` through `.NEW` and `.OLD` so that
-  one of them is always bootable for `select_boot`; `tests/fat.rs` cuts the card off after
-  every possible write of an install and checks exactly that, and that the next install
-  recovers. Keep a new write step inside that test.
+  one of them is always bootable for `select_boot` (a `.BIN` that doesn't load is replaced
+  without touching `.OLD`); `tests/fat.rs` cuts the card off after every possible write of
+  an install, and of the install after a cut one, and checks exactly that, that every
+  chain a directory points to stays valid, and that the next install recovers. Its
+  free clusters hold old bytes where order matters (a directory cluster must be zeroed
+  before it is linked). Keep a new write step inside those tests.
 - **Raise `BOOT_MGR_VERSION` with every Boot Manager change**: boards install a slot-0
   image only if its header version is greater. Tests read it from `main.rs`
   (`sim/emu/bm_env.py`, `scripts/test_hardware.py`); don't hard-code it.

@@ -157,14 +157,16 @@ impl<D: BlockDevice> Volume<D> {
                 Ok(slot) => return Ok(slot),
                 Err(last) => last,
             };
-        // Directory full: one more cluster, zeroed (all entries unused)
+        // Directory full: one more cluster, zeroed (all entries unused) before the link to
+        // it reaches the card. The link waits in the FAT cache: writing data doesn't touch
+        // it, and alloc_cluster sets `last`'s entry last.
         let new = self.alloc_cluster(Some(last))?;
-        self.flush_fat()?;
         self.buf = [0; SECTOR];
         let lba = self.cluster_lba(new);
         for s in 0..1u32 << self.cluster_shift {
             self.write_sector(lba + s, Buf::Data)?;
         }
+        self.flush_fat()?;
         Ok((lba, 0))
     }
 
@@ -213,7 +215,16 @@ impl<D: BlockDevice> Volume<D> {
         }
         self.begin_change()?;
         let first = self.write_chain(data)?;
-        let (lba, index) = self.free_slot(dir)?;
+        let (lba, index) = match self.free_slot(dir) {
+            Ok(slot) => slot,
+            Err(e) => {
+                // No entry will point to the data: give it back where the card allows
+                if first != 0 {
+                    let _ = self.free_chain(first);
+                }
+                return Err(e);
+            }
+        };
         read(&mut self.dev, lba, &mut self.buf)?;
         let e = &mut self.buf[index as usize * ENTRY..(index as usize + 1) * ENTRY];
         e.fill(0);
