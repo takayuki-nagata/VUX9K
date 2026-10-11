@@ -15,7 +15,7 @@ Read before changing anything under `firmware/` or the slot format in `tools/vux
 
 `firmware/` is a Cargo workspace (`boot_manager` + `resident_loader` members, plus
 `fw_common`: the firmware's hardware-independent logic, no MMIO, tested on the host
-with `cargo test -p fw_common --target <host triple>` — `make test-fw-host`. The Resident
+with `cargo test -p fw_common --target <host triple> --features fat-write` — `make test-fw-host`. The Resident
 Loader takes only constants and `crc32_update` from it: it has ~100 bytes left of its
 2 KB, which `make firmware-size` enforces along with the Boot Manager's 14 KB).
 **When you build a member from within its own directory (`cd firmware/boot_manager
@@ -62,6 +62,13 @@ release/{boot_manager,resident_loader}`.
   sector count in TotSec16. Callbacks are `&mut dyn FnMut`: generic ones gave each call
   site its own copy of the loops, which costs firmware size and split the host coverage
   per instantiation.
+- **Writes are ordered for power loss** (feature `fat-write`, `fat/write.rs`): a new file's
+  data and chain reach the card before its directory entry, a removed file's entry goes
+  before its chain, so an interrupted change only leaves clusters nothing uses.
+  `fat::stage2::install` replaces `\VUX9K\STAGE2.BIN` through `.NEW` and `.OLD` so that
+  one of them is always bootable for `select_boot`; `tests/fat.rs` cuts the card off after
+  every possible write of an install and checks exactly that, and that the next install
+  recovers. Keep a new write step inside that test.
 - **Raise `BOOT_MGR_VERSION` with every Boot Manager change**: boards install a slot-0
   image only if its header version is greater. Tests read it from `main.rs`
   (`sim/emu/bm_env.py`, `scripts/test_hardware.py`); don't hard-code it.

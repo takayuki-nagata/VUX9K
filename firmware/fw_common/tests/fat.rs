@@ -14,11 +14,27 @@ use fw_common::fat::{to_short_name, BlockDevice, DirEntry, FatError, Volume, SEC
 use fw_common::header::{ImageHeader, HEADER_LEN};
 
 /// A card image in memory. `fail_read`: the sector whose read fails. `far`: an LBA
-/// past the image that reads as the image's boot sector (LBA 2048).
+/// past the image that reads as the image's boot sector (LBA 2048). `writes`: how many
+/// writes reached the image; `write_limit`: how many may (power loss after that, every
+/// later write fails). `corrupt`: a sector whose writes get one byte wrong.
 pub struct MemDisk {
     pub img: Vec<u8>,
     pub fail_read: Option<u32>,
     pub far: Option<u32>,
+    pub writes: u32,
+    pub write_limit: Option<u32>,
+    pub corrupt: Option<u32>,
+}
+
+fn disk(img: Vec<u8>) -> MemDisk {
+    MemDisk {
+        img,
+        fail_read: None,
+        far: None,
+        writes: 0,
+        write_limit: None,
+        corrupt: None,
+    }
 }
 
 impl BlockDevice for MemDisk {
@@ -32,8 +48,15 @@ impl BlockDevice for MemDisk {
         true
     }
     fn write(&mut self, lba: u32, buf: &[u8; SECTOR]) -> bool {
+        if self.write_limit.is_some_and(|n| self.writes >= n) {
+            return false;
+        }
+        self.writes += 1;
         let at = lba as usize * SECTOR;
         self.img[at..at + SECTOR].copy_from_slice(buf);
+        if Some(lba) == self.corrupt {
+            self.img[at] ^= 1;
+        }
         true
     }
 }
@@ -77,11 +100,7 @@ fn manifest(name: &str) -> Vec<(String, u32, u32)> {
 const IMAGES: [&str; 2] = ["mkfs_s1", "mkfs_s8_1fat"];
 
 fn mount(img: Vec<u8>) -> Result<Volume<MemDisk>, FatError> {
-    Volume::mount(MemDisk {
-        img,
-        fail_read: None,
-        far: None,
-    })
+    Volume::mount(disk(img))
 }
 
 /// Read a file twice (sector by sector, and into a buffer); its bytes.
@@ -180,7 +199,7 @@ fn lists_directories_without_long_names_labels_or_deleted_entries() {
         &listed[..5],
         [".", "..", "STAGE2.BIN", "STAGE2.OLD", "LONGFI~1.TXT"]
     );
-    assert_eq!(listed.last().unwrap(), "SUB");
+    assert_eq!(&listed[listed.len() - 2..], ["SUB", "ARATHE~1.DAT"]);
     let stop = vol
         .find_entry(&dir, &mut |e| e.name == *b"F03     DAT")
         .unwrap();
@@ -308,16 +327,11 @@ fn mount_rejects_what_is_not_fat32() {
         if at == 446 + 8 {
             // The entry now points near the end of the 32-bit LBAs, where the disk shows
             // the boot sector again: the partition would end past LBA 2^32
-            let disk = MemDisk {
-                img,
-                fail_read: None,
+            let d = MemDisk {
                 far: Some(0xFFFF_F000),
+                ..disk(img)
             };
-            assert_eq!(
-                Volume::mount(disk).err(),
-                Some(FatError::BadBpb),
-                "past 2^32"
-            );
+            assert_eq!(Volume::mount(d).err(), Some(FatError::BadBpb), "past 2^32");
         } else {
             assert_eq!(mount(img).err(), Some(FatError::BadBpb), "root");
         }
@@ -338,12 +352,11 @@ fn total_sectors_from_either_field() {
 #[test]
 fn card_errors_name_the_sector() {
     for lba in [0, 2048] {
-        let disk = MemDisk {
-            img: image("mkfs_s1"),
+        let d = MemDisk {
             fail_read: Some(lba),
-            far: None,
+            ..disk(image("mkfs_s1"))
         };
-        assert_eq!(Volume::mount(disk).err(), Some(FatError::Io(lba)));
+        assert_eq!(Volume::mount(d).err(), Some(FatError::Io(lba)));
     }
     let mut vol = mount(image("mkfs_s1")).unwrap();
     let f = vol.open("FRAG.BIN").unwrap();
@@ -518,4 +531,560 @@ fn errors_at_a_chains_end_and_in_directories() {
     vol.device().fail_read = Some(lba);
     let mut buf = [0u8; 600];
     assert_eq!(vol.read_to(&f, &mut buf), Err(FatError::Io(lba)));
+}
+
+// ----- Writes (feature fat-write) ------------------------------------------------
+
+#[cfg(feature = "fat-write")]
+mod write {
+    use super::*;
+    use fw_common::fat::stage2::{
+        install, load_file, select_boot, BootError, Which, Window, BIN, NEW, OLD,
+    };
+    use fw_common::header::{ImageError, MODE_RISCV};
+    use std::collections::BTreeSet;
+
+    const PSRAM: Window = Window {
+        base: 0x8000_0000,
+        len: 0x80_0000,
+    };
+    const S2: u32 = 0x8070_0000;
+
+    /// A VUX9 v4 file: `n` payload bytes from `seed`, loading at S2.
+    fn v4_image(n: usize, seed: u8, version: u32) -> Vec<u8> {
+        let payload: Vec<u8> = (0..n).map(|i| (i as u8).wrapping_mul(13) ^ seed).collect();
+        let mut f = std::vec![0u8; HEADER_LEN];
+        let mut put = |at: usize, v: u32| f[at..at + 4].copy_from_slice(&v.to_le_bytes());
+        put(0, 0x5655_5839);
+        put(4, 4);
+        put(8, MODE_RISCV);
+        put(12, n as u32);
+        put(16, S2);
+        put(20, S2);
+        put(24, crc32_update(&payload, 0xFFFF_FFFF) ^ 0xFFFF_FFFF);
+        put(28, version);
+        f.extend_from_slice(&payload);
+        f
+    }
+
+    /// What select_boot starts on this image: which file, its version and payload.
+    fn boot(img: Vec<u8>) -> Result<(Which, u32, Vec<u8>), (BootError, BootError)> {
+        let mut vol = mount(img).unwrap();
+        let mut payload = Vec::new();
+        let (which, h) = select_boot(&mut vol, PSRAM, &mut |at, d| {
+            if at == 0 {
+                // .OLD after a .BIN that failed part way
+                payload.clear();
+            }
+            assert_eq!(at as usize, payload.len());
+            payload.extend_from_slice(d);
+        })?;
+        Ok((which, h.version, payload))
+    }
+
+    fn file(vol: &mut Volume<MemDisk>, name: &[u8; 11]) -> Option<DirEntry> {
+        let dir = vol.open("VUX9K").unwrap();
+        vol.find(&dir, name).unwrap()
+    }
+
+    // The volume's layout, read from the image itself (not through fw_common)
+    struct Layout {
+        fat: usize,
+        fat_bytes: usize,
+        fats: usize,
+        data: usize,
+        cluster: usize,
+        clusters: u32,
+        root: u32,
+    }
+
+    fn layout(img: &[u8]) -> Layout {
+        let b = &img[PART..];
+        let w = |at: usize| u16::from_le_bytes([b[at], b[at + 1]]) as usize;
+        let total = if w(19) != 0 {
+            w(19)
+        } else {
+            le32(b, 32) as usize
+        };
+        let fat_sectors = le32(b, 36) as usize;
+        let meta = w(14) + b[16] as usize * fat_sectors;
+        Layout {
+            fat: PART + w(14) * SECTOR,
+            fat_bytes: fat_sectors * SECTOR,
+            fats: b[16] as usize,
+            data: PART + meta * SECTOR,
+            cluster: b[13] as usize * SECTOR,
+            clusters: ((total - meta) / b[13] as usize) as u32,
+            root: le32(b, 44),
+        }
+    }
+
+    fn chain(img: &[u8], l: &Layout, first: u32) -> Vec<u32> {
+        let mut out = Vec::new();
+        let mut c = first;
+        while (2..l.clusters + 2).contains(&c) {
+            assert!(!out.contains(&c), "loop at {c}");
+            out.push(c);
+            c = le32(img, l.fat + 4 * c as usize) & 0x0FFF_FFFF;
+        }
+        assert!(
+            first == 0 || c >= 0x0FFF_FFF8,
+            "chain from {first} ends in {c:#x}"
+        );
+        out
+    }
+
+    /// Clusters the directory tree uses (raw directory walk).
+    fn reachable(img: &[u8], l: &Layout, dir: u32, out: &mut BTreeSet<u32>) {
+        let clusters = chain(img, l, dir);
+        out.extend(&clusters);
+        for c in clusters {
+            let at = l.data + (c as usize - 2) * l.cluster;
+            for e in img[at..at + l.cluster].chunks(32) {
+                if e[0] == 0 {
+                    return;
+                }
+                if e[0] == 0xE5 || e[11] == 0x0F || e[11] & 0x08 != 0 || e[0] == b'.' {
+                    continue;
+                }
+                let first = (u16::from_le_bytes([e[20], e[21]]) as u32) << 16
+                    | u16::from_le_bytes([e[26], e[27]]) as u32;
+                if e[11] & 0x10 != 0 {
+                    reachable(img, l, first, out);
+                } else {
+                    let ch = chain(img, l, first);
+                    let size = le32(e, 28) as usize;
+                    assert_eq!(ch.len(), size.div_ceil(l.cluster), "{:?}", &e[..11]);
+                    out.extend(ch);
+                }
+            }
+        }
+    }
+
+    /// What fsck would check: equal FAT copies, every used cluster reachable exactly once
+    /// (no lost clusters), FSInfo's counts unknown once anything changed.
+    fn consistent(img: &[u8], changed: bool) {
+        let l = layout(img);
+        if l.fats == 2 {
+            assert!(
+                img[l.fat..l.fat + l.fat_bytes]
+                    == img[l.fat + l.fat_bytes..l.fat + 2 * l.fat_bytes]
+            );
+        }
+        let used: BTreeSet<u32> = (2..l.clusters + 2)
+            .filter(|&c| le32(img, l.fat + 4 * c as usize) & 0x0FFF_FFFF != 0)
+            .collect();
+        let mut seen = BTreeSet::new();
+        reachable(img, &l, l.root, &mut seen);
+        assert_eq!(used, seen, "lost or doubly used clusters");
+        let fsinfo = PART + u16::from_le_bytes([img[PART + 48], img[PART + 49]]) as usize * SECTOR;
+        if changed {
+            assert_eq!(&img[fsinfo + 488..fsinfo + 496], &[0xFF; 8]);
+        }
+    }
+
+    #[test]
+    fn install_keeps_the_previous_second_stage() {
+        for name in IMAGES {
+            let img = image(name);
+            consistent(&img, false);
+            let (which, first, old_payload) = boot(img.clone()).unwrap();
+            assert_eq!(which, Which::Bin);
+            // Over 128 clusters on mkfs_s1: the chain crosses FAT sectors
+            let new = v4_image(70_000, 1, 7);
+            let mut vol = mount(img).unwrap();
+            install(&mut vol, PSRAM, &new).unwrap();
+            assert_eq!(file(&mut vol, &NEW), None);
+            let img = vol.device().img.clone();
+            consistent(&img, true);
+            assert_eq!(
+                boot(img.clone()).unwrap(),
+                (Which::Bin, 7, new[HEADER_LEN..].to_vec())
+            );
+            // The previous .BIN is .OLD now
+            let mut vol = mount(img).unwrap();
+            let old = file(&mut vol, &OLD).unwrap();
+            let h = load_file(&mut vol, &old, PSRAM, &mut |_, _| ()).unwrap();
+            assert_eq!(h.version, first, "{name}");
+            assert_eq!(old.size as usize, old_payload.len() + HEADER_LEN);
+
+            // Again: the first new one becomes .OLD, the previous .OLD's clusters are freed
+            let newer = v4_image(600, 2, 8);
+            install(&mut vol, PSRAM, &newer).unwrap();
+            let img = vol.device().img.clone();
+            consistent(&img, true);
+            assert_eq!(boot(img.clone()).unwrap().1, 8);
+            let mut vol = mount(img).unwrap();
+            let old = file(&mut vol, &OLD).unwrap();
+            assert_eq!(
+                load_file(&mut vol, &old, PSRAM, &mut |_, _| ())
+                    .unwrap()
+                    .version,
+                7
+            );
+        }
+    }
+
+    #[test]
+    fn power_loss_at_any_write_leaves_a_bootable_second_stage() {
+        for name in IMAGES {
+            let new = v4_image(3000, 3, 9);
+            let mut full = mount(image(name)).unwrap();
+            install(&mut full, PSRAM, &new).unwrap();
+            let total = full.device().writes;
+            assert!(total > 5 && total < 200, "{name}: {total} writes");
+            let before = boot(image(name)).unwrap().1;
+            for limit in 0..total {
+                let mut vol = Volume::mount(MemDisk {
+                    write_limit: Some(limit),
+                    ..disk(image(name))
+                })
+                .unwrap();
+                assert!(install(&mut vol, PSRAM, &new).is_err(), "{name} {limit}");
+                let img = vol.device().img.clone();
+                let (_, version, payload) = boot(img.clone()).expect("bootable");
+                assert!(version == before || (version == 9 && payload == new[HEADER_LEN..]));
+                // A later install recovers (removing the stale .NEW) and nothing is lost
+                // that a directory still points to
+                let mut vol = mount(img).unwrap();
+                install(&mut vol, PSRAM, &new).unwrap();
+                assert_eq!(
+                    boot(vol.device().img.clone()).unwrap().1,
+                    9,
+                    "{name} {limit}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn install_checks_the_image_before_writing() {
+        let good = v4_image(100, 4, 1);
+        let mut short = good.clone();
+        short.pop();
+        let mut bad_crc = good.clone();
+        bad_crc[HEADER_LEN] ^= 1;
+        let mut low = good.clone();
+        low[16..20].copy_from_slice(&0x2000_0000u32.to_le_bytes());
+        for (img, want) in [
+            (&good[..10], BootError::NotV4),
+            (&short[..], BootError::SizeMismatch),
+            (&bad_crc[..], BootError::Crc),
+            (&low[..], BootError::Image(ImageError::OutOfWindow)),
+        ] {
+            let mut vol = mount(image("mkfs_s1")).unwrap();
+            assert_eq!(install(&mut vol, PSRAM, img), Err(want));
+            assert_eq!(vol.device().writes, 0);
+        }
+        // No VUX9K directory
+        let mut img = image("mkfs_s1");
+        let e = entry_at(&img, b"VUX9K      ");
+        img[e] = 0xE5;
+        let mut vol = mount(img).unwrap();
+        assert_eq!(
+            install(&mut vol, PSRAM, &good),
+            Err(BootError::Fat(FatError::NotFound))
+        );
+    }
+
+    #[test]
+    fn install_reads_back_what_it_wrote() {
+        // Find where .NEW's data will go: the first free cluster
+        let img = image("mkfs_s1");
+        let l = layout(&img);
+        let free = (2..l.clusters + 2)
+            .find(|&c| le32(&img, l.fat + 4 * c as usize) == 0)
+            .unwrap();
+        let lba = (l.data / SECTOR) as u32 + (free - 2) * (l.cluster / SECTOR) as u32;
+        let mut vol = Volume::mount(MemDisk {
+            corrupt: Some(lba),
+            ..disk(img)
+        })
+        .unwrap();
+        assert_eq!(
+            install(&mut vol, PSRAM, &v4_image(100, 5, 3)),
+            Err(BootError::Fat(FatError::Verify))
+        );
+        assert_eq!(
+            boot(vol.device().img.clone()).unwrap().0,
+            Which::Bin,
+            "untouched"
+        );
+    }
+
+    #[test]
+    fn select_boot_falls_back_to_old() {
+        // .BIN corrupt (payload), missing, not v4, size disagreeing, loading outside
+        let name = b"STAGE2  BIN";
+        let cases: [(fn(&mut Vec<u8>, usize), BootError); 5] = [
+            (
+                |i, e| {
+                    let l = layout(i);
+                    let c = first_cluster(i, b"STAGE2  BIN") as usize;
+                    let at = l.data + (c - 2) * l.cluster + HEADER_LEN + 5;
+                    i[at] ^= 1;
+                    let _ = e;
+                },
+                BootError::Crc,
+            ),
+            (|i, e| i[e] = 0xE5, BootError::Fat(FatError::NotFound)),
+            (
+                |i, e| {
+                    let l = layout(i);
+                    let c = first_cluster(i, b"STAGE2  BIN") as usize;
+                    i[l.data + (c - 2) * l.cluster] ^= 1;
+                    let _ = e;
+                },
+                BootError::NotV4,
+            ),
+            (
+                |i, e| {
+                    let size = le32(i, e + 28) - 1;
+                    i[e + 28..e + 32].copy_from_slice(&size.to_le_bytes());
+                },
+                BootError::SizeMismatch,
+            ),
+            (
+                |i, e| {
+                    let l = layout(i);
+                    let c = first_cluster(i, b"STAGE2  BIN") as usize;
+                    let at = l.data + (c - 2) * l.cluster + 16;
+                    i[at..at + 4].copy_from_slice(&0u32.to_le_bytes());
+                    let _ = e;
+                },
+                BootError::Image(ImageError::OutOfWindow),
+            ),
+        ];
+        for (n, (break_it, want)) in cases.into_iter().enumerate() {
+            let mut img = image("mkfs_s1");
+            let e = entry_at(&img, name);
+            break_it(&mut img, e);
+            let (which, version, _) = boot(img.clone()).unwrap();
+            assert_eq!((which, version), (Which::Old, 1), "case {n}");
+            let mut vol = mount(img).unwrap();
+            if let Some(f) = file(&mut vol, &BIN) {
+                let got = load_file(&mut vol, &f, PSRAM, &mut |_, _| ());
+                assert_eq!(got.err(), Some(want), "case {n}");
+            }
+        }
+    }
+
+    #[test]
+    fn select_boot_reports_both_failures() {
+        let mut img = image("mkfs_s1");
+        for name in [b"STAGE2  BIN", b"STAGE2  OLD"] {
+            let e = entry_at(&img, name);
+            img[e] = 0xE5;
+        }
+        assert_eq!(
+            boot(img).err(),
+            Some((
+                BootError::Fat(FatError::NotFound),
+                BootError::Fat(FatError::NotFound)
+            ))
+        );
+        // An empty file is not a v4 file
+        let mut vol = mount(image("mkfs_s1")).unwrap();
+        let empty = file(&mut vol, b"EMPTY   DAT").unwrap();
+        assert_eq!(
+            load_file(&mut vol, &empty, PSRAM, &mut |_, _| ()),
+            Err(BootError::NotV4)
+        );
+    }
+
+    #[test]
+    fn create_rename_remove() {
+        let mut vol = mount(image("mkfs_s1")).unwrap();
+        let dir = vol.open("VUX9K").unwrap();
+        let data = std::vec![7u8; 1300];
+        let f = vol.create(&dir, b"NEWFILE DAT", &data).unwrap();
+        assert_eq!(read_file(&mut vol, "VUX9K/NEWFILE.DAT").unwrap(), data);
+        assert_eq!(
+            vol.create(&dir, b"NEWFILE DAT", b"x"),
+            Err(FatError::Exists)
+        );
+        assert_eq!(vol.rename(&dir, &f, b"STAGE2  BIN"), Err(FatError::Exists));
+        let sub = vol.open("VUX9K/SUB").unwrap();
+        assert_eq!(
+            vol.rename(&dir, &sub, b"X       Y  "),
+            Err(FatError::WrongType)
+        );
+        assert_eq!(vol.remove(&sub), Err(FatError::WrongType));
+        vol.rename(&dir, &f, b"RENAMED DAT").unwrap();
+        assert_eq!(read_file(&mut vol, "VUX9K/RENAMED.DAT").unwrap(), data);
+        assert_eq!(vol.open("VUX9K/NEWFILE.DAT"), Err(FatError::NotFound));
+        let f = vol.open("VUX9K/RENAMED.DAT").unwrap();
+        vol.remove(&f).unwrap();
+        // An empty file, and removing one (no clusters to free)
+        let e = vol.create(&dir, b"ZERO    DAT", b"").unwrap();
+        assert_eq!(
+            (
+                e.cluster,
+                read_file(&mut vol, "VUX9K/ZERO.DAT").unwrap().len()
+            ),
+            (0, 0)
+        );
+        vol.remove(&e).unwrap();
+        let empty = vol.open("VUX9K/EMPTY.DAT").unwrap();
+        vol.remove(&empty).unwrap();
+        consistent(&vol.device().img, true);
+    }
+
+    /// The live long-name entries of the directory at `path` (raw walk).
+    fn long_name_entries(img: &[u8], path_cluster: u32) -> usize {
+        let l = layout(img);
+        chain(img, &l, path_cluster)
+            .into_iter()
+            .flat_map(|c| {
+                let at = l.data + (c as usize - 2) * l.cluster;
+                img[at..at + l.cluster]
+                    .chunks(32)
+                    .map(|e| (e[0], e[11]))
+                    .collect::<Vec<_>>()
+            })
+            .filter(|&(first, attr)| first != 0 && first != 0xE5 && attr == 0x0F)
+            .count()
+    }
+
+    #[test]
+    fn long_names_go_with_their_entry() {
+        // mkfs_s8_1fat: the run crosses a sector; mkfs_s1: ARATHE~1 crosses a cluster
+        for (name, short) in [
+            ("mkfs_s8_1fat", b"LONGFI~1TXT"),
+            ("mkfs_s1", b"ARATHE~1DAT"),
+            ("mkfs_s1", b"LONGFI~1TXT"),
+        ] {
+            for rename in [false, true] {
+                let mut vol = mount(image(name)).unwrap();
+                let dir = vol.open("VUX9K").unwrap();
+                let before = long_name_entries(&vol.device().img, dir.cluster);
+                let e = vol.find(&dir, short).unwrap().unwrap();
+                if rename {
+                    vol.rename(&dir, &e, b"SHORT   TXT").unwrap();
+                    assert!(vol.find(&dir, b"SHORT   TXT").unwrap().is_some());
+                } else {
+                    vol.remove(&e).unwrap();
+                }
+                let after = long_name_entries(&vol.device().img, dir.cluster);
+                assert!(after < before, "{name} {short:?}: {before} -> {after}");
+                consistent(&vol.device().img, true);
+            }
+        }
+        // A long-name run whose checksum doesn't match its entry belongs to nothing: the
+        // entry is found without it, and removing the entry leaves it
+        let mut img = image("mkfs_s8_1fat");
+        let e = entry_at(&img, b"LONGFI~1TXT");
+        img[e - 32 + 13] ^= 1;
+        img[e - 64 + 13] ^= 1;
+        let mut vol = mount(img).unwrap();
+        let dir = vol.open("VUX9K").unwrap();
+        let before = long_name_entries(&vol.device().img, dir.cluster);
+        let f = vol.find(&dir, b"LONGFI~1TXT").unwrap().unwrap();
+        vol.remove(&f).unwrap();
+        assert_eq!(long_name_entries(&vol.device().img, dir.cluster), before);
+    }
+
+    #[test]
+    fn directories_grow_and_reuse_slots() {
+        let mut vol = mount(image("mkfs_s8_1fat")).unwrap();
+        let dir = vol.open("VUX9K").unwrap();
+        let l = layout(&vol.device().img);
+        let before = chain(&vol.device().img, &l, dir.cluster).len();
+        // 4 KB clusters hold 128 entries: 120 more files need a second cluster
+        for i in 0..120u32 {
+            let name = std::format!("N{i:03}    DAT");
+            vol.create(&dir, name.as_bytes().try_into().unwrap(), &[i as u8])
+                .unwrap();
+        }
+        let img = vol.device().img.clone();
+        assert_eq!(chain(&img, &l, dir.cluster).len(), before + 1);
+        consistent(&img, true);
+        let mut vol = mount(img).unwrap();
+        assert_eq!(read_file(&mut vol, "VUX9K/N119.DAT").unwrap(), [119]);
+        // A removed file's slot is taken by the next new one
+        let g = vol.open("VUX9K/G03.DAT").unwrap();
+        vol.remove(&g).unwrap();
+        let again = vol.create(&dir, b"REUSE   DAT", b"r").unwrap();
+        assert_eq!(again.name, *b"REUSE   DAT");
+        assert_eq!(names(&mut vol, &dir)[6], "REUSE.DAT");
+    }
+
+    #[test]
+    fn full_volume() {
+        let mut vol = mount(image("mkfs_s8_1fat")).unwrap();
+        let dir = vol.open("VUX9K").unwrap();
+        let used_before = {
+            let img = &vol.device().img;
+            let l = layout(img);
+            (2..l.clusters + 2)
+                .filter(|&c| le32(img, l.fat + 4 * c as usize) != 0)
+                .count()
+        };
+        // A small file first moves the search past the start; the big one wraps around
+        vol.create(&dir, b"SMALL   DAT", b"s").unwrap();
+        let huge = std::vec![1u8; 5 * 1024 * 1024];
+        assert_eq!(
+            vol.create(&dir, b"HUGE    DAT", &huge),
+            Err(FatError::DiskFull)
+        );
+        let img = vol.device().img.clone();
+        let l = layout(&img);
+        let used = (2..l.clusters + 2)
+            .filter(|&c| le32(&img, l.fat + 4 * c as usize) != 0)
+            .count();
+        assert_eq!(
+            used,
+            used_before + 1,
+            "the big file's clusters were given back"
+        );
+        consistent(&img, true);
+    }
+
+    #[test]
+    fn card_errors_while_writing() {
+        // A write that fails: create stops and reports it
+        let mut vol = Volume::mount(MemDisk {
+            write_limit: Some(0),
+            ..disk(image("mkfs_s1"))
+        })
+        .unwrap();
+        let dir = vol.open("VUX9K").unwrap();
+        assert!(matches!(
+            vol.create(&dir, b"X       Y  ", b"x"),
+            Err(FatError::Io(_))
+        ));
+        // Removing a file whose chain is broken
+        let mut img = image("mkfs_s1");
+        let c = first_cluster(&img, b"FRAG    BIN");
+        let at = fat_at(&img, c);
+        patch(&mut img, at, &1u32.to_le_bytes());
+        let mut vol = mount(img).unwrap();
+        let f = vol.open("FRAG.BIN").unwrap();
+        assert_eq!(vol.remove(&f), Err(FatError::BadChain(1)));
+        // ... and one whose chain loops back to its start
+        let mut img = image("mkfs_s1");
+        let c = first_cluster(&img, b"B       BIN");
+        let next = le32(&img, fat_at(&img, c)) & 0x0FFF_FFFF;
+        let at = fat_at(&img, next);
+        patch(&mut img, at, &c.to_le_bytes());
+        let mut vol = mount(img).unwrap();
+        let f = vol.open("B.BIN").unwrap();
+        assert_eq!(vol.remove(&f), Err(FatError::BadChain(0)));
+    }
+
+    #[test]
+    fn fsinfo_left_alone_when_missing_or_invalid() {
+        for (at, bytes) in [(PART + 48, &[0u8, 0][..]), (PART + SECTOR, &[0u8; 4][..])] {
+            let mut img = image("mkfs_s1");
+            patch(&mut img, at, bytes);
+            let fsinfo = img[PART + SECTOR..PART + 2 * SECTOR].to_vec();
+            let mut vol = mount(img).unwrap();
+            let dir = vol.open("VUX9K").unwrap();
+            vol.create(&dir, b"X       Y  ", b"x").unwrap();
+            assert_eq!(
+                &vol.device().img[PART + SECTOR..PART + 2 * SECTOR],
+                &fsinfo[..]
+            );
+        }
+    }
 }

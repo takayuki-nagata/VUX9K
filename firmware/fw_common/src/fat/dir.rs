@@ -9,8 +9,8 @@ pub const ATTR_VOLUME: u8 = 0x08;
 pub const ATTR_DIR: u8 = 0x10;
 /// A long-name entry (read-only + hidden + system + volume).
 pub const ATTR_LFN: u8 = 0x0F;
-const ENTRY: usize = 32;
-const DELETED: u8 = 0xE5;
+pub(crate) const ENTRY: usize = 32;
+pub(crate) const DELETED: u8 = 0xE5;
 
 /// A file or directory, as its directory entry describes it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -24,6 +24,9 @@ pub struct DirEntry {
     /// Where the entry is: its sector and index there (the root has none).
     pub(crate) lba: u32,
     pub(crate) index: u8,
+    /// Where its long-name entries start (the entry itself when it has none).
+    pub(crate) lfn_lba: u32,
+    pub(crate) lfn_index: u8,
 }
 
 impl DirEntry {
@@ -35,10 +38,13 @@ impl DirEntry {
             size: 0,
             lba: 0,
             index: 0,
+            lfn_lba: 0,
+            lfn_index: 0,
         }
     }
 
-    fn parse(e: &[u8], lba: u32, index: u8) -> DirEntry {
+    /// `lfn`: where the long-name run before it starts, if it has one.
+    fn parse(e: &[u8], lba: u32, index: u8, lfn: Option<(u32, u8)>) -> DirEntry {
         let mut name = [0u8; 11];
         name.copy_from_slice(&e[..11]);
         DirEntry {
@@ -48,6 +54,8 @@ impl DirEntry {
             size: le32(e, 28),
             lba,
             index,
+            lfn_lba: lfn.map_or(lba, |l| l.0),
+            lfn_index: lfn.map_or(index, |l| l.1),
         }
     }
 
@@ -71,6 +79,12 @@ impl DirEntry {
         }
         n
     }
+}
+
+/// The checksum of an 8.3 name that its long-name entries carry.
+fn checksum(name: &[u8]) -> u8 {
+    name.iter()
+        .fold(0u8, |sum, &c| sum.rotate_right(1).wrapping_add(c))
 }
 
 /// `name` as a directory entry's 11-byte 8.3 name (upper case, space-padded), if it is
@@ -110,8 +124,49 @@ impl<D: BlockDevice> Volume<D> {
         if !dir.is_dir() {
             return Err(FatError::WrongType);
         }
+        // The long-name run before the next entry: where it starts, and its checksum
+        let mut lfn: Option<(u32, u8, u8)> = None;
+        let mut found = None;
+        // Where the walk stopped doesn't matter: `found` says whether it was a match
+        let _ = self.walk_slots(dir.cluster, &mut |lba, i, e| {
+            if e[0] == 0 {
+                return true;
+            }
+            if e[0] == DELETED {
+                lfn = None;
+                return false;
+            }
+            if e[11] == ATTR_LFN {
+                // A run starts at its last part (bit 6) and shares one checksum
+                if e[0] & 0x40 != 0 || lfn.is_none_or(|l| l.2 != e[13]) {
+                    lfn = Some((lba, i, e[13]));
+                }
+                return false;
+            }
+            let run = lfn.take().filter(|l| l.2 == checksum(&e[..11]));
+            if e[11] & ATTR_VOLUME != 0 {
+                return false;
+            }
+            let entry = DirEntry::parse(e, lba, i, run.map(|l| (l.0, l.1)));
+            if f(&entry) {
+                found = Some(entry);
+                return true;
+            }
+            false
+        })?;
+        Ok(found)
+    }
+
+    /// Call `f(lba, index, entry)` for each 32-byte slot of the directory whose chain
+    /// starts at `first`, until it returns true: Ok(Ok(that slot)), or Ok(Err(the last
+    /// cluster)) at the end of the chain.
+    pub(crate) fn walk_slots(
+        &mut self,
+        first: u32,
+        f: &mut dyn FnMut(u32, u8, &[u8]) -> bool,
+    ) -> Result<Result<(u32, u8), u32>, FatError> {
         let sectors = 1u32 << self.cluster_shift;
-        let mut c = dir.cluster;
+        let mut c = first;
         // A directory can't have more clusters than the volume: a looping chain stops here
         for _ in 0..self.cluster_end {
             if !self.is_cluster(c) {
@@ -121,22 +176,14 @@ impl<D: BlockDevice> Volume<D> {
             for s in 0..sectors {
                 read(&mut self.dev, lba + s, &mut self.buf)?;
                 for i in 0..SECTOR / ENTRY {
-                    let e = &self.buf[i * ENTRY..(i + 1) * ENTRY];
-                    if e[0] == 0 {
-                        return Ok(None);
-                    }
-                    if e[0] == DELETED || e[11] == ATTR_LFN || e[11] & ATTR_VOLUME != 0 {
-                        continue;
-                    }
-                    let entry = DirEntry::parse(e, lba + s, i as u8);
-                    if f(&entry) {
-                        return Ok(Some(entry));
+                    if f(lba + s, i as u8, &self.buf[i * ENTRY..(i + 1) * ENTRY]) {
+                        return Ok(Ok((lba + s, i as u8)));
                     }
                 }
             }
             match self.next_cluster(c)? {
                 Some(next) => c = next,
-                None => return Ok(None),
+                None => return Ok(Err(c)),
             }
         }
         Err(FatError::BadChain(c))

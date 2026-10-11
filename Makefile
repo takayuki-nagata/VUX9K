@@ -177,8 +177,10 @@ coverage-fw: emu-py firmware build-hack build-zephyr-demo build-zephyr
 
 # Host tests of the firmware's hardware-independent logic (firmware/fw_common)
 HOST_TARGET ?= $(shell rustc -vV | sed -n 's/^host: //p')
+# (with fat-write, so the update's FAT writes are tested; the plain build is built too)
 test-fw-host:
-	cd firmware && $(CARGO) test -p fw_common --target $(HOST_TARGET)
+	cd firmware && $(CARGO) test -p fw_common --target $(HOST_TARGET) --features fat-write
+	cd firmware && $(CARGO) build -p fw_common --target $(HOST_TARGET)
 
 # The FAT32 images fw_common's host tests read, rebuilt with mkfs.fat and mtools and checked
 # with fsck.fat (sim/emu/test_fat_images.py). Fails, rather than skips, without dosfstools/mtools.
@@ -214,9 +216,9 @@ coverage-rust: coverage-rust-tool firmware hwtest build-hack build-zephyr build-
 		$(CARGO) llvm-cov report --release --json --summary-only --output-path $(RUST_COV_REPORT)/emu.json && \
 		$(CARGO) llvm-cov report --release --lcov --output-path $(RUST_COV_REPORT)/emu.info
 	cd firmware && export CARGO_TARGET_DIR=$(CURDIR)/$(RUST_COV_DIR)/fw-target && \
-		$(CARGO) llvm-cov test -p fw_common --target $(HOST_TARGET) \
+		$(CARGO) llvm-cov test -p fw_common --target $(HOST_TARGET) --features fat-write \
 			--json --summary-only --output-path $(RUST_COV_REPORT)/fw_common.json && \
-		$(CARGO) llvm-cov report -p fw_common --target $(HOST_TARGET) --lcov --output-path $(RUST_COV_REPORT)/fw_common.info
+		$(CARGO) llvm-cov report -p fw_common --target $(HOST_TARGET) --features fat-write --lcov --output-path $(RUST_COV_REPORT)/fw_common.info
 	$(PYTHON) scripts/coverage_rust.py $(RUST_COV_REPORT)/emu.json $(RUST_COV_REPORT)/fw_common.json \
 		--thresholds coverage/thresholds.toml --summary $(RUST_COV_DIR)/summary.md
 

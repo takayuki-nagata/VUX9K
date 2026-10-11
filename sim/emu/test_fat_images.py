@@ -135,7 +135,8 @@ def stage2(n, version, seed=0):
 
 def build_mkfs_s1(card, tmp):
     """512-byte clusters, two FATs: the second stage and its backup, a directory longer than
-    a cluster, a long name, a fragmented file, a nested directory, an empty file."""
+    a cluster, long names (one across the cluster boundary), a fragmented file, a nested
+    directory, an empty file."""
     card.mkdir("VUX9K")
     card.put("A.BIN", data(2000, 1), tmp)
     card.put("B.BIN", data(600, 2), tmp)
@@ -151,12 +152,20 @@ def build_mkfs_s1(card, tmp):
     card.put("VUX9K/EMPTY.DAT", b"", tmp)
     card.mkdir("VUX9K/SUB")
     card.put("VUX9K/SUB/X.TXT", b"nested\n", tmp)
+    # Three long-name entries in slots 29-31 and the 8.3 one in slot 32: the run crosses
+    # from the directory's first cluster into its second
+    card.put("VUX9K/A Rather Long File Name 01.dat", b"cross\n", tmp, short="VUX9K/ARATHE~1.DAT")
 
 
 def build_mkfs_s8_1fat(card, tmp):
-    """4 KB clusters, one FAT: a second stage over several clusters."""
+    """4 KB clusters, one FAT: a second stage over several clusters, and a long name whose
+    entries cross a sector boundary inside the directory's cluster."""
     card.mkdir("VUX9K")
     card.put("VUX9K/STAGE2.BIN", stage2(10000, 3), tmp)
+    for i in range(12):
+        card.put(f"VUX9K/G{i:02}.DAT", bytes([i]), tmp)
+    # ., .., STAGE2.BIN and G00-G11 fill slots 0-14; two long-name entries in 15 and 16
+    card.put("VUX9K/Long File Name.txt", b"lfn\n", tmp, short="VUX9K/LONGFI~1.TXT")
 
 
 IMAGES = {

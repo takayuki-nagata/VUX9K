@@ -3,6 +3,9 @@
 
 //! FAT32 on an SD card, without allocation: the first partition of an MBR, 8.3 names
 //! (long-name entries are skipped), files read by following their cluster chains.
+//! Feature `fat-write` adds the few writes an update needs (`write`: create, rename and
+//! remove files, all FAT copies kept equal, FSInfo's counts marked unknown) and the
+//! second stage's install (`stage2::install`).
 //!
 //! A volume is FAT32 when its BPB says so (`FATSz16 == 0`), whatever its cluster count,
 //! so small test images work; FAT16 and exFAT are refused (`NotFat32`). No multiply or
@@ -11,6 +14,9 @@
 //! (sim/emu/test_fat_images.py), which the host tests read.
 
 mod dir;
+pub mod stage2;
+#[cfg(feature = "fat-write")]
+mod write;
 pub use dir::{to_short_name, DirEntry, ATTR_DIR, ATTR_LFN, ATTR_VOLUME};
 
 pub const SECTOR: usize = 512;
@@ -43,6 +49,12 @@ pub enum FatError {
     WrongType,
     /// The destination is smaller than the file.
     TooBig,
+    /// A file to be created or renamed to already exists.
+    Exists,
+    /// No free cluster left.
+    DiskFull,
+    /// A file read back differently from what was written.
+    Verify,
 }
 
 /// FAT32 entries are 28 bits; values from here on end a chain.
@@ -64,9 +76,9 @@ pub struct Volume<D: BlockDevice> {
     /// LBA of the boot sector (the partition's first).
     part_lba: u32,
     fat_lba: u32,
-    #[allow(dead_code)] // for the writes to come
+    #[cfg_attr(not(feature = "fat-write"), allow(dead_code))]
     fat_sectors: u32,
-    #[allow(dead_code)] // for the writes to come
+    #[cfg_attr(not(feature = "fat-write"), allow(dead_code))]
     num_fats: u32,
     data_lba: u32,
     /// log2 of the sectors per cluster.
@@ -74,12 +86,21 @@ pub struct Volume<D: BlockDevice> {
     /// Clusters 2..cluster_end exist.
     cluster_end: u32,
     root: u32,
-    #[allow(dead_code)] // for the writes to come
+    #[cfg_attr(not(feature = "fat-write"), allow(dead_code))]
     fsinfo_lba: u32,
     buf: [u8; SECTOR],
     fat_buf: [u8; SECTOR],
     /// FAT sector (relative to the FAT) in `fat_buf`, or u32::MAX.
     fat_cached: u32,
+    /// `fat_buf` holds changes not yet on the card (written to every FAT copy).
+    #[cfg(feature = "fat-write")]
+    fat_dirty: bool,
+    /// Where the next free-cluster search starts.
+    #[cfg(feature = "fat-write")]
+    next_free: u32,
+    /// FSInfo's counts are marked unknown (once, before the first change).
+    #[cfg(feature = "fat-write")]
+    fsinfo_done: bool,
 }
 
 impl<D: BlockDevice> Volume<D> {
@@ -150,6 +171,12 @@ impl<D: BlockDevice> Volume<D> {
             buf,
             fat_buf: [0; SECTOR],
             fat_cached: u32::MAX,
+            #[cfg(feature = "fat-write")]
+            fat_dirty: false,
+            #[cfg(feature = "fat-write")]
+            next_free: 2,
+            #[cfg(feature = "fat-write")]
+            fsinfo_done: false,
         };
         if !vol.is_cluster(vol.root) {
             return Err(FatError::BadBpb);
@@ -183,6 +210,8 @@ impl<D: BlockDevice> Volume<D> {
     /// Bring FAT sector `index` into `fat_buf`.
     fn load_fat(&mut self, index: u32) -> Result<(), FatError> {
         if self.fat_cached != index {
+            #[cfg(feature = "fat-write")]
+            self.flush_fat()?;
             self.fat_cached = u32::MAX;
             read(&mut self.dev, self.fat_lba + index, &mut self.fat_buf)?;
             self.fat_cached = index;

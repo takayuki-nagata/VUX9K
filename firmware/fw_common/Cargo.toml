@@ -9,4 +9,8 @@ authors = ["Takayuki Nagata"]
 license = "MIT"
 description = "Hardware-independent Boot Manager logic, tested on the host"
 
+[features]
+# fat::write and fat::stage2::install: the writes an update of the second stage needs
+fat-write = []
+
 [dependencies]
