@@ -3,8 +3,9 @@
 
 """The VUX9 header on both sides: tools/vux_tool.py (writes slots) and fw_common (reads them).
 
-firmware/fw_common/tests/vux9_vectors/ holds headers vux_tool made, each with the fields
-fw_common's SlotHeader::parse must return (`<case>.txt`, `field value` lines, or `invalid`).
+firmware/fw_common/tests/vux9_vectors/ (v3) and vux9_v4_vectors/ (v4) hold headers vux_tool
+made, each with the fields fw_common's SlotHeader::parse / ImageHeader::parse must return
+(`<case>.txt`, `field value` lines, or `invalid`).
 This test checks the files are what vux_tool makes today and that vux_tool's own parser
 agrees; fw_common's host test (tests/host.rs) checks the firmware's parser against the same
 files. Regenerate after a deliberate header change with VUX9_VECTORS_UPDATE=1.
@@ -23,15 +24,23 @@ sys.path.insert(0, REPO_ROOT)
 import tools.vux_tool as vux_tool  # noqa: E402 (needs REPO_ROOT on sys.path)
 
 VECTOR_DIR = os.path.join(REPO_ROOT, "firmware", "fw_common", "tests", "vux9_vectors")
+V4_VECTOR_DIR = os.path.join(REPO_ROOT, "firmware", "fw_common", "tests", "vux9_v4_vectors")
 HEADER_RS = os.path.join(REPO_ROOT, "firmware", "fw_common", "src", "header.rs")
+MAP_RS = os.path.join(REPO_ROOT, "firmware", "fw_common", "src", "map.rs")
 UPDATE = os.environ.get("VUX9_VECTORS_UPDATE") == "1"
 
 NOPS = bytes.fromhex("13000000") * 4
 FIELDS = ("header_version", "flags", "mode", "size", "load_addr", "entry_point", "crc32", "version", "name")
+V4_FIELDS = ("mode", "size", "load_addr", "entry_point", "crc32", "version", "name")
 
 
 def _image(**kw):
     raw, _ = vux_tool.build_vux9_image(kw.pop("payload", NOPS), **kw)
+    return bytearray(raw[: vux_tool.HEADER_LEN])
+
+
+def _image_v4(**kw):
+    raw, _ = vux_tool.build_vux9_v4_image(kw.pop("payload", NOPS), **kw)
     return bytearray(raw[: vux_tool.HEADER_LEN])
 
 
@@ -60,6 +69,23 @@ CASES = {
 }
 
 
+# The v4 cases (vux9_v4_vectors/). As for v3, the invalid ones are changed after packing.
+V4_CASES = {
+    "stage2": lambda: _image_v4(name="Stage2", version=2, load_addr=0x80700000, entry_point=0x80700000),
+    "hack_app": lambda: _image_v4(name="Hk", mode="hack", version=1),
+    "riscv_loaded": lambda: _image_v4(
+        payload=bytes(range(256)) * 3,
+        name="N" * 32,
+        version=0xFFFFFFFF,
+        load_addr=0x80001000,
+        entry_point=0x80001004,
+    ),
+    "bad_magic": lambda: _image_v4(name="x", magic_override=0x56555838),
+    "bad_header_version": lambda: _patched(_image_v4(name="x"), 4, "<H", 3),
+    "reserved_set": lambda: _patched(_image_v4(name="x"), 6, "<H", 1),
+}
+
+
 def _expected(header):
     h = vux_tool.SlotHeader.parse(bytes(header))
     if h is None:
@@ -69,14 +95,27 @@ def _expected(header):
     return "".join(f"{f} {values[f]}\n" for f in FIELDS)
 
 
-@pytest.mark.parametrize("case", sorted(CASES))
-def test_vectors_match_vux_tool(case):
-    header = bytes(CASES[case]())
-    expected = _expected(header)
-    bin_path = os.path.join(VECTOR_DIR, f"{case}.bin")
-    txt_path = os.path.join(VECTOR_DIR, f"{case}.txt")
+def _expected_v4(header):
+    h = vux_tool.ImageHeader.parse(bytes(header))
+    if h is None:
+        return "invalid\n"
+    values = {f: getattr(h, f) for f in V4_FIELDS}
+    values["name"] = h.name.hex()
+    return "".join(f"{f} {values[f]}\n" for f in V4_FIELDS)
+
+
+@pytest.mark.parametrize(
+    "vector_dir,case",
+    [(VECTOR_DIR, c) for c in sorted(CASES)] + [(V4_VECTOR_DIR, c) for c in sorted(V4_CASES)],
+)
+def test_vectors_match_vux_tool(vector_dir, case):
+    v4 = vector_dir == V4_VECTOR_DIR
+    header = bytes((V4_CASES if v4 else CASES)[case]())
+    expected = (_expected_v4 if v4 else _expected)(header)
+    bin_path = os.path.join(vector_dir, f"{case}.bin")
+    txt_path = os.path.join(vector_dir, f"{case}.txt")
     if UPDATE:
-        os.makedirs(VECTOR_DIR, exist_ok=True)
+        os.makedirs(vector_dir, exist_ok=True)
         with open(bin_path, "wb") as f:
             f.write(header)
         with open(txt_path, "w") as f:
@@ -87,9 +126,10 @@ def test_vectors_match_vux_tool(case):
         assert f.read() == expected, f"{case}.txt differs from vux_tool's parse"
 
 
-def test_no_stale_vectors():
-    files = {os.path.splitext(n)[0] for n in os.listdir(VECTOR_DIR)}
-    assert files == set(CASES), "vectors without a case (or the reverse); remove or regenerate"
+@pytest.mark.parametrize("vector_dir,cases", [(VECTOR_DIR, CASES), (V4_VECTOR_DIR, V4_CASES)])
+def test_no_stale_vectors(vector_dir, cases):
+    files = {os.path.splitext(n)[0] for n in os.listdir(vector_dir)}
+    assert files == set(cases), "vectors without a case (or the reverse); remove or regenerate"
 
 
 def test_pack_parse_round_trip():
@@ -98,11 +138,26 @@ def test_pack_parse_round_trip():
     assert int.from_bytes(h.pack()[:4], "little") == vux_tool.VUX_MAGIC
 
 
+def test_v4_pack_parse_round_trip():
+    h = vux_tool.ImageHeader(mode=vux_tool.MODE_HACK, size=5, crc32=7, name=b"app", version=3, load_addr=8)
+    assert vux_tool.ImageHeader.parse(h.pack()) == dataclasses.replace(h, name=b"app".ljust(32, b"\0"))
+    assert vux_tool.ImageHeader.parse(h.pack()[:63]) is None
+
+
+def test_v4_image_is_header_then_payload():
+    raw, h = vux_tool.build_vux9_v4_image(bytes(range(5)), name="a")
+    assert raw[vux_tool.HEADER_LEN :] == bytes(range(5)), "no padding"
+    assert (h.load_addr, h.entry_point, h.size) == (vux_tool.XMEM_BASE, vux_tool.XMEM_BASE, 5)
+    raw, h = vux_tool.build_vux9_v4_image(bytes.fromhex("1234abcd5678"), mode="hack")
+    assert raw[vux_tool.HEADER_LEN :] == bytes.fromhex("3412cdab78560000"), "pack_hack's word order"
+    assert (h.load_addr, h.mode) == (0, vux_tool.MODE_HACK)
+
+
 def test_constants_match_fw_common():
     with open(HEADER_RS) as f:
         rust = {m[1]: int(m[2].replace("_", ""), 0) for m in re.finditer(r"pub const (\w+): \w+ = (\w+);", f.read())}
     names = ["VUX_MAGIC", "HEADER_VERSION", "HEADER_LEN", "SECTOR", "FLAG_VALID", "FLAG_SYSTEM", "MODE_HACK"]
-    names += ["MODE_RISCV"]
+    names += ["MODE_RISCV", "HEADER_VERSION_V4"]
     for name in names:
         assert rust[name] == getattr(vux_tool, name), name
     # Field offsets: the order and sizes of HEADER_FORMAT
@@ -113,3 +168,7 @@ def test_constants_match_fw_common():
     for field, off in offsets.items():
         assert rust[f"OFF_{field.upper()}"] == off, field
     assert vux_tool.slot_sector(1) == 128
+    assert rust["OFF_RESERVED"] == offsets["flags"]
+    with open(MAP_RS) as f:
+        m = re.search(r"pub const XMEM_BASE: usize = (\w+);", f.read())
+    assert m and int(m[1].replace("_", ""), 0) == vux_tool.XMEM_BASE

@@ -39,6 +39,10 @@ release/{boot_manager,resident_loader}`.
   sim/emu/test_vux9_header.py`): both parsers are tested against those files, and the
   pytest also compares the constants and field offsets. The Resident Loader reads fields
   by `OFF_*` and, unlike `SlotHeader::parse`, ignores the valid flag (no room).
+  The v4 header of the two-stage boot's files (`ImageHeader`, `vux_tool.ImageHeader` and
+  `build_vux9_v4_image`) follows the same rule, with its vectors in
+  `firmware/fw_common/tests/vux9_v4_vectors/` (same command); v3 stays until the Boot
+  Manager is replaced.
 - **Raise `BOOT_MGR_VERSION` with every Boot Manager change**: boards install a slot-0
   image only if its header version is greater. Tests read it from `main.rs`
   (`sim/emu/bm_env.py`, `scripts/test_hardware.py`); don't hard-code it.

@@ -10,7 +10,7 @@ extern crate std;
 use std::vec::Vec;
 
 use fw_common::fmt::Sink;
-use fw_common::header::{slot_sector, SlotHeader, FIRST_SECTOR_PAYLOAD, HEADER_LEN};
+use fw_common::header::{slot_sector, ImageHeader, SlotHeader, FIRST_SECTOR_PAYLOAD, HEADER_LEN};
 use fw_common::update::{precheck, Precheck, MAX_IMAGE};
 use fw_common::{crc32_update, mailbox, mul_u32};
 
@@ -26,10 +26,13 @@ const BOOTMGR_V11: &[u8] = include_bytes!("vux9_vectors/bootmgr_v11.bin");
 // build_vux9_image(bytes.fromhex("13000000") * 4, slot=2, name="Hk", mode="hack", version=1)
 const HACK_V1: &[u8] = include_bytes!("vux9_vectors/hack_v1.bin");
 
-/// Every vector against its `<case>.txt`: `field value` lines (name in hex), or `invalid`.
-#[test]
-fn parses_every_vux9_vector_like_vux_tool() {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/vux9_vectors");
+fn name_hex(name: &[u8; 32]) -> std::string::String {
+    name.iter().map(|b| std::format!("{b:02x}")).collect()
+}
+
+/// Every vector in `dir` against its `<case>.txt`: what `parse` makes of the `.bin`.
+fn check_vectors(dir: &str, parse: impl Fn(&[u8]) -> std::string::String) {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(dir);
     let mut cases = 0;
     for entry in std::fs::read_dir(&dir).unwrap() {
         let path = entry.unwrap().path();
@@ -38,29 +41,108 @@ fn parses_every_vux9_vector_like_vux_tool() {
         }
         let header = std::fs::read(&path).unwrap();
         let expected = std::fs::read_to_string(path.with_extension("txt")).unwrap();
-        let got = match SlotHeader::parse(&header) {
-            None => std::string::String::from("invalid\n"),
-            Some(h) => std::format!(
-                "header_version {}\nflags {}\nmode {}\nsize {}\nload_addr {}\nentry_point {}\n\
-                 crc32 {}\nversion {}\nname {}\n",
-                h.header_version,
-                h.flags,
-                h.mode,
-                h.size,
-                h.load_addr,
-                h.entry_point,
-                h.crc32,
-                h.version,
-                h.name
-                    .iter()
-                    .map(|b| std::format!("{b:02x}"))
-                    .collect::<std::string::String>(),
-            ),
-        };
-        assert_eq!(got, expected, "{}", path.display());
+        assert_eq!(parse(&header), expected, "{}", path.display());
         cases += 1;
     }
     assert!(cases >= 6, "vectors missing from {}", dir.display());
+}
+
+/// `field value` lines (name in hex), or `invalid`, as sim/emu/test_vux9_header.py writes them.
+#[test]
+fn parses_every_vux9_vector_like_vux_tool() {
+    check_vectors("tests/vux9_vectors", |b| match SlotHeader::parse(b) {
+        None => std::string::String::from("invalid\n"),
+        Some(h) => std::format!(
+            "header_version {}\nflags {}\nmode {}\nsize {}\nload_addr {}\nentry_point {}\n\
+             crc32 {}\nversion {}\nname {}\n",
+            h.header_version,
+            h.flags,
+            h.mode,
+            h.size,
+            h.load_addr,
+            h.entry_point,
+            h.crc32,
+            h.version,
+            name_hex(&h.name),
+        ),
+    });
+}
+
+#[test]
+fn parses_every_vux9_v4_vector_like_vux_tool() {
+    check_vectors("tests/vux9_v4_vectors", |b| match ImageHeader::parse(b) {
+        None => std::string::String::from("invalid\n"),
+        Some(h) => std::format!(
+            "mode {}\nsize {}\nload_addr {}\nentry_point {}\ncrc32 {}\nversion {}\nname {}\n",
+            h.mode,
+            h.size,
+            h.load_addr,
+            h.entry_point,
+            h.crc32,
+            h.version,
+            name_hex(&h.name),
+        ),
+    });
+}
+
+// build_vux9_v4_image(bytes.fromhex("13000000") * 4, name="Stage2", version=2, load_addr=0x80700000, ...)
+const STAGE2_V4: &[u8] = include_bytes!("vux9_v4_vectors/stage2.bin");
+
+fn v4(mode: u32, size: u32, load_addr: u32, entry_point: u32) -> ImageHeader {
+    ImageHeader {
+        mode,
+        size,
+        load_addr,
+        entry_point,
+        ..ImageHeader::parse(STAGE2_V4).unwrap()
+    }
+}
+
+#[test]
+fn v4_header_fields_and_name() {
+    let h = ImageHeader::parse(STAGE2_V4).unwrap();
+    assert_eq!(&h.name[..h.name_len()], b"Stage2");
+    assert_eq!(ImageHeader::parse(&STAGE2_V4[..HEADER_LEN - 1]), None);
+    let nops = [0x13u8, 0, 0, 0].repeat(4);
+    assert!(h.crc_matches(&nops));
+    assert!(!h.crc_matches(&nops[..15]), "length is checked too");
+    let mut bad = nops.clone();
+    bad[3] = 1;
+    assert!(!h.crc_matches(&bad));
+}
+
+#[test]
+fn v4_check_window() {
+    const BASE: u32 = 0x8000_0000;
+    const LEN: u32 = 0x80_0000;
+    use fw_common::header::{ImageError::*, MODE_HACK, MODE_RISCV};
+    for (h, want) in [
+        (v4(MODE_RISCV, 16, BASE, BASE), Ok(())),
+        (v4(MODE_RISCV, 16, BASE, BASE + 12), Ok(())),
+        (v4(MODE_RISCV, LEN, BASE, BASE), Ok(())),
+        (v4(MODE_RISCV, 4, BASE + LEN - 4, BASE + LEN - 4), Ok(())),
+        (v4(MODE_HACK, 8, BASE + 4, 0), Ok(())),
+        (v4(2, 16, BASE, BASE), Err(BadMode(2))),
+        (v4(MODE_RISCV, 0, BASE, BASE), Err(Empty)),
+        (v4(MODE_RISCV, 16, BASE - 4, BASE), Err(OutOfWindow)),
+        (v4(MODE_RISCV, LEN + 4, BASE, BASE), Err(OutOfWindow)),
+        (
+            v4(MODE_RISCV, 8, BASE + LEN - 4, BASE + LEN - 4),
+            Err(OutOfWindow),
+        ),
+        (
+            v4(MODE_RISCV, 16, 0xFFFF_FFF0, 0xFFFF_FFF0),
+            Err(OutOfWindow),
+        ),
+        (
+            v4(MODE_RISCV, 16, BASE, BASE + 16),
+            Err(BadEntry(BASE + 16)),
+        ),
+        (v4(MODE_RISCV, 16, BASE + 4, BASE), Err(BadEntry(BASE))),
+        (v4(MODE_RISCV, 16, BASE, BASE + 2), Err(BadEntry(BASE + 2))),
+    ] {
+        assert_eq!(h.check(BASE, LEN), want, "{h:?}");
+    }
 }
 
 struct Buf(Vec<u8>);

@@ -98,6 +98,51 @@ class SlotHeader:
 
 
 assert struct.calcsize(HEADER_FORMAT) == HEADER_LEN
+
+# VUX9 v4: the header of a file the two-stage boot loads (fw_common's ImageHeader). The
+# same 64-byte layout as v3; v3's flags are reserved (0). The file is the header, then
+# the payload, with no padding.
+HEADER_VERSION_V4 = 4
+XMEM_BASE = 0x80000000  # the PSRAM, where RV32 images load by default
+
+
+@dataclass(frozen=True)
+class ImageHeader:
+    mode: int
+    size: int
+    crc32: int
+    name: bytes = b""
+    version: int = 1
+    load_addr: int = 0
+    entry_point: int = 0
+
+    def pack(self, magic=VUX_MAGIC, header_version=HEADER_VERSION_V4, reserved=0):
+        return struct.pack(
+            HEADER_FORMAT,
+            magic,
+            header_version,
+            reserved,
+            self.mode,
+            self.size,
+            self.load_addr,
+            self.entry_point,
+            self.crc32,
+            self.version,
+            self.name[:32].ljust(32, b"\x00"),
+        )
+
+    @classmethod
+    def parse(cls, data):
+        """The v4 header at the start of data if the firmware accepts it (magic, version 4,
+        reserved 0; fw_common's ImageHeader::parse), else None."""
+        if len(data) < HEADER_LEN:
+            return None
+        magic, hver, reserved, mode, size, load, entry, crc, ver, name = struct.unpack_from(HEADER_FORMAT, data)
+        if magic != VUX_MAGIC or hver != HEADER_VERSION_V4 or reserved != 0:
+            return None
+        return cls(mode, size, crc, name, ver, load, entry)
+
+
 DEFAULT_FTDI_URL = "ftdi://ftdi:2232/2"
 
 
@@ -425,6 +470,60 @@ def reboot_soc(ser, timeout=8.0):
     return out
 
 
+def _read_payload(file_or_bytes):
+    """(payload, default name): the bytes as given, or a file's contents and stem."""
+    if isinstance(file_or_bytes, (bytes, bytearray)):
+        return bytes(file_or_bytes), None
+    if not os.path.exists(file_or_bytes):
+        raise FileNotFoundError(f"File {file_or_bytes} not found!")
+    with open(file_or_bytes, "rb") as f:
+        return f.read(), os.path.splitext(os.path.basename(file_or_bytes))[0]
+
+
+def pack_hack(payload):
+    """A Hack binary (16-bit big-endian instructions) in the 32-bit little-endian words
+    the Hack CPU fetches: two instructions per word, the first in the low half."""
+    packed = bytearray()
+    for i in range(0, len(payload), 4):
+        chunk = payload[i : i + 4].ljust(4, b"\x00")
+        instr0 = (chunk[0] << 8) | chunk[1]
+        instr1 = (chunk[2] << 8) | chunk[3]
+        packed.extend(struct.pack("<I", (instr1 << 16) | instr0))
+    return bytes(packed)
+
+
+def build_vux9_v4_image(
+    file_or_bytes,
+    name="",
+    mode="riscv",
+    version=1,
+    load_addr=None,
+    entry_point=None,
+    crc_override=None,
+    magic_override=None,
+):
+    """A VUX9 v4 file: the 64-byte header, then the payload (Hack binaries packed as
+    pack_hack does). load_addr defaults to XMEM_BASE for RV32 and 0 for Hack,
+    entry_point to load_addr. Returns (bytes, ImageHeader)."""
+    payload, default_name = _read_payload(file_or_bytes)
+    mode_val = MODE_HACK if mode == "hack" else MODE_RISCV
+    if mode_val == MODE_HACK:
+        payload = pack_hack(payload)
+    if load_addr is None:
+        load_addr = XMEM_BASE if mode_val == MODE_RISCV else 0
+    header = ImageHeader(
+        mode=mode_val,
+        size=len(payload),
+        crc32=crc_override if crc_override is not None else binascii.crc32(payload) & 0xFFFFFFFF,
+        name=(name or default_name or "").encode("ascii", errors="replace"),
+        version=version,
+        load_addr=load_addr,
+        entry_point=load_addr if entry_point is None else entry_point,
+    )
+    magic = magic_override if magic_override is not None else VUX_MAGIC
+    return header.pack(magic) + payload, header
+
+
 def build_vux9_image(
     file_or_bytes,
     slot=1,
@@ -437,31 +536,11 @@ def build_vux9_image(
     magic_override=None,
 ):
     """Pack binary payload into VUX9 v3 image with 64-byte boot header and 512-byte sector padding"""
-    if isinstance(file_or_bytes, (bytes, bytearray)):
-        payload = bytes(file_or_bytes)
-        default_name = f"slot{slot}"
-    else:
-        if not os.path.exists(file_or_bytes):
-            raise FileNotFoundError(f"File {file_or_bytes} not found!")
-        with open(file_or_bytes, "rb") as f:
-            payload = f.read()
-        default_name = os.path.splitext(os.path.basename(file_or_bytes))[0]
+    payload, default_name = _read_payload(file_or_bytes)
+    default_name = default_name or f"slot{slot}"
 
     mode_val = MODE_HACK if mode == "hack" else MODE_RISCV
-    if mode_val == MODE_HACK:
-        # Pre-pack Hack 16-bit big-endian binary into native 32-bit LE word order for I-RAM
-        packed_payload = bytearray()
-        for i in range(0, len(payload), 4):
-            chunk = payload[i : i + 4]
-            if len(chunk) < 4:
-                chunk = chunk + b"\x00" * (4 - len(chunk))
-            instr0 = (chunk[0] << 8) | chunk[1]
-            instr1 = (chunk[2] << 8) | chunk[3]
-            word = (instr1 << 16) | instr0
-            packed_payload.extend(struct.pack("<I", word))
-        final_payload = bytes(packed_payload)
-    else:
-        final_payload = payload
+    final_payload = pack_hack(payload) if mode_val == MODE_HACK else payload
 
     size_bytes = len(final_payload)
     if not name:
