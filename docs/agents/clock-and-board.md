@@ -34,15 +34,21 @@ eqy can't see this (zero-delay models, and both sides of eqy come from Yosys). S
   hold `firmware.hex` under the known I-RAM mapping). Run it after RTL changes, before
   flashing a new bitstream. If you change `hw_test`'s tests, take the new checksums
   from the emulator (`sim/emu/test_hw_test.py` prints them on failure).
-- **`CLK_HZ` has copies that must change with it**, none derived from `soc_pkg`
-  automatically: the emulator (`uart::BIT`, `sdspi::HALF_PERIOD`/`CLK_HZ`, the CLI's real-time
+- **`CLK_HZ` has copies that must change with it**, all but one written out by hand: the emulator (`uart::BIT`, `sdspi::HALF_PERIOD`/`CLK_HZ`, the CLI's real-time
   pacing), `fw_common::map` (`TICKS_PER_*`, `SD_DIV_INIT`), the Boot Manager (`timer.rs` ticks per us/ms, `read_uart_byte_timeout`, the
   `t` banner and expected tick count), the Resident Loader's 10 us CS delay, Zephyr
   (`timebase-frequency`/`clock-frequency` in `vux9k-common.dtsi`,
   `SYS_CLOCK_HW_CYCLES_PER_SEC`), and the test constants (`tb_soc_top.sv`'s half period,
   `soc_env.py`, `virtual_serial.py`, `lockstep_programs.UART_BIT`, `sim/emu/vux9k.py`,
   `test_sdcard_spi.CLK_DIV_HALF`, `test_sd_transcripts.SLOW_HZ`/`FAST_HZ`, the tick windows in `test_soc_boot.py` and
-  `test_boot_manager.py`). `make sim-lockstep` catches an emulator that disagrees with
+  `test_boot_manager.py`). The PSRAM controller takes `soc_pkg::CLK_HZ` as a parameter, so
+  its cycle counts change with the clock too: `soc_pkg`'s `XMEM_READ_LATENCY`/
+  `XMEM_WRITE_LATENCY` and `PSRAM_INIT_CYCLES` (and the assumption that the power-up ends
+  inside the POR), with their copies in the wait-state window's row of sync-points.md (the
+  emulator's `XMEM_*_LATENCY`, `lockstep_programs.XMEM_WAIT`, `hw_test`'s `xmem_time`
+  checksum); `make sim-psram-contract` fails until they match the controller. The one
+  derived copy is the Makefile's `SOC_CLK_HZ` (read from `soc_pkg.veryl`, for the
+  controller's unit netlist). `make sim-lockstep` catches an emulator that disagrees with
   the RTL; the rest only shows up as timeouts or wrong tick counts.
 - **Simulations bypass the PLL.** RTL tests instantiate `soc_top` and drive it at 18 MHz.
   The GLS netlist is `board_top`'s: `tb_soc_top.sv` wraps it when `sim_runner.py`

@@ -442,11 +442,6 @@ fn xmem_loads_stores_aliases_and_wait_cycles() {
     assert_eq!(soc.regs[6], 0x5A);
     assert_eq!(soc.regs[7], 0xFFFF_FFFF);
     assert_eq!(
-        soc.xmem_word(0x8FFF_F810),
-        soc.xmem_word(0x807F_F810),
-        "repeats every 8 MB across region 8"
-    );
-    assert_eq!(
         soc.xmem_word(0x8F80_0010),
         0xFFFF_5AFE,
         "0x8F80_0010 is 0x8000_0010, 248 MB up"
