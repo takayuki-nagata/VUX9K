@@ -60,7 +60,11 @@ release/{boot_manager,resident_loader}`.
   `VUX9_VECTORS_UPDATE=1` rewrites them, byte-for-byte reproducibly). The same test runs
   fw_common's writes on every image through the `fat_host` example and runs `fsck.fat`
   after each; its only note allowed then is FSInfo's free count being unknown, which is
-  what fw_common sets. The host tests
+  what fw_common sets. mtools before 4.0.49 (CI's Ubuntu 22.04 has 4.0.32) takes a FAT32
+  volume of fewer than 65525 clusters, as these images are, for FAT16 and fails on it:
+  there the small images get fsck.fat and fat_host only, mtools checks a full-size
+  vux_tool image, and rebuilding the `mkfs_*` images is skipped (it needs the mtools they
+  were made with, `FIXTURE_MTOOLS`; rebuild them locally). The host tests
   (`tests/fat.rs`) read them and break copies of them one field at a time. A volume is
   FAT32 by its BPB (`FATSz16 == 0`), so the images can be a few MB; mkfs.fat then keeps the
   sector count in TotSec16. Callbacks are `&mut dyn FnMut`: generic ones gave each call

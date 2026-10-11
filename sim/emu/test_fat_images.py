@@ -14,11 +14,15 @@ they stay clean after fw_common writes to them (the `fat_host` example: install,
 VUX9_VECTORS_UPDATE=1 rewrites them.
 
 The checks with dosfstools and mtools are skipped without them, and fail instead when
-VUX9K_REQUIRE_FAT_TOOLS=1 (make test-fat, and so CI).
+VUX9K_REQUIRE_FAT_TOOLS=1 (make test-fat, and so CI). mtools before 4.0.49 (CI's Ubuntu 22.04
+has 4.0.32) takes a FAT32 volume of fewer than 65525 clusters for FAT16 and fails on it, so
+with those the small images are checked with fsck.fat and fat_host only, mtools reads a
+full-size FAT32 image from vux_tool instead, and the mkfs/mtools images aren't rebuilt.
 """
 
 import binascii
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -43,6 +47,26 @@ PART_LBA = 2048  # where SD cards start their first partition
 EPOCH = 315532800  # 1980-01-01 00:00 UTC, the first FAT date
 TOOL_ENV = dict(os.environ, TZ="UTC", SOURCE_DATE_EPOCH=str(EPOCH), MTOOLS_SKIP_CHECK="1")
 SPARSE_MAGIC = b"VUXSPRS1"
+# The mtools the mkfs_* images were made with; rebuilding them needs it (other versions write
+# other bytes, and older ones can't handle small FAT32 volumes at all)
+FIXTURE_MTOOLS = (4, 0, 49)
+# Partition sectors for a FAT32 volume of at least 65525 one-sector clusters, which every
+# mtools version reads as FAT32
+FULL_SIZE_SECTORS = 70_000
+
+
+def mtools_version():
+    """(major, minor, patch) of the installed mtools, or None."""
+    if shutil.which("mtools") is None:
+        return None
+    out = subprocess.run(["mtools", "--version"], capture_output=True, text=True, timeout=60).stdout
+    m = re.search(r"(\d+)\.(\d+)\.(\d+)", out)
+    return tuple(int(x) for x in m.groups()) if m else None
+
+
+MTOOLS = mtools_version()
+# Whether mtools reads FAT32 volumes below 65525 clusters (the fixtures) as FAT32
+MTOOLS_SMALL_FAT32 = MTOOLS is not None and MTOOLS >= FIXTURE_MTOOLS
 
 
 def data(n, seed=0):
@@ -265,22 +289,47 @@ def test_vux_tool_images(name, tmp_path):
 
 
 @needs_tools
+@pytest.mark.skipif(
+    MTOOLS != FIXTURE_MTOOLS and not UPDATE,
+    reason=f"the mkfs_* images were made with mtools {FIXTURE_MTOOLS}, this is {MTOOLS}",
+)
 @pytest.mark.parametrize("name", sorted(n for n in IMAGES if IMAGES[n][3] is not None))
 def test_tool_images(name, tmp_path):
+    assert MTOOLS == FIXTURE_MTOOLS, f"rebuild the mkfs_* images with mtools {FIXTURE_MTOOLS}, not {MTOOLS}"
     img, files = make_image(name, str(tmp_path))
     check_fixture(name, img, files)
 
 
 @needs_tools
-@pytest.mark.parametrize("name", sorted(n for n in IMAGES if IMAGES[n][3] is None))
-def test_vux_tool_images_pass_fsck_and_mtools(name, tmp_path):
-    img, files = make_image(name, str(tmp_path))
+@pytest.mark.parametrize("name", sorted(IMAGES))
+def test_fixtures_pass_fsck(name, tmp_path):
+    path = write_fixture(name, tmp_path)
+    fsck(path, str(tmp_path))
+    if MTOOLS_SMALL_FAT32 and IMAGES[name][3] is None:
+        _, files = make_image(name, str(tmp_path))
+        for p, content in files.items():
+            assert mtype(path, p) == content, p
+
+
+@needs_tools
+def test_full_size_vux_tool_image_passes_fsck_and_mtools(tmp_path):
+    files = vuxtool_files(1)
     path = str(tmp_path / "card.img")
     with open(path, "wb") as f:
-        f.write(img)
+        f.write(vux_tool.build_fat32_image(files, part_sectors=FULL_SIZE_SECTORS))
     fsck(path, str(tmp_path))
     for p, content in files.items():
         assert mtype(path, p) == content, p
+
+
+def write_fixture(name, tmp_path):
+    """The committed fixture `name` as an image file; its path."""
+    with open(os.path.join(IMAGE_DIR, f"{name}.sparse"), "rb") as f:
+        img = from_sparse(f.read())
+    path = str(tmp_path / "card.img")
+    with open(path, "wb") as f:
+        f.write(img)
+    return path
 
 
 def test_no_stale_images():
@@ -346,14 +395,23 @@ def fat_host_run(binary, *args):
 
 
 @needs_tools
-@pytest.mark.parametrize("name", sorted(IMAGES))
+@pytest.mark.parametrize("name", [*sorted(IMAGES), "full_size"])
 def test_fw_common_writes_pass_fsck(name, tmp_path, fat_host):
-    with open(os.path.join(IMAGE_DIR, f"{name}.sparse"), "rb") as f:
-        img = from_sparse(f.read())
-    path = str(tmp_path / "card.img")
-    with open(path, "wb") as f:
-        f.write(img)
-    previous = mtype(path, "VUX9K/STAGE2.BIN")
+    """Installs and removals by fw_common, then fsck.fat; the files read back with mtools
+    where it can read the image (full_size: a vux_tool image any mtools reads), else with
+    fat_host."""
+    if name == "full_size":
+        path = str(tmp_path / "card.img")
+        with open(path, "wb") as f:
+            f.write(vux_tool.build_fat32_image(vuxtool_files(1), part_sectors=FULL_SIZE_SECTORS))
+    else:
+        path = write_fixture(name, tmp_path)
+    use_mtools = name == "full_size" or MTOOLS_SMALL_FAT32
+
+    def read(p):
+        return mtype(path, p) if use_mtools else fat_host_run(fat_host, path, "cat", p)
+
+    previous = read("VUX9K/STAGE2.BIN")
     assert fat_host_run(fat_host, path, "cat", "VUX9K/STAGE2.BIN") == previous
     # Two installs: the first new image over 128 clusters (the chain crosses FAT sectors)
     for version, size in ((7, 70_000), (8, 900)):
@@ -361,13 +419,16 @@ def test_fw_common_writes_pass_fsck(name, tmp_path, fat_host):
         (tmp_path / "new.bin").write_bytes(new)
         fat_host_run(fat_host, path, "install", str(tmp_path / "new.bin"))
         fsck(path, str(tmp_path), fsinfo_unknown=True)
-        assert mtype(path, "VUX9K/STAGE2.BIN") == new
-        assert mtype(path, "VUX9K/STAGE2.OLD") == previous
+        assert read("VUX9K/STAGE2.BIN") == new
+        assert read("VUX9K/STAGE2.OLD") == previous
         assert fat_host_run(fat_host, path, "boot") == f"BIN {version}\n".encode()
         previous = new
-    # Removing files, long-named ones with their long-name entries
+    # Removing files, long-named ones with their long-name entries (fsck.fat reports
+    # long-name entries left without their 8.3 entry)
     listing = fat_host_run(fat_host, path, "ls", "VUX9K").decode().split()
     for short in [n for n in listing if "~" in n] + ["STAGE2.OLD"]:
         fat_host_run(fat_host, path, "rm", f"VUX9K/{short}")
         fsck(path, str(tmp_path), fsinfo_unknown=True)
-    assert "Long File Name" not in mdir(path, "VUX9K")
+    assert not [n for n in fat_host_run(fat_host, path, "ls", "VUX9K").decode().split() if "~" in n]
+    if use_mtools:
+        assert "Long File Name" not in mdir(path, "VUX9K")
