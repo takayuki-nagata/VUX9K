@@ -6,8 +6,8 @@ controller's contract, held until accepted, and completes (instr_ready / data_re
 the response's cycle; accesses outside the window complete at once and request nothing;
 nothing is requested while the CPU is held in soft reset. A CPU model holds each access
 until it completes, a memory model behind the bridge accepts and answers with random
-delays (the contract's lower bounds, not the stub's latencies); every output is checked
-in every cycle."""
+delays (the contract's lower bounds, not the PSRAM controller's latencies); every output
+is checked in every cycle."""
 
 import random
 

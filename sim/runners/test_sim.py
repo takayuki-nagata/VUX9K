@@ -43,7 +43,6 @@ UNIT = [
     ("timer_core", "test_timer_core"),
     ("gpio_controller", "test_gpio_controller"),
     ("soc_addr_decoder", "test_soc_addr_decoder"),
-    ("soc_xmem_stub", "test_soc_xmem_stub"),
     ("soc_xmem_bridge", "test_soc_xmem_bridge"),
     ("sdcard_spi", "test_sdcard_spi"),
     ("soc_ram", "test_soc_ram"),
@@ -61,7 +60,6 @@ UNIT_GLS = [
     ("unified_cpu", "test_rv32i_branches"),
     ("uart_controller", "test_uart_controller"),
     ("auto_mode_detector", "test_auto_mode_detector"),
-    ("soc_xmem_stub", "test_soc_xmem_stub"),  # its block RAM (SPX9) and byte-lane read-modify-write
     ("soc_xmem_bridge", "test_soc_xmem_bridge"),
 ]
 

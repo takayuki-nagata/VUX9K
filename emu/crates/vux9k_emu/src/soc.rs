@@ -11,7 +11,8 @@
 //! - ISA detection: soc/cpu/auto_mode_detector.veryl
 //! - address decode and memories: soc/soc_addr_decoder.veryl, soc/soc_ram.veryl,
 //!   soc/soc_top.veryl; the IsaTest profile follows sim/tb_hex_runner.veryl.
-//! - the wait-state window: soc/soc_xmem_bridge.veryl, soc/soc_xmem_stub.veryl.
+//! - the wait-state window: soc/soc_xmem_bridge.veryl, the PSRAM controller behind it in
+//!   soc/soc_top.veryl (vendor/psram_controller).
 //!
 //! Timing: `cycle` counts SoC clocks (18 MHz) since reset release. An instruction starts
 //! with its FETCH cycle; `Soc::step` executes one instruction and advances `cycle` by
@@ -35,13 +36,16 @@ use crate::profile::Profile;
 pub const TOHOST: u32 = 0xF000_0000;
 
 // The wait-state window, copied from soc/soc_pkg.veryl (keep in sync, see
-// docs/agents/sync-points.md): RV32 region XMEM_REGION, XMEM_WORDS words repeating
-// across it; a request accepted in the first FETCH/MEM_WAIT cycle is answered
-// XMEM_*_LATENCY cycles later, which is how many cycles the access adds.
+// docs/agents/sync-points.md): RV32 region XMEM_REGION, the 8 MB PSRAM (XMEM_WORDS words)
+// repeating every 8 MB across it (soc_top hides the controller's register space); a
+// request accepted in the first FETCH/MEM_WAIT cycle is answered XMEM_*_LATENCY cycles
+// later, which is how many cycles the access adds. The controller's power-up (about 3,610
+// cycles after reset) is not modeled: it ends inside soc_top's 32,768-cycle power-on reset,
+// before the CPU's first cycle, so no program can see it.
 /// RV32 region (`addr[31:28]`) of the window: soc_pkg::RV_REGION_XMEM.
 pub const XMEM_REGION: u32 = 0x8;
-/// Words in the window: soc_pkg::XMEM_WORDS.
-pub const XMEM_WORDS: usize = 512;
+/// Words in the window: soc_pkg::XMEM_WORDS (8 MB).
+pub const XMEM_WORDS: usize = 1 << 21;
 /// Extra cycles of a window fetch or load: soc_pkg::XMEM_READ_LATENCY.
 pub const XMEM_READ_LATENCY: u32 = 35;
 /// Extra cycles of a window store: soc_pkg::XMEM_WRITE_LATENCY.
@@ -385,7 +389,7 @@ impl Soc {
         self.dram[(idx & self.dram_mask) as usize]
     }
 
-    /// The window word at RV32 address `addr` (it repeats every `XMEM_WORDS` words).
+    /// The window word at RV32 address `addr` (it repeats every `XMEM_WORDS` words, 8 MB).
     pub fn xmem_word(&self, addr: u32) -> u32 {
         self.xmem[Self::xmem_index(addr)]
     }

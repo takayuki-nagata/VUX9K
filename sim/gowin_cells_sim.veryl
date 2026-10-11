@@ -497,6 +497,28 @@ module DFFCE (
     assign Q = q;
 }
 
+// Negative clock edge, asynchronous clear (the PSRAM controller's psram_phy)
+module DFFNC (
+    Q    : output logic           ,
+    D    : input  logic           ,
+    CLK  : input  clock_negedge   ,
+    CLEAR: input  reset_async_high,
+) {
+    #[allow(initial_assign)]
+    var q: logic;
+    initial {
+        q = 1'b0;
+    }
+    always_ff (CLK, CLEAR) {
+        if_reset {
+            q = 1'b0;
+        } else {
+            q = D;
+        }
+    }
+    assign Q = q;
+}
+
 module VCC (
     V: output logic,
 ) {

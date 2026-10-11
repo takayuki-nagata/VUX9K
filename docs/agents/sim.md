@@ -118,8 +118,24 @@ which a test may deposit a smaller value into), then the 35/34-cycle read/write 
 the wait-state window's contract, byte strobes, 8 MB of words. It exists because the real
 controller needs a pin-level PSRAM model, and the only one, the IP's W955D8MBYA model
 (`vendor/psram_controller/sim/model/`), is timed in real time (`realtime`, `#` delays) and runs
-on Icarus only; Verilator SoC runs and the lockstep runs are to use the word model instead. Simulation
+on Icarus only; Verilator SoC runs and the lockstep runs use the word model instead. Simulation
 only: it is in no synthesis or lint source list.
+
+Which SoC build has what (`sim_runner.psram_word_model`, `sources_for`):
+- **Verilator RTL** (`soc_top`/`tb_soc_top`, incl. `HDL_COVERAGE`): the runner defines
+  `VUX9K_PSRAM_MODEL`, compiles `psram_word_model.sv` instead of the IP's four files, and
+  `soc_top`'s `#[ifdef(VUX9K_PSRAM_MODEL)]` instance is the word model; its PSRAM pins are
+  constants (chip selects high, RESET# low). `soc_env.start_soc` deposits 0 into the model's
+  `init_count` where it ends the POR, so the window is ready from cycle 0 as on the board
+  (where the controller's power-up ends inside the POR); `test_soc_lockstep.py` zeroes only
+  the words in `lockstep_programs.XMEM_USED` (one VPI write per word: never all 2M), as the
+  emulator starts its window zeroed. Both signals are in `SOC_RTL_PUBLIC`.
+- **Icarus RTL and Icarus GLS** (`tb_soc_top`): the real controller, and `tb_soc_top.sv`
+  puts the W955 model on the pins. Its power-up (~3,610 cycles) is not accelerated: the
+  first window access waits for it.
+- **Verilator GLS**: the netlist's real controller with nothing on its pins (no Verilator GLS
+  test touches the window).
+Synthesis, `lint-rtl` and `check-rtl-syntax` never define `VUX9K_PSRAM_MODEL`.
 
 `sim/unit/test_psram_contract.py` (`make sim-psram-contract`, in `test-sim`, fcov group
 `psram`) pins the word model to the controller: `sim/tb_psram_contract.veryl` drives both from

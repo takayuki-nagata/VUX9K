@@ -9,7 +9,7 @@
 // - After reset, req_ready and init_done stay low for INIT_CYCLES cycles, the controller's
 //   power-up sequence (soc_pkg::PSRAM_INIT_CYCLES); init_count counts them down, and a
 //   test may deposit a smaller value into it to skip the wait.
-// - Then the contract of soc_xmem_stub: a request is taken in a cycle with
+// - Then the controller's host contract: a request is taken in a cycle with
 //   req_valid && req_ready, and the requester holds req_valid and the request fields
 //   unchanged until then; req_ready is high while idle and low while a request is in
 //   flight; exactly one response per request, rsp_valid high for one cycle,

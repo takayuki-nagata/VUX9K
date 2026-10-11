@@ -50,10 +50,12 @@ pub const DRAM_BASE: usize = 0x2000_0000;
 pub const LOADER_WORDS: usize = 0x2000_1FF8;
 /// The Boot Manager -> Resident Loader mailbox (crate::mailbox).
 pub const MAILBOX: usize = 0x2000_1FFC;
-/// The wait-state window (soc_pkg::RV_REGION_XMEM, XMEM_WORDS): code and data, every
-/// access slower than I-RAM/D-RAM; its `XMEM_BYTES` repeat across 0x8xxx_xxxx.
+/// The wait-state window (soc_pkg::RV_REGION_XMEM, XMEM_WORDS): the 8 MB PSRAM, code and
+/// data, every access slower than I-RAM/D-RAM; its `XMEM_BYTES` repeat every 8 MB across
+/// 0x8xxx_xxxx (the PSRAM's register space is not reachable). Contents are undefined at
+/// power-up.
 pub const XMEM_BASE: usize = 0x8000_0000;
-pub const XMEM_BYTES: usize = 2048;
+pub const XMEM_BYTES: usize = 8 * 1024 * 1024;
 
 // ----- Clock ----------------------------------------------------------------------
 /// mtime ticks at the SoC clock, 18 MHz (soc_pkg::CLK_HZ).

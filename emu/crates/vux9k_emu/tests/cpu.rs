@@ -411,7 +411,7 @@ fn hpm_csrs_exist_in_their_ranges() {
     }
 }
 
-// ----- the wait-state window (soc_xmem_bridge + soc_xmem_stub, RV32 region 8) ---------
+// ----- the wait-state window (soc_xmem_bridge + the 8 MB PSRAM, RV32 region 8) --------
 use vux9k_emu::soc::{XMEM_READ_LATENCY, XMEM_WRITE_LATENCY};
 
 /// lui + addi loading `v` into `rd`.
@@ -431,7 +431,7 @@ fn xmem_loads_stores_aliases_and_wait_cycles() {
             s(0x10, 2, 1, 2), // sw -2
             addi(3, 0, 0x5A),
             s(0x11, 3, 1, 0), // sb 0x5A into byte 1: the window has byte enables
-            lui(4, 0x80001),  // 0x8000_1000: the 2 KB repeat
+            lui(4, 0x80800),  // 0x8080_0000: the 8 MB repeat
             i(0x03, 0x10, 4, 2, 5), // lw x5 = 0xFFFF_5AFE
             i(0x03, 0x11, 1, 4, 6), // lbu x6 = 0x5A
             i(0x03, 0x12, 1, 1, 7), // lh x7 = -1
@@ -443,9 +443,15 @@ fn xmem_loads_stores_aliases_and_wait_cycles() {
     assert_eq!(soc.regs[7], 0xFFFF_FFFF);
     assert_eq!(
         soc.xmem_word(0x8FFF_F810),
-        0xFFFF_5AFE,
-        "repeats across region 8"
+        soc.xmem_word(0x807F_F810),
+        "repeats every 8 MB across region 8"
     );
+    assert_eq!(
+        soc.xmem_word(0x8F80_0010),
+        0xFFFF_5AFE,
+        "0x8F80_0010 is 0x8000_0010, 248 MB up"
+    );
+    assert_eq!(soc.xmem_word(0x8000_0810), 0, "no 2 KB repeat any more");
     let stores = 2 * (3 + XMEM_WRITE_LATENCY) as u64;
     let loads = 3 * (3 + XMEM_READ_LATENCY) as u64;
     assert_eq!(soc.cycle, 4 * 2 + stores + loads);

@@ -6,9 +6,9 @@
 //! one instruction pattern (xorshift32 operands) into a checksum and compares it with
 //! the value the emulator computes (which `make sim-lockstep` ties to the RTL); a
 //! bitstream whose timing fails on the board gets them wrong, even when STA passed.
-//! The `xmem` tests do the same for the wait-state window (`map::XMEM_BASE`): a memory
-//! test over all of it, every load/store width, code run from it, and the cycles each
-//! kind of access waits.
+//! The `xmem` tests do the same for the wait-state window (`map::XMEM_BASE`, the 8 MB
+//! PSRAM): its address lines and the first and last few KB, every load/store width, code
+//! run from it, and the cycles each kind of access waits.
 //!
 //! Output, one short line each: `T<nn> <name> <checksum> PASS|FAIL`, then
 //! `RESULT PASS|FAIL <passed>/<total> <mask>` (hex; bit n-1 of the mask set = test n
@@ -269,41 +269,72 @@ fn xmem_pattern(addr: u32, seed: u32) -> u32 {
     x
 }
 
-/// Every window word, in three passes of writing all words then reading them all back:
-/// f(addr) through the base; !f(addr) read through the alias 2 KB up; the word's own
-/// address written through aliases (2 KB up, and the top of the region) and read
-/// through the base.
+/// Words in each of the blocks at the window's start and end that `t_xmem` tests whole.
+const XMEM_BLOCK_WORDS: usize = 512;
+/// Word-address bits of the window (soc_pkg::XMEM_ADDR_BITS).
+const XMEM_ADDR_BITS: usize = XMEM_WORDS.trailing_zeros() as usize;
+
+/// Writes f(addr) to the word at `top ^ (4 << b)` for every word-address bit b, and to
+/// `top` itself, then reads them all back: an address line stuck or shorted to another
+/// makes two of these words one, and a value is lost (the checksum changes).
+fn xmem_lines(top: usize, seed: u32, mut acc: u32) -> u32 {
+    let at = |b: usize| -> *mut u32 {
+        let flip = if b < XMEM_ADDR_BITS { 4 << b } else { 0 };
+        (top ^ flip) as *mut u32
+    };
+    unsafe {
+        for b in 0..=XMEM_ADDR_BITS {
+            write_volatile(at(b), xmem_pattern(at(b) as u32, seed));
+        }
+        for b in 0..=XMEM_ADDR_BITS {
+            acc = acc.rotate_left(5).wrapping_add(read_volatile(at(b)));
+        }
+    }
+    acc
+}
+
+/// The window's 21 word-address lines, walking one (from the base) and walking zero (from
+/// its last word, 0x807F_FFFC); the register space hidden (a store through 0x8080_0020,
+/// which would be the PSRAM's CR0 if address bit 23 reached the controller, lands in
+/// 0x8000_0020; one through the top of region 8 in the last word); then the first and
+/// the last XMEM_BLOCK_WORDS words in two passes of writing all then reading all: f(addr),
+/// then !f(addr) read through the alias 8 MB up. About 4,200 window accesses (~10 ms).
 fn t_xmem(seed: u32) -> u32 {
-    let alias = |i: usize| -> *mut u32 {
-        let up = if i & 1 == 0 {
-            map::XMEM_BYTES
+    let top = map::XMEM_BASE + map::XMEM_BYTES - 4;
+    let mut acc = xmem_lines(map::XMEM_BASE, seed, 0);
+    acc = xmem_lines(top, seed, acc);
+    unsafe {
+        let cr0 = xmem_word(0x20 / 4);
+        write_volatile(cr0.byte_add(map::XMEM_BYTES), 0x8080_0020 ^ seed);
+        acc = acc.rotate_left(5).wrapping_add(read_volatile(cr0));
+        write_volatile(0x8FFF_FFFC as *mut u32, 0x8FFF_FFFC ^ seed);
+        acc = acc
+            .rotate_left(5)
+            .wrapping_add(read_volatile(top as *const u32));
+    }
+    let block = |k: usize| -> *mut u32 {
+        let i = if k < XMEM_BLOCK_WORDS {
+            k
         } else {
-            0x0FFF_F800
+            XMEM_WORDS - 2 * XMEM_BLOCK_WORDS + k
         };
-        (map::XMEM_BASE + up + i * 4) as *mut u32
+        xmem_word(i)
     };
     // added, not xored: !f cancels f in an xor over all words
-    let mut acc = 0u32;
     unsafe {
-        for i in 0..XMEM_WORDS {
-            write_volatile(xmem_word(i), xmem_pattern(xmem_word(i) as u32, seed));
+        for k in 0..2 * XMEM_BLOCK_WORDS {
+            write_volatile(block(k), xmem_pattern(block(k) as u32, seed));
         }
-        for i in 0..XMEM_WORDS {
-            acc = acc.rotate_left(5).wrapping_add(read_volatile(xmem_word(i)));
+        for k in 0..2 * XMEM_BLOCK_WORDS {
+            acc = acc.rotate_left(5).wrapping_add(read_volatile(block(k)));
         }
-        for i in 0..XMEM_WORDS {
-            write_volatile(xmem_word(i), !xmem_pattern(xmem_word(i) as u32, seed));
+        for k in 0..2 * XMEM_BLOCK_WORDS {
+            write_volatile(block(k), !xmem_pattern(block(k) as u32, seed));
         }
-        for i in 0..XMEM_WORDS {
+        for k in 0..2 * XMEM_BLOCK_WORDS {
             acc = acc
                 .rotate_left(5)
-                .wrapping_add(read_volatile(xmem_word(i).byte_add(map::XMEM_BYTES)));
-        }
-        for i in 0..XMEM_WORDS {
-            write_volatile(alias(i), xmem_word(i) as u32);
-        }
-        for i in 0..XMEM_WORDS {
-            acc = acc.rotate_left(5).wrapping_add(read_volatile(xmem_word(i)));
+                .wrapping_add(read_volatile(block(k).byte_add(map::XMEM_BYTES)));
         }
     }
     acc
@@ -380,7 +411,7 @@ extern "C" {
 /// Where t_xmem_exec puts its routine.
 const XMEM_CODE_OFF: usize = 0x100;
 
-/// The window routine, called at the base or (b bit 8) through the alias 2 KB up.
+/// The window routine, called at the base or (b bit 8) through the alias 8 MB up.
 fn xmem_call(a: u32, b: u32) -> u32 {
     let up = if b & 0x100 != 0 { map::XMEM_BYTES } else { 0 };
     let entry = core::ptr::addr_of!(xmem_code_start) as usize
@@ -481,9 +512,9 @@ const TESTS: [(&str, Test, u32); 15] = [
     ("raw", Pairs(t_raw), 0x086D_086D),
     ("mem", Pairs(t_mem), 0xED19_E792),
     ("regs", Pairs(t_regs), 0xC561_39A6),
-    ("xmem", Once(t_xmem), 0x344F_9E49),
+    ("xmem", Once(t_xmem), 0xDB16_358C),
     ("xmem_lanes", Pairs(t_xmem_lanes), 0x4490_6ED7),
-    ("xmem_exec", Once(t_xmem_exec), 0x1E2A_EC76),
+    ("xmem_exec", Once(t_xmem_exec), 0x9273_B7CB),
     ("xmem_time", Once(t_xmem_time), 0x0023_2322),
 ];
 

@@ -3,7 +3,7 @@
 
 // The CPU's side of the wait-state window (RV32 region soc_pkg::RV_REGION_XMEM): turns a
 // fetch (FETCH) or a data access (RV32 MEM_WAIT) in the window into one request of the
-// memory controller's request/response contract (soc_xmem_stub's header) and tells the
+// memory controller's request/response contract (psram::psram_controller, its header) and tells the
 // CPU when it completes. Outside the window instr_ready/data_ready are 1: everything else
 // answers in one cycle.
 // - The request is raised in the first cycle of the CPU's FETCH/MEM_WAIT and held, with

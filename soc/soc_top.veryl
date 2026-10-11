@@ -3,7 +3,7 @@
 
 // Tang Nano 9K Top-Level SoC Wrapper in Veryl
 // Integrates CPU, RAMs, UART, Machine Timer, SD Card SPI, GPIO, and Address Decoder,
-// and the wait-state window (soc_xmem_bridge + soc_xmem_stub) at RV32 region 8
+// and the wait-state window (soc_xmem_bridge + the PSRAM controller) at RV32 region 8
 
 pub module soc_top (
     clk  : input clock,
@@ -22,6 +22,14 @@ pub module soc_top (
     sd_mosi: output logic,
     sd_miso: input  logic,
     sd_cs_n: output logic,
+
+    // On-package PSRAM (W955D8MBYA, two 4 MB dies; psram::psram_controller's pins)
+    O_psram_ck     : output logic    <2> ,
+    O_psram_ck_n   : output logic    <2> ,
+    O_psram_cs_n   : output logic    <2> ,
+    O_psram_reset_n: output logic    <2> ,
+    IO_psram_dq    : inout  tri logic<16>,
+    IO_psram_rwds  : inout  tri logic<2> ,
 ) {
     // Mode Status (1 = RISC-V 32-bit, 0 = Hack 16-bit)
     var active_mode: logic;
@@ -197,18 +205,66 @@ pub module soc_top (
         rsp_rdata  : xmem_rsp_rdata,
     );
 
-    inst xmem_inst: soc_xmem_stub (
-        clk      : clk           ,
-        rst      : rst           ,
+    // The window's memory: 8 MB of PSRAM. req_addr[23] selects the controller's register
+    // space (ID/CR registers), which the CPU must never reach, so it is forced to 0: region
+    // 8's 256 MB repeat the 8 MB every 8 MB (0x8080_0020 is the word at 0x8000_0020, not
+    // CR0). The controller is reset by rst_n, not by the power-on reset: its power-up
+    // (soc_pkg::PSRAM_INIT_CYCLES, about 3,610 cycles) ends inside the 32,768-cycle POR,
+    // so the CPU never sees req_ready low for it (test_psram_contract pins both numbers).
+    let xmem_addr: logic<24> = {1'b0, xmem_req_addr[soc_pkg::XMEM_ADDR_BITS + 1:0]};
+
+    // The RTL builds for Verilator (sim_runner.py) define VUX9K_PSRAM_MODEL and get the word
+    // model instead: same host ports and timing, no pins (the pin-level PSRAM model is
+    // Icarus only). Synthesis, lint and Icarus never define it.
+    #[ifndef(VUX9K_PSRAM_MODEL)]
+    inst xmem_inst: psram::psram_controller #(
+        CLK_HZ: soc_pkg::CLK_HZ,
+    ) (
+        clk                            ,
+        rst_n                          ,
+        req_valid      : xmem_req_valid,
+        req_ready      : xmem_req_ready,
+        req_we         : xmem_req_we   ,
+        req_addr       : xmem_addr     ,
+        req_wdata      : xmem_req_wdata,
+        req_wstrb      : xmem_req_wstrb,
+        rsp_valid      : xmem_rsp_valid,
+        rsp_rdata      : xmem_rsp_rdata,
+        init_done      : _             ,
+        O_psram_ck                     ,
+        O_psram_ck_n                   ,
+        O_psram_cs_n                   ,
+        O_psram_reset_n                ,
+        IO_psram_dq                    ,
+        IO_psram_rwds                  ,
+        dbg_sample     : _             ,
+    );
+
+    #[ifdef(VUX9K_PSRAM_MODEL)]
+    inst xmem_inst: psram_word_model (
+        clk                      ,
+        rst_n                    ,
         req_valid: xmem_req_valid,
         req_ready: xmem_req_ready,
         req_we   : xmem_req_we   ,
-        req_addr : xmem_req_addr ,
+        req_addr : xmem_addr     ,
         req_wdata: xmem_req_wdata,
         req_wstrb: xmem_req_wstrb,
         rsp_valid: xmem_rsp_valid,
         rsp_rdata: xmem_rsp_rdata,
+        init_done: _             ,
     );
+
+    // Pins of the model build: no PSRAM attached; chip selects high (deselected) and
+    // RESET# low (held in reset), the state of a board whose PSRAM is unused; the bus
+    // inouts are left undriven
+    #[ifdef(VUX9K_PSRAM_MODEL)]
+    always_comb {
+        O_psram_ck      = 2'b00;
+        O_psram_ck_n    = 2'b11;
+        O_psram_cs_n    = 2'b11;
+        O_psram_reset_n = 2'b00;
+    }
 
     // Instantiate UART Controller (Veryl)
     inst uart_inst: uart_controller #(

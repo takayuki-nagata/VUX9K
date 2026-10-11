@@ -10,6 +10,14 @@
 // (7.9k vs 19k cycles/s, 2026-09). Everything else is passed straight through; the
 // SoC itself is reachable from tests as `dut.soc`. See sim/integration/soc_env.py.
 //
+// The PSRAM pins end here. Icarus builds (RTL and GLS) have the real controller and get the
+// IP's pin-level W955D8MBYA model on them (vendor/psram_controller/sim/model/, Icarus only:
+// timed in real time). Verilator RTL builds define VUX9K_PSRAM_MODEL and have the word model
+// inside soc_top, which drives the pins to constants; Verilator GLS builds have the real
+// controller with nothing on its pins (no Verilator GLS test touches the window: the
+// controller powers up and stays idle; undriven DQ/RWDS read 0 in Verilator's 2-state
+// simulation, so no pull is needed).
+//
 // This is the one hand-written SystemVerilog file in the repository, on purpose:
 // Veryl has no time-based clock outside `#[test]` modules run by its own simulator
 // ($tb::clock_gen), so the generated SV of a Veryl wrapper would need the clock from
@@ -37,6 +45,13 @@ module tb_soc_top #(
     logic clk = 1'b0;
     always #(HALF_PERIOD_PS) clk = ~clk;
 
+    wire [1:0]  psram_ck;
+    wire [1:0]  psram_ck_n;
+    wire [1:0]  psram_cs_n;
+    wire [1:0]  psram_reset_n;
+    wire [15:0] psram_dq;
+    wire [1:0]  psram_rwds;
+
 `ifdef VUX9K_GLS
     board_top soc (
 `else
@@ -51,8 +66,27 @@ module tb_soc_top #(
         .sd_sclk(sd_sclk),
         .sd_mosi(sd_mosi),
         .sd_miso(sd_miso),
-        .sd_cs_n(sd_cs_n)
+        .sd_cs_n(sd_cs_n),
+        .O_psram_ck     (psram_ck),
+        .O_psram_ck_n   (psram_ck_n),
+        .O_psram_cs_n   (psram_cs_n),
+        .O_psram_reset_n(psram_reset_n),
+        .IO_psram_dq    (psram_dq),
+        .IO_psram_rwds  (psram_rwds)
     );
+
+`ifndef VERILATOR
+`ifndef VUX9K_PSRAM_MODEL
+    w955d8mbya_model psram (
+        .ck     (psram_ck),
+        .ck_n   (psram_ck_n),
+        .cs_n   (psram_cs_n),
+        .reset_n(psram_reset_n),
+        .dq     (psram_dq),
+        .rwds   (psram_rwds)
+    );
+`endif
+`endif
 
 `ifdef VUX9K_RTL_TRACE
     // Lockstep trace for sim/emu/test_lockstep.py: what the CPU and the SoC did in each

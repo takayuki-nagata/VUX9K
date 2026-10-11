@@ -12,10 +12,16 @@
 lint_off -rule UNUSEDSIGNAL -file "*/soc_ram.sv" -match "*'i_addr'*"
 lint_off -rule UNUSEDSIGNAL -file "*/soc_ram.sv" -match "*'d_addr'*"
 lint_off -rule UNUSEDSIGNAL -file "*/soc_addr_decoder.sv" -match "*'addr'*"
-lint_off -rule UNUSEDSIGNAL -file "*/soc_xmem_stub.sv" -match "*'req_addr'*"
+// The window passes its 8 MB offset to the PSRAM; region bits are decoded before it, and
+// bit 23 (the controller's register space) is hidden (soc_top)
+lint_off -rule UNUSEDSIGNAL -file "*/soc_top.sv" -match "*'xmem_req_addr'*"
 lint_off -rule UNUSEDSIGNAL -file "*/tb_hex_runner.sv" -match "*'data_addr'*"
-// The PSRAM's power-up length, read only by the simulation word model (sim/psram_word_model)
+// The window's size and latencies and the PSRAM's power-up length: the controller has
+// its own, these are the copies the simulation word model (sim/psram_word_model) reads
 lint_off -rule UNUSEDPARAM -file "*/soc_pkg.sv" -match "*'PSRAM_INIT_CYCLES'*"
+lint_off -rule UNUSEDPARAM -file "*/soc_pkg.sv" -match "*'XMEM_WORDS'*"
+lint_off -rule UNUSEDPARAM -file "*/soc_pkg.sv" -match "*'XMEM_READ_LATENCY'*"
+lint_off -rule UNUSEDPARAM -file "*/soc_pkg.sv" -match "*'XMEM_WRITE_LATENCY'*"
 // Hack's ALU result is 16 bits; the port is the CPU's 32-bit datapath
 lint_off -rule UNUSEDSIGNAL -file "*/next_pc_unit.sv" -match "*'hack_comp'*"
 // mip only has MSIP/MTIP/MEIP
@@ -31,6 +37,10 @@ lint_off -rule UNUSEDSIGNAL -file "*/sdcard_spi.sv" -match "*'data_in'*"
 lint_off -rule PINCONNECTEMPTY -file "*/uart_tx.sv" -match "*'pout'*"
 lint_off -rule PINCONNECTEMPTY -file "*/uart_rx.sv" -match "*'sout'*"
 lint_off -rule PINCONNECTEMPTY -file "*/board_top.sv" -match "*'CLKOUT*'*"
+// The PSRAM controller's init_done (its power-up ends inside the POR, soc_top) and its
+// debug tracer port
+lint_off -rule PINCONNECTEMPTY -file "*/soc_top.sv" -match "*'init_done'*"
+lint_off -rule PINCONNECTEMPTY -file "*/soc_top.sv" -match "*'dbg_sample'*"
 lint_off -rule PINCONNECTEMPTY -file "*/tb_hex_runner.sv"
 // Testbench: the RAM's write enable is gated with reset as well
 lint_off -rule SYNCASYNCNET -file "*/tb_hex_runner.sv" -match "*'rst'*"
@@ -39,3 +49,13 @@ lint_off -rule SYNCASYNCNET -file "*/tb_hex_runner.sv" -match "*'rst'*"
 lint_off -rule UNUSEDPARAM -file "*/gowin_cells_sim.sv"
 lint_off -rule UNUSEDSIGNAL -file "*/gowin_cells_sim.sv"
 lint_off -rule DECLFILENAME -file "*/gowin_cells_sim.sv"
+// The PSRAM controller (Veryl dependency psram, vendor/psram_controller), as waived by
+// its own scripts/lint.vlt. Veryl prefixes a dependency's modules with its name
+// (psram_psram_core in psram_core.sv), so no file name matches its module
+lint_off -rule DECLFILENAME -file "*/dependencies/psram/rtl/*.sv"
+// Its register addresses, exported for users of the IP (the SoC never reaches them)
+lint_off -rule UNUSEDPARAM -file "*/dependencies/psram/rtl/psram_pkg.sv" -match "*'REG_ADDR_*'*"
+// Accesses are whole 32-bit words: req_addr[1:0] is ignored
+lint_off -rule UNUSEDSIGNAL -file "*/dependencies/psram/rtl/psram_core.sv" -match "*'req_addr'*"
+// CA byte 0 goes out from ca_packet when the request is accepted, not from ca_shift
+lint_off -rule UNUSEDSIGNAL -file "*/dependencies/psram/rtl/psram_core.sv" -match "*'ca_shift'*"

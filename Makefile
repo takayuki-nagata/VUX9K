@@ -480,7 +480,6 @@ synth-units: veryl
 	$(YOSYS) -p "read_verilog -sv $(CPU_RTL_SRCS); synth_gowin -top unified_cpu $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/unified_cpu_syn.v"
 	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/uart/clk_timer.sv $(VERYL_OUT_DIR)/soc/uart/shift_registers.sv $(VERYL_OUT_DIR)/soc/uart/fifo_sync.sv $(VERYL_OUT_DIR)/soc/uart/uart_tx.sv $(VERYL_OUT_DIR)/soc/uart/uart_rx.sv $(VERYL_OUT_DIR)/soc/uart/uart_controller.sv; synth_gowin -top uart_controller $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/uart_controller_syn.v"
 	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_pkg.sv $(VERYL_OUT_DIR)/soc/cpu/auto_mode_detector.sv; synth_gowin -top auto_mode_detector $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/auto_mode_detector_syn.v"
-	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/soc_pkg.sv $(VERYL_OUT_DIR)/soc/soc_xmem_stub.sv; synth_gowin -top soc_xmem_stub $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/soc_xmem_stub_syn.v"
 	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/soc_xmem_bridge.sv; synth_gowin -top soc_xmem_bridge $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/soc_xmem_bridge_syn.v"
 
 # The unit tests with another random seed each day (test-slow); the seed is in the log
@@ -556,10 +555,12 @@ sim-soc-gls-fast: synth-top firmware
 	@echo "=== Running Fast SoC Top Boot & Execution Verification (GLS Netlist) ==="
 	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc_gls[test_soc_gls_fast]"
 
+# The PSRAM controller (Veryl dependency psram, vendor/psram_controller), package first
+PSRAM_RTL_SRCS = $(addprefix $(VERYL_OUT_DIR)/dependencies/psram/rtl/,psram_pkg.sv psram_core.sv psram_phy.sv psram_controller.sv)
 SOC_RTL_SRCS = $(VERYL_OUT_DIR)/soc/soc_pkg.sv $(CPU_RTL_SRCS) $(VERYL_OUT_DIR)/soc/uart/clk_timer.sv $(VERYL_OUT_DIR)/soc/uart/fifo_sync.sv $(VERYL_OUT_DIR)/soc/uart/shift_registers.sv \
                $(VERYL_OUT_DIR)/soc/uart/uart_tx.sv $(VERYL_OUT_DIR)/soc/uart/uart_rx.sv $(VERYL_OUT_DIR)/soc/uart/uart_controller.sv $(VERYL_OUT_DIR)/soc/timer_core.sv \
                $(VERYL_OUT_DIR)/soc/sdcard_spi.sv $(VERYL_OUT_DIR)/soc/gpio_controller.sv $(VERYL_OUT_DIR)/soc/soc_ram.sv $(VERYL_OUT_DIR)/soc/soc_addr_decoder.sv \
-               $(VERYL_OUT_DIR)/soc/soc_xmem_stub.sv $(VERYL_OUT_DIR)/soc/soc_xmem_bridge.sv $(VERYL_OUT_DIR)/soc/soc_top.sv $(VERYL_OUT_DIR)/soc/board_top.sv
+               $(PSRAM_RTL_SRCS) $(VERYL_OUT_DIR)/soc/soc_xmem_bridge.sv $(VERYL_OUT_DIR)/soc/soc_top.sv $(VERYL_OUT_DIR)/soc/board_top.sv
 
 $(SYNTH_DIR)/soc.json $(SYNTH_DIR)/soc_syn.v: $(VERYL_OUT_DIR)/.stamp $(FIRMWARE_BUILD_DIR)/firmware.hex $(SOC_RTL_SRCS) $(SYNTH_OPTS_STAMP)
 	@mkdir -p $(SYNTH_DIR)

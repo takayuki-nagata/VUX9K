@@ -24,7 +24,8 @@ UART = 0x4000_0000  # +0 data, +4 status {frame_err, overrun, tx_full, rx_empty}
 TIMER = 0x4000_1000  # +0/+4 mtime lo/hi, +8/+C mtimecmp lo/hi
 GPIO = 0x4000_3000  # +0 LEDs, +4 button, +C soft-reset magic
 DRAM = 0x2000_0000
-XMEM = 0x8000_0000  # wait-state window: 2 KB repeating across region 8
+XMEM = 0x8000_0000  # wait-state window: the 8 MB PSRAM, repeating every 8 MB across region 8
+XMEM_BYTES = 0x80_0000
 RESET_MARKER_ADDR = DRAM + 0x200
 RESET_MARKER = 0xC0FFEE42
 GPIO_SOFT_RESET = 0x0000_A55A
@@ -107,19 +108,39 @@ def mmio_program() -> list[int]:
     a.lw("t3", 0, "t0")
     _expect(a, "t3", 0, 7)
 
-    # 18-20: the wait-state window: a word and a byte store read back through an alias
-    # 2 KB up and one at the top of the region; code copied there runs (fence.i first)
+    # 18-22: the wait-state window (the PSRAM; the controller's power-up isn't accelerated
+    # on Icarus, so the first access may wait for it): a word and byte stores on each die's
+    # lanes (bytes 0/2 die 0, 1/3 die 1), read back through the alias 8 MB up and from the
+    # top of region 8, 0x8FFF_F800 being 0x807F_F800 (18-19); 0x8080_0020, CR0 if the
+    # controller's register space were reachable, is the word at 0x8000_0020 (21); the
+    # last word (22); code copied there runs (fence.i first) (20)
     a.li("s6", XMEM)
     a.li("t0", 0xCAFE_BABE)
     a.sw("t0", 0x20, "s6")
     a.li("t0", 0x11)
     a.sb("t0", 0x22, "s6")
-    a.li("t0", XMEM + 0x800)
+    a.li("t0", XMEM + XMEM_BYTES)
     a.lw("t3", 0x20, "t0")
     _expect(a, "t3", 0xCA11_BABE, 18)
+    a.li("s7", XMEM + XMEM_BYTES - 0x800)
+    a.li("t0", 0x1234_5678)
+    a.sw("t0", 0x24, "s7")
     a.li("t0", 0x8FFF_F800)
-    a.lbu("t3", 0x22, "t0")
-    _expect(a, "t3", 0x11, 19)
+    a.li("t1", 0x99)
+    a.sb("t1", 0x25, "t0")
+    a.lw("t3", 0x24, "s7")
+    _expect(a, "t3", 0x1234_9978, 19)
+    a.li("t0", 0x0BAD_C0DE)
+    a.li("t1", XMEM + XMEM_BYTES + 0x20)
+    a.sw("t0", 0, "t1")
+    a.lw("t3", 0x20, "s6")
+    _expect(a, "t3", 0x0BAD_C0DE, 21)
+    a.li("t0", 0x600D_F00D)
+    a.li("t1", XMEM + XMEM_BYTES - 4)
+    a.sw("t0", 0, "t1")
+    a.li("t1", 0x8FFF_FFFC)
+    a.lw("t3", 0, "t1")
+    _expect(a, "t3", 0x600D_F00D, 22)
     a.li("t0", rv32_asm.i_type(0x5A, "zero", 0, "a2", 0x13))  # addi a2, zero, 0x5A
     a.sw("t0", 0x100, "s6")
     a.li("t0", rv32_asm.i_type(0, "ra", 0, "zero", 0x67))  # ret

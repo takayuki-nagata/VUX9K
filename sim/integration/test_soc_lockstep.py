@@ -14,11 +14,11 @@ import os
 
 import cocotb
 from cocotb.triggers import ReadOnly, RisingEdge, Timer
-from lockstep_programs import UART_BIT, programs
+from lockstep_programs import UART_BIT, XMEM_USED, programs
 from soc_env import CLK_PERIOD_PS, REPO_ROOT, load_imem, read_hex_words, soc_of, start_soc
 
 SLOW = os.environ.get("LOCKSTEP_SLOW", "") not in ("", "0")
-XMEM_WORDS = 512  # soc_pkg::XMEM_WORDS
+XMEM_HALF_WORDS = 1 << 20  # psram_word_model's mem is [2][XMEM_WORDS / 2] (soc_pkg::XMEM_WORDS = 2^21)
 
 
 def _firmware():
@@ -30,7 +30,7 @@ def _firmware():
 
 def _power_on_memories(soc, imem_words):
     """What $readmemh loaded at time 0 (earlier programs changed it), plus the program;
-    the window zeroed."""
+    the window's words the programs use zeroed (lockstep_programs.XMEM_USED)."""
     iram, lanes = _firmware()
     load_imem(soc, iram)
     if imem_words:
@@ -39,9 +39,11 @@ def _power_on_memories(soc, imem_words):
         mem = getattr(soc.ram_inst, f"d_mem{lane}")
         for i, v in enumerate(words):
             mem[i].value = v
-    xmem = soc.xmem_inst.mem
-    for i in range(XMEM_WORDS):
-        xmem[i].value = 0  # no initial contents in the RTL; the emulator starts it zeroed
+    xmem = soc.xmem_inst.mem  # the PSRAM word model (Verilator RTL builds)
+    for start, end in XMEM_USED:
+        for word in range(start // 4, end // 4):
+            # No initial contents in the RTL; the emulator starts it zeroed
+            xmem[word // XMEM_HALF_WORDS][word % XMEM_HALF_WORDS].value = 0
     regs = soc.cpu_inst.reg_file.registers
     for i in range(32):
         regs[i].value = 0  # no reset in rv32i_regfile; the emulator starts from 0

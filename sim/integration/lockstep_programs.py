@@ -11,7 +11,8 @@ instruction (fetch cycle, ISA, PC, register writes, bus writes, traps) and every
 UART TX byte with its cycle.
 
 A program is the power-on state (firmware preload from build/firmware, words over
-I-RAM, SD sectors; the wait-state window zeroed, as the emulator starts it) plus host
+I-RAM, SD sectors; the words of the wait-state window the programs use (XMEM_USED) zeroed,
+as the emulator starts it) plus host
 stimulus at exact cycles (cycle 0 = first cycle out of reset): UART bytes sent back to
 back from a cycle, and S2 button levels.
 """
@@ -25,7 +26,8 @@ from rv32_asm import Asm, b_type, i_type, r_type
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 UART_BIT = 156  # soc_pkg::UART_CNT: 18 MHz / 115200
 UART_FRAME = 10 * UART_BIT
-XMEM = 0x8000_0000  # the wait-state window: soc_pkg::RV_REGION_XMEM, 2 KB repeating
+XMEM = 0x8000_0000  # the wait-state window: soc_pkg::RV_REGION_XMEM, 8 MB of PSRAM
+XMEM_BYTES = 0x80_0000  # soc_pkg::XMEM_WORDS * 4: the window repeats every 8 MB of region 8
 XMEM_WAIT = 35  # soc_pkg::XMEM_READ_LATENCY: the longest wait of one access
 
 
@@ -132,8 +134,18 @@ def random_rv(seed: int, blocks: int = 300, base: int = 0x2000_0800) -> list:
 XMEM_IRQS = 4  # timer interrupts taken while running from the window
 
 
+# Word-address bits the xmem program sets one at a time (bits 0-8 are within its first 2 KB)
+XMEM_ADDR_LINES = range(9, 21)
+# Byte offsets in the window that the window programs read or write, as [start, end) ranges:
+# test_soc_lockstep zeroes these words of the RTL's PSRAM word model before each program, as
+# the emulator starts its window zeroed (never all 8 MB: one VPI write per word)
+XMEM_USED = [(0, 0x800), (0x7F_F840, 0x7F_F848)] + [(4 << b, (4 << b) + 4) for b in XMEM_ADDR_LINES]
+
+
 def xmem() -> list:
-    """The window at 0x8000_0000: stores and loads of every size, through aliases; a
+    """The window at 0x8000_0000: stores and loads of every size, through aliases (8 MB up,
+    the top of region 8, and 0x8080_0020, which would be the PSRAM's CR0 if the controller's
+    register space were reachable); a store to each high word-address line, all read back; a
     routine copied there (fence.i) and run, which sends a UART byte, reads the timer and
     mcycle and accesses the window itself; then a loop in the window, nearly all of whose
     cycles are fetch waits, until four timer interrupts (mtimecmp a different distance
@@ -144,7 +156,7 @@ def xmem() -> list:
     a.li("s1", 0x4000_0000)  # UART
     a.li("s2", 0x4000_1000)  # timer
     a.li("s10", 0x2000_0800)  # D-RAM
-    # Stores of every size, loads back, an alias 2 KB up and one at the top of the region
+    # Stores of every size, loads back, an alias 8 MB up and one at the top of the region
     a.li("t0", 0x1122_3344)
     a.sw("t0", 0x40, "s0")
     a.li("t1", 0xA5)
@@ -156,12 +168,25 @@ def xmem() -> list:
     a.lbu("t4", 0x41, "s0")
     a.lh("t5", 0x46, "s0")
     a.word(i_type(0x46, "s0", 5, "t6", 0x03))  # lhu
-    a.li("s3", XMEM + 0x800)
+    a.li("s3", XMEM + XMEM_BYTES)
     a.lw("t2", 0x40, "s3")
-    a.li("s4", 0x8FFF_F800)
+    a.li("s4", 0x8FFF_F800)  # the window's last 2 KB, 8 MB below
     a.sw("t0", 0x44, "s4")
-    a.lw("t3", 0x44, "s0")
+    a.li("t1", XMEM + XMEM_BYTES - 0x800)
+    a.lw("t3", 0x44, "t1")
     a.sw("t3", 0x40, "s10")  # a D-RAM store between window accesses
+    # Not the register space: 0x8080_0020 is the word at 0x8000_0020
+    a.li("t1", 0xC0DE_0020)
+    a.sw("t1", 0x20, "s3")
+    a.lw("t2", 0x20, "s0")
+    # Each high word-address line on its own, then all read back
+    for b in XMEM_ADDR_LINES:
+        a.li("t1", XMEM + (4 << b))
+        a.li("t0", 0x5A00_0000 | (b << 8) | b)
+        a.sw("t0", 0, "t1")
+    for b in XMEM_ADDR_LINES:
+        a.li("t1", XMEM + (4 << b))
+        a.lw("t2", 0, "t1")
 
     # The routine, assembled at its window address
     r = Asm(origin=XMEM + 0x100)
@@ -446,9 +471,9 @@ def programs() -> list:
     )
     progs.append(Program("hack_soft_reset", cycles=20_000, imem_words=hack_soft_reset()))
     progs.append(Program("sd_clkdiv", cycles=30_000, imem_words=sd_clkdiv()))
-    # The window programs finish by cycle ~2,600 / ~4,000 (window waits included); xmem
+    # The window programs finish by cycle ~3,600 / ~4,000 (window waits included); xmem
     # then takes timer interrupts in I-RAM until the end
-    progs.append(Program("xmem", cycles=5_000, imem_words=xmem()))
+    progs.append(Program("xmem", cycles=6_500, imem_words=xmem()))
     progs.append(Program("random_rv_xmem_4", cycles=8_000, imem_words=random_rv(4, base=XMEM + 0x400)))
     seeds = os.environ.get("LOCKSTEP_SEEDS", "")
     for s in [int(x) for x in seeds.split(",") if x]:

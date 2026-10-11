@@ -4,7 +4,7 @@
 //! Memory profiles: what the emulated board looks like.
 //!
 //! `Real` is the SoC as synthesized (soc/soc_ram.veryl, soc/soc_addr_decoder.veryl,
-//! the wait-state window of soc/soc_xmem_stub.veryl).
+//! the wait-state window: 8 MB of PSRAM behind soc/soc_xmem_bridge.veryl).
 //! `Extended` keeps the same MMIO and window but larger memories, for software that doesn't fit
 //! the real board (Zephyr bc); it is NOT real hardware. `IsaTest` is the flat 256 KB
 //! RAM of sim/tb_hex_runner.veryl, used only to run riscv-tests.
@@ -20,7 +20,7 @@ fn check_pow2(bytes: usize) -> usize {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Profile {
-    /// The Tang Nano 9K SoC: 16 KB I-RAM, 8 KB D-RAM, the 2 KB wait-state window.
+    /// The Tang Nano 9K SoC: 16 KB I-RAM, 8 KB D-RAM, 8 MB PSRAM in the wait-state window.
     Real,
     /// Same MMIO as `Real`, with bigger memories (not real hardware).
     Extended {
@@ -55,7 +55,7 @@ impl Profile {
         }
     }
 
-    /// The wait-state window at RV32 region 8 (soc_xmem_stub); the riscv-tests harness
+    /// The wait-state window at RV32 region 8 (the 8 MB PSRAM); the riscv-tests harness
     /// has none.
     pub fn xmem_bytes(self) -> usize {
         match self {
@@ -73,7 +73,7 @@ impl Profile {
     pub fn describe(self) -> String {
         match self {
             Profile::Real => {
-                "real (Tang Nano 9K SoC: 16 KB I-RAM, 8 KB D-RAM, 2 KB wait-state RAM)".to_string()
+                "real (Tang Nano 9K SoC: 16 KB I-RAM, 8 KB D-RAM, 8 MB PSRAM)".to_string()
             }
             Profile::Extended {
                 iram_bytes,

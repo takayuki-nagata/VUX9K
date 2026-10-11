@@ -26,6 +26,14 @@ pub module board_top (
     sd_mosi: output 'core logic,
     sd_miso: input  'core logic,
     sd_cs_n: output 'core logic,
+
+    // On-package PSRAM (soc_top's psram::psram_controller)
+    O_psram_ck     : output 'core logic    <2> ,
+    O_psram_ck_n   : output 'core logic    <2> ,
+    O_psram_cs_n   : output 'core logic    <2> ,
+    O_psram_reset_n: output 'core logic    <2> ,
+    IO_psram_dq    : inout  'core tri logic<16>,
+    IO_psram_rwds  : inout  'core tri logic<2> ,
 ) {
     var soc_clk : 'core clock;
     var pll_lock: 'core logic;
@@ -62,15 +70,21 @@ pub module board_top (
     assign soc_rst = rst_n & pll_lock;
 
     inst soc: soc_top (
-        clk    : soc_clk,
-        rst_n  : soc_rst,
-        btn             ,
-        uart_rx         ,
-        uart_tx         ,
-        led             ,
-        sd_sclk         ,
-        sd_mosi         ,
-        sd_miso         ,
-        sd_cs_n         ,
+        clk            : soc_clk,
+        rst_n          : soc_rst,
+        btn                     ,
+        uart_rx                 ,
+        uart_tx                 ,
+        led                     ,
+        sd_sclk                 ,
+        sd_mosi                 ,
+        sd_miso                 ,
+        sd_cs_n                 ,
+        O_psram_ck              ,
+        O_psram_ck_n            ,
+        O_psram_cs_n            ,
+        O_psram_reset_n         ,
+        IO_psram_dq             ,
+        IO_psram_rwds           ,
     );
 }

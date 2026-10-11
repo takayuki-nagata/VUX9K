@@ -76,7 +76,10 @@ async def start_soc(dut, *, sd_sectors=None, mbr=True, btn=1, accelerate_por=Tru
 
     sd_sectors: {lba: bytes} preloaded into the SD model before reset (after the MBR if mbr=True).
     btn: level of the active-low S2 button during and after reset (0 = held, e.g. for Safe Mode).
-    accelerate_por: jump soc_top's POR counter to its end if the signal is visible (RTL only).
+    accelerate_por: jump soc_top's POR counter to its end if the signal is visible (RTL only),
+        and end the PSRAM word model's power-up with it (Verilator RTL builds), so the window
+        is ready from the CPU's first cycle as on the board, where the power-up ends inside
+        the POR. The real controller (Icarus) isn't accelerated: a window access waits for it.
     during_reset: optional callable(soc) run while rst_n is still low, e.g. to preload I-RAM.
     sd_card: optional kwargs for SpiSdCardModel (e.g. {"sdhc": False, "strict": True}).
 
@@ -107,6 +110,8 @@ async def start_soc(dut, *, sd_sectors=None, mbr=True, btn=1, accelerate_por=Tru
     await ClockCycles(soc.clk, 5)
     if accelerate_por and hasattr(soc, "por_counter"):
         soc.por_counter.value = POR_DONE
+        if hasattr(soc.xmem_inst, "init_count"):  # sim/psram_word_model, not the controller
+            soc.xmem_inst.init_count.value = 0
     await ClockCycles(soc.clk, 10)
     return ser, sd_model
 
