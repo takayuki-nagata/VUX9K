@@ -40,6 +40,18 @@ never breaks Veryl itself; only external tooling that hardcodes paths to the
 *generated* `.sv` output (Makefile `read_verilog` commands, `sim/runners/sim_runner.py`'s
 `RTL_SOURCES`, `scripts/run_riscv_tests.py`) needs updating.
 
+The one exception to the flat namespace is a Veryl path dependency: the PSRAM controller,
+the git submodule `vendor/psram_controller` (pinned to a tag of its own repository),
+declared in `Veryl.toml` as `psram`. A subdirectory with its own `Veryl.toml` is skipped
+by the scan, so the dependency is the only way it comes in. Its modules are referenced as
+`psram::psram_controller`, generated with the dependency's name as prefix
+(`psram_psram_controller`, ...) into `build/veryl/dependencies/psram/rtl/`, read
+package first. It is upstream code: `pre_edit.py` refuses edits under `vendor/`; a fix
+goes to that repository and comes back as a new tag. `make eqy` exports the submodule at
+the commit the base records (`git archive` leaves submodules out) and compares
+`build/veryl/dependencies/<name>/` of each declared dependency together with `soc/` (Veryl
+also writes its standard library under `dependencies/std`; nothing uses it).
+
 ## Verification checklist after touching build paths or directory layout
 
 Run in this order (each depends on the previous succeeding):

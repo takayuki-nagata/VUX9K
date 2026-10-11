@@ -9,3 +9,7 @@ license = "MIT"
 
 [build]
 omit_project_prefix = true
+
+[dependencies]
+# PSRAM controller (git submodule, pinned to a tagged release; docs/integration.md there)
+psram = { path = "vendor/psram_controller" }

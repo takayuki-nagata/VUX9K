@@ -9,7 +9,10 @@ For behavior-preserving refactors: proves with Yosys eqy that <top> as generated
 from the working tree (gate: build/veryl) is equivalent to <top> generated from
 --base (gold). The base is exported with `git archive` into a temporary directory
 *outside* the repository (Veryl scans the whole project root, so a second copy of
-the sources inside it would clash) and built there with the same `veryl`.
+the sources inside it would clash) and built there with the same `veryl`. `git archive`
+leaves submodules out, so the Veryl path dependencies of the base's Veryl.toml (the
+PSRAM controller in vendor/) are exported from their submodule at the commit the base
+records for them.
 
 Both sides are flattened below <top>, so a refactor may change submodule
 interfaces or move logic between submodules; only <top>'s own ports must match.
@@ -40,12 +43,18 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 EQY_DIR = REPO_ROOT / "build" / "eqy"
 PACKAGE = Path("soc/cpu/rv32i_pkg.sv")  # always present; every *_pkg.sv is read before the modules
 BLACKBOX = {"soc_ram": Path("soc/soc_ram.sv")}
+# Generated trees compared: the SoC and the Veryl dependencies it declares (Veryl also
+# writes its standard library under dependencies/std, which the SoC doesn't use)
+RTL_DIRS = ("soc",) + tuple(
+    f"dependencies/{name}" for name in tomllib.loads((REPO_ROOT / "Veryl.toml").read_text()).get("dependencies", {})
+)
 
 
 def run(cmd, **kwargs):
@@ -63,11 +72,31 @@ def build_gold(base: str, veryl: str) -> Path:
     with tempfile.TemporaryDirectory(prefix="vux9k-eqy-") as tmp:
         archive = run(["git", "archive", sha], cwd=REPO_ROOT, capture_output=True).stdout
         run(["tar", "-x", "-C", tmp], input=archive)
+        export_path_dependencies(sha, Path(tmp))
         print(f"=== eqy: building gold RTL of {base} ({sha[:12]}) with {veryl} ===")
         run([veryl, "build", "--out-dir", "build/veryl"], cwd=tmp, stdout=subprocess.DEVNULL)
-        shutil.copytree(Path(tmp) / "build" / "veryl" / "soc", gold / "soc")
+        for name in RTL_DIRS:
+            if (Path(tmp) / "build" / "veryl" / name).is_dir():  # a dependency the base may not have yet
+                shutil.copytree(Path(tmp) / "build" / "veryl" / name, gold / name)
     (gold / ".done").touch()
     return gold
+
+
+def export_path_dependencies(sha: str, tree: Path) -> None:
+    """Fill in the submodules that tree/Veryl.toml names as path dependencies, at the
+    commits `sha` records for them (git archive exports a submodule as an empty directory)."""
+    manifest = tree / "Veryl.toml"
+    deps = tomllib.loads(manifest.read_text()).get("dependencies", {}) if manifest.exists() else {}
+    for dep in deps.values():
+        if not isinstance(dep, dict) or "path" not in dep:
+            continue
+        path = dep["path"]
+        entry = run(["git", "ls-tree", sha, path], cwd=REPO_ROOT, capture_output=True, text=True).stdout.split()
+        if len(entry) < 3 or entry[1] != "commit":
+            continue  # a plain directory of the base, already in its archive
+        archive = run(["git", "-C", path, "archive", entry[2]], cwd=REPO_ROOT, capture_output=True).stdout
+        (tree / path).mkdir(parents=True, exist_ok=True)
+        run(["tar", "-x", "-C", str(tree / path)], input=archive)
 
 
 def blackbox_stub(src: Path) -> str:
@@ -80,9 +109,9 @@ def blackbox_stub(src: Path) -> str:
 
 
 def snapshot(src_root: Path, dst: Path) -> list[Path]:
-    """Copy src_root/soc/**.sv to dst (black boxes stubbed); return the files in read order."""
+    """Copy the .sv files under src_root's RTL_DIRS to dst (black boxes stubbed); return them in read order."""
     shutil.rmtree(dst, ignore_errors=True)
-    files = sorted(p.relative_to(src_root) for p in (src_root / "soc").rglob("*.sv"))
+    files = sorted(p.relative_to(src_root) for d in RTL_DIRS for p in (src_root / d).rglob("*.sv"))
     if PACKAGE not in files:
         raise SystemExit(f"run_eqy.py: {src_root / PACKAGE} missing")
     out = []

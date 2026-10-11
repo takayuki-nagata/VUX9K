@@ -76,7 +76,8 @@ fmt:
 
 # ===== Veryl Build =====
 
-VERYL_SRCS = $(wildcard soc/*.veryl) $(wildcard soc/cpu/*.veryl) $(wildcard soc/uart/*.veryl) Veryl.toml
+VERYL_SRCS = $(wildcard soc/*.veryl) $(wildcard soc/cpu/*.veryl) $(wildcard soc/uart/*.veryl) \
+	$(wildcard vendor/psram_controller/rtl/*.veryl) Veryl.toml
 
 $(VERYL_OUT_DIR)/.stamp: $(VERYL_SRCS)
 	@mkdir -p $(VERYL_OUT_DIR)

@@ -1,3 +1,6 @@
 [submodule "vendor/bc_clone_rs"]
 	path = vendor/bc_clone_rs
 	url = https://github.com/takayuki-nagata/bc_clone_rs.git
+[submodule "vendor/psram_controller"]
+	path = vendor/psram_controller
+	url = https://github.com/takayuki-nagata/psram_controller.git

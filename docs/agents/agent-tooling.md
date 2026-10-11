@@ -44,9 +44,12 @@ when their trigger happens.
   timings, the fmt/check commands.
 - **A rule changes in a guide**: `sync-points.md` and the two agents' bodies.
 - **At the end of every development stage**, and before the changes known to move things:
-  - An external RTL dependency (e.g. a PSRAM controller): its `vendor/` path dependency
-    vs. `pre_edit.py`'s refused paths; new RTL in `SOC_RTL_SRCS` and in
-    `sim/runners/sim_runner.py`'s file lists (and `SOC_RTL_PUBLIC`); the guides' `paths:`.
+  - An external RTL dependency (the PSRAM controller, `vendor/psram_controller`, Veryl
+    dependency `psram`; layout.md, "Veryl module resolution is directory-agnostic"): its
+    `vendor/` path vs. `pre_edit.py`'s refused paths (refusing is right: it is upstream);
+    new RTL in `SOC_RTL_SRCS` and in `sim/runners/sim_runner.py`'s file lists (and
+    `SOC_RTL_PUBLIC`); `VERYL_SRCS`; `scripts/run_eqy.py`'s export of path dependencies;
+    the guides' `paths:`.
   - A new Boot Manager loader or image format: the `bm-change` skill's budgets and version
     numbers; once a Zephyr board runs from memory only the extended profile has today, the
     emulator-only rule in AGENTS.md and zephyr.md.

@@ -566,7 +566,7 @@ VUX9K/
 │   ├── riscv_tests/, act4/         # riscv-tests and riscv-arch-test (ACT4) configuration
 │   └── mcy/                        # mutation testing (mcy) driver
 ├── tools/                          # End-user CLI: vux_tool.py (UART flashing, diagnostics, monitor); 70-vux9k-board.rules (udev, ModemManager)
-├── vendor/                         # bc_clone_rs (git submodule); riscv-tests (fetched on demand by run_riscv_tests.py, gitignored)
+├── vendor/                         # bc_clone_rs and psram_controller (git submodules); riscv-tests (fetched on demand by run_riscv_tests.py, gitignored)
 └── build/                          # Unified build output (gitignored) - every generated artifact lands here
     ├── veryl/                      # veryl build --out-dir output: generated .sv/.map for soc/, soc/cpu/, soc/uart/, sim/
     ├── firmware/                   # firmware.bin/.hex, firmware_d0-3.hex, resident_loader.bin
