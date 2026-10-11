@@ -246,11 +246,15 @@ impl<D: BlockDevice> Volume<D> {
     /// either separator are accepted; case doesn't matter).
     pub fn open(&mut self, path: &str) -> Result<DirEntry, FatError> {
         let mut at = self.root();
-        for part in path.split(['/', '\\']).filter(|p| !p.is_empty()) {
+        // Byte-wise rather than str::split: smaller firmware
+        for part in path.as_bytes().split(|&c| c == b'/' || c == b'\\') {
+            if part.is_empty() {
+                continue;
+            }
             if !at.is_dir() {
                 return Err(FatError::WrongType);
             }
-            let name = to_short_name(part).ok_or(FatError::BadName)?;
+            let name = dir::short_name(part).ok_or(FatError::BadName)?;
             at = self.find(&at, &name)?.ok_or(FatError::NotFound)?;
         }
         Ok(at)

@@ -91,23 +91,31 @@ fn checksum(name: &[u8]) -> u8 {
 /// one: 1-8 characters, optionally a dot and 1-3 more, from A-Z, 0-9 and
 /// `! # $ % & ' ( ) - @ ^ _ ` { } ~` (lower case is folded).
 pub fn to_short_name(name: &str) -> Option<[u8; 11]> {
+    short_name(name.as_bytes())
+}
+
+/// `to_short_name` on bytes, without `str` slicing (whose UTF-8 checks cost firmware size).
+pub(crate) fn short_name(name: &[u8]) -> Option<[u8; 11]> {
     let mut out = [b' '; 11];
-    let (base, ext) = match name.rfind('.') {
-        Some(dot) => (&name[..dot], Some(&name[dot + 1..])),
-        None => (name, None),
+    // Base name into 0..8, after the last dot into 8..11
+    let dot = name.iter().rposition(|&c| c == b'.');
+    let (base, ext) = match dot {
+        Some(d) => (&name[..d], &name[d + 1..]),
+        None => (name, &name[name.len()..]),
     };
-    if base.is_empty() || base.len() > 8 || ext.is_some_and(|e| e.is_empty() || e.len() > 3) {
+    if base.is_empty() || base.len() > 8 || ext.len() > 3 || (dot.is_some() && ext.is_empty()) {
         return None;
     }
-    let (out_base, out_ext) = out.split_at_mut(8);
-    for (dst, src) in [(out_base, base), (out_ext, ext.unwrap_or(""))] {
-        for (d, c) in dst.iter_mut().zip(src.bytes()) {
-            let c = c.to_ascii_uppercase();
-            if !(c.is_ascii_uppercase() || c.is_ascii_digit() || b"!#$%&'()-@^_`{}~".contains(&c)) {
-                return None;
-            }
-            *d = c;
+    for (at, &c) in base
+        .iter()
+        .enumerate()
+        .chain(ext.iter().enumerate().map(|(i, c)| (8 + i, c)))
+    {
+        let c = c.to_ascii_uppercase();
+        if !(c.is_ascii_uppercase() || c.is_ascii_digit() || b"!#$%&'()-@^_`{}~".contains(&c)) {
+            return None;
         }
+        out[at] = c;
     }
     Some(out)
 }
