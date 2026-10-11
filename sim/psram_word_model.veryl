@@ -1,0 +1,112 @@
+// Copyright (c) 2026 Takayuki Nagata
+// SPDX-License-Identifier: MIT
+
+// Word-level model of psram::psram_controller for simulation: the controller's host-side
+// ports and cycle timing without its pins, so Verilator SoC simulations and the lockstep
+// runs do without the pin-level W955D8MBYA model (vendor/psram_controller/sim/model/,
+// Icarus only: it is timed in real time). sim/unit/test_psram_contract.py runs both side
+// by side and pins this model to the controller. Not synthesized.
+// - After reset, req_ready and init_done stay low for INIT_CYCLES cycles, the controller's
+//   power-up sequence (soc_pkg::PSRAM_INIT_CYCLES); init_count counts them down, and a
+//   test may deposit a smaller value into it to skip the wait.
+// - Then the contract of soc_xmem_stub: a request is taken in a cycle with
+//   req_valid && req_ready, and the requester holds req_valid and the request fields
+//   unchanged until then; req_ready is high while idle and low while a request is in
+//   flight; exactly one response per request, rsp_valid high for one cycle,
+//   XMEM_READ_LATENCY (read) or XMEM_WRITE_LATENCY (write) cycles after the accepting one,
+//   with rsp_rdata valid in that cycle for a read; req_ready is high again in that cycle.
+// - Addresses are byte addresses: req_addr[1:0] is ignored and the word index is the
+//   low log2(WORDS) bits of req_addr[22:2] (all of them for the default 8 MB). req_addr[23]
+//   (the controller's register space, which the SoC never addresses) is ignored too: such
+//   a request reads or writes memory like one with req_addr[23] = 0. req_wstrb[i] writes
+//   byte i.
+// - Memory has no initial contents, like the PSRAM (whatever the simulator starts it
+//   with; a test writes a word before it reads it). No clearing loop: Veryl
+//   unrolls `for` loops when it analyses the source, and one over the 2^21 words took
+//   `veryl check` past 11 GB. rsp_rdata holds the last read word until the next read,
+//   like the controller's (it is unknown until the first read; the controller's is 0).
+pub module psram_word_model #(
+    param WORDS      : u32 = 1 << 21                   , // 32-bit words: 8 MB, both dies
+    param INIT_CYCLES: u32 = soc_pkg::PSRAM_INIT_CYCLES,
+) (
+    clk      : input  clock              ,
+    rst_n    : input  reset_async_low    ,
+    req_valid: input  logic              ,
+    req_ready: output logic              ,
+    req_we   : input  logic              ,
+    req_addr : input  logic          <24>,
+    req_wdata: input  logic          <32>,
+    req_wstrb: input  logic          <4> ,
+    rsp_valid: output logic              ,
+    rsp_rdata: output logic          <32>,
+    init_done: output logic              ,
+) {
+    // Two halves: Veryl refuses a single unpacked dimension of 2^21 elements
+    const IDX_BITS: u32 = $clog2(WORDS);
+    const ROW_BITS: u32 = IDX_BITS - 1;
+    // Counter loads: the response follows the cycle in which the count is 1
+    const READ_COUNT : logic<6> = (soc_pkg::XMEM_READ_LATENCY - 1) as 6;
+    const WRITE_COUNT: logic<6> = (soc_pkg::XMEM_WRITE_LATENCY - 1) as 6;
+
+    var mem       : logic<32> [2, WORDS / 2];
+    var init_count: logic<32>               ; // power-up cycles left
+    var busy      : logic                   ;
+    var count     : logic<6>                ;
+    var rdata     : logic<32>               ; // the last read word (no reset, like the array)
+
+    let idx   : logic<IDX_BITS> = req_addr[IDX_BITS + 1:2];
+    let half  : logic           = idx[IDX_BITS - 1];
+    let row   : logic<ROW_BITS> = idx[ROW_BITS - 1:0];
+    let accept: logic           = req_valid && req_ready;
+
+    assign init_done = init_count == 32'd0;
+    assign req_ready = init_done && !busy;
+    assign rsp_rdata = rdata;
+
+    always_ff (clk, rst_n) {
+        if_reset {
+            init_count = INIT_CYCLES;
+            busy       = 1'b0;
+            count      = 6'd0;
+            rsp_valid  = 1'b0;
+        } else {
+            rsp_valid = 1'b0;
+            if init_count != 32'd0 {
+                init_count -= 32'd1;
+            }
+            if accept {
+                busy  = 1'b1;
+                count = if req_we ? WRITE_COUNT : READ_COUNT;
+            } else if busy {
+                if count == 6'd1 {
+                    busy      = 1'b0;
+                    rsp_valid = 1'b1;
+                }
+                count -= 6'd1;
+            }
+        }
+    }
+
+    // The array is only touched here, never in a combinational read: Icarus makes such a
+    // process sensitive to every word, and compiling it did not finish in minutes.
+    always_ff (clk) {
+        if accept {
+            if !req_we {
+                rdata = mem[half][row];
+            } else {
+                if req_wstrb[0] {
+                    mem[half][row][7:0] = req_wdata[7:0];
+                }
+                if req_wstrb[1] {
+                    mem[half][row][15:8] = req_wdata[15:8];
+                }
+                if req_wstrb[2] {
+                    mem[half][row][23:16] = req_wdata[23:16];
+                }
+                if req_wstrb[3] {
+                    mem[half][row][31:24] = req_wdata[31:24];
+                }
+            }
+        }
+    }
+}

@@ -41,6 +41,16 @@ pub package soc_pkg {
     const XMEM_READ_LATENCY : u32      = 35;
     const XMEM_WRITE_LATENCY: u32      = 34;
 
+    // PSRAM power-up (psram::psram_controller): cycles from reset release until req_ready
+    // and init_done first rise. psram_core holds RESET# low for tRP (psram_pkg::T_RP_NS,
+    // 400 ns) and waits tVCS (T_VCS_NS, 200 us), each converted to CLK_HZ cycles rounded
+    // up, and spends one more cycle in each of the two states: 8 + 3600 + 2 = 3610 at
+    // 18 MHz. Copied here (soc_pkg must not need the IP's package); the contract test
+    // sim/unit/test_psram_contract.py pins it to the controller.
+    const PSRAM_RESET_PULSE_CYCLES: u64 = (400 * (CLK_HZ as u64) + 999_999_999) / 1_000_000_000;
+    const PSRAM_INIT_WAIT_CYCLES  : u64 = (200_000 * (CLK_HZ as u64) + 999_999_999) / 1_000_000_000;
+    const PSRAM_INIT_CYCLES       : u32 = (PSRAM_RESET_PULSE_CYCLES + PSRAM_INIT_WAIT_CYCLES + 2) as u32;
+
     // Hack data address map (16-bit word addresses): RAM below HACK_MMIO_BASE,
     // MMIO in the 16 words from HACK_MMIO_BASE (UART in the first 4, GPIO after)
     const HACK_MMIO_BASE: logic<16> = 16'h6000;

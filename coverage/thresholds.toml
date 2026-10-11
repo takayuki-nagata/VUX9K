@@ -20,6 +20,7 @@ decode = 100.0
 fifo = 100.0
 lsu = 100.0
 npc = 100.0
+psram = 100.0
 sd = 100.0
 stall = 100.0
 trap = 100.0

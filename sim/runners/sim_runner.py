@@ -59,6 +59,19 @@ TB_SOC_TOP = SIM_DIR / "tb_soc_top.sv"
 TB_HEX_RUNNER = VERYL_OUT_DIR / "sim" / "tb_hex_runner.sv"
 # Test wrapper for the SP/SDPB cell models (sim/tb_gowin_bram.veryl): cell models only, no RTL
 TB_GOWIN_BRAM = VERYL_OUT_DIR / "sim" / "tb_gowin_bram.sv"
+# The word model's contract test (sim/tb_psram_contract.veryl): the PSRAM controller (a Veryl
+# dependency, package first) on the pin-level W955D8MBYA model, next to sim/psram_word_model.veryl.
+# Icarus only: the W955 model is timed in real time (`realtime`, `#` delays).
+_PSRAM_IP = VERYL_OUT_DIR / "dependencies" / "psram" / "rtl"
+_W955_MODEL = REPO_ROOT / "vendor" / "psram_controller" / "sim" / "model"
+PSRAM_CONTRACT_SOURCES = (
+    [VERYL_OUT_DIR / "soc" / "soc_pkg.sv"]
+    + [_PSRAM_IP / f"{m}.sv" for m in ("psram_pkg", "psram_core", "psram_phy", "psram_controller")]
+    + [_W955_MODEL / "w955d8mbya_die.sv", _W955_MODEL / "w955d8mbya_model.sv"]
+    + [VERYL_OUT_DIR / "sim" / "psram_word_model.sv", VERYL_OUT_DIR / "sim" / "tb_psram_contract.sv"]
+)
+ICARUS_ONLY = {"tb_psram_contract"}
+PSRAM_CONTRACT_RUN_DIR = SIM_BUILD_DIR / "psram_contract" / "run_test_psram_contract"  # fcov.yml: coverage-fcov
 # Simulation models of the Gowin cells the GLS netlists instantiate (from sim/gowin_cells_sim.veryl),
 # and the copy of them GLS builds actually read (see _gowin_cells_with_net_inputs)
 GOWIN_CELLS = VERYL_OUT_DIR / "sim" / "gowin_cells_sim.sv"
@@ -135,6 +148,10 @@ def sources_for(toplevel: str, gls: bool) -> list[Path]:
     """RTL sources, or Gowin cell models + the yosys netlist for toplevel (GLS)."""
     if toplevel == "tb_gowin_bram":
         return [_gowin_cells_with_net_inputs(), TB_GOWIN_BRAM]
+    if toplevel == "tb_psram_contract":
+        if gls:
+            raise ValueError("tb_psram_contract has no gate-level build")
+        return list(PSRAM_CONTRACT_SOURCES)
     if gls:
         # Wrappers simulate around the netlist of what they wrap
         netlist = {"soc_top": "soc_syn.v", "tb_soc_top": "soc_syn.v", "tb_hex_runner": "unified_cpu_syn.v"}.get(
@@ -229,6 +246,8 @@ def run(
     a failing cocotb test fails the calling pytest test. Returns the results file.
     """
     sim = sim or os.environ.get("SIM", "icarus")
+    if toplevel in ICARUS_ONLY and sim != "icarus":
+        raise ValueError(f"{toplevel} runs on Icarus only (its PSRAM model is timed in real time)")
     coverage = os.environ.get("HDL_COVERAGE", "") not in ("", "0")
     if coverage and (sim != "verilator" or gls):
         raise ValueError("HDL_COVERAGE=1 needs SIM=verilator and an RTL (non-GLS) build")

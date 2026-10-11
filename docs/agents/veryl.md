@@ -41,6 +41,14 @@ these; one of the three tools does not (found 2026-09):
 `make check-rtl-syntax` (Yosys read + Icarus compile of the generated SoC, about a second)
 catches the first five, as does `make sim-unit`; `veryl build` alone does not. Only a GLS test catches the last one.
 
+**Veryl unrolls `for` loops while it analyses the source** (`veryl check`, `veryl build`,
+and so the edit hooks): a loop that cleared the 2^21 words of `sim/psram_word_model.veryl`
+in an `initial` block took `veryl check` to 11.7 GB and out of memory (2026-10-11). Don't
+clear or initialise big memories with a loop; a test clears the words it uses, or the memory
+has no initial contents. Keep every loop's trip count small (a few hundred at most). Veryl
+also refuses a single unpacked dimension of 2^21 elements ("exceed evaluate size limit"),
+which is why that model's array is `[2, WORDS / 2]`.
+
 `$readmemh` in synthesized RTL: `soc_ram` preloads its arrays in a plain Veryl
 `initial` block, allowed by `#[allow(initial_assign)]` on each array. Veryl emits it
 without a `` `ifndef SYNTHESIS `` guard, so yosys reads the files and the firmware

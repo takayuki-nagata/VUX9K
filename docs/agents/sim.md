@@ -17,13 +17,14 @@ the Rust emulator. The split tracks *which helper a test needs*: `sdcard_model.p
 `lockstep_programs.py`) live in `sim/integration/`; `sim/emu/vux9k.py` puts that
 directory on `sys.path`. `sim/runners/` holds the pytest entry point that builds and
 runs all cocotb tests (see below).
-`gowin_cells_sim.veryl`, `tb_soc_top.sv`, `tb_hex_runner.veryl` and `tb_gowin_bram.veryl`
-stay at `sim/`'s top level — **do not move them into a subdirectory**:
+`gowin_cells_sim.veryl`, `tb_soc_top.sv`, `tb_hex_runner.veryl`, `tb_gowin_bram.veryl`,
+`psram_word_model.veryl` and `tb_psram_contract.veryl` stay at `sim/`'s top level — **do not move them into a subdirectory**:
 - `sim/runners/sim_runner.py` refers to `sim/tb_soc_top.sv` (RTL and GLS) by path.
 - The `.veryl` files there are the only Veryl sources outside `soc/`; Veryl mirrors
   the source tree into `build/veryl/`, so they compile to
   `build/veryl/sim/gowin_cells_sim.sv` (the Gowin cell models for GLS) and
-  `build/veryl/sim/tb_gowin_bram.sv` (a test wrapper for the SP/SDPB models), paths
+  `build/veryl/sim/tb_gowin_bram.sv` (a test wrapper for the SP/SDPB models),
+  `build/veryl/sim/psram_word_model.sv` and `tb_psram_contract.sv` (below), paths
   `sim/runners/sim_runner.py` hardcodes, and `build/veryl/sim/tb_hex_runner.sv`
   (a path `scripts/run_riscv_tests.py` hardcodes). Moving any of them
   changes that generated path and silently breaks GLS or `make test-isa` (this is
@@ -107,6 +108,31 @@ whether the model or the RTL is wrong; an RTL bug gets `xfail(strict=True)` unti
   the start of the test (the CSR writes, SD dividers, UART bytes 0x00/0xFF), never a
   lower minimum; a bin that can't happen is a model error (remove it, say why). Sampling
   functions take positional arguments only.
+
+## The PSRAM word model and its contract test
+
+`sim/psram_word_model.veryl` is `psram::psram_controller` (the PSRAM IP, a Veryl dependency in
+`vendor/psram_controller`) reduced to its host-side ports and cycle timing: the power-up
+(`req_ready`/`init_done` low for `soc_pkg::PSRAM_INIT_CYCLES`, counted down in `init_count`,
+which a test may deposit a smaller value into), then the 35/34-cycle read/write latency of
+the wait-state window's contract, byte strobes, 8 MB of words. It exists because the real
+controller needs a pin-level PSRAM model, and the only one, the IP's W955D8MBYA model
+(`vendor/psram_controller/sim/model/`), is timed in real time (`realtime`, `#` delays) and runs
+on Icarus only; Verilator SoC runs and the lockstep runs are to use the word model instead. Simulation
+only: it is in no synthesis or lint source list.
+
+`sim/unit/test_psram_contract.py` (`make sim-psram-contract`, in `test-sim`, fcov group
+`psram`) pins the word model to the controller: `sim/tb_psram_contract.veryl` drives both from
+the same requests, the controller on the W955 model, and the test checks every cycle that both
+agree on `req_ready`/`rsp_valid`/`init_done` and the read data, that the power-up is exactly
+`PSRAM_INIT_CYCLES` (read from the tb's `init_cycles` output) and shorter than `soc_top`'s
+power-on reset, and that the W955 model's checkers counted no error. It runs on Icarus whatever
+`SIM` says (`sim_runner.ICARUS_ONLY`; `test_sim.py::test_psram_contract`), in its own run
+directory `build/sim/psram_contract/`, outside the `build/sim/<sim>/` tree whose `fcov.yml`
+files `sim-unit` deletes; `coverage-fcov` reads it from there. Both memories start unknown, so
+the test reads only words it wrote, each first written with all four strobes. A change to the
+controller (a new submodule tag) or to the word model reruns it; if it fails, the word model
+follows the controller, not the other way round.
 
 ## SoC cocotb tests: clock in HDL, never wait with `ClockCycles`
 

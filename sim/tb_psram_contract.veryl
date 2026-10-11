@@ -1,0 +1,89 @@
+// Copyright (c) 2026 Takayuki Nagata
+// SPDX-License-Identifier: MIT
+
+// Contract testbench of sim/psram_word_model.veryl: the real controller
+// (psram::psram_controller at soc_pkg::CLK_HZ) on the pin-level W955D8MBYA model
+// (vendor/psram_controller/sim/model/, Icarus only) and the word model, side by side on
+// the same clock, reset and host requests. sim/unit/test_psram_contract.py drives the
+// requests and checks that both answer alike in every cycle. The W955 model's protocol
+// and timing checkers count violations in u_w955.error_count.
+module tb_psram_contract (
+    clk  : input clock          ,
+    rst_n: input reset_async_low,
+
+    // Host requests, fanned out to both
+    req_valid: input logic    ,
+    req_we   : input logic    ,
+    req_addr : input logic<24>,
+    req_wdata: input logic<32>,
+    req_wstrb: input logic<4> ,
+
+    // psram_controller
+    ctl_req_ready: output logic    ,
+    ctl_rsp_valid: output logic    ,
+    ctl_rsp_rdata: output logic<32>,
+    ctl_init_done: output logic    ,
+
+    // psram_word_model
+    mdl_req_ready: output logic    ,
+    mdl_rsp_valid: output logic    ,
+    mdl_rsp_rdata: output logic<32>,
+    mdl_init_done: output logic    ,
+
+    init_cycles: output logic<32>, // soc_pkg::PSRAM_INIT_CYCLES, for the test to read
+) {
+    assign init_cycles = soc_pkg::PSRAM_INIT_CYCLES;
+
+    var psram_ck     : logic    <2> ;
+    var psram_ck_n   : logic    <2> ;
+    var psram_cs_n   : logic    <2> ;
+    var psram_reset_n: logic    <2> ;
+    var psram_dq     : tri logic<16>;
+    var psram_rwds   : tri logic<2> ;
+
+    inst u_ctl: psram::psram_controller #(
+        CLK_HZ: soc_pkg::CLK_HZ,
+    ) (
+        clk                           ,
+        rst_n                         ,
+        req_valid                     ,
+        req_ready      : ctl_req_ready,
+        req_we                        ,
+        req_addr                      ,
+        req_wdata                     ,
+        req_wstrb                     ,
+        rsp_valid      : ctl_rsp_valid,
+        rsp_rdata      : ctl_rsp_rdata,
+        init_done      : ctl_init_done,
+        O_psram_ck     : psram_ck     ,
+        O_psram_ck_n   : psram_ck_n   ,
+        O_psram_cs_n   : psram_cs_n   ,
+        O_psram_reset_n: psram_reset_n,
+        IO_psram_dq    : psram_dq     ,
+        IO_psram_rwds  : psram_rwds   ,
+        dbg_sample     : _            ,
+    );
+
+    inst u_w955: $sv::w955d8mbya_model (
+        ck     : psram_ck     ,
+        ck_n   : psram_ck_n   ,
+        cs_n   : psram_cs_n   ,
+        reset_n: psram_reset_n,
+        dq     : psram_dq     ,
+        rwds   : psram_rwds   ,
+    );
+
+    inst u_mdl: psram_word_model (
+        clk                     ,
+        rst_n                   ,
+        req_valid               ,
+        req_ready: mdl_req_ready,
+        req_we                  ,
+        req_addr                ,
+        req_wdata               ,
+        req_wstrb               ,
+        rsp_valid: mdl_rsp_valid,
+        rsp_rdata: mdl_rsp_rdata,
+        init_done: mdl_init_done,
+    );
+}

@@ -12,7 +12,7 @@ The simulator is $SIM (default icarus).
 """
 
 import pytest
-from sim_runner import run
+from sim_runner import PSRAM_CONTRACT_RUN_DIR, run
 
 slow = pytest.mark.slow
 
@@ -96,6 +96,14 @@ def _ids(cases):
 @pytest.mark.parametrize("toplevel,module", UNIT, ids=_ids(UNIT))
 def test_unit(toplevel, module):
     run(toplevel, module)
+
+
+# psram_word_model against the real PSRAM controller on its pin-level model, on Icarus
+# whatever $SIM says (the model is timed in real time); the Makefile's sim-psram-contract.
+# Its run directory is outside build/sim/<sim>/, whose fcov.yml files sim-unit deletes.
+@pytest.mark.unit
+def test_psram_contract():
+    run("tb_psram_contract", "test_psram_contract", sim="icarus", test_dir=PSRAM_CONTRACT_RUN_DIR)
 
 
 @pytest.mark.unit
