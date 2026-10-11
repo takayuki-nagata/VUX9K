@@ -3,8 +3,8 @@
 
 //! The firmware's hardware-independent logic: the SoC's address map, the SD slot
 //! layout and VUX9 boot header (v3) and file header (v4), CRC32, the self-update
-//! checks, the `w` upload exchange and transfer v2, the Boot Manager -> Resident Loader mailbox, and number formatting. No
-//! MMIO here (the drivers pass themselves in as traits), so all of it is tested on
+//! checks, the `w` upload exchange and transfer v2, the Boot Manager -> Resident
+//! Loader mailbox, FAT32 (`fat`), and number formatting. No MMIO here (the drivers pass themselves in as traits), so all of it is tested on
 //! the host: `cargo test -p fw_common --target x86_64-unknown-linux-gnu`
 //! (make test-fw-host).
 //!
@@ -13,6 +13,7 @@
 
 #![no_std]
 
+pub mod fat;
 pub mod fmt;
 pub mod header;
 pub mod mailbox;

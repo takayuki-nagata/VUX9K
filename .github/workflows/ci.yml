@@ -44,7 +44,7 @@ jobs:
       - name: Install Host Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-riscv64-linux-gnu device-tree-compiler ninja-build
+          sudo apt-get install -y gcc-riscv64-linux-gnu device-tree-compiler ninja-build dosfstools mtools
 
       - name: Install Rust Toolchain & Target
         uses: dtolnay/rust-toolchain@master

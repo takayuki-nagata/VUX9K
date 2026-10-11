@@ -2,6 +2,9 @@
 paths:
   - "firmware/**"
   - "tools/vux_tool.py"
+  - "sim/emu/test_vux9_header.py"
+  - "sim/emu/test_upload_v2.py"
+  - "sim/emu/test_fat_images.py"
 ---
 
 # Firmware (Boot Manager, Resident Loader, fw_common)
@@ -49,6 +52,16 @@ release/{boot_manager,resident_loader}`.
   (`VUX9_VECTORS_UPDATE=1` regenerates them): the host test replays their host bytes into
   `upload_v2` and compares its lines, the pytest runs the sender against their device
   lines. Change both sides and the reference device together.
+- **`fw_common::fat` is tested on images from the real tools**: `tests/fat_images/` holds
+  card images that mkfs.fat and mtools made (stored sparse, with a `.files` list of what
+  must read back), rebuilt and checked with `fsck.fat` by `sim/emu/test_fat_images.py`
+  (`make test-fat`, which fails instead of skipping without dosfstools/mtools;
+  `VUX9_VECTORS_UPDATE=1` rewrites them, byte-for-byte reproducibly). The host tests
+  (`tests/fat.rs`) read them and break copies of them one field at a time. A volume is
+  FAT32 by its BPB (`FATSz16 == 0`), so the images can be a few MB; mkfs.fat then keeps the
+  sector count in TotSec16. Callbacks are `&mut dyn FnMut`: generic ones gave each call
+  site its own copy of the loops, which costs firmware size and split the host coverage
+  per instantiation.
 - **Raise `BOOT_MGR_VERSION` with every Boot Manager change**: boards install a slot-0
   image only if its header version is greater. Tests read it from `main.rs`
   (`sim/emu/bm_env.py`, `scripts/test_hardware.py`); don't hard-code it.

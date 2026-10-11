@@ -89,7 +89,7 @@ except the handful of firmware-hex symlinks described below
 | Tier | What | When |
 |---|---|---|
 | `make check`, `check-rtl-syntax`, `lint-rtl` | static checks | every change (seconds) |
-| `make test-sim` | everything in CI per push: unit RTL + GLS, ISA (riscv-tests, ACT4) RTL/GLS/emu and RTL with bus waits, emulator, firmware host tests + size, coverage-fw/fcov/rust, lockstep, SoC fast/mmio/boot/hack/sd-quirks/hw-flow, Zephyr demo RTL, GLS fast | before merging |
+| `make test-sim` | everything in CI per push: unit RTL + GLS, ISA (riscv-tests, ACT4) RTL/GLS/emu and RTL with bus waits, emulator, firmware host tests + size + FAT images (`test-fat`), coverage-fw/fcov/rust, lockstep, SoC fast/mmio/boot/hack/sd-quirks/hw-flow, Zephyr demo RTL, GLS fast | before merging |
 | `make test-slow` | GLS flashing flow, Icarus full flow, long lockstep, Zephyr demo GLS, the PSRAM controller on its pin model (SoC window on Icarus RTL, controller netlist), unit tests with a new random seed | nightly; by hand after touching the flashing/SD chain (sync-points.md) |
 | `make sta`, `make timing`, `make eqy` | timing; RTL refactor proof | RTL changes |
 | `make hw-smoke`, `make test-hw`, `test-hw-dist`, `test-hw-upgrade` | the board | after RTL changes, before flashing or releasing (`test-hw-upgrade`: the previous release's slots and tool, RELEASING.md) |
