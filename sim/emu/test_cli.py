@@ -5,7 +5,6 @@
 
 import os
 import socket
-import struct
 import subprocess
 import sys
 import time
@@ -21,10 +20,11 @@ def run(*args, timeout=60):
 
 
 def test_batch_until_prompt():
-    r = run("--until", "vux> ", "--cycles", "5000000")
+    # The default card has no FAT32 volume: the first stage stops at its prompt
+    r = run("--until", "s1> ", "--cycles", "10000000")
     assert r.returncode == 0, r.stderr
-    assert b"Boot Manager" in r.stdout
-    assert r.stdout.endswith(b"vux> ")
+    assert b"VUX9K Stage 1" in r.stdout
+    assert r.stdout.endswith(b"s1> ")
     assert b"--until text received" in r.stderr
 
 
@@ -106,27 +106,22 @@ def tcp_session(extra_args, dialog):
 
 def test_tcp_uart_session():
     def dialog(recv_until, send):
-        recv_until(b"vux> ")
+        recv_until(b"s1> ")
         send(b"h\r")
-        recv_until(b"Available Commands")
+        recv_until(b"Commands:")
 
     assert b"host closed the UART" in tcp_session([], dialog)
 
 
-def test_mkimg_slot_boots_from_the_boot_manager(tmp_path):
-    payload = tmp_path / "hash.bin"
-    # lui a1, 0x40000; addi a0, zero, '#'; sb a0, 0(a1); j .
-    payload.write_bytes(struct.pack("<IIII", 0x400005B7, 0x02300513, 0x00A58023, 0x0000006F))
+def test_mkfat_card_boots_the_second_stage(tmp_path):
     img = tmp_path / "sd.img"
     tool = [sys.executable, os.path.join(REPO_ROOT, "tools", "vux_tool.py")]
-    subprocess.run([*tool, "mkimg", str(img), "--slot", f"1:{payload}:riscv:Hash"], check=True)
-    assert len(img.read_bytes()) == (128 + 1) * 512
+    stage2 = os.path.join(REPO_ROOT, "build", "firmware", "stage2", "STAGE2.BIN")
+    subprocess.run([*tool, "mkfat", str(img), "--file", f"VUX9K/STAGE2.BIN={stage2}"], check=True)
 
     def dialog(recv_until, send):
-        recv_until(b"vux> ")
-        send(b"1")
-        recv_until(b"[RL] Slot 1")
-        recv_until(b"#")
+        out = recv_until(b"s2> ")
+        assert b"[BOOT] STAGE2.BIN v1" in out and b"[S2] a0=0x00000001 a1=0x00000800" in out, out
 
     tcp_session(["--sd", str(img)], dialog)
 
@@ -135,7 +130,7 @@ def test_sd_write_back(tmp_path):
     img = tmp_path / "sd.img"
     img.write_bytes(sd_image({}))
     before = img.read_bytes()
-    # The Boot Manager's 'd' command reads sector 0; nothing writes, so the image is unchanged
-    r = run("--sd", str(img), "--sd-write-back", "--until", "vux> ", "--cycles", "5000000")
+    # The first stage reads sector 0; nothing writes, so the image is unchanged
+    r = run("--sd", str(img), "--sd-write-back", "--until", "s1> ", "--cycles", "10000000")
     assert r.returncode == 0, r.stderr
     assert img.read_bytes() == before

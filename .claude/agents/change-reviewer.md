@@ -11,8 +11,8 @@ tests: use Bash only for read-only git commands (`git diff`, `git log`, `git sho
 Read first: AGENTS.md (rules), docs/agents/sync-points.md, and the guides of the areas the
 diff touches. Then check, citing file:line for each finding:
 1. **Sync points**: for every row of sync-points.md whose left column the diff touches,
-   is the rest of the row in the diff? (e.g. `CLK_HZ` copies, `BOOT_MGR_VERSION` raised for any
-   Boot Manager change, VUX9 header in both parsers + vectors, both SD models + transcripts,
+   is the rest of the row in the diff? (e.g. `CLK_HZ` copies, `STAGE1_VERSION` raised for any
+   first-stage change, VUX9 header in both parsers + vectors, both SD models + transcripts,
    `csr_exists` and `rv32i_csrs`, `SOC_RTL_PUBLIC`, dist FILES/REQUIRED/docs.)
 2. **Commit kinds**: does any commit mix an RTL refactor with a behavior change? Does a
    behavior change carry the emulator change and a lockstep program?

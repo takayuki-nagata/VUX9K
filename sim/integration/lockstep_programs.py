@@ -19,6 +19,8 @@ back from a cycle, and S2 button levels.
 
 import os
 import random
+import struct
+import sys
 from dataclasses import dataclass, field
 
 from rv32_asm import Asm, b_type, i_type, r_type
@@ -140,6 +142,10 @@ XMEM_ADDR_LINES = range(9, 21)
 # test_soc_lockstep zeroes these words of the RTL's PSRAM word model before each program, as
 # the emulator starts its window zeroed (never all 8 MB: one VPI write per word)
 XMEM_USED = [(0, 0x800), (0x7F_F840, 0x7F_F848)] + [(4 << b, (4 << b) + 4) for b in XMEM_ADDR_LINES]
+# The first stage's .bss and stack (fw_common::map::S1_RAM_BASE, 64 KB below the second
+# stage) and the start of the second stage's window (STAGE2_BASE), for the s1_* programs
+STAGE2_BASE = 0x8070_0000
+XMEM_USED += [(0x6F_0000, 0x6F_0100), (0x6F_E000, 0x70_0000), (0x70_0000, 0x70_0100)]
 
 
 def xmem() -> list:
@@ -433,18 +439,42 @@ def _hex_words(path):
         return [int(line, 16) for line in f if line.strip()]
 
 
-def _hash_slot1():
-    """Slot 1 image of a program printing '#' (as test_soc_fast uses)."""
-    import struct
-    import sys
+def hash_program(origin: int, soft_reset: bool = False) -> bytes:
+    """Code that prints '#' (once the UART's TX FIFO has room: the first stage's last lines
+    may still fill it) and stops, or soft-resets back to the first stage."""
+    a = Asm(origin=origin)
+    a.lui("a1", 0x40000)  # UART
+    a.label("wait")
+    a.lw("t0", 4, "a1")
+    a.andi("t0", "t0", 2)  # TX full
+    a.bne("t0", "zero", "wait")
+    a.addi("a0", "zero", ord("#"))
+    a.sb("a0", 0, "a1")
+    if soft_reset:
+        a.lui("a2", 0x40003)  # GPIO
+        a.lui("a3", 0xA)
+        a.addi("a3", "a3", 0x55A)  # SOFT_RESET_KEY's low half (0x0000_A55A)
+        a.sw("a3", 0xC, "a2")
+    a.label("stop")
+    a.jal("zero", "stop")
+    words = a.assemble()
+    return struct.pack(f"<{len(words)}I", *words)
 
+
+def stage2_card() -> dict:
+    """A FAT32 card with \\VUX9K\\STAGE2.BIN printing '#', as {lba: sector}."""
     if REPO_ROOT not in sys.path:
         sys.path.insert(0, REPO_ROOT)
     import tools.vux_tool as vux_tool
 
-    payload = struct.pack("<IIII", 0x400005B7, 0x02300513, 0x00A58023, 0x0000006F)
-    raw, meta = vux_tool.build_vux9_image(payload, slot=1, name="TestApp", mode="riscv")
-    return {128 + i: raw[i * 512 : (i + 1) * 512] for i in range(meta["num_sectors"])}
+    data, _ = vux_tool.build_vux9_v4_image(hash_program(STAGE2_BASE), name="test", load_addr=STAGE2_BASE)
+    img = vux_tool.build_fat32_image({"VUX9K/STAGE2.BIN": data})
+    sectors = {}
+    for lba in range(len(img) // 512):
+        sector = img[lba * 512 : (lba + 1) * 512]
+        if any(sector):
+            sectors[lba] = sector
+    return sectors
 
 
 def programs() -> list:
@@ -453,19 +483,15 @@ def programs() -> list:
     progs.append(Program("traps", cycles=6_000, imem_words=traps(), uart_rx=[(TRAPS_RX_CYCLE, b"Z")]))
     hack_hex = os.path.join(REPO_ROOT, "build", "hack", "firmware.hex")
     progs.append(Program("hack_demo", cycles=1_250_000, imem_words=_hex_words(hack_hex)))
+    # The first stage: from power-on it boots STAGE2.BIN, which runs from the PSRAM ('#')
+    progs.append(Program("s1_autoboot", cycles=3_300_000, sd_sectors=stage2_card()))
+    # A key right after the banner keeps it at its prompt; then h and i
     progs.append(
         Program(
-            "boot_cli",
-            cycles=3_000_000,
-            uart_rx=[(2_300_000, b"h"), (2_400_000, b"s")],
-        )
-    )
-    progs.append(
-        Program(
-            "boot_s2",
-            cycles=4_000_000,
-            sd_sectors=_hash_slot1(),
-            button=[(2_300_000, True), (2_300_000 + 675_000, False)],
+            "s1_cli",
+            cycles=3_600_000,
+            sd_sectors=stage2_card(),
+            uart_rx=[(600_000, b"\r"), (1_300_000, b"h"), (2_000_000, b"i")],
             slow=True,
         )
     )

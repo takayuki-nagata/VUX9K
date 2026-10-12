@@ -13,9 +13,10 @@ Read before changing `zephyr_workspace/`. Index and the rules that apply everywh
 (18 MHz, `vux9k,uart`, and the SoC timer as `andestech,machine-timer`, whose
 mtime +0x0 / mtimecmp +0x8 layout is `timer_core`'s, so Zephyr's in-tree
 `riscv_machine_timer` driver serves it):
-- `vux9k`: the real board. flash = I-RAM 0x0000-0x37FF (the Resident Loader owns
-  0x3800+), sram = D-RAM less the mailbox words at 0x1FF8/0x1FFC. The linker enforces
-  both, so an app that outgrows the board fails to link.
+- `vux9k`: the real board. flash = I-RAM 0x0000-0x37FF, sram = D-RAM up to 0x1FF8: limits
+  the Boot Manager's Resident Loader and mailbox set, kept until the board moves to the PSRAM
+  (B3d of the roadmap; nothing loads an app into I-RAM in the meantime). The linker
+  enforces both, so an app that outgrows the board fails to link.
 - `vux9k/vux9k/ext`: 512 KB/256 KB, **emulator only** (`vux9k-emu --profile extended`).
   bc_clone_rs (`make build-zephyr`, ~260 KB) runs only here; never present it as
   running on hardware.
@@ -23,16 +24,17 @@ mtime +0x0 / mtimecmp +0x8 layout is `timer_core`'s, so Zephyr's in-tree
 `zephyr_workspace/app/` is the Rust demo: Zephyr (`src/main.c`, FFI wrappers for
 `printk`/`k_msleep`/`k_uptime_get_32`) calls `rust_main()` from the `rust_demo`
 staticlib. `make build-zephyr-demo` builds it for `vux9k` into `build/zephyr-demo/`
-(cargo output included); it is what `scripts/test_hardware.py` flashes to Slot 1, and
-it is tested from SD on the emulator (`sim/emu/test_zephyr_demo.py`) and the RTL
-(`sim-zephyr-demo-rtl`). Its `prj.conf` size settings are what make it fit in 14 KB.
+(cargo output included). It is tested loaded straight into I-RAM, on the emulator
+(`sim/emu/test_zephyr_demo.py`) and the RTL (`sim-zephyr-demo-rtl`); starting it on the
+board waits for the second stage that loads applications. Its `prj.conf` size settings are
+what make it fit in 14 KB.
 
 Two traps found while bringing Zephyr up on the RTL (the old Python emulator hid both):
 - **The SoC must select Zifencei.** The Zephyr SDK has no libgcc multilib for
   `rv32i_zicsr`; GCC silently links a default one built with RV32M, and the first
   64-bit division (`__udivdi3` -> `divu`) is an illegal instruction.
 - **XIP `.data` must be in the image.** An XIP image's `.data` runs in D-RAM but loads
-  from I-RAM; the slot image must carry it at its load address, or Zephyr's startup
+  from I-RAM; the image must carry it at its load address, or Zephyr's startup
   copies zeros into `.data` (e.g. an empty-but-not-self-linked `timeout_list`, so
   `k_msleep` never woke up). Zephyr's own `zephyr.bin` (objcopy by LMA) always did;
   the bug was the Makefile overwriting it with an older `scripts/elf2bin.py` that
@@ -69,5 +71,6 @@ revisions and compatibility"); this revision doesn't add them.
 callback gives, and each line comes back upper-cased in one piece (longer than the TX
 FIFO, so the timer path runs) with `rx=<n> drop=<n> err=<n>`. It fits the board without
 printk (cbprintf alone is 1.5 KB; with it the app overflowed 14 KB by 1.8 KB). Tests:
-`sim/emu/test_zephyr_irq_echo.py`, `sim-zephyr-irq-echo-rtl`, and on the board
-`make test-hw-irq-echo` (`scripts/hw_irq_echo.py`, slot 3, not part of `test-hw`/dist).
+`sim/emu/test_zephyr_irq_echo.py` and `sim-zephyr-irq-echo-rtl` (loaded into I-RAM like the
+Rust demo); its board test went with the Boot Manager's slots and comes back with the
+second stage that loads applications.

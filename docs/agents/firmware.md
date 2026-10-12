@@ -7,48 +7,68 @@ paths:
   - "sim/emu/test_fat_images.py"
 ---
 
-# Firmware (Boot Manager, Resident Loader, fw_common)
+# Firmware (the two-stage boot's stages, fw_common, fw_drivers)
 
-Read before changing anything under `firmware/` or the slot format in `tools/vux_tool.py`. Index and the rules that apply everywhere: [`AGENTS.md`](../../AGENTS.md).
+Read before changing anything under `firmware/` or the file format in `tools/vux_tool.py`. Index and the rules that apply everywhere: [`AGENTS.md`](../../AGENTS.md).
 
 ## Cargo workspace gotcha: rustflags paths are workspace-root-relative
 
-`firmware/` is a Cargo workspace (`boot_manager` + `resident_loader` members, `fw_drivers`
-(the MMIO drivers), plus
-`fw_common`: the firmware's hardware-independent logic, no MMIO, tested on the host
-with `cargo test -p fw_common --target <host triple> --features fat-write` — `make test-fw-host`. The Resident
-Loader takes only constants and `crc32_update` from it: it has ~100 bytes left of its
-2 KB, which `make firmware-size` enforces along with the Boot Manager's 14 KB).
-**When you build a member from within its own directory (`cd firmware/boot_manager
+`firmware/` is a Cargo workspace: `stage1` (the first stage, the boot ROM in I-RAM,
+`build/firmware/firmware.{bin,hex}`), `stage2` (a provisional second stage, linked into
+the PSRAM and wrapped as the v4 file `build/firmware/stage2/STAGE2.BIN`), `hw_test`,
+`fw_drivers` (the MMIO drivers they share) and `fw_common` (the hardware-independent
+logic, no MMIO, tested on the host with `cargo test -p fw_common --target <host triple>
+--features fat-write` — `make test-fw-host`; `make firmware-size` holds the first stage to
+the 16 KB it runs from).
+**When you build a member from within its own directory (`cd firmware/stage1
 && cargo build`), rustc/the linker still runs with cwd = the workspace root
 (`firmware/`), not the member directory.** This means each member's
 `.cargo/config.toml` `-C link-arg=-T<path>` linker-script flag must be written
-relative to `firmware/`, e.g. `-Tboot_manager/bootstrap/link.x`, **not**
+relative to `firmware/`, e.g. `-Tstage1/bootstrap/link.x`, **not**
 `-Tbootstrap/link.x`. Getting this wrong produces `rust-lld: error: cannot find
-linker script` with no indication of *why* the cwd changed. Both members' output
+linker script` with no indication of *why* the cwd changed. All members' output
 binaries land in the single shared `firmware/target/riscv32i-unknown-none-elf/
-release/{boot_manager,resident_loader}`.
+release/`.
 
-## Firmware rules (Boot Manager, Resident Loader, `fw_common`)
+## Firmware rules (the stages, `fw_common`, `fw_drivers`)
 
-- **Addresses come from `fw_common::map`** (MMIO, mailbox, RL entry, mtime rate);
-  the MMIO drivers (UART, GPIO, mtime, SD) are in `fw_drivers`, which also implements
-  `fw_common`'s traits for them;
-  logic that needs no MMIO goes into `fw_common` behind a trait and gets a host test
-  (`upload` is the `w` exchange over `Host`/`Disk`; a 10/13-sector upload bug hid in
-  the Boot Manager until it moved there). The emulator's SD card is lenient about
-  SDSC/SDHC addressing unless `strict=True`: use strict for anything card-type related.
+- **Addresses come from `fw_common::map`** (MMIO, the second stage's window
+  `STAGE2_BASE`, the first stage's data `S1_RAM_BASE`, mtime rate); the MMIO drivers
+  (UART, GPIO, mtime, SD) are in `fw_drivers`, which also implements `fw_common`'s traits
+  for them; logic that needs no MMIO goes into `fw_common` behind a trait and gets a host
+  test (`upload` is transfer v2 over `Host`/`UploadSink`; `boot::RamBoot` is the first
+  stage's RAM boot). The emulator's SD card is lenient about SDSC/SDHC addressing unless
+  `strict=True`: use strict for anything card-type related.
+- **The first stage is the boot ROM**: it is in the bitstream (BSRAM, `$readmemh` of
+  `firmware.hex`), so a board only gets a new one with a new bitstream; the card can't
+  update it. It loads `\VUX9K\STAGE2.BIN` (else `STAGE2.OLD`) into the PSRAM and starts it
+  with a0 = SDHC, a1 = the FAT32 partition's LBA (0: none mounted), a2 = `STAGE1_VERSION`;
+  S2 held or a key within `AUTOBOOT_MS` of its banner keeps it at its prompt (`s1> `).
+  Its data and stack are in the PSRAM (`S1_RAM_BASE`), never in D-RAM (`hw_smoke.py`
+  needs D-RAM's preload all zero; D-RAM goes away in B4b of the roadmap). It doesn't write
+  the card: installing a second stage is the second stage's job (`fat::stage2::install`),
+  after a RAM boot (`u`) of it if need be. Keep it small: 14 KB of 16 KB, and a later ROM
+  may be 8 KB. Its `t` and `d` commands were dropped for room; what a feature costs is
+  measured by building without it, and `Volume::open`'s path parsing alone cost 1.3 KB (the
+  stage finds `\VUX9K\` with `stage2::dir`, by its 8.3 name).
+- **Raise `STAGE1_VERSION` with every first-stage change** (`firmware/stage1/src/main.rs`):
+  the second stage gets it in a2, `make dist` puts it in MANIFEST.json, and the tests read it
+  from there (`sim/emu/s1_env.py`, `sim/integration/soc_env.py`, `scripts/test_hardware.py`);
+  don't hard-code it.
+- **Code in the PSRAM is slow**: every fetch waits ~35 cycles (no cache before B4a of the
+  roadmap). The second stage's transfer loop lost UART bytes at 115200 baud until the
+  receive stopped calling `mul_u32` for its timeout on every byte (`fw_drivers`'
+  `Uart::read_byte_timeout` returns a byte that is there at once; `ms_ticks` shifts).
+  Keep per-byte paths of code that runs from the PSRAM free of loops and calls.
+- **A program started after the first stage's output may find the UART's TX FIFO full**:
+  wait for `UART_TX_FULL` to clear before each byte (a store to a full FIFO is dropped).
 - **The VUX9 header exists twice**: `fw_common::header` (the firmware reads it) and
-  `SlotHeader`/the constants in `tools/vux_tool.py` (it writes the slots; the dist ships
-  it as one file, so nothing is generated). Change both, then regenerate
-  `firmware/fw_common/tests/vux9_vectors/` (`VUX9_VECTORS_UPDATE=1 pytest
+  `ImageHeader`/`build_vux9_v4_image`/the constants in `tools/vux_tool.py` (it writes the
+  files; the dist ships it as one file, so nothing is generated). Change both, then
+  regenerate `firmware/fw_common/tests/vux9_v4_vectors/` (`VUX9_VECTORS_UPDATE=1 pytest
   sim/emu/test_vux9_header.py`): both parsers are tested against those files, and the
-  pytest also compares the constants and field offsets. The Resident Loader reads fields
-  by `OFF_*` and, unlike `SlotHeader::parse`, ignores the valid flag (no room).
-  The v4 header of the two-stage boot's files (`ImageHeader`, `vux_tool.ImageHeader` and
-  `build_vux9_v4_image`) follows the same rule, with its vectors in
-  `firmware/fw_common/tests/vux9_v4_vectors/` (same command); v3 stays until the Boot
-  Manager is replaced.
+  pytest also compares the constants and field offsets. The old v3 slot header
+  (`vux9_vectors/`) has no user left and goes next.
 - **Transfer v2 exists twice**: `fw_common::upload::upload_v2` (the device) and
   `vux_tool.send_upload_v2` (the host). `firmware/fw_common/tests/upload_v2_vectors/` holds
   transcripts from a reference device in `sim/emu/test_upload_v2.py`
@@ -83,37 +103,28 @@ release/{boot_manager,resident_loader}`.
   chain a directory points to stays valid, and that the next install recovers. Its
   free clusters hold old bytes where order matters (a directory cluster must be zeroed
   before it is linked). Keep a new write step inside those tests.
-- **Raise `BOOT_MGR_VERSION` with every Boot Manager change**: boards install a slot-0
-  image only if its header version is greater. Tests read it from `main.rs`
-  (`sim/emu/bm_env.py`, `scripts/test_hardware.py`); don't hard-code it.
-- **The Resident Loader reads a slot twice** (check pass with CRC32, then load pass),
-  because lower I-RAM holds the running Boot Manager until the load pass overwrites
-  it: errors E1-E5 return to it intact, only a load-pass failure (E6) stops. Keep new
-  checks in the first pass. For size, watch what the compiler links in: a
-  zero-initialized buffer that is then fully overwritten cost a 152-byte `memset`
-  (the header buffer is `MaybeUninit` for that reason).
 - **The SD SCLK divider survives a soft reset** (`0x4000_200C`; only power-on resets it).
-  The Boot Manager sets `SD_DIV_INIT` before every card init (a strict card reports a
-  faster SCLK before it is ready) and `SD_DIV_FAST` after it; the Resident Loader reads at
-  whatever the Boot Manager left and never touches the divider.
-- **Mailbox requests are marked** (`0xB007_xxxx` launch, `0xA55A_xxxx` update); any
-  other value makes the RL restart the Boot Manager. Keep slot in bits 7:0 and SDHC in
-  bit 8: older RLs in flashed bitstreams read those.
+  `SdCard::init` sets `SD_DIV_INIT` before every card init (a strict card reports a
+  faster SCLK before it is ready) and `SD_DIV_FAST` after it. A second stage that takes
+  the first stage's card over (`SdCard::adopt`, from a0/a1) keeps the divider as it is.
 
 ## Firmware coverage: `make coverage-fw` (emulator runs, source lines)
 
 The emulator tests in `sim/emu/` run with `VUX9K_COV_DIR` set, so every SoC made by
 `vux9k.start_soc()` records each executed (PC, ISA, instruction word).
 `scripts/coverage_fw.py` credits a hit to an image only where that image holds the same
-word at that PC (code loaded from SD over the Boot Manager's addresses stays apart).
+word at that PC (code loaded over the first stage's addresses stays apart).
 RV32 hits map to lines through the DWARF of the firmware's `coverage` cargo profile,
 whose code the target first `cmp`s against the release image; Hack hits map to the
 demo's assembly, checked instruction by instruction against the binary. Output:
 `build/coverage/fw/{fw.info,summary.md}`; minimums in `coverage/thresholds.toml`
 (runs in `test-sim`). Rules:
 - A line that can't run by design gets `cov:exclude(reason)` in a comment on that line
-  (e.g. the `nop` after the Resident Loader's soft-reset store). Don't use it for code
-  that is merely untested — add the test.
+  (e.g. the `loop {}` after a soft-reset store, a panic handler nothing reaches). It
+  counts for every image that links the line: a library line excluded for one stage's
+  use (e.g. `find_entry` on a non-directory) must be unreachable from every stage measured.
+  Don't use it for code that is merely untested — add the test. The provisional second
+  stage is not measured until it is the real one.
 - Raise a threshold when coverage rises; never lower one to get a run through.
 - The Hack demo in CI is assembled from the committed `hack_demo/src/main.asm` (`hcc`
   isn't installed there). After changing `main.c`, regenerate it with `hcc -S`.

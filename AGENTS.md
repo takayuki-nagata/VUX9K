@@ -15,10 +15,11 @@ soc/                    Veryl RTL: board_top (PLL), soc_top + peripherals direct
   cpu/                  CPU core submodules
   uart/                 UART controller submodules
 firmware/               Cargo workspace (virtual manifest)
-  boot_manager/         Boot Manager crate (package name: boot_manager)
-  resident_loader/      Resident Loader crate (package name: resident_loader)
-  fw_common/            Boot Manager logic without MMIO, host-tested (make test-fw-host)
-  hw_test/              Board self-test in place of the Boot Manager (make hw-smoke)
+  stage1/               First stage of the two-stage boot: the boot ROM in I-RAM (firmware.hex)
+  stage2/               Provisional second stage: \VUX9K\STAGE2.BIN on the card, runs in PSRAM
+  fw_common/            Firmware logic without MMIO (FAT32, v4 header, transfer), host-tested (make test-fw-host)
+  fw_drivers/           The MMIO drivers the stages share (UART, GPIO, mtime, SD)
+  hw_test/              Board self-test in place of the first stage (make hw-smoke)
 hack_demo/              Standalone Hack 16-bit C/asm demo app (toolchain self-test)
 zephyr_workspace/       Zephyr west module: board/SoC/driver/dts support for "vux9k"
   app/                  Zephyr Rust demo (C glue + rust_demo staticlib; see "Zephyr" below)
@@ -90,9 +91,9 @@ except the handful of firmware-hex symlinks described below
 |---|---|---|
 | `make check`, `check-rtl-syntax`, `lint-rtl` | static checks | every change (seconds) |
 | `make test-sim` | everything in CI per push: unit RTL + GLS, ISA (riscv-tests, ACT4) RTL/GLS/emu and RTL with bus waits, emulator, firmware host tests + size + FAT images (`test-fat`), coverage-fw/fcov/rust, lockstep, SoC fast/mmio/boot/hack/sd-quirks/hw-flow, Zephyr demo RTL, GLS fast | before merging |
-| `make test-slow` | GLS flashing flow, Icarus full flow, long lockstep, Zephyr demo GLS, the PSRAM controller on its pin model (SoC window on Icarus RTL, controller netlist), unit tests with a new random seed | nightly; by hand after touching the flashing/SD chain (sync-points.md) |
+| `make test-slow` | GLS RAM-boot/install flow, Icarus full flow, long lockstep, the PSRAM controller on its pin model (SoC window on Icarus RTL, controller netlist), unit tests with a new random seed | nightly; by hand after touching the flashing/SD chain (sync-points.md) |
 | `make sta`, `make timing`, `make eqy` | timing; RTL refactor proof | RTL changes |
-| `make hw-smoke`, `make test-hw`, `test-hw-dist`, `test-hw-upgrade` | the board | after RTL changes, before flashing or releasing (`test-hw-upgrade`: the previous release's slots and tool, RELEASING.md) |
+| `make hw-smoke`, `make test-hw`, `test-hw-dist` | the board | after RTL changes, before flashing or releasing |
 | `make mutation`, `make coverage` | test quality | by hand (quality.md) |
 
 ## Index: read before touching
@@ -105,7 +106,7 @@ except the handful of firmware-hex symlinks described below
 | `sim/` (cocotb unit/SoC tests, the runner, Verilator) | [sim.md](docs/agents/sim.md) |
 | Which tests run where; the long flashing-flow tests | [test-tiers.md](docs/agents/test-tiers.md) |
 | CPU ISA behavior, CSRs, `tb_hex_runner`, `scripts/run_riscv_tests.py`, `scripts/{riscv_tests,act4}/` | [isa-tests.md](docs/agents/isa-tests.md) |
-| `firmware/`, the slot format in `tools/vux_tool.py`, firmware coverage | [firmware.md](docs/agents/firmware.md) |
+| `firmware/`, the file format in `tools/vux_tool.py`, firmware coverage | [firmware.md](docs/agents/firmware.md) |
 | `zephyr_workspace/` | [zephyr.md](docs/agents/zephyr.md) |
 | `make dist`, releases, `.github/workflows/`, `docs/APP_DEVELOPMENT.md` | [dist-release.md](docs/agents/dist-release.md) |
 | `make mutation`, `make coverage`, `coverage/thresholds.toml` | [quality.md](docs/agents/quality.md) |

@@ -3,14 +3,6 @@
 version = 4
 
 [[package]]
-name = "boot_manager"
-version = "0.1.0"
-dependencies = [
- "fw_common",
- "fw_drivers",
-]
-
-[[package]]
 name = "fw_common"
 version = "0.1.0"
 
@@ -23,13 +15,6 @@ dependencies = [
 
 [[package]]
 name = "hw_test"
-version = "0.1.0"
-dependencies = [
- "fw_common",
-]
-
-[[package]]
-name = "resident_loader"
 version = "0.1.0"
 dependencies = [
  "fw_common",

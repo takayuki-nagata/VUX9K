@@ -5,9 +5,8 @@ paths:
   - "sim/integration/**"
   - "tools/vux_tool.py"
   - "scripts/test_hardware.py"
-  - "scripts/test_hw_upgrade.py"
-  - "firmware/boot_manager/**"
-  - "firmware/resident_loader/**"
+  - "firmware/stage1/**"
+  - "firmware/stage2/**"
 ---
 
 # Test tiers
@@ -19,9 +18,9 @@ What `test-sim` and `test-slow` cover, and which long tests to run by hand for w
 `make test-sim` (every push/PR in CI) runs the firmware's host tests (`test-fw-host`, and
 `test-fat`: the FAT32 images rebuilt with dosfstools/mtools, which CI installs), the unit suites (RTL + GLS), `test-isa`
 (+ `test-isa-gls`, `test-isa-waits`), and the SoC tests: `sim-soc-fast` (+ `-icarus`), `sim-soc-mmio`,
-`sim-boot` (CLI), `sim-hack-rtl`, `sim-sd-quirks`, `sim-hw-flow` (RTL flashing
-flow), `sim-zephyr-demo-rtl`, `sim-zephyr-irq-echo-rtl` and `sim-soc-gls-fast`. `make test-slow` (CI nightly + manual `workflow_dispatch`) adds
-`sim-gls-hw-flow`, `sim-hw-flow-icarus`, `sim-lockstep-slow`, `sim-zephyr-demo-gls`,
+`sim-boot` (the first stage's prompt), `sim-hack-rtl`, `sim-sd-quirks`, `sim-hw-flow` (RTL RAM
+boot and install flow), `sim-zephyr-demo-rtl`, `sim-zephyr-irq-echo-rtl` and `sim-soc-gls-fast`. `make test-slow` (CI nightly + manual `workflow_dispatch`) adds
+`sim-gls-hw-flow`, `sim-hw-flow-icarus`, `sim-lockstep-slow`,
 `sim-psram-icarus` (below) and
 `sim-unit-random` (the unit tests with the date as random seed). Until 2026-09 the flashing flow ran in
 no tier at all (25–35 min RTL / many hours GLS on Icarus); on Verilator it's ~16 s
@@ -38,29 +37,27 @@ gate-level side is the controller alone because a full-SoC Icarus GLS run with t
 on the PSRAM pins (sim.md, "The PSRAM word model and its contract test"). Run it after a new
 controller tag or a change to the window's bridge.
 
-`test_soc_hardware_flow.py` is the only test that drives the full multi-step UART
-flashing protocol end-to-end through `tools/vux_tool.py`'s `build_vux9_image()`:
-`'w'`-command flash of a Hack and a RISC-V payload (slot-ID handshake →
-sector-count handshake → per-sector streaming), a byte-exact check of what
-reached the SD model, boot-header verification via `s1`, and booting the flashed
-payload through the Resident Loader. The other CLI commands are
-`test_soc_boot.py`'s job.
+`test_soc_hardware_flow.py` is the only RTL test that drives the two-stage boot's whole
+UART and SD chain: transfer v2 carries the provisional second stage (16 KB, ~25M cycles at
+115200 baud) to the first stage's `u` for a RAM boot, the second stage installs a new
+`\VUX9K\STAGE2.BIN` on the FAT32 card (`n`), and after its soft reset the first stage boots
+that file. The first stage's other commands are `test_soc_boot.py`'s. RTL reads the card
+at ~250 cycles a byte as the board does: the other SoC tests boot a 28-byte `STAGE2.BIN`
+(`soc_env.v4_file`), not the second stage.
+
+The SD and RAM-boot RTL tests (`sim-boot`, `sim-hw-flow`, `sim-sd-quirks`, the lockstep's
+`s1_*`) wait at least the first stage's key window (100 ms, 1.8M cycles) when they let it
+boot; Icarus (`sim-soc-fast-icarus`, `sim-hw-flow-icarus`) runs ~19k cycles/s.
 
 Also run `sim-gls-hw-flow` (not in `test-sim`) explicitly whenever you touch:
-- the UART flashing handshake (`firmware/boot_manager/src/main.rs`'s
-  `write_sectors_from_uart()` and its `[READY]`/`[READY-SLOT:N]`/
-  `[READY-COUNT:N]`/`[READY-SEC:i]` protocol),
-- `tools/vux_tool.py`'s `build_vux9_image()` or the sector/header layout it
-  produces,
-- the SD boot/slot-loading chain (`resident_loader`, `slot_sector()`), or
+- transfer v2 (`fw_common::upload`, `vux_tool.send_upload_v2`), the first stage's RAM
+  boot (`fw_common::boot::RamBoot`) or the second stage's install,
+- the SD boot chain (`firmware/stage1`, `fw_common::fat`, `fw_drivers::sdcard`), or
 - anything under `sim/integration/` that talks to the virtual UART/SD models
   (`sdcard_model.py`, `virtual_serial.py`) — a change there can silently
   desync `test_soc_hardware_flow.py`'s own protocol assumptions from the
-  firmware's actual behavior (this happened during the 2026-09 `sim/` reorg:
-  the test's handshake had drifted from a 2-step to a 3-step protocol
-  sometime after the VUX9 v3 boot header work, undetected until this test was
-  actually run — `sim-soc-fast`'s lighter flow never exercises the `'w'`
-  command at all).
+  firmware's actual behavior (this happened during the 2026-09 `sim/` reorg with the
+  first stage's predecessor, undetected until this test was actually run).
 
 It's also worth running once as a final check after any `sim/` directory
 layout change (as opposed to content change), even though the fast tests all
@@ -74,13 +71,12 @@ None of these run in CI; they need the board. The host setup they check is in
 clock-and-board.md, "Board UART output that is noise: ModemManager and the bridge's shared baud rate".
 - `make hw-smoke` (after `make timing`): `hw_test` on every routed seed's placement. After
   RTL changes, before flashing.
-- `make test-hw`: the 15-test suite (`scripts/test_hardware.py`) on a local build;
-  `make test-hw-dist DIST=<dir>` the same on a `make dist` tree, Boot Manager version from
-  its `MANIFEST.json`.
-- `make test-hw-upgrade OLD=<dir> NEW=<dir>` (`scripts/test_hw_upgrade.py`; OLD the
-  previous release's dist, NEW the candidate's): the previous release's slots and
-  `vux_tool.py` with the candidate's bitstream and Boot Manager and the reverse, and the
-  old bitstream installing the new Boot Manager from slot 0. A release gate
-  (docs/RELEASING.md, step 2); also worth a run after changing the slot header, the `w`
-  protocol, the mailbox or the self-update. It overwrites SD slots 0-4.
-- `make test-hw-irq-echo`: the Zephyr interrupt-driven UART echo (zephyr.md).
+- `make test-hw`: the two-stage boot suite (`scripts/test_hardware.py`, 9 tests) on a local
+  build; `make test-hw-dist DIST=<dir>` the same on a `make dist` tree, the first stage's
+  version from its `MANIFEST.json`. The card must be FAT32 with a `\VUX9K\` directory; the
+  suite writes only there (versions 9001-9003, then the second stage under test). It runs
+  against the emulator too: `vux9k-emu --tcp PORT --sd <mkfat image>` and
+  `--port socket://127.0.0.1:PORT`.
+- Starting the Zephyr and Hack demos on the board waits for the second stage that loads
+  applications (the old slot-based `test-hw-irq-echo` and the upgrade test from the previous
+  release went with the Boot Manager).

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 //! Text output without core::fmt (which would not fit): a byte sink with hex and
-//! decimal printing. The Boot Manager's UART implements it.
+//! decimal printing. fw_drivers' UART implements it.
 
 const HEX: &[u8; 16] = b"0123456789ABCDEF";
 

@@ -661,11 +661,13 @@ def read_until(ser, tokens, timeout):
     return None, text
 
 
-def enter_s1(ser, timeout=10.0):
+def enter_s1(ser, timeout=10.0, drain=True):
     """Get to the first stage's prompt: soft-reset a second stage found at its prompt,
     and send keys until the first stage answers (a key right after its banner keeps it
-    there instead of booting). Returns the text read; raises TimeoutError."""
-    drain_serial(ser, timeout=0.05)
+    there instead of booting). Returns the text read (without what arrived before, unless
+    drain=False); raises TimeoutError."""
+    if drain:
+        drain_serial(ser, timeout=0.05)
     text = ""
     end = time.monotonic() + timeout
     while time.monotonic() < end:

@@ -150,7 +150,8 @@ def setup_hack(soc: Any, build: str) -> bool:
     return True
 
 
-def setup_bm(soc: Any, build: str) -> bool:
+def setup_s1(soc: Any, build: str) -> bool:
+    """The first stage, from power-on to its prompt on a card without a partition."""
     if not _preload(soc, build):
         return False
     soc.sd_insert(mbr_sector())
@@ -163,7 +164,7 @@ WORKLOADS = [
     Workload("bc", "extended", setup_bc, b"bc> ", 2_000_000_000, False),
     Workload("demo", "real", setup_demo, b"All Rust application tasks finished successfully!", 40_000_000, True),
     Workload("hack", "real", setup_hack, b"ALL HACK C FIRMWARE TESTS PASSED (100%)!", 20_000_000, True),
-    Workload("bm", "real", setup_bm, b"vux> ", 3_000_000, True),
+    Workload("s1", "real", setup_s1, b"s1> ", 6_000_000, True),
 ]
 
 

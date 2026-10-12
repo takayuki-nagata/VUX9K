@@ -4,8 +4,6 @@ paths:
   - "soc/soc_pkg.veryl"
   - "scripts/hw_smoke.py"
   - "scripts/test_hardware.py"
-  - "scripts/hw_irq_echo.py"
-  - "scripts/test_hw_upgrade.py"
   - "tools/vux_tool.py"
   - "tools/70-vux9k-board.rules"
   - "sim/emu/test_board_uart.py"
@@ -36,8 +34,8 @@ eqy can't see this (zero-delay models, and both sides of eqy come from Yosys). S
   from the emulator (`sim/emu/test_hw_test.py` prints them on failure).
 - **`CLK_HZ` has copies that must change with it**, all but one written out by hand: the emulator (`uart::BIT`, `sdspi::HALF_PERIOD`/`CLK_HZ`, the CLI's real-time
   pacing), `fw_common::map` (`TICKS_PER_*`, `SD_DIV_INIT`), `fw_drivers` (`timer.rs`: ticks per us/ms and `ms_ticks`'s shifts, which a compile-time
-  assert holds to `TICKS_PER_MS`), the Boot Manager's `t` banner and expected tick count, the
-  first stage's banner, the Resident Loader's 10 us CS delay, Zephyr
+  assert holds to `TICKS_PER_MS`), the first stage's banner, `fw_drivers::sdcard`'s 10 us CS
+  delay, Zephyr
   (`timebase-frequency`/`clock-frequency` in `vux9k-common.dtsi`,
   `SYS_CLOCK_HW_CYCLES_PER_SEC`), and the test constants (`tb_soc_top.sv`'s half period,
   `soc_env.py`, `virtual_serial.py`, `lockstep_programs.UART_BIT`, `sim/emu/vux9k.py`,
@@ -64,9 +62,9 @@ The board's USB-UART bridge (BL702, full speed) can lose output because of the h
 USB setup, typically another full-speed device busy on the same USB 2.0 hub (found
 2026-10). The loss is deterministic, not random: after a short pass-through, the bridge
 keeps the first 128 B, drops the rest, and delivers the 128 B seconds later. A timing
-change in the firmware can therefore look exactly like a regression: the Resident
-Loader's check pass (`c70d180`) only delayed the demo's output, and `make test-hw` failed
-tests 14/15 until the board had a hub to itself.
+change in the firmware can therefore look exactly like a regression: the (since replaced)
+Resident Loader's check pass (`c70d180`) only delayed the demo's output, and `make test-hw`
+failed its demo tests until the board had a hub to itself.
 - **Before suspecting the SoC or firmware for lost board output, check the USB topology**
   (`lsusb -t`): give the board its own port or hub.
 - **Tell device from host with the LEDs**, not the UART: write progress to the GPIO LED
@@ -89,17 +87,15 @@ output at 57600: about half as many bytes, all noise, reproducibly the same byte
 session is clean, which made it look random. While its probe runs (up to ~20 s after a
 load) ModemManager's reopens can switch the rate even in the middle of an open session.
 - **`tools/70-vux9k-board.rules`** sets `ID_MM_DEVICE_IGNORE` on the board's ttys; the
-  board-test scripts (`test_hardware.py`, `hw_smoke.py`, `hw_irq_echo.py`,
-  `test_hw_upgrade.py`) refuse to run while ModemManager could probe the board
+  board-test scripts (`test_hardware.py`, `hw_smoke.py`) refuse to run while ModemManager
+  could probe the board
   (`vux_tool.modemmanager_hint`), and `vux_tool` warns.
 - `vux_tool.open_port` sets the line format twice after opening
   (`apply_line_settings`), so a stale stored rate never survives into a session; changing
   only the baud rate would not help (`SET_BAUD` alone isn't applied).
 - Output the board sent while no host had the port open is handed over at the next open.
   Anything that waits for a verdict must anchor it to the run it started: `hw_smoke.py`
-  takes a `RESULT` line only after this boot's `hw_test` banner, `test_hw_upgrade.py` drains
-  what arrives in the first 0.5 s after the open (before the load) and then reads only past
-  the previous image's last prompt (the drain, not the anchor, keeps out a whole stale
-  startup).
+  takes a `RESULT` line only after this boot's `hw_test` banner, and `test_hardware.py`
+  checks the first stage's banner only after a soft reset it caused itself.
 - Noise with non-ASCII bytes is a host-side rate problem until proven otherwise:
   `vux_tool.garbled_hint` adds that note to the test failures.

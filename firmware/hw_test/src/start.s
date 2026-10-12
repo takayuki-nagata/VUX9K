@@ -43,7 +43,7 @@ _start:
     blt t0, t1, 3b
 4:
 
-    /* Any exception stops at trap_stop (the Boot Manager leaves mtvec at 0, which
+    /* Any exception stops at trap_stop (mtvec resets to 0, which
      * would silently restart the test instead) */
     la t0, trap_stop
     .option push

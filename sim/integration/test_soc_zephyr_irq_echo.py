@@ -3,28 +3,27 @@
 
 """
 The Zephyr interrupt-driven UART echo (build/zephyr-irq-echo, board vux9k) on the RTL,
-from SD slot 1 through the Boot Manager's '1' and the Resident Loader, as on the board
-(the emulator counterpart is sim/emu/test_zephyr_irq_echo.py).
+preloaded into I-RAM like the Rust demo (sim/integration/test_soc_zephyr_demo.py; the
+emulator counterpart is sim/emu/test_zephyr_irq_echo.py).
 """
 
 import os
 
 import cocotb
-from soc_env import REPO_ROOT, slot_image, start_soc
+from soc_env import REPO_ROOT, load_imem, start_soc
 
 ECHO_BIN = os.path.join(REPO_ROOT, "build", "zephyr-irq-echo", "zephyr", "zephyr.bin")
 BURST = bytes(b"abcdefghijklmnopqrstuvwxyz0123456789"[i % 36] for i in range(64))
 
 
 @cocotb.test()
-async def test_zephyr_irq_echo_from_sd(dut):
+async def test_zephyr_irq_echo_from_i_ram(dut):
     """A 64-byte burst (over both FIFOs) comes back upper-cased with no overrun"""
     assert os.path.exists(ECHO_BIN), f"{ECHO_BIN} missing; run `make build-zephyr-irq-echo`"
     with open(ECHO_BIN, "rb") as f:
-        slot1, _ = slot_image(f.read(), slot=1, mode="riscv", name="IRQ echo")
-    ser, _ = await start_soc(dut, sd_sectors=slot1)
-    await ser.wait_for(b"vux> ", timeout_cycles=3_000_000)
-    ser.write(b"1")
+        image = f.read()
+    words = [int.from_bytes(image[i : i + 4].ljust(4, b"\0"), "little") for i in range(0, len(image), 4)]
+    ser, _ = await start_soc(dut, during_reset=lambda soc: load_imem(soc, words))
     await ser.wait_for(b"irq_echo ready\n", timeout_cycles=10_000_000)
     ser.reset_input_buffer()
     for _ in range(2):  # the second burst: the driver state after the first

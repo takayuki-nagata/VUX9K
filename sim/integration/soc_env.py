@@ -18,6 +18,7 @@ import sys
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, Timer
+from lockstep_programs import hash_program
 from sdcard_model import SpiSdCardModel
 from virtual_serial import VirtualSerialBridge
 
@@ -26,11 +27,19 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 import tools.vux_tool as vux_tool  # noqa: E402 (needs REPO_ROOT on sys.path)
 
-with open(os.path.join(REPO_ROOT, "firmware", "boot_manager", "src", "main.rs")) as _f:
-    _m = re.search(r"const BOOT_MGR_VERSION: u32 = (\d+);", _f.read())
-    assert _m, "BOOT_MGR_VERSION not found in main.rs"
-    BOOT_MGR_VERSION = int(_m.group(1))
-BANNER = f"VUX9K Dual-ISA RISC-V / Hack SoC Boot Manager (v{BOOT_MGR_VERSION})"
+with open(os.path.join(REPO_ROOT, "firmware", "stage1", "src", "main.rs")) as _f:
+    _m = re.search(r"const STAGE1_VERSION: u32 = (\d+);", _f.read())
+    assert _m, "STAGE1_VERSION not found in main.rs"
+    STAGE1_VERSION = int(_m.group(1))
+BANNER = f"VUX9K Stage 1 (v{STAGE1_VERSION})"
+S1_PROMPT = b"s1> "
+S2_PROMPT = b"s2> "
+STAGE2_BASE = 0x8070_0000
+
+
+HASH_PAYLOAD = hash_program(STAGE2_BASE)
+# The provisional second stage (make firmware)
+STAGE2_RAW = os.path.join(REPO_ROOT, "build", "firmware", "stage2", "stage2.bin")
 
 CLK_PERIOD_PS = 55556  # 18.0 MHz SoC clock (tb_soc_top.sv: 2 x 27778 ps)
 UART_BAUD_CYCLES = 156  # 18.0 MHz / 115200 baud
@@ -45,17 +54,30 @@ def mbr_sector() -> bytes:
     return bytes(mbr)
 
 
-def slot_lba(slot: int) -> int:
-    """First SD sector of a program slot (same formula as the firmware and vux_tool)."""
-    return 64 + (slot << 6)
+def v4_file(payload: bytes = HASH_PAYLOAD, version: int = 1, **kw) -> bytes:
+    """A VUX9 v4 file loading at the second stage's address: by default a tiny one that
+    prints '#' (RTL reads a card at ~250 cycles a byte: keep what tests boot small)."""
+    kw.setdefault("load_addr", STAGE2_BASE)
+    data, _ = vux_tool.build_vux9_v4_image(payload, name="test", version=version, **kw)
+    return data
 
 
-def slot_image(payload: bytes, *, slot: int, mode: str, name: str = ""):
-    """VUX9 v3 image for slot, as {lba: sector bytes} for start_soc(sd_sectors=...), plus vux_tool's meta."""
-    raw, meta = vux_tool.build_vux9_image(payload, slot=slot, name=name, mode=mode)
-    base = slot_lba(slot)
-    sectors = {base + i: raw[i * 512 : (i + 1) * 512] for i in range(meta["num_sectors"])}
-    return sectors, meta
+def stage2_file(version: int = 1) -> bytes:
+    """The provisional second stage (16 KB) as a v4 file, as `make firmware` builds it."""
+    with open(STAGE2_RAW, "rb") as f:
+        return v4_file(f.read(), version)
+
+
+def fat_sectors(files: dict) -> dict:
+    """A FAT32 card holding files ({"VUX9K/STAGE2.BIN": bytes}) as {lba: sector} for
+    start_soc(sd_sectors=..., mbr=False), without its all-zero sectors."""
+    img = vux_tool.build_fat32_image(files)
+    out = {}
+    for lba in range(len(img) // 512):
+        sector = img[lba * 512 : (lba + 1) * 512]
+        if any(sector):
+            out[lba] = sector
+    return out
 
 
 def soc_of(dut):

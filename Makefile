@@ -39,7 +39,7 @@ HACK_BUILD_DIR := $(BUILD_DIR)/hack
 ZEPHYR_BUILD_DIR ?= $(BUILD_DIR)/zephyr
 SYNTH_DIR := $(BUILD_DIR)/synth
 
-.PHONY: all stage1 stage2 lint-rtl check-rtl-syntax coverage-fcov mutation act4-elfs test-act4 test-act4-gls test-act4-emu test-isa-waits emu emu-py emu-test emu-bench test-isa-emu test-emu test-fw-host test-fat firmware-size coverage-fw coverage-rust coverage-rust-tool sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hw-dist test-hw-upgrade dist check-dist test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware hwtest hw-smoke sim-unit sim-psram-contract sim-psram-icarus sim-unit-random sim-boot sim-soc sim test-isa test-isa-gls zephyr-bc-lib build-zephyr build-zephyr-demo build-zephyr-irq-echo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-demo-gls sim-zephyr-irq-echo-rtl test-hw-irq-echo sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
+.PHONY: all lint-rtl check-rtl-syntax coverage-fcov mutation act4-elfs test-act4 test-act4-gls test-act4-emu test-isa-waits emu emu-py emu-test emu-bench test-isa-emu test-emu test-fw-host test-fat firmware-size coverage-fw coverage-rust coverage-rust-tool sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hw-dist dist check-dist test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware hwtest hw-smoke sim-unit sim-psram-contract sim-psram-icarus sim-unit-random sim-boot sim-soc sim test-isa test-isa-gls zephyr-bc-lib build-zephyr build-zephyr-demo build-zephyr-irq-echo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-irq-echo-rtl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
 
 all: test-ci
 
@@ -110,43 +110,28 @@ check-rtl-syntax: veryl
 	$(YOSYS) -q -p "read_verilog -sv $(filter-out %/soc_ram.sv,$(SOC_RTL_SRCS))"
 	iverilog -g2012 -o /dev/null -s board_top $(SOC_RTL_SRCS) $(GOWIN_CELLS_SV)
 
-# ===== Firmware (Rust Boot Manager & Resident Loader) =====
+# ===== Firmware (Rust: the first stage of the two-stage boot, and a provisional second stage) =====
 
-FIRMWARE_SRCS = $(wildcard firmware/boot_manager/src/*.rs) $(wildcard firmware/boot_manager/bootstrap/*) firmware/boot_manager/Cargo.toml firmware/Cargo.toml \
-	$(wildcard firmware/fw_drivers/src/*.rs) firmware/fw_drivers/Cargo.toml
-LOADER_SRCS = $(wildcard firmware/resident_loader/src/*.rs) firmware/resident_loader/link.x firmware/resident_loader/Cargo.toml
+# The first stage (firmware/stage1), the boot ROM in I-RAM: build/firmware/firmware.{bin,hex}.
+# The provisional second stage (firmware/stage2) as the v4 file \VUX9K\STAGE2.BIN for the card,
+# linked at fw_common::map::STAGE2_BASE: build/firmware/stage2/STAGE2.BIN
+STAGE2_DIR = $(FIRMWARE_BUILD_DIR)/stage2
+STAGE2_BASE = 0x80700000
+FW_LIB_SRCS = $(wildcard firmware/fw_common/src/*.rs firmware/fw_common/src/*/*.rs) firmware/fw_common/Cargo.toml \
+	$(wildcard firmware/fw_drivers/src/*.rs) firmware/fw_drivers/Cargo.toml firmware/Cargo.toml
+FIRMWARE_SRCS = $(wildcard firmware/stage1/src/*.rs firmware/stage1/bootstrap/*) firmware/stage1/Cargo.toml $(FW_LIB_SRCS)
+STAGE2_SRCS = $(wildcard firmware/stage2/src/*.rs firmware/stage2/bootstrap/*) firmware/stage2/Cargo.toml $(FW_LIB_SRCS)
 
-$(FIRMWARE_BUILD_DIR)/firmware.hex: $(FIRMWARE_SRCS) $(LOADER_SRCS)
+$(FIRMWARE_BUILD_DIR)/firmware.hex: $(FIRMWARE_SRCS)
 	@mkdir -p $(FIRMWARE_BUILD_DIR)
-	cd firmware/resident_loader && $(CARGO) build --release
-	$(PYTHON) scripts/elf2bin.py firmware/target/riscv32i-unknown-none-elf/release/resident_loader $(FIRMWARE_BUILD_DIR)/resident_loader.bin
-	cd firmware/boot_manager && $(CARGO) build --release
-	$(PYTHON) scripts/elf2bin.py firmware/target/riscv32i-unknown-none-elf/release/boot_manager $(FIRMWARE_BUILD_DIR)/firmware.bin $(FIRMWARE_BUILD_DIR)
-	$(PYTHON) scripts/merge_firmware_hex.py $(FIRMWARE_BUILD_DIR)/firmware.bin $(FIRMWARE_BUILD_DIR)/resident_loader.bin $(FIRMWARE_BUILD_DIR)/firmware.hex
+	cd firmware/stage1 && $(CARGO) build --release
+	$(PYTHON) scripts/elf2bin.py firmware/target/riscv32i-unknown-none-elf/release/stage1 $(FIRMWARE_BUILD_DIR)/firmware.bin $(FIRMWARE_BUILD_DIR)
+	$(PYTHON) scripts/merge_firmware_hex.py $(FIRMWARE_BUILD_DIR)/firmware.bin "" $(FIRMWARE_BUILD_DIR)/firmware.hex
 	@# soc_ram.veryl's $$readmemh() resolves these bare filenames relative to each tool's own
 	@# process cwd. yosys/nextpnr run from the repo root, so they need these symlinks (not cp, to stay
 	@# identical to build/firmware/); cocotb tests get their own per-run symlinks from sim/runners/sim_runner.py.
 	ln -sf $(CURDIR)/$(FIRMWARE_BUILD_DIR)/firmware.hex ./firmware.hex
 	ln -sf $(CURDIR)/$(FIRMWARE_BUILD_DIR)/firmware_d0.hex $(CURDIR)/$(FIRMWARE_BUILD_DIR)/firmware_d1.hex $(CURDIR)/$(FIRMWARE_BUILD_DIR)/firmware_d2.hex $(CURDIR)/$(FIRMWARE_BUILD_DIR)/firmware_d3.hex .
-
-firmware: $(FIRMWARE_BUILD_DIR)/firmware.hex
-
-# The two-stage boot (replacing the Boot Manager and Resident Loader): the first stage's
-# I-RAM image (build/firmware/stage1/, laid out like firmware.hex), and the provisional second
-# stage as the v4 file \VUX9K\STAGE2.BIN (linked at fw_common::map::STAGE2_BASE)
-STAGE1_DIR = $(FIRMWARE_BUILD_DIR)/stage1
-STAGE2_DIR = $(FIRMWARE_BUILD_DIR)/stage2
-STAGE2_BASE = 0x80700000
-FW_LIB_SRCS = $(wildcard firmware/fw_common/src/*.rs firmware/fw_common/src/*/*.rs) firmware/fw_common/Cargo.toml \
-	$(wildcard firmware/fw_drivers/src/*.rs) firmware/fw_drivers/Cargo.toml firmware/Cargo.toml
-STAGE1_SRCS = $(wildcard firmware/stage1/src/*.rs firmware/stage1/bootstrap/*) firmware/stage1/Cargo.toml $(FW_LIB_SRCS)
-STAGE2_SRCS = $(wildcard firmware/stage2/src/*.rs firmware/stage2/bootstrap/*) firmware/stage2/Cargo.toml $(FW_LIB_SRCS)
-
-$(STAGE1_DIR)/firmware.hex: $(STAGE1_SRCS)
-	@mkdir -p $(STAGE1_DIR)
-	cd firmware/stage1 && $(CARGO) build --release
-	$(PYTHON) scripts/elf2bin.py firmware/target/riscv32i-unknown-none-elf/release/stage1 $(STAGE1_DIR)/firmware.bin $(STAGE1_DIR)
-	$(PYTHON) scripts/merge_firmware_hex.py $(STAGE1_DIR)/firmware.bin "" $(STAGE1_DIR)/firmware.hex
 
 $(STAGE2_DIR)/STAGE2.BIN: $(STAGE2_SRCS) tools/vux_tool.py
 	@mkdir -p $(STAGE2_DIR)
@@ -154,15 +139,14 @@ $(STAGE2_DIR)/STAGE2.BIN: $(STAGE2_SRCS) tools/vux_tool.py
 	$(PYTHON) scripts/elf2bin.py --base $(STAGE2_BASE) firmware/target/riscv32i-unknown-none-elf/release/stage2 $(STAGE2_DIR)/stage2.bin
 	$(PYTHON) tools/vux_tool.py mkv4 --load-addr $(STAGE2_BASE) --name "VUX9K stage 2 (provisional)" $(STAGE2_DIR)/stage2.bin $@
 
-stage1: $(STAGE1_DIR)/firmware.hex
-stage2: $(STAGE2_DIR)/STAGE2.BIN
+firmware: $(FIRMWARE_BUILD_DIR)/firmware.hex $(STAGE2_DIR)/STAGE2.BIN
 
-# Board self-test (firmware/hw_test), an I-RAM image in place of the Boot Manager for
+# Board self-test (firmware/hw_test), an I-RAM image in place of the first stage for
 # `make hw-smoke`; its D-RAM preload (elf2bin's firmware_d*.hex) goes to its own
 # directory and must stay all zero (scripts/hw_smoke.py checks it)
 HWTEST_DIR = $(FIRMWARE_BUILD_DIR)/hw_test
-HWTEST_SRCS = $(wildcard firmware/hw_test/src/*) firmware/hw_test/Cargo.toml $(wildcard firmware/fw_common/src/*.rs) \
-	firmware/boot_manager/bootstrap/link.x
+HWTEST_SRCS = $(wildcard firmware/hw_test/src/*) firmware/hw_test/Cargo.toml firmware/hw_test/link.x \
+	$(wildcard firmware/fw_common/src/*.rs)
 
 $(HWTEST_DIR)/hw_test.hex: $(HWTEST_SRCS)
 	@mkdir -p $(HWTEST_DIR)
@@ -182,25 +166,17 @@ hw-smoke: hwtest firmware
 # scripts/coverage_fw.py. Minimums in coverage/thresholds.toml; report in build/coverage/fw/
 FW_COV_DIR = $(BUILD_DIR)/coverage/fw
 FW_TARGET = firmware/target/riscv32i-unknown-none-elf
-coverage-fw: emu-py firmware stage1 stage2 build-hack build-zephyr-demo build-zephyr
+coverage-fw: emu-py firmware build-hack build-zephyr-demo build-zephyr
 	rm -rf $(FW_COV_DIR) && mkdir -p $(FW_COV_DIR)
-	cd firmware/boot_manager && $(CARGO) build --profile coverage
-	cd firmware/resident_loader && $(CARGO) build --profile coverage
-	$(PYTHON) scripts/elf2bin.py $(FW_TARGET)/coverage/boot_manager $(FW_COV_DIR)/boot_manager.bin > /dev/null
-	$(PYTHON) scripts/elf2bin.py $(FW_TARGET)/coverage/resident_loader $(FW_COV_DIR)/resident_loader.bin > /dev/null
-	cmp $(FW_COV_DIR)/boot_manager.bin $(FIRMWARE_BUILD_DIR)/firmware.bin
-	cmp -i 0x3800 $(FW_COV_DIR)/resident_loader.bin $(FIRMWARE_BUILD_DIR)/resident_loader.bin
 	cd firmware/stage1 && $(CARGO) build --profile coverage
 	$(PYTHON) scripts/elf2bin.py $(FW_TARGET)/coverage/stage1 $(FW_COV_DIR)/stage1.bin > /dev/null
-	cmp $(FW_COV_DIR)/stage1.bin $(STAGE1_DIR)/firmware.bin
+	cmp $(FW_COV_DIR)/stage1.bin $(FIRMWARE_BUILD_DIR)/firmware.bin
 	@# The Hack demo's assembly, made the way hack_demo/Makefile made the binary
 	if command -v msp430-gcc >/dev/null 2>&1 && [ -f $(VENV_PATH)/bin/hcc ]; then \
 		$(VENV_PATH)/bin/hcc -S hack_demo/src/main.c -o $(FW_COV_DIR)/hack_demo.asm; \
 	else cp hack_demo/src/main.asm $(FW_COV_DIR)/hack_demo.asm; fi
 	VUX9K_COV_DIR=$(FW_COV_DIR)/hits $(PYTHON) -m pytest -q sim/emu
 	$(PYTHON) scripts/coverage_fw.py --hits $(FW_COV_DIR)/hits \
-		--elf boot_manager=$(FW_TARGET)/coverage/boot_manager=firmware/boot_manager/,firmware/fw_common/,firmware/fw_drivers/ \
-		--elf resident_loader=$(FW_TARGET)/coverage/resident_loader=firmware/resident_loader/ \
 		--elf stage1=$(FW_TARGET)/coverage/stage1=firmware/stage1/,firmware/fw_common/,firmware/fw_drivers/ \
 		--elf zephyr_demo=$(ZEPHYR_DEMO_BUILD_DIR)/zephyr/zephyr.elf=zephyr_workspace/app/ \
 		--hack hack_demo=$(FW_COV_DIR)/hack_demo.asm=$(HACK_BUILD_DIR)/firmware.bin \
@@ -254,16 +230,13 @@ coverage-rust: coverage-rust-tool firmware hwtest build-hack build-zephyr build-
 	$(PYTHON) scripts/coverage_rust.py $(RUST_COV_REPORT)/emu.json $(RUST_COV_REPORT)/fw_common.json \
 		--thresholds coverage/thresholds.toml --summary $(RUST_COV_DIR)/summary.md
 
-# Size budgets: the Boot Manager fills lower I-RAM below the Resident Loader
-# (0x0000-0x37FF), the Resident Loader its 2 KB above it (0x3800-0x3FFF)
-BM_MAX_BYTES = 14336
-RL_MAX_BYTES = 2048
+# Size budget: the first stage fills at most the 16 KB I-RAM it runs from (a ROM of 8 KB
+# would take half the block RAM: keep it small)
+S1_MAX_BYTES = 16384
 firmware-size: firmware
-	@bm=$$(stat -c %s $(FIRMWARE_BUILD_DIR)/firmware.bin); \
-	rl=$$(( $$(stat -c %s $(FIRMWARE_BUILD_DIR)/resident_loader.bin) - 0x3800 )); \
-	echo "Boot Manager    $$bm / $(BM_MAX_BYTES) bytes"; \
-	echo "Resident Loader $$rl / $(RL_MAX_BYTES) bytes"; \
-	[ $$bm -le $(BM_MAX_BYTES) ] && [ $$rl -le $(RL_MAX_BYTES) ] || { echo "firmware over its size budget"; exit 1; }
+	@s1=$$(stat -c %s $(FIRMWARE_BUILD_DIR)/firmware.bin); \
+	echo "First stage     $$s1 / $(S1_MAX_BYTES) bytes"; \
+	[ $$s1 -le $(S1_MAX_BYTES) ] || { echo "firmware over its size budget"; exit 1; }
 
 # ===== Emulator (emu/: host-only Rust workspace, toolchain pinned by emu/rust-toolchain.toml) =====
 
@@ -414,7 +387,7 @@ sim-lockstep-slow: veryl firmware build-hack emu-py
 	LOCKSTEP_SEEDS=$(LOCKSTEP_SEEDS) LOCKSTEP_SLOW=1 SIM=verilator $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_lockstep]"
 	LOCKSTEP_SEEDS=$(LOCKSTEP_SEEDS) LOCKSTEP_SLOW=1 LOCKSTEP_TRACE=$(LOCKSTEP_TRACE_FILE) $(PYTHON) -m pytest sim/emu/test_lockstep.py
 
-test-emu: emu-py firmware stage1 stage2 hwtest build-hack build-zephyr build-zephyr-demo build-zephyr-irq-echo
+test-emu: emu-py firmware hwtest build-hack build-zephyr build-zephyr-demo build-zephyr-irq-echo
 	@echo "=== Running firmware and demo tests on the emulator ==="
 	$(PYTHON) -m pytest sim/emu
 
@@ -469,15 +442,11 @@ sim-zephyr-repl: build-zephyr emu-py
 	$(PYTHON) -m pytest sim/emu/test_zephyr_bc.py
 
 sim-zephyr-demo-rtl: veryl firmware build-zephyr-demo
-	@echo "=== Running the Zephyr Rust demo from SD on the RTL ==="
+	@echo "=== Running the Zephyr Rust demo from I-RAM on the RTL ==="
 	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_zephyr_demo]"
 
-sim-zephyr-demo-gls: synth-top firmware build-zephyr-demo
-	@echo "=== Running the Zephyr Rust demo from SD on the GLS netlist ==="
-	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc_gls[test_soc_zephyr_demo]"
-
 sim-zephyr-irq-echo-rtl: veryl firmware build-zephyr-irq-echo
-	@echo "=== Running the Zephyr interrupt-driven UART echo from SD on the RTL ==="
+	@echo "=== Running the Zephyr interrupt-driven UART echo from I-RAM on the RTL ==="
 	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_zephyr_irq_echo]"
 
 sim-zephyr: sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-irq-echo-rtl
@@ -548,13 +517,13 @@ sim-gls-unit: synth-units
 
 sim-soc-fast: veryl firmware
 	@echo "=== Running Fast SoC Top Boot & Execution Verification (RTL) ==="
-	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_fast]" "$(SIM_TESTS)::test_soc[test_soc_boot_mode]"
+	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_fast]"
 
 # Same test on Icarus: 4-state simulation keeps X-propagation (e.g. a missing reset)
 # visible on the boot path, which 2-state Verilator would hide
 sim-soc-fast-icarus: veryl firmware
 	@echo "=== Running Fast SoC Top Boot & Execution Verification (RTL, Icarus 4-state) ==="
-	SIM=icarus $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_fast]" "$(SIM_TESTS)::test_soc[test_soc_boot_mode]"
+	SIM=icarus $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_fast]"
 
 sim-soc-mmio: veryl
 	@echo "=== Running SoC Memory Map / MMIO Peripheral Tests (RTL) ==="
@@ -698,7 +667,7 @@ test-sim: check lint-rtl emu-test test-isa-emu firmware test-fw-host test-fat fi
 # Nightly / on demand (CI schedule + workflow_dispatch): the gate-level flashing flow, the
 # full flow on 4-state Icarus, the real PSRAM controller on its pin model (SoC RTL, controller
 # netlist), and the unit tests with a new random seed
-test-slow: sim-gls-hw-flow sim-hw-flow-icarus sim-lockstep-slow sim-zephyr-demo-gls sim-psram-icarus sim-unit-random
+test-slow: sim-gls-hw-flow sim-hw-flow-icarus sim-lockstep-slow sim-psram-icarus sim-unit-random
 	@echo "========================================================================"
 	@echo "  [SLOW] GLS FLOW, ICARUS FLOW, PSRAM ON ICARUS & LONG LOCKSTEP PASSED!    "
 	@echo "========================================================================"
@@ -712,7 +681,7 @@ test-ci: test
 
 test-hardware: test-hw
 
-test-hw: build-zephyr-demo firmware build-hack build-hw prog-sram
+test-hw: firmware build-hw prog-sram
 	@echo "=== Running Automated End-to-End Hardware Test Suite on Tang Nano 9K ==="
 	$(PYTHON) scripts/test_hardware.py
 	@echo "========================================================================"
@@ -728,23 +697,11 @@ check-dist:
 	$(PYTHON) scripts/check_dist.py $(BUILD_DIR)/dist
 	$(PYTHON) scripts/release_check.py selftest $(BUILD_DIR)/dist
 
-# The interrupt-driven UART echo on the board: flashed to slot 3 and booted through the
-# Boot Manager that is running (bitstream and SD card as test-hw or hw-smoke left them)
-test-hw-irq-echo: build-zephyr-irq-echo
-	$(PYTHON) scripts/hw_irq_echo.py --bin $(ZEPHYR_IRQ_ECHO_BUILD_DIR)/zephyr/zephyr.bin --loader $(OPENFPGALOADER)
-
 # test-hw on a `make dist` tree (e.g. CI's vux9k-dist-<sha> artifact): nothing is rebuilt
 DIST ?= $(BUILD_DIR)/dist
 test-hw-dist:
 	$(OPENFPGALOADER) -b tangnano9k $(DIST)/bitstream/pack.fs
 	$(PYTHON) scripts/test_hardware.py --dist $(DIST)
-
-# The upgrade from a previous release on the board (docs/RELEASING.md, step 2): OLD's slots
-# and tool with NEW's bitstream, and OLD's bitstream installing NEW's Boot Manager from
-# slot 0; both `make dist` trees, nothing rebuilt. Leaves NEW's bitstream in SRAM.
-test-hw-upgrade:
-	@test -n "$(OLD)" -a -n "$(NEW)" || { echo "usage: make test-hw-upgrade OLD=<previous release's dist> NEW=<candidate dist>"; exit 2; }
-	$(PYTHON) scripts/test_hw_upgrade.py --old $(OLD) --new $(NEW) --loader $(OPENFPGALOADER)
 
 # ===== Clean =====
 

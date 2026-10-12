@@ -3,54 +3,33 @@
 
 """
 Fast Top-Level SoC Verification Testbench (test_soc_fast.py)
-Verifies power-on reset, CPU boot, instruction execution, and initial peripheral activation.
+Power-on reset, the first stage booting \\VUX9K\\STAGE2.BIN from a FAT32 card into the
+PSRAM, and the CPU running it there (on Icarus, through the real PSRAM controller).
 """
 
 import os
-import struct
 import sys
 
 import cocotb
 
 sys.path.append(os.path.dirname(__file__))
-from soc_env import slot_image, start_soc, wait_cycles
+from soc_env import BANNER, check_psram_pins, fat_sectors, start_soc, v4_file
 
 
 @cocotb.test()
 async def test_soc_fast_boot(dut):
-    """Verify top-level SoC power-on reset, SD card loader, boot prompt, and S2 button launch"""
-    # Preload Slot 1 (LBA 128) with test payload that writes '#' (0x23) to UART (0x4000_0000):
-    # lui a1, 0x40000    -> 0x400005b7
-    # addi a0, zero, 0x23 -> 0x02300513
-    # sb a0, 0(a1)        -> 0x00a58023
-    # j .                 -> 0x0000006f
-    payload = struct.pack("<IIII", 0x400005B7, 0x02300513, 0x00A58023, 0x0000006F)
-    # VUX9 v3 image exactly as tools/vux_tool.py flashes it (the hand-packed header
-    # this replaced had CRC32 = 0, which only worked because the RL doesn't check it)
-    slot1, _ = slot_image(payload, slot=1, mode="riscv", name="TestApp")
-    # Sector 0 gets the 0x55AA MBR signature from start_soc()
-    ser, _ = await start_soc(dut, sd_sectors=slot1)
+    """Power-on to the first stage, which loads STAGE2.BIN into the PSRAM and starts it"""
+    card = fat_sectors({"VUX9K/STAGE2.BIN": v4_file(version=5)})
+    ser, _ = await start_soc(dut, sd_sectors=card)
     dut._log.info("SoC Reset released.")
 
-    # Wait for UART boot banner and prompt 'vux> ' (raises TimeoutError with the output so far)
-    await ser.wait_for(b"vux> ", timeout_cycles=3000000)
-    dut._log.info("SoC Fast Boot & UART Prompt verified successfully!")
-
-    # -------------------------------------------------------------------------
-    # TEST: S2 Button Launch & Full Slot 1 Execution
-    # -------------------------------------------------------------------------
-    dut._log.info("Testing S2 button launch for Slot 1...")
-    dut.btn.value = 0  # Button S2 pressed
-    await wait_cycles(18000 * 25)  # 25ms debounce
-    dut.btn.value = 1  # Release button
-    await wait_cycles(18000 * 15)
-
-    # Wait for Resident Loader "[RL] Slot 1" confirmation
-    rl_buf = await ser.wait_for(b"[RL] Slot 1", timeout_cycles=2000000)
-    dut._log.info("Resident Loader triggered for Slot 1!")
-
-    # Wait for the loaded application to execute and output '#' (it may already
-    # have arrived in the same chunk as the Resident Loader message)
-    if b"#" not in rl_buf.split(b"[RL] Slot 1", 1)[1]:
-        await ser.wait_for(b"#", timeout_cycles=2000000)
-    dut._log.info("Slot 1 loaded and executed payload ('#') successfully!")
+    # The banner, the key window (100 ms), the card and the file: a few million cycles
+    out = await ser.wait_for(b"[BOOT] Starting at 0x80700000", timeout_cycles=6_000_000)
+    text = out.decode("utf-8", errors="replace")
+    assert BANNER in text, text
+    assert '[BOOT] STAGE2.BIN v5 "test" 28 B' in text, text
+    # The second stage runs from the PSRAM: '#'
+    if b"#" not in out.split(b"Starting at 0x80700000", 1)[1]:
+        await ser.wait_for(b"#", timeout_cycles=500_000)
+    dut._log.info("STAGE2.BIN loaded into the PSRAM and executed ('#')")
+    check_psram_pins(dut)

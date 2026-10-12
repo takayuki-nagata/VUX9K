@@ -4,20 +4,19 @@
 
 """
 VUX9K Automated Hardware Test Suite (test_hardware.py)
-End-to-end checks on a Sipeed Tang Nano 9K with a MicroSD card, through the Boot
-Manager's UART commands (README, "Real Hardware Test Suite", lists the 15 tests):
-prompt, diagnostics, MBR dump, flashing and inspecting slots 0-2, the slot catalog,
-CRC/magic rejection, Boot Manager self-update, and booting the Zephyr and Hack demos.
+End-to-end checks of the two-stage boot on a Sipeed Tang Nano 9K with a FAT32 MicroSD card
+(README, "Real Hardware Test Suite", lists the tests): the first stage's prompt and card
+report, a RAM boot of the second stage and its refusals, installing second stages on the
+card (\\VUX9K\\STAGE2.BIN, the previous one kept as STAGE2.OLD), the fall back to
+STAGE2.OLD, and the soft reset back to the first stage. It writes only in \\VUX9K\\,
+which must exist on the card, and leaves the second stage under test installed there.
 """
 
 import argparse
 import json
 import os
 import re
-import shutil
-import subprocess
 import sys
-import time
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
@@ -25,36 +24,55 @@ sys.path.insert(0, REPO_ROOT)
 import tools.vux_tool as vux_tool  # noqa: E402 (needs REPO_ROOT on sys.path)
 
 
-def boot_manager_version():
-    """BOOT_MGR_VERSION of the Boot Manager being tested (tests 4, 11-13 flash slot 0 relative to it)."""
-    with open(os.path.join(REPO_ROOT, "firmware", "boot_manager", "src", "main.rs")) as f:
-        m = re.search(r"const BOOT_MGR_VERSION: u32 = (\d+);", f.read())
-    assert m, "BOOT_MGR_VERSION not found in main.rs"
+def stage1_version():
+    """STAGE1_VERSION of the first stage being tested (it hands it to the second in a2)."""
+    with open(os.path.join(REPO_ROOT, "firmware", "stage1", "src", "main.rs")) as f:
+        m = re.search(r"const STAGE1_VERSION: u32 = (\d+);", f.read())
+    assert m, "STAGE1_VERSION not found in main.rs"
     return int(m.group(1))
 
 
-def dist_boot_manager_version(dist):
-    """The Boot Manager version a `make dist` tree ships (its MANIFEST.json)."""
+def dist_stage1_version(dist):
+    """The first stage's version a `make dist` tree ships (its MANIFEST.json)."""
     with open(os.path.join(dist, "MANIFEST.json")) as f:
-        return int(json.load(f)["boot_manager_version"])
+        return int(json.load(f)["stage1_version"])
 
 
 # With --dist, main() replaces it with the dist's version
-BM_VERSION = boot_manager_version()
+S1_VERSION = stage1_version()
 
-# What the suite flashes: the local build outputs, or with --dist DIR a `make dist` tree
+# What the suite uses: the local build outputs, or with --dist DIR a `make dist` tree
 FILES = {
     "pack_fs": os.path.join(REPO_ROOT, "build", "synth", "pack.fs"),
-    "boot_manager": os.path.join(REPO_ROOT, "build", "firmware", "firmware.bin"),
-    "zephyr_demo": os.path.join(REPO_ROOT, "build", "zephyr-demo", "zephyr", "zephyr.bin"),
-    "hack_demo": os.path.join(REPO_ROOT, "build", "hack", "firmware.bin"),
+    "stage2": os.path.join(REPO_ROOT, "build", "firmware", "stage2", "STAGE2.BIN"),
 }
 DIST_FILES = {
     "pack_fs": "bitstream/pack.fs",
-    "boot_manager": "boot-manager.bin",
-    "zephyr_demo": "demos/zephyr-demo.bin",
-    "hack_demo": "demos/hack-demo.bin",
+    "stage2": "sd/VUX9K/STAGE2.BIN",
 }
+# Versions the suite installs, apart from what a release ships
+TEST_VERSIONS = (9001, 9002, 9003)
+
+
+def with_version(stage2, version, **kw):
+    """The second stage file stage2 with another header version (and overrides)."""
+    h = vux_tool.ImageHeader.parse(stage2)
+    assert h, "not a VUX9 v4 file"
+    data, _ = vux_tool.build_vux9_v4_image(
+        stage2[vux_tool.HEADER_LEN :],
+        name=h.name.rstrip(b"\0").decode(),
+        version=version,
+        load_addr=kw.pop("load_addr", h.load_addr),
+        entry_point=kw.pop("entry_point", h.entry_point),
+        **kw,
+    )
+    return data
+
+
+def handoff(text):
+    """a0, a1, a2 as the second stage printed them, or None."""
+    m = re.search(r"\[S2\] a0=0x([0-9A-F]{8}) a1=0x([0-9A-F]{8}) a2=0x([0-9A-F]{8})", text)
+    return tuple(int(g, 16) for g in m.groups()) if m else None
 
 
 def usb_hub_neighbours(tty, sysfs="/sys"):
@@ -112,8 +130,13 @@ def print_test_result(name, passed, detail=""):
 
 
 def run_hardware_test_suite(port="auto", baud=115200):
-    print_banner("VUX9K Real Hardware Test Suite (Tang Nano 9K + MicroSD)")
+    print_banner("VUX9K Real Hardware Test Suite (Tang Nano 9K + FAT32 MicroSD)")
     results = []
+
+    def record(name, passed, msg):
+        results.append((name, passed, msg))
+        print_test_result(name, passed, msg)
+        return passed
 
     try:
         ser = vux_tool.open_port(port, baudrate=baud, timeout=0.1)
@@ -122,7 +145,6 @@ def run_hardware_test_suite(port="auto", baud=115200):
         return False
 
     neighbours = usb_hub_neighbours(ser.port)
-    hub_hint = ""
     if neighbours:
         hub_hint = (
             "USB devices share the board's hub (" + ", ".join(neighbours) + "); they can make the board's "
@@ -131,341 +153,128 @@ def run_hardware_test_suite(port="auto", baud=115200):
         print(f"\033[93m[WARN]\033[0m {hub_hint}")
     mm_hint = vux_tool.modemmanager_hint(ser.port)
     if mm_hint:
-        # every reconfiguration below would let ModemManager change the board's baud rate
         ser.close()
         print_test_result("0. Host Setup", False, mm_hint)
         return False
 
+    with open(FILES["stage2"], "rb") as f:
+        stage2 = f.read()
+    v_a, v_b, v_c = TEST_VERSIONS
     try:
-        # -------------------------------------------------------------
-        # Test 1: UART Connection & Prompt Sync (vux_tool.sync_prompt)
-        # -------------------------------------------------------------
-        test_name = "1. UART Connection & Prompt Synchronization"
-        passed, resp = vux_tool.sync_prompt(ser, timeout=4.0)
-        msg = (
-            "Connected and synchronized with Boot Manager"
-            if passed
-            else fail_msg("Failed to synchronize prompt.", resp)
-        )
-        results.append((test_name, passed, msg))
-        print_test_result(test_name, passed, msg)
-        if not passed:
-            print("\n[ERROR] Could not communicate with Boot Manager on Tang Nano 9K.")
+        # 1. The first stage's prompt, then its banner after a soft reset
+        name = "1. First stage prompt and banner (vux_tool.enter_s1, 'r')"
+        try:
+            vux_tool.enter_s1(ser)
+            ser.write(b"r")
+            ser.flush()
+            out = vux_tool.enter_s1(ser, drain=False)
+            want = f"VUX9K Stage 1 (v{S1_VERSION})"
+            ok = want in out
+            msg = f"{want} at its prompt" if ok else fail_msg(f"No {want!r} banner.", out)
+        except TimeoutError as e:
+            ok, msg = False, fail_msg("No first-stage prompt.", str(e))
+        if not record(name, ok, msg):
+            print("\n[ERROR] Could not reach the first stage on the Tang Nano 9K.")
             return False
 
-        # -------------------------------------------------------------
-        # Test 2: Hardware Self-Diagnostics (vux_tool.run_diag)
-        # -------------------------------------------------------------
-        test_name = "2. Hardware Self-Diagnostics ('t' / vux_tool.run_diag)"
-        out = vux_tool.run_diag(ser, timeout=8.0)
-        passed = ("[DIAG]" in out) and ("Diagnostics Complete" in out)
-        msg = "Executed onboard LED, UART, and SPI diagnostics" if passed else fail_msg("Failed diagnostics.", out)
-        results.append((test_name, passed, msg))
-        print_test_result(test_name, passed, msg)
+        # 2. The card: FAT32 and where
+        name = "2. SD card and FAT32 volume ('i')"
+        out = vux_tool.send_cmd_and_wait(ser, "i", timeout=30.0, prompt=vux_tool.S1_PROMPT)
+        m = re.search(r"\[FAT\] FAT32 at LBA (\d+)", out)
+        sdhc = "[SD] SDHC card" in out
+        part_lba = int(m.group(1)) if m else None
+        card = f"{'SDHC' if sdhc else 'SDSC'}, FAT32 at LBA {part_lba}"
+        record(name, m is not None, card if m else fail_msg("No FAT32 volume.", out))
 
-        # -------------------------------------------------------------
-        # Test 3: MicroSD Sector 0 (MBR) Dump (vux_tool.dump_mbr)
-        # -------------------------------------------------------------
-        test_name = "3. MicroSD Card Sector 0 (MBR) Dump ('d' / vux_tool.dump_mbr)"
-        out = vux_tool.dump_mbr(ser, timeout=8.0)
-        passed = ("[SD]" in out) and (("55 AA" in out) or ("55aa" in out.lower()) or ("Signature:" in out))
-        msg = "Read 512-byte Sector 0 from physical MicroSD" if passed else fail_msg("Failed sector dump.", out)
-        results.append((test_name, passed, msg))
-        print_test_result(test_name, passed, msg)
-
-        # -------------------------------------------------------------
-        # Test 4: Flash Slot 0: Boot Manager (vux_tool.flash_slot)
-        # -------------------------------------------------------------
-        boot_mgr_bin = FILES["boot_manager"]
-        test_name_flash_s0 = "4. Flash Slot 0: Boot Manager ('w' / vux_tool.flash_slot)"
+        # 3. RAM boot of the second stage
+        name = "3. RAM boot of the second stage ('u' / vux_tool.ram_boot)"
         try:
-            meta = vux_tool.flash_slot(ser, boot_mgr_bin, slot=0, name="Boot Manager", mode="riscv", version=BM_VERSION)
-            results.append(
-                (
-                    test_name_flash_s0,
-                    True,
-                    f"Flashed {boot_mgr_bin} to Slot 0 "
-                    f"(LBA 64, {meta['num_sectors']} sectors, CRC=0x{meta['crc32']:08X})",
-                )
-            )
-            print_test_result(
-                test_name_flash_s0,
-                True,
-                f"Flashed {boot_mgr_bin} to Slot 0 (LBA 64, {meta['num_sectors']} sectors, CRC=0x{meta['crc32']:08X})",
-            )
-        except Exception as e:
-            results.append((test_name_flash_s0, False, str(e)))
-            print_test_result(test_name_flash_s0, False, str(e))
-
-        # -------------------------------------------------------------
-        # Test 5: Inspect Slot 0 Header (vux_tool.inspect_slot)
-        # -------------------------------------------------------------
-        test_name_insp_s0 = "5. Header Verification: Slot 0 ('s0' / vux_tool.inspect_slot)"
-        out = vux_tool.inspect_slot(ser, slot=0, timeout=6.0)
-        passed = ("VUX9" in out) and (("Mode:  1" in out) or ("RISC-V" in out))
-        msg = (
-            "Verified Slot 0 header (Magic: VUX9, Mode: 1/RISC-V, Name: Boot Manager)"
-            if passed
-            else fail_msg("Failed inspect.", out)
-        )
-        results.append((test_name_insp_s0, passed, msg))
-        print_test_result(test_name_insp_s0, passed, msg)
-
-        # -------------------------------------------------------------
-        # Test 6: Flash Slot 1: Default RISC-V App (vux_tool.flash_slot)
-        # -------------------------------------------------------------
-        # The Zephyr Rust demo (make build-zephyr-demo)
-        app_bin = FILES["zephyr_demo"]
-        if not os.path.exists(app_bin):
-            app_bin = os.path.join(REPO_ROOT, "build", "firmware", "test_payload.bin")
-            os.makedirs(os.path.dirname(app_bin), exist_ok=True)
-            with open(app_bin, "wb") as f:
-                f.write(bytes([0x93, 0x02, 0x00, 0x00, 0x93, 0x82, 0x12, 0x00]))
-
-        test_name_flash_s1 = "6. Flash Slot 1: Default RISC-V App ('w' / vux_tool.flash_slot)"
-        try:
-            meta = vux_tool.flash_slot(ser, app_bin, slot=1, name="Zephyr Rust", mode="riscv")
-            results.append(
-                (
-                    test_name_flash_s1,
-                    True,
-                    f"Flashed {app_bin} to Slot 1 (LBA 128, {meta['num_sectors']} sectors, CRC=0x{meta['crc32']:08X})",
-                )
-            )
-            print_test_result(
-                test_name_flash_s1,
-                True,
-                f"Flashed {app_bin} to Slot 1 (LBA 128, {meta['num_sectors']} sectors, CRC=0x{meta['crc32']:08X})",
-            )
-        except Exception as e:
-            results.append((test_name_flash_s1, False, str(e)))
-            print_test_result(test_name_flash_s1, False, str(e))
-
-        # -------------------------------------------------------------
-        # Test 7: Inspect Slot 1 Header (vux_tool.inspect_slot)
-        # -------------------------------------------------------------
-        test_name_insp_s1 = "7. Header Verification: Slot 1 ('s1' / vux_tool.inspect_slot)"
-        out = vux_tool.inspect_slot(ser, slot=1, timeout=6.0)
-        passed = ("VUX9" in out) and (("Mode:  1" in out) or ("RISC-V" in out))
-        results.append(
-            (test_name_insp_s1, passed, "Verified Slot 1 header (Magic: VUX9, Mode: 1/RISC-V, Name: Rust App)")
-        )
-        print_test_result(
-            test_name_insp_s1, passed, "Verified Slot 1 header (Magic: VUX9, Mode: 1/RISC-V, Name: Rust App)"
-        )
-
-        # -------------------------------------------------------------
-        # Test 8: Flash Slot 2: Hack 16-bit Firmware (vux_tool.flash_slot)
-        # -------------------------------------------------------------
-        hack_bin = FILES["hack_demo"]
-        if not os.path.exists(hack_bin):
-            os.makedirs(os.path.join(REPO_ROOT, "build", "hack"), exist_ok=True)
-            with open(hack_bin, "wb") as f:
-                f.write(bytes([0x00, 0x00, 0x01, 0x00, 0x02, 0x00]))
-
-        test_name_flash_s2 = "8. Flash Slot 2: Hack 16-bit Firmware ('w' / vux_tool.flash_slot)"
-        try:
-            meta = vux_tool.flash_slot(ser, hack_bin, slot=2, name="Hack Demo", mode="hack")
-            results.append(
-                (
-                    test_name_flash_s2,
-                    True,
-                    f"Flashed {hack_bin} to Slot 2 (LBA 192, {meta['num_sectors']} sectors, CRC=0x{meta['crc32']:08X})",
-                )
-            )
-            print_test_result(
-                test_name_flash_s2,
-                True,
-                f"Flashed {hack_bin} to Slot 2 (LBA 192, {meta['num_sectors']} sectors, CRC=0x{meta['crc32']:08X})",
-            )
-        except Exception as e:
-            results.append((test_name_flash_s2, False, str(e)))
-            print_test_result(test_name_flash_s2, False, str(e))
-
-        # -------------------------------------------------------------
-        # Test 9: Inspect Slot 2 Header (vux_tool.inspect_slot)
-        # -------------------------------------------------------------
-        test_name_insp_s2 = "9. Header Verification: Slot 2 ('s2' / vux_tool.inspect_slot)"
-        out = vux_tool.inspect_slot(ser, slot=2, timeout=6.0)
-        passed = ("VUX9" in out) and (("Mode:  0" in out) or ("Hack" in out))
-        msg = (
-            "Verified Slot 2 header (Magic: VUX9, Mode: 0/Hack, Name: Hack Demo)"
-            if passed
-            else fail_msg("Failed inspect.", out)
-        )
-        results.append((test_name_insp_s2, passed, msg))
-        print_test_result(test_name_insp_s2, passed, msg)
-
-        # -------------------------------------------------------------
-        # Test 10: Program Slots Catalog Listing (vux_tool.list_slots)
-        # -------------------------------------------------------------
-        test_name_catalog = "10. Program Slots Catalog Listing ('l' / vux_tool.list_slots)"
-        out = vux_tool.list_slots(ser, timeout=8.0)
-        passed = ("Slot 0" in out) and ("Slot 1" in out) and ("Slot 2" in out)
-        msg = (
-            "Verified multi-slot catalog listing with names and sizes"
-            if passed
-            else fail_msg("Catalog incomplete.", out)
-        )
-        results.append((test_name_catalog, passed, msg))
-        print_test_result(test_name_catalog, passed, msg)
-
-        # -------------------------------------------------------------
-        # Test 11: Negative Test: CRC32 Corrupted Payload Rejection
-        # -------------------------------------------------------------
-        test_name_crc = "11. Negative Test: CRC32 Corrupted Payload Rejection (Slot 0)"
-        try:
-            vux_tool.flash_slot(
-                ser,
-                boot_mgr_bin,
-                slot=0,
-                name="CorruptBM",
-                mode="riscv",
-                version=BM_VERSION + 1,
-                crc_override=0xDEADBEEF,
-            )
-            out = vux_tool.reboot_soc(ser, timeout=8.0)
-            passed = "CRC32 mismatch" in out or "Corrupted payload" in out or "invalid" in out
-            if passed and "vux>" not in out:
-                p_ok, _ = vux_tool.sync_prompt(ser, timeout=4.0)
-                passed = passed and p_ok
+            out = vux_tool.ram_boot(ser, stage2)
+            got = handoff(out)
+            ok = got == (int(sdhc), part_lba, S1_VERSION)
             msg = (
-                "Detected corrupted CRC32, bypassed auto-update, and preserved Boot Manager"
-                if passed
-                else fail_msg("Failed CRC check.", out)
+                f"a0-a2 = {got}"
+                if ok
+                else fail_msg(f"Handoff {got}, expected {(int(sdhc), part_lba, S1_VERSION)}.", out)
             )
-            # Restore Slot 0 to the Boot Manager under test
-            time.sleep(0.5)
-            vux_tool.sync_prompt(ser, timeout=4.0)
-            vux_tool.flash_slot(ser, boot_mgr_bin, slot=0, name="Boot Manager", mode="riscv", version=BM_VERSION)
-            results.append((test_name_crc, passed, msg))
-            print_test_result(test_name_crc, passed, msg)
-        except Exception as e:
-            results.append((test_name_crc, False, str(e)))
-            print_test_result(test_name_crc, False, str(e))
+        except (vux_tool.UploadError, TimeoutError) as e:
+            ok, msg = False, str(e)
+        record(name, ok, msg)
 
-        # -------------------------------------------------------------
-        # Test 12: Negative Test: Invalid Magic Header Rejection (Slot 3)
-        # -------------------------------------------------------------
-        test_name_magic = "12. Negative Test: Invalid Magic Header Rejection ('3')"
+        # 4. What the first stage refuses to start
+        name = "4. RAM boot refusals (magic, CRC, load window)"
+        vux_tool.enter_s1(ser)
+        cases = [
+            (with_version(stage2, 1, magic_override=0x12345678), "not a VUX9 v4 file"),
+            (with_version(stage2, 1, crc_override=0), "CRC mismatch"),
+            (with_version(stage2, 1, load_addr=vux_tool.XMEM_BASE, entry_point=vux_tool.XMEM_BASE), "loads outside"),
+        ]
+        bad = []
+        for data, reason in cases:
+            try:
+                vux_tool.ram_boot(ser, data)
+                bad.append(f"{reason}: started")
+                vux_tool.enter_s1(ser)
+            except vux_tool.UploadError as e:
+                if f"[BOOT] {reason}" not in str(e):
+                    bad.append(f"{reason}: {e}")
+        record(name, not bad, "each refused, still at the prompt" if not bad else "; ".join(bad))
+
+        # 5. Install two second stages: the second keeps the first as STAGE2.OLD
+        name = f"5. Install STAGE2.BIN v{v_a}, then v{v_b} (second stage 'n')"
         try:
-            vux_tool.flash_slot(ser, b"\x00" * 64, slot=3, name="BadMagic", mode="riscv", magic_override=0x12345678)
-            out = vux_tool.boot_slot(ser, slot=3, timeout=8.0)
-            passed = "Load failed" in out or "returning to Boot Manager" in out
-            if passed and "vux>" not in out:
-                p_ok, _ = vux_tool.sync_prompt(ser, timeout=4.0)
-                passed = passed and p_ok
-            msg = (
-                "Resident Loader rejected invalid Magic header and returned to Boot Manager"
-                if passed
-                else fail_msg("Failed Magic check.", out)
-            )
-            results.append((test_name_magic, passed, msg))
-            print_test_result(test_name_magic, passed, msg)
-        except Exception as e:
-            results.append((test_name_magic, False, str(e)))
-            print_test_result(test_name_magic, False, str(e))
+            vux_tool.ram_boot(ser, stage2)
+            vux_tool.install_stage2(ser, with_version(stage2, v_a))
+            vux_tool.install_stage2(ser, with_version(stage2, v_b))
+            ok, msg = True, "[INSTALL] OK twice"
+        except (vux_tool.UploadError, TimeoutError) as e:
+            ok, msg = False, str(e)
+            if "[INSTALL] not found" in msg:
+                msg += " -> create the directory VUX9K in the card's root (on a PC) and run again"
+        record(name, ok, msg)
 
-        # -------------------------------------------------------------
-        # Test 13: Boot Manager v2 Self-Update and Rollback
-        # -------------------------------------------------------------
-        test_name_update = "13. Boot Manager Self-Update & Rollback"
-        try:
-            vux_tool.flash_slot(ser, boot_mgr_bin, slot=0, name="BootMgr v2", mode="riscv", version=BM_VERSION + 1)
-            out = vux_tool.reboot_soc(ser, timeout=8.0)
-            passed = (
-                "Verified valid Boot Manager update" in out
-                or "Booted newly updated" in out
-                or f"v{BM_VERSION + 1}" in out
-            ) and ("Auto-updating" in out or "Booted newly updated" in out)
-            if passed and "vux>" not in out:
-                p_ok, _ = vux_tool.sync_prompt(ser, timeout=4.0)
-                passed = passed and p_ok
-            msg = (
-                f"Verified automatic Boot Manager self-update from Slot 0 (v{BM_VERSION + 1})"
-                if passed
-                else fail_msg("Failed self-update.", out)
-            )
-
-            # Restore Slot 0 to the Boot Manager under test
-            time.sleep(0.5)
-            vux_tool.sync_prompt(ser, timeout=4.0)
-            vux_tool.flash_slot(ser, boot_mgr_bin, slot=0, name="Boot Manager", mode="riscv", version=BM_VERSION)
-
-            results.append((test_name_update, passed, msg))
-            print_test_result(test_name_update, passed, msg)
-        except Exception as e:
-            results.append((test_name_update, False, str(e)))
-            print_test_result(test_name_update, False, str(e))
-
-        # -------------------------------------------------------------
-        # Test 14: Boot Slot 1: Zephyr Rust demo
-        # -------------------------------------------------------------
-        test_name_boot_s1 = "14. Boot Slot 1: Zephyr Rust App Execution ('1' / vux_tool.boot_slot)"
-        out = vux_tool.boot_slot(ser, slot=1, timeout=8.0)
-        passed = (
-            ("[RL] Slot 1" in out)
-            and ("[Rust App]" in out)
-            and ("All Rust application tasks finished successfully!" in out)
-        )
-        msg = "Executed the Zephyr Rust application tasks" if passed else fail_msg("Failed Slot 1 execution.", out)
-        if not passed and hub_hint:
-            msg += f"\n       -> {hub_hint}"
-        results.append((test_name_boot_s1, passed, msg))
-        print_test_result(test_name_boot_s1, passed, msg)
-
-        # A launched application never returns to the Boot Manager: reconfigure the FPGA to get it back
-        ser.close()
-        pack_fs = FILES["pack_fs"]
-        loader_bin = shutil.which("openFPGALoader") or os.path.expanduser("~/.local/oss-cad-suite/bin/openFPGALoader")
-        subprocess.run(
-            [loader_bin, "-b", "tangnano9k", pack_fs], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        )
-        time.sleep(0.5)
-        ser = vux_tool.open_port(port, baudrate=baud, timeout=0.1)
-        resynced, resync_out = vux_tool.sync_prompt(ser, timeout=4.0)
-
-        # -------------------------------------------------------------
-        # Test 15: Boot Slot 2: Hack 16-bit Firmware Execution
-        # -------------------------------------------------------------
-        test_name_boot_s2 = "15. Boot Slot 2: Hack 16-bit Firmware Execution ('2')"
-        vux_tool.drain_serial(ser, timeout=0.1)
-        ser.write(b"2")
+        # 6. Soft reset back to the first stage, which boots the new one
+        name = f"6. Soft reset to the first stage, which boots v{v_b}"
+        ser.write(b"r")
         ser.flush()
-        start = time.time()
-        out = ""
-        while time.time() - start < 40.0:
-            c = ser.read(128)
-            if c:
-                out += c.decode("utf-8", errors="replace")
-                if "ALL HACK C FIRMWARE TESTS PASSED" in out:
-                    break
-        passed = (
-            resynced
-            and ("[RL] Slot 2" in out)
-            and ("Hack 16-bit C Firmware Test" in out)
-            and ("ALL HACK C FIRMWARE TESTS PASSED" in out)
-        )
-        msg = (
-            "Executed Hack 16-bit C firmware and verified 100% test pass"
-            if passed
-            else fail_msg("Failed Slot 2 execution.", out)
-            if resynced
-            else fail_msg("No Boot Manager prompt after reconfiguring the FPGA.", resync_out)
-        )
-        if not passed and hub_hint:
-            msg += f"\n       -> {hub_hint}"
-        results.append((test_name_boot_s2, passed, msg))
-        print_test_result(test_name_boot_s2, passed, msg)
+        got, out = vux_tool.read_until(ser, (vux_tool.S2_PROMPT,), 20.0)
+        ok = got is not None and f"[BOOT] STAGE2.BIN v{v_b} " in out and "VUX9K Stage 1" in out
+        record(name, ok, f"booted v{v_b}" if ok else fail_msg("Not booted.", out))
 
-        # Reconfigure the FPGA again, so the board is left at the Boot Manager
-        ser.close()
-        pack_fs = FILES["pack_fs"]
-        loader_bin = shutil.which("openFPGALoader") or os.path.expanduser("~/.local/oss-cad-suite/bin/openFPGALoader")
-        subprocess.run(
-            [loader_bin, "-b", "tangnano9k", pack_fs], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        )
-        time.sleep(0.5)
+        # 7. The card as the first stage sees it
+        name = f"7. STAGE2.BIN v{v_b} and STAGE2.OLD v{v_a} on the card ('i')"
+        vux_tool.enter_s1(ser)
+        out = vux_tool.send_cmd_and_wait(ser, "i", timeout=30.0, prompt=vux_tool.S1_PROMPT)
+        ok = f"STAGE2.BIN: v{v_b} " in out and f"STAGE2.OLD: v{v_a} " in out
+        record(name, ok, "both checked [OK]" if ok else fail_msg("Unexpected files.", out))
+
+        # 8. A broken STAGE2.BIN: the first stage boots STAGE2.OLD
+        name = "8. Broken STAGE2.BIN: boot from STAGE2.OLD (second stage 'x')"
+        try:
+            vux_tool.ram_boot(ser, stage2)
+            vux_tool.install_stage2(ser, with_version(stage2, v_c, crc_override=0), unchecked=True)
+            ser.write(b"r")
+            ser.flush()
+            got, out = vux_tool.read_until(ser, (vux_tool.S2_PROMPT,), 20.0)
+            ok = got is not None and f"[BOOT] STAGE2.OLD (STAGE2.BIN missing or broken) v{v_a} " in out
+            msg = f"booted STAGE2.OLD v{v_a}" if ok else fail_msg("No fall back.", out)
+        except (vux_tool.UploadError, TimeoutError) as e:
+            ok, msg = False, str(e)
+        record(name, ok, msg)
+
+        # 9. Leave the card with the second stage under test
+        name = "9. Install the second stage under test and boot it"
+        try:
+            vux_tool.install_stage2(ser, stage2)
+            ser.write(b"r")
+            ser.flush()
+            h = vux_tool.ImageHeader.parse(stage2)
+            got, out = vux_tool.read_until(ser, (vux_tool.S2_PROMPT,), 20.0)
+            ok = got is not None and h is not None and f"[BOOT] STAGE2.BIN v{h.version} " in out
+            msg = "installed and booted" if ok else fail_msg("Not booted.", out)
+        except (vux_tool.UploadError, TimeoutError) as e:
+            ok, msg = False, str(e)
+        record(name, ok, msg)
     finally:
         try:
             ser.close()
@@ -496,15 +305,15 @@ def run_hardware_test_suite(port="auto", baud=115200):
 
 
 def main():
-    global BM_VERSION
+    global S1_VERSION
     parser = argparse.ArgumentParser(description="VUX9K Automated Hardware Test Suite")
     parser.add_argument("--port", default="auto", help="Serial/FTDI port URL (default: auto)")
     parser.add_argument("--baud", type=int, default=115200, help="UART baud rate (default: 115200)")
-    parser.add_argument("--dist", metavar="DIR", help="flash the files of a `make dist` tree instead of build/")
+    parser.add_argument("--dist", metavar="DIR", help="use the files of a `make dist` tree instead of build/")
     args = parser.parse_args()
 
     if args.dist:
-        BM_VERSION = dist_boot_manager_version(args.dist)
+        S1_VERSION = dist_stage1_version(args.dist)
         for key, rel in DIST_FILES.items():
             FILES[key] = os.path.join(args.dist, rel)
             if not os.path.isfile(FILES[key]):

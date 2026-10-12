@@ -42,7 +42,7 @@ pub fn crc32_update(data: &[u8], mut crc: u32) -> u32 {
 }
 
 /// a * b by shift-and-add: RV32I has no multiplier, and this keeps libgcc's
-/// __mulsi3 out of the Boot Manager.
+/// __mulsi3 out of the firmware.
 #[inline(never)]
 pub fn mul_u32(mut a: u32, mut b: u32) -> u32 {
     let mut res = 0u32;

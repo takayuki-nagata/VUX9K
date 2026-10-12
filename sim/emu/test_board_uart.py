@@ -68,7 +68,7 @@ def test_apply_line_settings_leaves_non_tty_ports_alone():
     [
         (RESULT_AT_57600, True),
         (RESULT_AT_57600.decode("utf-8", errors="replace"), True),
-        (b"\nvux> ", False),
+        (b"\ns1> ", False),
         ("  POS (AU)  :  X = +0.7198389\x1b[K\r\n", False),  # the Zephyr demo's escapes
     ],
 )
@@ -135,7 +135,7 @@ def test_modemmanager_hint_ignores_non_usb_ports(tmp_path):
     assert vux_tool.modemmanager_hint("/dev/pts/7", **paths) == ""
 
 
-STALE = b"RESULT PASS 0B/0B 00000000\nRESULT PASS 0B/0B 00000000\n  [r] Reboot SoC via Resident Loader\nvux> "
+STALE = b"RESULT PASS 0B/0B 00000000\nRESULT PASS 0B/0B 00000000\n  [r] Soft reset (boots again)\ns1> "
 FRESH = b"\nhw_test\nT01 add C02B9A30 FAIL\nRESULT FAIL 00/0B 00000001\n"
 
 

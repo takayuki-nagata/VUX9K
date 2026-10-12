@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Takayuki Nagata
 // SPDX-License-Identifier: MIT
 
-//! Board self-test (`make hw-smoke`): runs from block RAM in place of the Boot Manager,
+//! Board self-test (`make hw-smoke`): runs from block RAM in place of the first stage,
 //! so it needs neither the SD card nor the boot chain. Each test folds 4096 results of
 //! one instruction pattern (xorshift32 operands) into a checksum and compares it with
 //! the value the emulator computes (which `make sim-lockstep` ties to the RTL); a

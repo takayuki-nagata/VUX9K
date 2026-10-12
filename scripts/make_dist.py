@@ -4,11 +4,12 @@
 
 """Assemble the application-developer distribution (make dist) into a directory.
 
-The tree holds what an application developer needs: the bitstream, the Boot Manager
-update image, the demos, vux_tool.py, the Zephyr BSP (with the Zephyr demo as a
-template), the Hack demo's C sources, and the emulator (CLI and Python module).
-Nothing in it depends on a version number: MANIFEST.json records the commit, the
-adopted place-and-route seed, the Boot Manager version and the tool pins (taken from
+The tree holds what an application developer needs: the bitstream (with the first stage
+in it), the second stage for the card (sd/VUX9K/STAGE2.BIN), the demos, vux_tool.py, the
+Zephyr BSP (with the Zephyr demo as a template), the Hack demo's C sources, and the
+emulator (CLI and Python module). Nothing in it depends on a version number:
+MANIFEST.json records the commit, the adopted place-and-route seed, the first stage's
+version and the tool pins (taken from
 .github/workflows/ci.yml, so they can't drift from what CI builds with), and the
 release workflow names the archives after the tag. SHA256SUMS covers every other file.
 """
@@ -33,7 +34,7 @@ FILES = {
     "docs/APP_DEVELOPMENT.md": "docs/APP_DEVELOPMENT.md",
     "LICENSE": "LICENSE",
     "bitstream/pack.fs": "build/synth/pack.fs",
-    "boot-manager.bin": "build/firmware/firmware.bin",
+    "sd/VUX9K/STAGE2.BIN": "build/firmware/stage2/STAGE2.BIN",
     "demos/zephyr-demo.bin": "build/zephyr-demo/zephyr/zephyr.bin",
     "demos/hack-demo.bin": "build/hack/firmware.bin",
     "tools/vux_tool.py": "tools/vux_tool.py",
@@ -87,11 +88,11 @@ def tool_pins():
     return pins
 
 
-def boot_manager_version():
-    with open(os.path.join(REPO_ROOT, "firmware", "boot_manager", "src", "main.rs")) as f:
-        m = re.search(r"const BOOT_MGR_VERSION: u32 = (\d+);", f.read())
+def stage1_version():
+    with open(os.path.join(REPO_ROOT, "firmware", "stage1", "src", "main.rs")) as f:
+        m = re.search(r"const STAGE1_VERSION: u32 = (\d+);", f.read())
     if not m:
-        sys.exit("make_dist: BOOT_MGR_VERSION not found in firmware/boot_manager/src/main.rs")
+        sys.exit("make_dist: STAGE1_VERSION not found in firmware/stage1/src/main.rs")
     return int(m.group(1))
 
 
@@ -216,7 +217,7 @@ def main():
             "sta_target_mhz": pnr["target_mhz"],
             "sta_closure": pnr["closure"],
         },
-        "boot_manager_version": boot_manager_version(),
+        "stage1_version": stage1_version(),
         "pins": tool_pins(),
     }
     with open(os.path.join(args.out, "MANIFEST.json"), "w") as f:

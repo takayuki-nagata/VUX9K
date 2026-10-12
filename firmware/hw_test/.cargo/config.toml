@@ -4,9 +4,10 @@
 [build]
 target = "riscv32i-unknown-none-elf"
 
-# Same memory layout as the Boot Manager (it replaces it in firmware.hex). The path is
-# relative to the workspace root (docs/agents/firmware.md, "Cargo workspace gotcha").
+# Its own memory layout: it replaces the first stage in firmware.hex, but keeps its stack in
+# D-RAM. The path is relative to the workspace root (docs/agents/firmware.md, "Cargo
+# workspace gotcha").
 [target.riscv32i-unknown-none-elf]
 rustflags = [
-    "-C", "link-arg=-Tboot_manager/bootstrap/link.x",
+    "-C", "link-arg=-Thw_test/link.x",
 ]

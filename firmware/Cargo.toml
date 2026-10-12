@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 [workspace]
-members = ["boot_manager", "resident_loader", "stage1", "stage2", "fw_common", "fw_drivers", "hw_test"]
+members = ["stage1", "stage2", "fw_common", "fw_drivers", "hw_test"]
 resolver = "2"
 
 [profile.dev]

@@ -278,7 +278,7 @@ impl SdCard {
 
         // Verify: re-read the sector and compare byte-for-byte, streaming
         // the comparison rather than buffering a second 512-byte block.
-        // (No second 512-byte buffer: the Boot Manager's stack is in the 8 KB D-RAM.)
+        // Compared as it is read back: no second 512-byte buffer
         let r1v = Self::send_cmd(17, addr, 0xFF);
         if r1v != 0x00 {
             Self::deselect();

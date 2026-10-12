@@ -28,7 +28,7 @@ REQUIRED = [
     "THIRD_PARTY_LICENSES.txt",
     "docs/APP_DEVELOPMENT.md",
     "bitstream/pack.fs",
-    "boot-manager.bin",
+    "sd/VUX9K/STAGE2.BIN",
     "demos/zephyr-demo.bin",
     "demos/hack-demo.bin",
     "tools/vux_tool.py",
@@ -111,7 +111,7 @@ def check_sums(dist):
 def check_manifest(dist):
     with open(os.path.join(dist, "MANIFEST.json")) as f:
         m = json.load(f)
-    for key in ("git_sha", "git_describe", "dirty", "bitstream", "boot_manager_version", "pins"):
+    for key in ("git_sha", "git_describe", "dirty", "bitstream", "stage1_version", "pins"):
         if key not in m:
             fail(f"MANIFEST.json has no {key}")
     with tarfile.open(os.path.join(dist, "zephyr/vux9k-zephyr-bsp.tar.gz")) as tar:

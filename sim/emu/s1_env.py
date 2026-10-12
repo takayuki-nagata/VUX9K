@@ -18,7 +18,7 @@ from vux9k import (
     wait_for,
 )
 
-STAGE1_DIR = os.path.join(FIRMWARE_DIR, "stage1")
+STAGE1_DIR = FIRMWARE_DIR
 STAGE2_RAW = os.path.join(FIRMWARE_DIR, "stage2", "stage2.bin")
 S1_PROMPT = b"s1> "
 S2_PROMPT = b"s2> "

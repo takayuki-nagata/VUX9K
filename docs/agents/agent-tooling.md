@@ -31,7 +31,7 @@ when their trigger happens.
 | `stop_check.py`'s budget (90 s), lock and timeouts | the machine and how long the checks take | checks skipped with a note, or slow stops | review |
 | `.githooks/pre-commit` (`make check`) | what `make check` runs and how long it takes | slow or noisy commits | review |
 | `implementer` / `change-reviewer` bodies | AGENTS.md's rules, `sync-points.md`, `test-tiers.md` | stale instructions to agents | review |
-| Skills (`rtl-refactor-proof`, `mutation-triage`, `bm-change`) | script options (`run_eqy.py --depth`, `mutation.py --replay`/`--summarize`), firmware constants and budgets | wrong commands in a procedure | paths and targets **checked**; options and numbers review |
+| Skills (`rtl-refactor-proof`, `mutation-triage`, `stage1-change`) | script options (`run_eqy.py --depth`, `mutation.py --replay`/`--summarize`), firmware constants and budgets | wrong commands in a procedure | paths and targets **checked**; options and numbers review |
 
 ## When to review
 
@@ -50,7 +50,7 @@ when their trigger happens.
     new RTL in `SOC_RTL_SRCS` and in `sim/runners/sim_runner.py`'s file lists (and
     `SOC_RTL_PUBLIC`); `VERYL_SRCS`; `scripts/run_eqy.py`'s export of path dependencies;
     the guides' `paths:`.
-  - A new Boot Manager loader or image format: the `bm-change` skill's budgets and version
+  - A new loader stage or image format: the `stage1-change` skill's budgets and version
     numbers; once a Zephyr board runs from memory only the extended profile has today, the
     emulator-only rule in AGENTS.md and zephyr.md.
   - RV32M in the CPU: the firmware crates' `.cargo/config.toml` targets, zephyr.md's

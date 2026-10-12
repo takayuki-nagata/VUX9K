@@ -3,10 +3,11 @@
  * SPDX-License-Identifier: MIT
  */
 
-/* Unified Linker Script for Tang Nano 9K SoC */
+/* hw_test: code in I-RAM (in place of the first stage), data and stack in D-RAM (its
+ * tests own the PSRAM) */
 MEMORY
 {
-  I_ROM (rx)  : ORIGIN = 0x00000000, LENGTH = 14K
+  I_ROM (rx)  : ORIGIN = 0x00000000, LENGTH = 16K
   D_RAM (rwx) : ORIGIN = 0x20000000, LENGTH = 8K
 }
 
