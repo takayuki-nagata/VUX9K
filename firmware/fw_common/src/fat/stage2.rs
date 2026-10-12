@@ -20,8 +20,8 @@
 use super::{BlockDevice, DirEntry, FatError, Volume};
 use crate::header::{ImageError, ImageHeader, HEADER_LEN};
 
-/// The directory, from the root.
-pub const DIR: &str = "VUX9K";
+/// The directory, in the root.
+pub const DIR: [u8; 11] = *b"VUX9K      ";
 pub const BIN: [u8; 11] = *b"STAGE2  BIN";
 pub const OLD: [u8; 11] = *b"STAGE2  OLD";
 pub const NEW: [u8; 11] = *b"STAGE2  NEW";
@@ -60,9 +60,30 @@ pub struct Window {
     pub len: u32,
 }
 
-/// Check the v4 file `file` and hand its payload to `load` (offset into the payload,
-/// bytes) as it is read: the header first (parse, size, `check(window)`), the CRC at the
-/// end. On an error, `load` may have received part of the payload.
+/// `\VUX9K\`, found by its 8.3 name in the root (without `Volume::open`'s path parsing,
+/// which the first stage has no room for).
+pub fn dir<D: BlockDevice>(vol: &mut Volume<D>) -> Result<DirEntry, FatError> {
+    let root = vol.root();
+    match vol.find(&root, &DIR)? {
+        Some(d) if d.is_dir() => Ok(d),
+        Some(_) => Err(FatError::WrongType),
+        None => Err(FatError::NotFound),
+    }
+}
+
+/// The second stage's file `name` (`BIN`, `OLD`, `NEW`) in `\VUX9K\`.
+pub fn find_file<D: BlockDevice>(
+    vol: &mut Volume<D>,
+    name: &[u8; 11],
+) -> Result<DirEntry, FatError> {
+    let d = dir(vol)?;
+    vol.find(&d, name)?.ok_or(FatError::NotFound)
+}
+
+/// Check the v4 file `file` and hand its payload to `load` (address, bytes: where they
+/// load, from the header's `load_addr` on) as it is read: the header first (parse, size,
+/// `check(window)`), the CRC at the end. On an error, `load` may have received part of
+/// the payload.
 pub fn load_file<D: BlockDevice>(
     vol: &mut Volume<D>,
     file: &DirEntry,
@@ -88,9 +109,9 @@ pub fn load_file<D: BlockDevice>(
             });
             payload = &data[HEADER_LEN.min(data.len())..];
         }
-        if let Some(Ok(_)) = header {
+        if let Some(Ok(h)) = header {
             crc = crate::crc32_update(payload, crc);
-            load(at, payload);
+            load(h.load_addr + at, payload);
             at += payload.len() as u32;
         }
     })?;
@@ -109,8 +130,7 @@ pub fn select_boot<D: BlockDevice>(
     load: &mut dyn FnMut(u32, &[u8]),
 ) -> Result<(Which, ImageHeader), (BootError, BootError)> {
     let mut try_one = |name: &[u8; 11]| -> Result<ImageHeader, BootError> {
-        let dir = vol.open(DIR)?;
-        let file = vol.find(&dir, name)?.ok_or(FatError::NotFound)?;
+        let file = find_file(vol, name)?;
         load_file(vol, &file, window, load)
     };
     let bin = match try_one(&BIN) {
@@ -140,7 +160,7 @@ pub fn install<D: BlockDevice>(
     if !h.crc_matches(&image[HEADER_LEN..]) {
         return Err(BootError::Crc);
     }
-    let dir = vol.open(DIR)?;
+    let dir = dir(vol)?;
     if let Some(stale) = vol.find(&dir, &NEW)? {
         vol.remove(&stale)?;
     }

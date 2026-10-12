@@ -6,6 +6,7 @@
 Merge Boot Manager binary and Resident Loader binary into a 4096-word (16KB) hex file.
 - Words 0..3583   (14 KB): Boot Manager (or NOP if empty)
 - Words 3584..4095 (2 KB): Resident Loader
+Without a Resident Loader (the first stage, hw_test), the image may fill all 16 KB.
 """
 
 import os
@@ -31,9 +32,12 @@ def merge_hex(bm_path, rl_path, out_hex_path):
         rl_data = rl_data[0x3800:]
 
     words = [NOP] * 4096
+    limit = 3584 * 4 if rl_data else 4096 * 4
+    if len(bm_data) > limit:
+        sys.exit(f"{bm_path}: {len(bm_data)} bytes, more than the {limit} that fit")
 
-    # 1. Boot Manager (up to 14 KB / 3584 words)
-    for i in range(0, min(len(bm_data), 3584 * 4), 4):
+    # 1. Boot Manager (up to 14 KB / 3584 words; 16 KB alone)
+    for i in range(0, len(bm_data), 4):
         chunk = bm_data[i : i + 4]
         if len(chunk) < 4:
             chunk = chunk + b"\x00" * (4 - len(chunk))
@@ -50,7 +54,7 @@ def merge_hex(bm_path, rl_path, out_hex_path):
         for w in words:
             f.write(f"{w:08x}\n")
 
-    print(f"Generated {out_hex_path} (4096 words / 16 KB: 14KB BM + 2KB RL)")
+    print(f"Generated {out_hex_path} (4096 words / 16 KB, {len(bm_data)} + {len(rl_data)} bytes)")
 
 
 if __name__ == "__main__":

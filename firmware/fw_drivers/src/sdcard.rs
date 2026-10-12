@@ -180,6 +180,15 @@ impl SdCard {
         true
     }
 
+    /// Take over a card that the first stage initialized (its a0: SDHC), without
+    /// initializing it again.
+    pub fn adopt(sdhc: bool) {
+        unsafe {
+            IS_SDHC = sdhc;
+            IS_INITIALIZED = true;
+        }
+    }
+
     pub fn is_sdhc() -> bool {
         unsafe { IS_SDHC }
     }
@@ -269,10 +278,7 @@ impl SdCard {
 
         // Verify: re-read the sector and compare byte-for-byte, streaming
         // the comparison rather than buffering a second 512-byte block.
-        // D_RAM is only 8KB total and shared with the stack (no guard page,
-        // see firmware/boot_manager/bootstrap/link.x) -- an extra 512-byte local buffer
-        // here, on top of the caller's own 512-byte sector buffer already
-        // on the stack, is a real stack-overflow risk on this target.
+        // (No second 512-byte buffer: the Boot Manager's stack is in the 8 KB D-RAM.)
         let r1v = Self::send_cmd(17, addr, 0xFF);
         if r1v != 0x00 {
             Self::deselect();
@@ -312,5 +318,15 @@ impl Disk for SdCard {
 
     fn write(&mut self, sector: u32, data: &[u8; SECTOR]) -> bool {
         SdCard::write_block(sector, data)
+    }
+}
+
+impl fw_common::fat::BlockDevice for SdCard {
+    fn read(&mut self, lba: u32, buf: &mut [u8; SECTOR]) -> bool {
+        SdCard::read_block(lba, buf)
+    }
+
+    fn write(&mut self, lba: u32, buf: &[u8; SECTOR]) -> bool {
+        SdCard::write_block(lba, buf)
     }
 }

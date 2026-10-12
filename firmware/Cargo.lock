@@ -34,3 +34,19 @@ version = "0.1.0"
 dependencies = [
  "fw_common",
 ]
+
+[[package]]
+name = "stage1"
+version = "0.1.0"
+dependencies = [
+ "fw_common",
+ "fw_drivers",
+]
+
+[[package]]
+name = "stage2"
+version = "0.1.0"
+dependencies = [
+ "fw_common",
+ "fw_drivers",
+]

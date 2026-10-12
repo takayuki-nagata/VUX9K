@@ -13,6 +13,7 @@
 
 #![no_std]
 
+pub mod boot;
 pub mod fat;
 pub mod fmt;
 pub mod header;

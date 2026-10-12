@@ -3,10 +3,10 @@
 
 // MMIO UART Driver with standard formatting and non-blocking RX
 
-use crate::timer::Timer;
+use crate::timer::{ms_ticks, Timer};
 use fw_common::fmt::Sink;
+use fw_common::map;
 use fw_common::upload::Host;
-use fw_common::{map, mul_u32};
 
 const UART_DATA: *mut u8 = map::UART_DATA as *mut u8;
 const UART_STATUS: *const u32 = map::UART_STATUS as *const u32;
@@ -39,8 +39,13 @@ impl Uart {
     /// The next received byte, or None after `timeout_ms`.
     #[inline(never)]
     pub fn read_byte_timeout(timeout_ms: u32) -> Option<u8> {
+        // A byte that is already there costs no timer reads (transfers from code in the
+        // PSRAM keep up with 115200 baud only so)
+        if let Some(b) = Self::read_byte() {
+            return Some(b);
+        }
         let start = Timer::get_mtime32();
-        let limit = mul_u32(timeout_ms, map::TICKS_PER_MS);
+        let limit = ms_ticks(timeout_ms);
         while Timer::get_mtime32().wrapping_sub(start) < limit {
             if let Some(b) = Self::read_byte() {
                 return Some(b);

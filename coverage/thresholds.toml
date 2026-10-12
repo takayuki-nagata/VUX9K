@@ -7,6 +7,8 @@
 [line]
 boot_manager = 100.0
 resident_loader = 100.0
+# The first stage; the provisional second stage (firmware/stage2) is not measured
+stage1 = 100.0
 zephyr_demo = 100.0
 hack_demo = 90.0
 
@@ -36,4 +38,4 @@ xbridge = 100.0
 vux9k_emu = 95.0
 vux9k_emu_cli = 72.4
 vux9k_emu_py = 70.5
-fw_common = 99.6
+fw_common = 99.7

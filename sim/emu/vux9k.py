@@ -78,11 +78,12 @@ def read_hex_words(path) -> list[int]:
         return [int(line, 16) for line in f if line.strip()]
 
 
-def preload_firmware(soc) -> None:
-    """soc_ram's power-on contents: build/firmware/firmware.hex and firmware_d0-3.hex."""
+def preload_firmware(soc, firmware_dir=FIRMWARE_DIR) -> None:
+    """soc_ram's power-on contents: firmware.hex and firmware_d0-3.hex of firmware_dir
+    (build/firmware/, what the bitstream holds)."""
     texts = []
     for name in ["firmware.hex"] + [f"firmware_d{i}.hex" for i in range(4)]:
-        path = os.path.join(FIRMWARE_DIR, name)
+        path = os.path.join(firmware_dir, name)
         if not os.path.exists(path):
             raise FileNotFoundError(f"{path} missing; run `make firmware` first")
         with open(path) as f:
@@ -229,6 +230,17 @@ class EmuSerial:
         self._pos += len(got)
         self.log += got
         return bytes(got)
+
+    def read_until(self, expected: bytes = b"\n", size=None) -> bytes:
+        """pyserial's: bytes up to and including expected, or what arrived before the
+        timeout."""
+        out = bytearray()
+        while not out.endswith(expected) and (size is None or len(out) < size):
+            b = self.read(1)
+            if not b:
+                break
+            out += b
+        return bytes(out)
 
     def reset_input_buffer(self) -> None:
         self._pos = len(self.soc.uart_received())

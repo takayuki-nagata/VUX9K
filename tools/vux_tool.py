@@ -307,7 +307,7 @@ def drain_serial(ser, timeout=0.15):
         time.sleep(0.01)
 
 
-def send_cmd_and_wait(ser, cmd_char, timeout=5.0):
+def send_cmd_and_wait(ser, cmd_char, timeout=5.0, prompt="vux>"):
     drain_serial(ser, timeout=0.1)
     ser.write(cmd_char.encode("utf-8"))
     ser.flush()
@@ -319,7 +319,7 @@ def send_cmd_and_wait(ser, cmd_char, timeout=5.0):
             text = c.decode("utf-8", errors="replace")
             buf += text
             # Ensure prompt is checked only after command echo
-            if (cmd_char in buf) and ("vux>" in buf[buf.find(cmd_char) + len(cmd_char) :]):
+            if (cmd_char in buf) and (prompt in buf[buf.find(cmd_char) + len(cmd_char) :]):
                 break
     return buf
 
@@ -639,6 +639,79 @@ def send_upload_v2(ser, data, progress_cb=None, timeout=10.0, crc_override=None)
     ser.write(struct.pack("<I", crc))
     ser.flush()
     return _upload_expect(ser, "[OK]", deadline())
+
+
+# ----- The two-stage boot: the first stage's prompt, RAM boot, second-stage install -----
+
+S1_PROMPT = "s1> "
+S2_PROMPT = "s2> "
+
+
+def read_until(ser, tokens, timeout):
+    """Read until one of tokens arrives: (token or None on a timeout, text read)."""
+    text = ""
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        c = ser.read(256)
+        if c:
+            text += c.decode("utf-8", errors="replace")
+            for t in tokens:
+                if t in text:
+                    return t, text
+    return None, text
+
+
+def enter_s1(ser, timeout=10.0):
+    """Get to the first stage's prompt: soft-reset a second stage found at its prompt,
+    and send keys until the first stage answers (a key right after its banner keeps it
+    there instead of booting). Returns the text read; raises TimeoutError."""
+    drain_serial(ser, timeout=0.05)
+    text = ""
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        ser.write(b"\r")
+        ser.flush()
+        got, t = read_until(ser, (S1_PROMPT, S2_PROMPT), 0.02)
+        text += t
+        if got == S1_PROMPT:
+            return text
+        if got == S2_PROMPT:
+            ser.write(b"r")
+            ser.flush()
+    raise TimeoutError(f"no first-stage prompt; got {text[-400:]!r}")
+
+
+def ram_boot(ser, data, timeout=10.0):
+    """At the first stage's prompt: send the v4 file data with `u` and wait for the
+    second stage's prompt. Returns the text from the [OK] line on; raises UploadError with
+    the first stage's reason when it refuses."""
+    drain_serial(ser, timeout=0.05)
+    ser.write(b"u")
+    ser.flush()
+    try:
+        ok = send_upload_v2(ser, data, timeout=timeout)
+    except UploadError as e:
+        _, rest = read_until(ser, (S1_PROMPT,), timeout)
+        raise UploadError(f"{e} {rest.strip()}") from None
+    got, text = read_until(ser, (S2_PROMPT, S1_PROMPT), timeout)
+    if got != S2_PROMPT:
+        raise UploadError(f"{ok}: no second stage started; got {text!r}")
+    return ok + "\n" + text
+
+
+def install_stage2(ser, data, unchecked=False, timeout=30.0):
+    """At the second stage's prompt: install the v4 file data as \\VUX9K\\STAGE2.BIN
+    (`n`; the previous one becomes STAGE2.OLD), or write it there unchecked (`x`, tests).
+    Returns the result line; raises UploadError unless it ends in OK."""
+    drain_serial(ser, timeout=0.05)
+    ser.write(b"x" if unchecked else b"n")
+    ser.flush()
+    send_upload_v2(ser, data, timeout=timeout)
+    got, text = read_until(ser, (S2_PROMPT,), timeout)
+    line = next((ln for ln in text.splitlines() if ln.startswith(("[INSTALL]", "[UNCHECKED]"))), "")
+    if not line.endswith("OK"):
+        raise UploadError(line or text)
+    return line
 
 
 def flash_slot(
@@ -1071,6 +1144,55 @@ def cmd_mkfat(args):
     print(f"Wrote {args.output}: FAT32, {args.size_mb} MB partition, {len(files)} files")
 
 
+def cmd_mkv4(args):
+    load_addr = int(args.load_addr, 0) if args.load_addr else None
+    entry = int(args.entry, 0) if args.entry else None
+    data, _ = build_vux9_v4_image(
+        args.input, name=args.name, mode=args.mode, version=args.version, load_addr=load_addr, entry_point=entry
+    )
+    with open(args.output, "wb") as f:
+        f.write(data)
+    print(f"Wrote {args.output}: VUX9 v4, {len(data) - HEADER_LEN} bytes payload")
+
+
+def _read_file(path):
+    with open(path, "rb") as f:
+        return f.read()
+
+
+def cmd_sd_info(args):
+    ser = open_port(args.port, baudrate=args.baud)
+    try:
+        enter_s1(ser)
+        print(send_cmd_and_wait(ser, "i", timeout=30.0, prompt=S1_PROMPT))
+    finally:
+        ser.close()
+
+
+def cmd_run(args):
+    ser = open_port(args.port, baudrate=args.baud)
+    try:
+        enter_s1(ser)
+        print(ram_boot(ser, _read_file(args.file)))
+    finally:
+        ser.close()
+
+
+def cmd_install_stage2(args):
+    data = _read_file(args.file)
+    ser = open_port(args.port, baudrate=args.baud)
+    try:
+        enter_s1(ser)
+        ram_boot(ser, data)
+        print(install_stage2(ser, data))
+        ser.write(b"r")
+        ser.flush()
+        _, text = read_until(ser, (S2_PROMPT, S1_PROMPT), 20.0)
+        print(text)
+    finally:
+        ser.close()
+
+
 def build_sd_image(slots, mbr=True):
     """Raw SD card image (sector n at byte 512 n), as `flash-sd` would leave the card.
 
@@ -1170,8 +1292,30 @@ def main():
     sub_fat.add_argument("--size-mb", type=int, default=4, help="Partition size in MB (default: 4)")
     sub_fat.add_argument("--cluster-sectors", type=int, default=1, help="Sectors per cluster (default: 1)")
 
+    # mkv4
+    sub_v4 = subparsers.add_parser("mkv4", help="Wrap a binary in a VUX9 v4 header (a file for the card)")
+    sub_v4.add_argument("input", help="Binary to wrap")
+    sub_v4.add_argument("output", help="v4 file to write")
+    sub_v4.add_argument("--mode", choices=["hack", "riscv"], default="riscv", help="Target ISA mode")
+    sub_v4.add_argument("--name", default="", help="Program name (max 32 characters)")
+    sub_v4.add_argument("--version", type=int, default=1, help="Version number (default: 1)")
+    sub_v4.add_argument("--load-addr", help="Load address (default: 0x80000000 for RV32, 0 for Hack)")
+    sub_v4.add_argument("--entry", help="Entry point (default: the load address)")
+
+    # two-stage boot
+    subparsers.add_parser("sd-info", help="SD card, FAT32 and STAGE2 files (first stage's i)")
+    sub_run = subparsers.add_parser("run", help="RAM-boot a second stage (v4 file) through the first stage")
+    sub_run.add_argument("file", help="v4 file")
+    sub_inst = subparsers.add_parser(
+        "install-stage2", help="Install a second stage (v4 file) as \\VUX9K\\STAGE2.BIN and boot it"
+    )
+    sub_inst.add_argument("file", help="v4 file (it is RAM-booted, then installs itself)")
+
     args = parser.parse_args()
 
+    if args.command == "mkv4":
+        cmd_mkv4(args)
+        return
     if args.command == "mkimg":
         cmd_mkimg(args)
         return
@@ -1198,6 +1342,12 @@ def main():
         cmd_boot(args)
     elif args.command == "flash-sd":
         cmd_flash_sd(args)
+    elif args.command == "sd-info":
+        cmd_sd_info(args)
+    elif args.command == "run":
+        cmd_run(args)
+    elif args.command == "install-stage2":
+        cmd_install_stage2(args)
 
 
 if __name__ == "__main__":

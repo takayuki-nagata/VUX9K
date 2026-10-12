@@ -56,6 +56,13 @@ pub const MAILBOX: usize = 0x2000_1FFC;
 /// power-up.
 pub const XMEM_BASE: usize = 0x8000_0000;
 pub const XMEM_BYTES: usize = 8 * 1024 * 1024;
+/// The second stage's window, the top 1 MB of the PSRAM: `\VUX9K\STAGE2.BIN` and a RAM
+/// boot load there (crate::boot::STAGE2_WINDOW).
+pub const STAGE2_BASE: usize = 0x8070_0000;
+pub const STAGE2_BYTES: usize = 1024 * 1024;
+/// The first stage's data and stack: the 64 KB below the second stage's window.
+pub const S1_RAM_BASE: usize = 0x806F_0000;
+pub const S1_RAM_BYTES: usize = 64 * 1024;
 
 // ----- Clock ----------------------------------------------------------------------
 /// mtime ticks at the SoC clock, 18 MHz (soc_pkg::CLK_HZ).

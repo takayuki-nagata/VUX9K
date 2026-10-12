@@ -35,8 +35,9 @@ eqy can't see this (zero-delay models, and both sides of eqy come from Yosys). S
   flashing a new bitstream. If you change `hw_test`'s tests, take the new checksums
   from the emulator (`sim/emu/test_hw_test.py` prints them on failure).
 - **`CLK_HZ` has copies that must change with it**, all but one written out by hand: the emulator (`uart::BIT`, `sdspi::HALF_PERIOD`/`CLK_HZ`, the CLI's real-time
-  pacing), `fw_common::map` (`TICKS_PER_*`, `SD_DIV_INIT`), the Boot Manager (`timer.rs` ticks per us/ms, `read_uart_byte_timeout`, the
-  `t` banner and expected tick count), the Resident Loader's 10 us CS delay, Zephyr
+  pacing), `fw_common::map` (`TICKS_PER_*`, `SD_DIV_INIT`), `fw_drivers` (`timer.rs`: ticks per us/ms and `ms_ticks`'s shifts, which a compile-time
+  assert holds to `TICKS_PER_MS`), the Boot Manager's `t` banner and expected tick count, the
+  first stage's banner, the Resident Loader's 10 us CS delay, Zephyr
   (`timebase-frequency`/`clock-frequency` in `vux9k-common.dtsi`,
   `SYS_CLOCK_HW_CYCLES_PER_SEC`), and the test constants (`tb_soc_top.sv`'s half period,
   `soc_env.py`, `virtual_serial.py`, `lockstep_programs.UART_BIT`, `sim/emu/vux9k.py`,

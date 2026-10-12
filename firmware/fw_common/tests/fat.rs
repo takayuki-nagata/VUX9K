@@ -555,7 +555,7 @@ fn errors_at_a_chains_end_and_in_directories() {
 mod write {
     use super::*;
     use fw_common::fat::stage2::{
-        install, load_file, select_boot, BootError, Which, Window, BIN, NEW, OLD,
+        self, install, load_file, select_boot, BootError, Which, Window, BIN, NEW, OLD,
     };
     use fw_common::header::{ImageError, MODE_RISCV};
     use std::collections::BTreeSet;
@@ -587,12 +587,12 @@ mod write {
     fn boot(img: Vec<u8>) -> Result<(Which, u32, Vec<u8>), (BootError, BootError)> {
         let mut vol = mount(img).unwrap();
         let mut payload = Vec::new();
-        let (which, h) = select_boot(&mut vol, PSRAM, &mut |at, d| {
-            if at == 0 {
+        let (which, h) = select_boot(&mut vol, PSRAM, &mut |addr, d| {
+            if addr == S2 {
                 // .OLD after a .BIN that failed part way
                 payload.clear();
             }
-            assert_eq!(at as usize, payload.len());
+            assert_eq!((addr - S2) as usize, payload.len());
             payload.extend_from_slice(d);
         })?;
         Ok((which, h.version, payload))
@@ -1069,6 +1069,26 @@ mod write {
             load_file(&mut vol, &empty, PSRAM, &mut |_, _| ()),
             Err(BootError::NotV4)
         );
+    }
+
+    #[test]
+    fn stage2_dir_is_found_by_its_short_name() {
+        let mut vol = mount(image("mkfs_s1")).unwrap();
+        assert!(stage2::dir(&mut vol).unwrap().is_dir());
+        let bin = stage2::find_file(&mut vol, &BIN).unwrap();
+        assert_eq!(Some(bin), file(&mut vol, &BIN));
+        // \VUX9K\ missing, or a file
+        let mut img = image("mkfs_s1");
+        let e = entry_at(&img, b"VUX9K      ");
+        img[e] = 0xE5;
+        let missing = BootError::Fat(FatError::NotFound);
+        assert_eq!(boot(img).err(), Some((missing, missing)));
+        let mut img = image("mkfs_s1");
+        img[e + 11] &= !fw_common::fat::ATTR_DIR;
+        let mut vol = mount(img.clone()).unwrap();
+        assert_eq!(stage2::dir(&mut vol), Err(FatError::WrongType));
+        let file = BootError::Fat(FatError::WrongType);
+        assert_eq!(boot(img).err(), Some((file, file)));
     }
 
     #[test]

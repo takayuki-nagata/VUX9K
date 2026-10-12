@@ -130,7 +130,7 @@ impl<D: BlockDevice> Volume<D> {
         f: &mut dyn FnMut(&DirEntry) -> bool,
     ) -> Result<Option<DirEntry>, FatError> {
         if !dir.is_dir() {
-            return Err(FatError::WrongType);
+            return Err(FatError::WrongType); // cov:exclude(the first stage looks only into directories)
         }
         // The long-name run before the next entry: where it starts, and its checksum
         let mut lfn: Option<(u32, u8, u8)> = None;
