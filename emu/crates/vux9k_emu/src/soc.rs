@@ -51,14 +51,14 @@ pub const XMEM_READ_LATENCY: u32 = 35;
 /// Extra cycles of a window store: soc_pkg::XMEM_WRITE_LATENCY.
 pub const XMEM_WRITE_LATENCY: u32 = 34;
 
-/// The ISA of an application image (a VUX9 slot header's mode).
+/// The ISA of an application image (a VUX9 header's mode).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Isa {
     Rv32,
     Hack,
 }
 
-/// Largest application on the board: lower I-RAM below the Resident Loader (its E3 limit).
+/// Largest application image in I-RAM: what the `vux9k` Zephyr board links into.
 pub const MAX_APP_BYTES: usize = 14 * 1024;
 
 /// Why `Soc::run` returned.
@@ -301,11 +301,11 @@ impl Soc {
         }
     }
 
-    /// Start an application image the way the Resident Loader starts a slot: the bytes
-    /// as the slot holds them (RV32: little-endian words; Hack: big-endian 16-bit
-    /// instructions, two per word with the first in the low half, as vux_tool.py
-    /// packs them) at address 0, and the CPU in `isa` from the first fetch (the RL's
-    /// GPIO 0x8 write before its soft reset) instead of guessing it from the code.
+    /// Start an application image the way a loader that soft-resets into it does: the
+    /// bytes (RV32: little-endian words; Hack: big-endian 16-bit instructions, two per
+    /// word with the first in the low half, as vux_tool.py packs them) at address 0, and
+    /// the CPU in `isa` from the first fetch (the loader's GPIO 0x8 write before its
+    /// soft reset) instead of guessing it from the code.
     /// Call it after `reset`, which drops the ISA again.
     pub fn load_app(&mut self, bytes: &[u8], isa: Isa) -> Result<(), String> {
         let max = match self.profile {

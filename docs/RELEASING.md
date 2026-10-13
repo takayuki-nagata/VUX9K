@@ -7,10 +7,10 @@ its evidence: `release.yml` publishes only if the tag's `pack.fs sha256` matches
 artifact of the tagged commit. Nothing is rebuilt for the release, so it doesn't matter
 whether a rebuild would reproduce the same bits.
 
-Versions are tags `vMAJOR.MINOR.PATCH`. They are independent of the Boot Manager's own
-`BOOT_MGR_VERSION` (bump that when the Boot Manager changes, so boards install it from
-slot 0) and of the VUX9 header version (the slot format).
-A patch release keeps applications and slots working; a release that breaks them,
+Versions are tags `vMAJOR.MINOR.PATCH`. They are independent of the first stage's own
+`STAGE1_VERSION` (bump that when the first stage changes; the second stage gets it, and
+`MANIFEST.json` records it) and of the VUX9 header version (the file format).
+A patch release keeps applications and SD cards working; a release that breaks them,
 including one for a later hardware revision, raises the minor or major version and says
 so in its tag message (docs/APP_DEVELOPMENT.md, "Hardware revisions and compatibility").
 
@@ -29,26 +29,21 @@ tar -xzf build/candidate/vux9k-dist.tar.gz -C build/candidate    # -> build/cand
 
 ```sh
 make test-hw-dist DIST=build/candidate/dist
-gh release download <previous tag> -p 'vux9k-*-linux-x86_64.tar.gz' -D build/previous
-tar -xzf build/previous/vux9k-<previous tag>-linux-x86_64.tar.gz -C build/previous
-make test-hw-upgrade OLD=build/previous/vux9k-<previous tag> NEW=build/candidate/dist
 git switch --detach $SHA && make timing hw-smoke
 ```
 
 `test-hw-dist` loads the candidate's `pack.fs` and runs the hardware suite with its
-Boot Manager and demos; nothing is rebuilt. `hw-smoke` runs `hw_test` on every seed of a
+second stage; nothing is rebuilt (the card must be FAT32 with a `VUX9K` directory). `hw-smoke` runs `hw_test` on every seed of a
 local place and route of the same commit, which covers the CPU more thoroughly than the
 suite. The candidate's seed is one of them (`MANIFEST.json`); if the local `pack.fs` has
 the same SHA-256 as the candidate's, hw-smoke tested exactly its placement (note it in
 the tag).
 
-`test-hw-upgrade` (`scripts/test_hw_upgrade.py`) tests the way up from the previous
-release: its slots, written with its own `vux_tool.py`, must boot under the candidate's
-bitstream; its tool must work with the candidate's Boot Manager and the candidate's tool
-with its Boot Manager; and its bitstream must install the candidate's Boot Manager from
-slot 0 (skipped when the Boot Manager version is unchanged). It overwrites SD slots 0-4
-and leaves the candidate's bitstream in SRAM. Its result goes in the tag message next to
-test-hw and hw-smoke (e.g. `test-hw-upgrade: from v0.1.0, 29 PASS, 0 FAIL, 0 SKIP`).
+The way up from the previous release was tested with its slots (`make test-hw-upgrade`)
+until the two-stage boot replaced them, which v0.2.x cards can't follow. The move from
+v0.2.x to the two-stage boot gets its own board test before the release that brings it;
+until then, describe the steps (new bitstream, FAT32 card with `VUX9K\STAGE2.BIN`) in the
+release notes.
 
 ## 3. Tag
 
@@ -63,9 +58,9 @@ git push origin vX.Y.Z
 The message is three parts separated by blank lines: the version, the fields (one
 `key: value` per line), and the release notes in Markdown (`--cleanup=verbatim` keeps
 their `#` headings, which git would otherwise strip as comments). Fill in every `<fill in>`:
-- `test-hw`, `hw-smoke` and `test-hw-upgrade`: the board results of step 2.
-- `compatibility`: whether the previous release's applications and slots keep working
-  (test-hw-upgrade is the evidence); if they don't, why the minor or major version went up.
+- `test-hw` and `hw-smoke`: the board results of step 2.
+- `compatibility`: whether the previous release's applications and SD cards keep working;
+  if they don't, why the minor or major version went up.
 - The release notes: what changed since the previous release, how to upgrade, and any
   host setup a user must redo.
 

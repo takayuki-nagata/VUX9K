@@ -5,10 +5,10 @@
 //!
 //! By default the SoC powers up like the board: I-RAM and D-RAM preloaded from
 //! build/firmware/firmware.hex and firmware_d0-3.hex (`--firmware DIR`), so the
-//! Resident Loader and Boot Manager start, with an SD card from `--sd`.
-//! `--load`/`--hex` put a program at address 0 instead (over the preload, or alone
-//! with `--no-firmware`); `--load FILE --mode riscv|hack` starts an application image
-//! (a slot's payload) in its ISA, as the Resident Loader does on the board.
+//! first stage starts and boots the SD card from `--sd` (a FAT32 image, e.g. from
+//! `vux_tool.py mkfat`). `--load`/`--hex` put a program at address 0 instead (over the
+//! preload, or alone with `--no-firmware`); `--load FILE --mode riscv|hack` starts an
+//! application image in its ISA from the first fetch.
 //!
 //! The UART is connected to stdout (batch), the terminal (`--stdio`), or a TCP
 //! client (`--tcp PORT`, e.g. `vux_tool.py --port socket://localhost:PORT`).
@@ -31,11 +31,12 @@ usage: vux9k-emu [options]
   --firmware DIR      preload firmware.hex + firmware_d0-3.hex from DIR (default build/firmware)
   --no-firmware       start with empty memories
   --load FILE         raw binary into I-RAM at address 0
-  --mode riscv|hack   with --load: FILE is an application image as vux_tool.py flash-sd
-                      writes it (hack: big-endian 16-bit instructions), started in that
-                      ISA like the Resident Loader starts a slot (max 14 KB on real)
+  --mode riscv|hack   with --load: FILE is an application image (hack: big-endian
+                      16-bit instructions, as hcc -r writes them), started in that ISA
+                      from address 0 (max 14 KB on real, the vux9k Zephyr board's limit)
   --hex FILE          $readmemh words into I-RAM from word 0 (e.g. build/hack/firmware.hex)
-  --sd IMAGE          raw SD image (sector n at byte 512 n); changes are kept in memory
+  --sd IMAGE          raw SD image (sector n at byte 512 n; vux_tool.py mkfat makes FAT32
+                      ones); changes are kept in memory
   --sd-write-back     write the SD image back to IMAGE on exit
   --sdsc              the card is SDSC (byte addressing) instead of SDHC
   --no-card           empty SD socket

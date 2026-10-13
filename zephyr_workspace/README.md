@@ -12,16 +12,17 @@ west build -b vux9k <app dir> -- -DEXTRA_ZEPHYR_MODULES=<path to this directory>
 ```
 
 `zephyr/module.yml` registers the board, SoC and devicetree roots, so no other option
-is needed; for example `$ZEPHYR_BASE/samples/hello_world` builds as is. The slot image is
+is needed; for example `$ZEPHYR_BASE/samples/hello_world` builds as is. The image is
 `build/zephyr/zephyr.bin`, which includes the initial `.data` (an XIP image copies it
-from I-RAM to D-RAM at startup). Write it to a slot with
-`vux_tool.py flash-sd build/zephyr/zephyr.bin --mode riscv --slot 1`.
+from I-RAM to D-RAM at startup). Run it on the emulator with
+`vux9k-emu --no-firmware --load build/zephyr/zephyr.bin --mode riscv --stdio`; on the
+board, applications are started by the second stage's launcher (to come).
 
 ## Boards
 
 | Board | Memory | Runs on |
 |---|---|---|
-| `vux9k` | 14 KB ROM (I-RAM 0x0000-0x37FF), 8 KB RAM less the mailbox words | the board and the emulator |
+| `vux9k` | 14 KB ROM (I-RAM 0x0000-0x37FF), 8 KB RAM less 8 bytes (limits of the boot chain before the two-stage boot, kept until the board moves to the PSRAM) | the board and the emulator |
 | `vux9k/vux9k/ext` | 512 KB ROM, 256 KB RAM | **the emulator only** (`vux9k-emu --profile extended`); not real hardware |
 
 The linker enforces the `vux9k` limits: an application that outgrows the board fails to

@@ -7,10 +7,10 @@ files' hashes. Source: https://github.com/takayuki-nagata/VUX9K
 
 | Path | What |
 |---|---|
-| `bitstream/pack.fs` | FPGA bitstream (the Boot Manager and Resident Loader are inside) |
-| `boot-manager.bin` | Boot Manager image, to update it from the SD card's slot 0 |
-| `demos/` | Zephyr demo (RV32) and Hack demo images, for the board and the emulator alike |
-| `tools/vux_tool.py` | Writes applications to the SD card and starts them, over the serial port |
+| `bitstream/pack.fs` | FPGA bitstream (the first stage of the two-stage boot is inside) |
+| `sd/VUX9K/STAGE2.BIN` | The second stage: copy it to the microSD card's FAT32 partition as `VUX9K\STAGE2.BIN` |
+| `demos/` | Zephyr demo (RV32) and Hack demo images, for the emulator (the board starts applications with the next release's second stage) |
+| `tools/vux_tool.py` | Talks to the boot stages over the serial port: card report, RAM boot, installing the second stage; makes v4 files and FAT32 card images |
 | `tools/70-vux9k-board.rules` | udev rule that keeps ModemManager off the board (docs/APP_DEVELOPMENT.md, section 1) |
 | `zephyr/vux9k-zephyr-bsp.tar.gz` | Zephyr board support (module) with a Rust application template |
 | `hack/` | Hack demo's C source, a template for Hack applications |
@@ -19,27 +19,23 @@ files' hashes. Source: https://github.com/takayuki-nagata/VUX9K
 
 ## Try it
 
-On the board (needs openFPGALoader, Python 3 with pyserial, and a FAT-formatted microSD
-card in the board). If ModemManager runs on your host, install
-`tools/70-vux9k-board.rules` first, as its comment shows; without it the board's serial
-output can turn into noise after each bitstream load.
+On the board (needs openFPGALoader, Python 3 with pyserial, and a microSD card with one
+FAT32 partition). Copy `sd/VUX9K/STAGE2.BIN` to the card as `VUX9K\STAGE2.BIN` (create
+the directory `VUX9K` in its root), and insert it. If ModemManager runs on your host,
+install `tools/70-vux9k-board.rules` first, as its comment shows; without it the board's
+serial output can turn into noise after each bitstream load.
 
 ```sh
 openFPGALoader -b tangnano9k bitstream/pack.fs
 pip install -r tools/requirements.txt
-python3 tools/vux_tool.py flash-sd demos/zephyr-demo.bin --mode riscv --slot 1 --name "Zephyr demo"
-python3 tools/vux_tool.py boot --slot 1
+python3 tools/vux_tool.py sd-info          # the card and STAGE2.BIN, as the first stage sees them
+python3 tools/vux_tool.py monitor          # the first stage's banner, then the second stage's s2> prompt
 ```
 
-Upgrading a board from an earlier release: write this `bitstream/pack.fs` to the flash
-(`openFPGALoader -b tangnano9k -f bitstream/pack.fs`), then put this Boot Manager in
-slot 0 with the version from `MANIFEST.json`. The applications already on the card keep
-working. Section 2 of `docs/APP_DEVELOPMENT.md` has the details.
-
-```sh
-python3 tools/vux_tool.py flash-sd boot-manager.bin --mode riscv --slot 0 --name "Boot Manager" \
-    --version <boot_manager_version from MANIFEST.json>
-```
+Upgrading a board from v0.2.x: write this `bitstream/pack.fs` to the flash
+(`openFPGALoader -b tangnano9k -f bitstream/pack.fs`) and prepare the card as above. The
+v0.2.x slots on the card are no longer read. Section 2 of `docs/APP_DEVELOPMENT.md` has
+the details.
 
 On the emulator:
 

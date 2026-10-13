@@ -46,7 +46,7 @@
 		compatible = "simple-bus";
 		ranges;
 
-		/* I-RAM: programs run from it in place (loaded by the Resident Loader) */
+		/* I-RAM: programs run from it in place (loaded there by a loader) */
 		flash0: flash@0 {
 			compatible = "soc-nv-flash";
 		};

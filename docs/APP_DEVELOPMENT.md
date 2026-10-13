@@ -7,11 +7,11 @@ application, test it on the emulator, then run it on the board.
 
 Everything referred to here is in the release archive (`vux9k-<version>-linux-x86_64.tar.gz`);
 paths are relative to its top directory. `MANIFEST.json` there names the commit it was
-built from, the Boot Manager version and the tool versions it was built with.
+built from, the first stage's version and the tool versions it was built with.
 
 Contents:
 1. [Preparing the board](#1-preparing-the-board)
-2. [Running the demos and updating the Boot Manager](#2-running-the-demos-and-updating-the-boot-manager)
+2. [The second stage and the demos](#2-the-second-stage-and-the-demos)
 3. [Building an application](#3-building-an-application)
 4. [Testing on the emulator](#4-testing-on-the-emulator)
 5. [Running on the board](#5-running-on-the-board)
@@ -40,67 +40,51 @@ openFPGALoader -b tangnano9k bitstream/pack.fs      # SRAM
 openFPGALoader -b tangnano9k -f bitstream/pack.fs   # flash
 ```
 
-The bitstream contains the Boot Manager and the Resident Loader in block RAM. After
-loading it, a terminal on the board's serial port (115200 bps, 8N1) shows the Boot
-Manager's `vux>` prompt; press `h` for its commands.
+The bitstream contains the first stage of a two-stage boot in block RAM. At power-on (and
+at every reset) it loads the second stage, `\VUX9K\STAGE2.BIN`, from the microSD card into
+the PSRAM and starts it. A terminal on the board's serial port (115200 bps, 8N1) shows the
+first stage's banner, then the second stage's `s2>` prompt; press `h` for its commands.
+Holding button S2 while the board starts keeps the first stage at its own `s1>` prompt.
 
-**microSD card.** Applications live in ten 32 KB slots on the card, in LBA 64-703: the
-gap between the partition table (LBA 0) and the first partition, which no filesystem
-uses. A card formatted with FAT or exFAT works as it is and keeps its files, as long as
-its first partition starts at LBA 704 or later; cards formatted the usual way start it at
-LBA 2048 or beyond (`fdisk -l` shows the start). Sector 0 must end with the `55 AA` boot
-signature, which any partitioned card has. Insert the card before power-on or reset.
+**microSD card.** The card needs one FAT32 partition (as most cards up to 32 GB come; an
+SDXC card formatted exFAT must be reformatted as FAT32), a directory `VUX9K` in its root,
+and in it the second stage: copy `sd/VUX9K/STAGE2.BIN` there with a PC. Insert the card
+before power-on or reset. With no card, or no `STAGE2.BIN`, the first stage says why and
+stays at its prompt.
 
-## 2. Running the demos and updating the Boot Manager
+## 2. The second stage and the demos
 
-`tools/vux_tool.py` talks to the Boot Manager over the serial port. It needs pyserial
-(`pip install -r tools/requirements.txt`); `--port` defaults to finding the Tang Nano 9K,
-or give it one, such as `--port /dev/ttyUSB1`.
-
-```sh
-python3 tools/vux_tool.py flash-sd demos/zephyr-demo.bin --mode riscv --slot 1 --name "Zephyr demo"
-python3 tools/vux_tool.py flash-sd demos/hack-demo.bin   --mode hack  --slot 2 --name "Hack demo"
-python3 tools/vux_tool.py list-slots
-python3 tools/vux_tool.py boot --slot 1     # prints the Zephyr demo's output
-```
-
-`boot --slot N` is the Boot Manager's key `N`; button S2 at the prompt starts slot 1.
-`monitor` opens a plain terminal. An application replaces the Boot Manager in
-instruction RAM, so getting back to the Boot Manager takes reconfiguring the FPGA:
-power-cycle the board or run `python3 tools/vux_tool.py reset` (both load the bitstream
-from flash), or load `bitstream/pack.fs` into SRAM again. The reset button S1 resets
-the SoC only, which restarts the application.
-
-**Updating the Boot Manager.** Slot 0 holds a Boot Manager on the card. Whenever the
-Boot Manager starts, it reads slot 0's header and installs that image in its place when
-the header's version is greater than its own (`boot_manager_version` in
-`MANIFEST.json`); holding S2 while it starts skips this. So a
-newer Boot Manager reaches a board without rebuilding the bitstream:
+`tools/vux_tool.py` talks to the first and second stages over the serial port. It needs
+pyserial (`pip install -r tools/requirements.txt`); `--port` defaults to finding the Tang
+Nano 9K, or give it one, such as `--port /dev/ttyUSB1`.
 
 ```sh
-python3 tools/vux_tool.py flash-sd boot-manager.bin --mode riscv --slot 0 --name "Boot Manager" \
-    --version <boot_manager_version from MANIFEST.json>
+python3 tools/vux_tool.py sd-info                                 # the card as the first stage sees it
+python3 tools/vux_tool.py install-stage2 sd/VUX9K/STAGE2.BIN      # install it without a PC
+python3 tools/vux_tool.py run sd/VUX9K/STAGE2.BIN                 # start it without writing the card
 ```
 
-The header version is whatever `--version` says (default 1, which never installs), so
-pass the Boot Manager's own version. With the bitstream of the same release the two are
-equal and nothing is installed; when a newer one is, the Boot Manager prints
-`[UPDATE] Verified valid Boot Manager update` as it starts.
+`install-stage2` starts the given second stage from the serial port (a RAM boot) and has
+it write itself to the card as `STAGE2.BIN`, keeping the previous one as `STAGE2.OLD`: when
+`STAGE2.BIN` is missing or broken, the first stage starts `STAGE2.OLD`. `run` is the RAM boot
+alone, for trying a second stage or recovering a card. `monitor` opens a plain terminal.
 
-**Upgrading from an earlier release.** Write the new release's `bitstream/pack.fs` to the
-flash (section 1) and use its `tools/vux_tool.py`; the slots already on the card keep
-working. Then write its `boot-manager.bin` to slot 0 as above, with its version. A Boot
-Manager installed from slot 0 also runs on an older bitstream, but it can use only the
-hardware that bitstream has: on the v0.1.0 bitstream, a later Boot Manager reads the
-card at about 400 kHz instead of 3 MHz. To go back to an older release, write its Boot
-Manager to slot 0 before loading its bitstream; otherwise the older Boot Manager installs
-the newer one from slot 0 every time it starts.
+The second stage in this release is provisional: it installs second stages, but it doesn't
+start applications yet. That comes with the next one, the file manager and launcher. Until
+then, run applications on the emulator (section 4); `demos/` holds the Zephyr and Hack
+demos for it.
+
+**Upgrading from v0.2.x.** v0.2.x kept applications and a Boot Manager in slots between the
+card's partition table and its first partition; this release reads only the FAT32 partition
+and ignores them. Write the new bitstream to the flash (section 1), prepare the card as above
+and rebuild applications (section 3).
 
 ## 3. Building an application
 
 The CPU is RV32I with Zicsr and Zifencei, machine mode only, at 18 MHz, with 16 KB of
-instruction RAM and 8 KB of data RAM. An application may use 14 KB of the instruction RAM
-(the top 2 KB hold the Resident Loader) and the data RAM except its last 8 bytes.
+instruction RAM, 8 KB of data RAM and 8 MB of PSRAM. The Zephyr board `vux9k` still links
+applications into 14 KB of the instruction RAM and the data RAM except its last 8 bytes,
+as on v0.2.x; it moves to the PSRAM with the launcher.
 Misaligned loads and stores trap, and so does any CSR that isn't implemented
 ([RV32 CSRs](../README.md#rv32-csrs) in the repository's README lists them).
 
@@ -116,7 +100,7 @@ west build -b vux9k $ZEPHYR_BASE/samples/hello_world -- \
     -DEXTRA_ZEPHYR_MODULES=$PWD/vux9k-zephyr-bsp
 ```
 
-`build/zephyr/zephyr.bin` is the image for a slot and for the emulator (`--mode riscv`).
+`build/zephyr/zephyr.bin` is the image for the emulator (`--mode riscv`).
 Use it as `west build` writes it: it carries the initial values of `.data`, which the
 image copies from instruction RAM to data RAM at startup.
 
@@ -152,7 +136,7 @@ and MSP430 GCC with `msp430-gcc` on `PATH`.
 writes to the UART at Hack address 24576):
 
 ```sh
-hcc -r hack/main.c -o app.bin    # the image for a slot and for the emulator (--mode hack)
+hcc -r hack/main.c -o app.bin    # the image for the emulator (--mode hack)
 ```
 
 Hack mode sees the UART at `0x6000`-`0x6003`, the GPIO at `0x6004`-`0x600F` and 2K words
@@ -162,15 +146,15 @@ of RAM ([Hack Mode Address Space](../README.md#hack-mode-address-space-16-bit-wo
 
 `emu/vux9k-emu` models the SoC cycle for cycle: both ISAs, the memories and every
 peripheral, with the UART's and SD card's real timing. Start an application directly,
-without the Boot Manager, from the same image and `--mode` you give `vux_tool.py flash-sd`:
+without the boot stages, from its image and ISA:
 
 ```sh
 emu/vux9k-emu --no-firmware --load build/zephyr/zephyr.bin --mode riscv --stdio
 emu/vux9k-emu --no-firmware --load app.bin --mode hack --stdio
 ```
 
-`--mode` starts the CPU in that ISA, as the Resident Loader does with the slot header's,
-and refuses an image larger than the 14 KB a slot application may have.
+`--mode` starts the CPU in that ISA with the image at address 0 of the instruction RAM, and
+refuses an image larger than the 14 KB the board `vux9k` links into.
 
 - `--stdio` connects the UART to the terminal (input goes line by line); `--tcp PORT`
   serves it on `localhost:PORT` instead, for a terminal program.
@@ -181,9 +165,9 @@ and refuses an image larger than the 14 KB a slot application may have.
 - `--profile extended` gives 512 KB / 256 KB for the `vux9k/vux9k/ext` Zephyr board.
   **Nothing that needs it runs on the board.**
 
-Started this way, an application finds what the Resident Loader leaves on the board: its
-image at address 0, the CPU in the ISA of `--mode`, and the data RAM zeroed. The
-difference is the SD card, which is empty (a card image can be given with `--sd IMAGE`).
+Started this way, an application finds its image at address 0, the CPU in the ISA of
+`--mode`, the data RAM zeroed, and an empty SD card (a card image can be given with `--sd
+IMAGE`; `vux_tool.py mkfat` makes one).
 
 **From Python.** `emu/vux9k_emu.abi3.so` is the emulator as a Python module (CPython 3.10
 or later, Linux x86_64). Put `emu/` on `sys.path`:
@@ -211,33 +195,14 @@ Useful methods of `Soc`: `load_app(image, mode)` (`mode` `"riscv"` or `"hack"`, 
 
 ## 5. Running on the board
 
-Write the application to a free slot (1-9) and start it. The Resident Loader reads the
-slot once to check it (including the payload's CRC32, which `flash-sd` writes into the
-header) before loading it; its errors are listed in the README
-([Resident Loader and the mailbox](../README.md#3-resident-loader-and-the-mailbox)):
+Starting applications on the board comes with the second stage's launcher (section 2).
+What applies to anything that runs there:
 
-```sh
-python3 tools/vux_tool.py flash-sd build/zephyr/zephyr.bin --mode riscv --slot 3 --name "my app"
-python3 tools/vux_tool.py boot --slot 3
-```
-
-At start, an application finds:
-- its image at address 0 of the instruction RAM, and the CPU starting there in the ISA of
-  the slot header;
-- the data RAM zeroed, except for the last 8 bytes (`0x2000_1FF8`-`0x2000_1FFF`), which
-  belong to the loaders: don't use them;
-- the UART, timer, GPIO and SD SPI master as the Boot Manager left them
-  ([Memory & MMIO Register Map](../README.md#memory--mmio-register-map)); the SD card is
-  initialized and its SCLK at 3 MHz. Interrupts are
-  the timer (`MTI`) and UART receive (`MEI`, while the receive FIFO holds data).
-
-Writing `0x5A5A_A55A` to `0x4000_300C` resets the CPU only, like S1: it restarts the
-application (the instruction RAM now holds it). A Hack application writes `0x0000_A55A`
-to `0x600C` instead, formed by addition such as `0x255A + 0x4000 + 0x4000` (an `@n` holds
-at most `0x7FFF`). After such a reset the CPU guesses the ISA from the first instruction
-word ([ISA selection](../README.md#hack-mode-address-space-16-bit-word-addresses) in the
-README) unless the application first writes it to GPIO register `0x8` (`0x101` RV32,
-`0x100` Hack). To return to the Boot Manager, reconfigure the FPGA as in section 2.
+Writing `0x5A5A_A55A` to `0x4000_300C` resets the CPU only, like S1, and starts the first
+stage again, which boots the card. A Hack program writes `0x0000_A55A` to `0x600C` instead,
+formed by addition such as `0x255A + 0x4000 + 0x4000` (an `@n` holds at most `0x7FFF`).
+The UART, timer, GPIO and SD SPI master keep their state across it
+([Memory & MMIO Register Map](../README.md#memory--mmio-register-map)).
 
 **If output stops after ~128 bytes** or arrives seconds late: the Tang Nano 9K's on-board
 USB-UART bridge (BL702) does this when another full-speed USB device is busy on the same
@@ -250,14 +215,15 @@ ModemManager set. Install the udev rule (section 1).
 
 ## 6. Hardware revisions and compatibility
 
-This guide and the README describe this hardware revision of the SoC, which the v0.2.x
-releases implement: the RV32 and Hack address spaces and their registers, the CSRs, the
-slot header, the SD card's sector map, the Resident Loader and its mailbox, and the state
-an application starts in. Within those releases, a patch release doesn't break
-applications or slots: an application that uses only what is documented, and a slot
-written with an earlier v0.2.x `vux_tool.py`, keep running.
+This guide and the README describe the hardware revision with the PSRAM and the two-stage
+boot: the RV32 and Hack address spaces and their registers, the CSRs, the VUX9 v4 file
+header, `\VUX9K\STAGE2.BIN` on a FAT32 card, and the state a program starts in. Within the
+releases of one minor version, a patch release doesn't break applications or SD cards: an
+application that uses only what is documented, and a card prepared for an earlier patch
+release, keep working. (The v0.2.x releases, the previous revision, kept that promise for
+their slots, which this revision no longer reads.)
 
-A later hardware revision makes no such promise. Its memory map, registers, slot format,
+A later hardware revision makes no such promise. Its memory map, registers, file format,
 SD card layout and loaders may all change, and its release says how to rebuild and
 rewrite applications for it. Applications that reach the hardware only through Zephyr's
 APIs are the easiest to move: they may need no more than a rebuild for that revision's
@@ -274,10 +240,9 @@ them.
 In the repository's [README](../README.md):
 [Memory & MMIO Register Map](../README.md#memory--mmio-register-map),
 [RV32 CSRs](../README.md#rv32-csrs),
-[MicroSD Card Sector Map](../README.md#microsd-card-sector-map-multi-slot-mbr-gap-boot),
-[VUX9 Boot Header](../README.md#vux9-boot-header-64-bytes-v3) (written by
-`vux_tool.py flash-sd`; you choose only the name and the version),
-[Boot Manager CLI](../README.md#2-on-chip-bare-metal-boot-manager-cli).
+[Two-stage boot](../README.md#two-stage-boot-the-first-stage-and-the-sd-card),
+[VUX9 file header](../README.md#vux9-file-header-64-bytes-v4) (`vux_tool.py mkv4` writes it),
+[the first stage's prompt](../README.md#2-the-first-stages-prompt).
 
 **Licenses:** the VUX9K SoC, firmware, tools and emulator are MIT (`LICENSE`); the Zephyr
 board support package is Apache-2.0 (its `LICENSE`). `THIRD_PARTY_LICENSES.txt` covers the

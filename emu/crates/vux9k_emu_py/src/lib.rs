@@ -48,9 +48,9 @@ impl Soc {
         self.inner.load_iram(addr, data);
     }
 
-    /// Start an application image as the Resident Loader starts a slot: `data` as
-    /// `vux_tool.py flash-sd` writes it, `mode` "riscv" or "hack" (the slot's ISA; a
-    /// Hack image is big-endian 16-bit instructions). The CPU runs it in that ISA from
+    /// Start an application image from I-RAM address 0, as a loader that soft-resets
+    /// into it does: `mode` "riscv" or "hack" (a Hack image is big-endian 16-bit
+    /// instructions, as `hcc -r` writes them). The CPU runs it in that ISA from
     /// the first fetch; call this after `reset()`, which drops the ISA again.
     #[pyo3(signature = (data, mode = "riscv"))]
     fn load_app(&mut self, data: &[u8], mode: &str) -> PyResult<()> {

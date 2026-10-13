@@ -334,7 +334,7 @@ fn isa_detection_skips_zero_words() {
 }
 
 // ----- application images (load_app, vux9k-emu --load --mode) -------------------------
-/// Hack instructions as a slot/`hcc -r` image: big-endian 16-bit words.
+/// Hack instructions as an `hcc -r` image: big-endian 16-bit words.
 fn hack_image(instrs: &[u16]) -> Vec<u8> {
     instrs.iter().flat_map(|i| i.to_be_bytes()).collect()
 }

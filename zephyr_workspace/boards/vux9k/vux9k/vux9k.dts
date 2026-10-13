@@ -11,12 +11,12 @@
 	model = "VUX9K Tang Nano 9K SoC";
 };
 
-/* I-RAM 0x0000-0x37FF: 0x3800-0x3FFF is the Resident Loader */
+/* I-RAM 0x0000-0x37FF (the Resident Loader's limit, kept until the board moves to PSRAM) */
 &flash0 {
 	reg = <0x00000000 0x3800>;
 };
 
-/* D-RAM 0x2000_0000-0x2000_1FF7: 0x1FF8/0x1FFC hold the Boot Manager <-> RL mailbox */
+/* D-RAM 0x2000_0000-0x2000_1FF7 (less the old mailbox words, as above) */
 &sram0 {
 	reg = <0x20000000 0x1FF8>;
 };
