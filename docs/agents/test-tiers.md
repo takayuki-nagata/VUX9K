@@ -33,8 +33,9 @@ controller, then `soc_env.check_psram_pins`: the W955 model counted no protocol/
 (`test_sim.py::test_psram_contract_gls`). `test-sim` has the controller only in
 `sim-psram-contract` (RTL) and in `sim-soc-fast-icarus`, which has no window checks. The
 gate-level side is the controller alone because a full-SoC Icarus GLS run with the W955 model
-(`test_soc_gls_fast` on the whole netlist) did not finish in 30 min; Verilator GLS has nothing
-on the PSRAM pins (sim.md, "The PSRAM word model and its contract test"). Run it after a new
+(`test_soc_gls_fast` on the whole netlist) did not finish in 30 min; Verilator GLS has the W955
+model on the pins and runs the window through the netlist (`sim-soc-gls-fast`, `sim-gls-hw-flow`),
+without its error check (sim.md, "The PSRAM word model and its contract test"). Run it after a new
 controller tag or a change to the window's bridge.
 
 `test_soc_hardware_flow.py` is the only RTL test that drives the two-stage boot's whole

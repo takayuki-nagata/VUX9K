@@ -117,8 +117,10 @@ whether the model or the RTL is wrong; an RTL bug gets `xfail(strict=True)` unti
 which a test may deposit a smaller value into), then the 35/34-cycle read/write latency of
 the wait-state window's contract, byte strobes, 8 MB of words. It exists because the real
 controller needs a pin-level PSRAM model, and the only one, the IP's W955D8MBYA model
-(`vendor/psram_controller/sim/model/`), is timed in real time (`realtime`, `#` delays) and runs
-on Icarus only; Verilator SoC runs and the lockstep runs use the word model instead. Simulation
+(`vendor/psram_controller/sim/model/`), is timed in real time (`realtime`, `#` delays): it runs
+on Icarus, and on Verilator with `--timing` (tried 2026-10-13 for the gate-level SoC, where it
+works), but Verilator RTL SoC runs and the lockstep runs use the word model, for speed and the
+trace. Simulation
 only: it is in no synthesis or lint source list.
 
 Which SoC build has what (`sim_runner.psram_word_model`, `sources_for`):
@@ -139,8 +141,11 @@ Which SoC build has what (`sim_runner.psram_word_model`, `sources_for`):
   test on Icarus is `make sim-psram-icarus` (test-slow; `sim-soc-mmio` in `test-sim` is
   Verilator). Full-SoC Icarus GLS with the W955 model is too slow to use (>30 min for
   `test_soc_gls_fast`).
-- **Verilator GLS**: the netlist's real controller with nothing on its pins (no Verilator GLS
-  test touches the window).
+- **Verilator GLS**: the netlist's real controller on the W955 model (`tb_soc_top`, as on
+  Icarus; `sim_runner.sources_for`). Needed since the first stage keeps its stack in the
+  PSRAM: with nothing on the pins the netlist read zeros, returned to address 0 and printed
+  its banner's first line over and over. The model's error count isn't checked there
+  (`check_psram_pins` is Icarus-only: Verilator has no X).
 Synthesis, `lint-rtl` and `check-rtl-syntax` never define `VUX9K_PSRAM_MODEL`.
 
 `sim/unit/test_psram_contract.py` (`make sim-psram-contract`, in `test-sim`, fcov group

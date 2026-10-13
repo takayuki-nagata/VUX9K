@@ -157,9 +157,9 @@ def _rtl_overrides() -> dict[str, Path]:
 def psram_word_model(toplevel: str, gls: bool, sim: str) -> bool:
     """Whether this build has the PSRAM word model in place of the controller (VUX9K_PSRAM_MODEL).
 
-    Verilator RTL builds of the SoC: the controller needs the W955 pin model, which Verilator
-    can't run. Icarus builds (RTL and GLS) keep the controller on the W955 model (tb_soc_top);
-    Verilator GLS builds keep it with nothing on its pins.
+    Verilator RTL builds of the SoC (faster, and the lockstep trace's reference). Icarus
+    builds (RTL and GLS) and Verilator GLS builds keep the controller on the W955 pin model
+    (tb_soc_top; Verilator runs it with --timing).
     """
     return sim == "verilator" and not gls and toplevel in SOC_TOPLEVELS
 
@@ -186,7 +186,7 @@ def sources_for(toplevel: str, gls: bool, sim: str = "icarus") -> list[Path]:
             rtl = [PSRAM_WORD_MODEL if p == PSRAM_IP_SOURCES[0] else p for p in rtl if p not in PSRAM_IP_SOURCES[1:]]
         sources = [overrides.get(p.stem, p) for p in rtl]
     if toplevel == "tb_soc_top":
-        if sim == "icarus":
+        if sim == "icarus" or gls:  # the real controller: the W955 pin model on its pins
             sources += W955_MODEL_SOURCES
         sources.append(TB_SOC_TOP)
     elif toplevel == "tb_hex_runner":

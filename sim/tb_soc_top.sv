@@ -10,13 +10,12 @@
 // (7.9k vs 19k cycles/s, 2026-09). Everything else is passed straight through; the
 // SoC itself is reachable from tests as `dut.soc`. See sim/integration/soc_env.py.
 //
-// The PSRAM pins end here. Icarus builds (RTL and GLS) have the real controller and get the
-// IP's pin-level W955D8MBYA model on them (vendor/psram_controller/sim/model/, Icarus only:
-// timed in real time). Verilator RTL builds define VUX9K_PSRAM_MODEL and have the word model
-// inside soc_top, which drives the pins to constants; Verilator GLS builds have the real
-// controller with nothing on its pins (no Verilator GLS test touches the window: the
-// controller powers up and stays idle; undriven DQ/RWDS read 0 in Verilator's 2-state
-// simulation, so no pull is needed).
+// The PSRAM pins end here. Builds with the real controller (Icarus RTL and GLS, Verilator
+// GLS) get the IP's pin-level W955D8MBYA model on them (vendor/psram_controller/sim/model/,
+// timed in real time; Verilator runs it with --timing). Verilator RTL builds define
+// VUX9K_PSRAM_MODEL and have the word model inside soc_top, which drives the pins to
+// constants. The first stage keeps its stack in the PSRAM, so a gate-level SoC run needs
+// the model: without it the netlist read zeros and the first stage restarted.
 //
 // This is the one hand-written SystemVerilog file in the repository, on purpose:
 // Veryl has no time-based clock outside `#[test]` modules run by its own simulator
@@ -75,7 +74,6 @@ module tb_soc_top #(
         .IO_psram_rwds  (psram_rwds)
     );
 
-`ifndef VERILATOR
 `ifndef VUX9K_PSRAM_MODEL
     w955d8mbya_model psram (
         .ck     (psram_ck),
@@ -85,7 +83,6 @@ module tb_soc_top #(
         .dq     (psram_dq),
         .rwds   (psram_rwds)
     );
-`endif
 `endif
 
 `ifdef VUX9K_RTL_TRACE
