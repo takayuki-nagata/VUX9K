@@ -15,6 +15,15 @@ _start:
     .option pop
     la sp, _stack_end
 
+    /* Zero the stack's 8 KB and .bss: the PSRAM holds whatever was there (X in 4-state
+     * simulation, which the PSRAM model flags when it is stored back) */
+    la t0, _stack_zero
+    la t1, _stack_end
+5:
+    sw zero, 0(t0)
+    addi t0, t0, 4
+    blt t0, t1, 5b
+
     la t0, _sbss
     la t1, _ebss
     bge t0, t1, 2f

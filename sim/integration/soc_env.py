@@ -172,7 +172,8 @@ async def send_and_wait(ser, text: str, token: bytes, timeout_cycles: int, settl
     waiting for an unprompted follow-up (e.g. "[READY-SEC:0]" right after
     "[READY-COUNT:N]"), resetting it would clip the start of the reply.
     """
-    await Timer(settle_bits * ser.bit_ps, unit="ps")
+    if settle_bits:
+        await Timer(settle_bits * ser.bit_ps, unit="ps")
     if text:
         ser.reset_input_buffer()
         ser.write(text.encode("utf-8"))

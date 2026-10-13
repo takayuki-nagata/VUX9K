@@ -56,6 +56,7 @@ SECTIONS
   } > S2
 
   _stack_end = ORIGIN(S2) + LENGTH(S2);
+  _stack_zero = _stack_end - 8K;
 
   /DISCARD/ :
   {

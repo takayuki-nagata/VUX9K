@@ -9,13 +9,54 @@
 
 _start:
     /* The first stage: POR and every soft reset start here. The register file is not
-     * reset, and the PSRAM holds whatever was there: set what is used, clear .bss.
-     * Set Global Pointer and Stack Pointer */
+     * reset and the PSRAM holds whatever was there (both X in 4-state simulation, where
+     * the PSRAM model flags X written to it): zero every register, the stack's 8 KB (its
+     * deepest use is ~6 KB) and .bss, so nothing undefined is ever stored. */
+    li x1, 0
+    li x3, 0
+    li x4, 0
+    li x5, 0
+    li x6, 0
+    li x7, 0
+    li x8, 0
+    li x9, 0
+    li x10, 0
+    li x11, 0
+    li x12, 0
+    li x13, 0
+    li x14, 0
+    li x15, 0
+    li x16, 0
+    li x17, 0
+    li x18, 0
+    li x19, 0
+    li x20, 0
+    li x21, 0
+    li x22, 0
+    li x23, 0
+    li x24, 0
+    li x25, 0
+    li x26, 0
+    li x27, 0
+    li x28, 0
+    li x29, 0
+    li x30, 0
+    li x31, 0
+
+    /* Set Global Pointer and Stack Pointer */
     .option push
     .option norelax
     la gp, __global_pointer$
     .option pop
     la sp, _stack_end
+
+    /* Zero the stack */
+    la t0, _stack_zero
+    la t1, _stack_end
+7:
+    sw zero, 0(t0)
+    addi t0, t0, 4
+    blt t0, t1, 7b
 
     /* Zero initialize .bss section */
     la t0, _sbss

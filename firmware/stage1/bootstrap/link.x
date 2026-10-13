@@ -65,6 +65,8 @@ SECTIONS
   {
     . = ALIGN(16);
     _stack_end = ORIGIN(S1_RAM) + LENGTH(S1_RAM);
+    /* start.s zeroes the stack from here (the lockstep's XMEM_USED covers it too) */
+    _stack_zero = _stack_end - 8K;
   } > S1_RAM
 
   /DISCARD/ :
