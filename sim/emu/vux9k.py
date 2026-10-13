@@ -26,7 +26,7 @@ try:
     import vux9k_emu  # noqa: E402
 except ImportError as e:  # pragma: no cover - a setup problem, not a test result
     raise ImportError(f"{e}: build the emulator's Python module with `make emu-py`") from e
-import tools.vux_tool as vux_tool  # noqa: E402
+import tools.vux_tool as vux_tool  # noqa: E402, F401 (the tests take it from here)
 
 Soc = vux9k_emu.Soc
 
@@ -46,19 +46,6 @@ def mbr_sector() -> bytes:
     mbr = bytearray(SECTOR)
     mbr[510:512] = b"\x55\xaa"
     return bytes(mbr)
-
-
-def slot_lba(slot: int) -> int:
-    """First SD sector of a program slot (same formula as the firmware and vux_tool)."""
-    return 64 + (slot << 6)
-
-
-def slot_image(payload: bytes, *, slot: int, mode: str, name: str = ""):
-    """VUX9 v3 image for slot as {lba: sector bytes}, plus vux_tool's meta."""
-    raw, meta = vux_tool.build_vux9_image(payload, slot=slot, name=name, mode=mode)
-    base = slot_lba(slot)
-    sectors = {base + i: raw[i * SECTOR : (i + 1) * SECTOR] for i in range(meta["num_sectors"])}
-    return sectors, meta
 
 
 def sd_image(sectors: dict, *, mbr: bool = True) -> bytes:
@@ -156,7 +143,7 @@ def send_paced(soc, data: bytes, chunk: int = 16, drain_cycles: int = 50_000_000
     """Send data in chunks, each once the program has emptied the RX FIFO.
 
     The FIFO holds 32 bytes; a program that only polls the UART between longer
-    computations (bc, the Boot Manager) needs a host that doesn't outrun it, as a
+    computations (bc, the first stage) needs a host that doesn't outrun it, as a
     person typing does. Raises if the FIFO overflowed anyway.
     """
     for i in range(0, len(data), chunk):

@@ -5,7 +5,7 @@
 SoC memory map / MMIO peripheral verification in RISC-V mode (test_soc_rv32i.py).
 
 A small RV32I program (built with rv32_asm) is preloaded straight into I-RAM, so no
-SD card or Boot Manager is involved. It checks the address decoder and peripherals
+SD card or boot firmware is involved. It checks the address decoder and peripherals
 from the CPU's side and reports over the UART: "F<code>" on the first failed check,
 "PASS" when all passed. See the check codes in mmio_program().
 """

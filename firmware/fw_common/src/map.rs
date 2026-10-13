@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 //! The SoC's addresses and clock as the firmware sees them (README "Memory & MMIO
-//! Register Map", soc/soc_pkg.veryl). Constants only: the Resident Loader uses them
-//! too without growing.
+//! Register Map", soc/soc_pkg.veryl).
 
 // ----- UART (0x4000_0000) ---------------------------------------------------------
 pub const UART_DATA: usize = 0x4000_0000;
@@ -42,14 +41,7 @@ pub const GPIO_SOFT_RESET: usize = 0x4000_300C;
 pub const SOFT_RESET_KEY: u32 = 0x5A5A_A55A;
 
 // ----- Memories -------------------------------------------------------------------
-/// The Resident Loader's entry, in upper I-RAM (0x3800-0x3FFF).
-pub const RL_ENTRY: usize = 0x0000_3800;
 pub const DRAM_BASE: usize = 0x2000_0000;
-/// The last 8 bytes of D-RAM belong to the loaders: the mailbox (below) and the
-/// word before it.
-pub const LOADER_WORDS: usize = 0x2000_1FF8;
-/// The Boot Manager -> Resident Loader mailbox (crate::mailbox).
-pub const MAILBOX: usize = 0x2000_1FFC;
 /// The wait-state window (soc_pkg::RV_REGION_XMEM, XMEM_WORDS): the 8 MB PSRAM, code and
 /// data, every access slower than I-RAM/D-RAM; its `XMEM_BYTES` repeat every 8 MB across
 /// 0x8xxx_xxxx (the PSRAM's register space is not reachable). Contents are undefined at

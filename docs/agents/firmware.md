@@ -67,8 +67,7 @@ release/`.
   files; the dist ships it as one file, so nothing is generated). Change both, then
   regenerate `firmware/fw_common/tests/vux9_v4_vectors/` (`VUX9_VECTORS_UPDATE=1 pytest
   sim/emu/test_vux9_header.py`): both parsers are tested against those files, and the
-  pytest also compares the constants and field offsets. The old v3 slot header
-  (`vux9_vectors/`) has no user left and goes next.
+  pytest also compares the constants and field offsets.
 - **Transfer v2 exists twice**: `fw_common::upload::upload_v2` (the device) and
   `vux_tool.send_upload_v2` (the host). `firmware/fw_common/tests/upload_v2_vectors/` holds
   transcripts from a reference device in `sim/emu/test_upload_v2.py`

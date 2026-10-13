@@ -1,15 +1,12 @@
 // Copyright (c) 2026 Takayuki Nagata
 // SPDX-License-Identifier: MIT
 
-//! The firmware's hardware-independent logic: the SoC's address map, the SD slot
-//! layout and VUX9 boot header (v3) and file header (v4), CRC32, the self-update
-//! checks, the `w` upload exchange and transfer v2, the Boot Manager -> Resident
-//! Loader mailbox, FAT32 (`fat`), and number formatting. No MMIO here (the drivers pass themselves in as traits), so all of it is tested on
-//! the host: `cargo test -p fw_common --target x86_64-unknown-linux-gnu --features
-//! fat-write` (make test-fw-host).
-//!
-//! The Resident Loader must fit in 2 KB (make firmware-size): it takes only
-//! constants from here (`map`, `mailbox`), and keeps its own small loops.
+//! The firmware's hardware-independent logic: the SoC's address map, the VUX9 v4 file
+//! header, CRC32, transfer v2 (`upload`), FAT32 (`fat`) with the second stage's files
+//! (`fat::stage2`), the first stage's RAM boot (`boot`), and number formatting. No MMIO
+//! here (the drivers pass themselves in as traits), so all of it is tested on the host:
+//! `cargo test -p fw_common --target x86_64-unknown-linux-gnu --features fat-write`
+//! (make test-fw-host).
 
 #![no_std]
 
@@ -17,13 +14,8 @@ pub mod boot;
 pub mod fat;
 pub mod fmt;
 pub mod header;
-pub mod mailbox;
 pub mod map;
-pub mod slot;
-pub mod update;
 pub mod upload;
-
-pub use header::{slot_sector, SlotHeader};
 
 /// CRC-32 (IEEE, reflected, poly 0xEDB88320) over `data`, continuing from `crc`.
 /// Start with 0xFFFF_FFFF and invert the result, as zlib/binascii.crc32 do.

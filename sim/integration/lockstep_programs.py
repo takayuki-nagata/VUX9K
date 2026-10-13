@@ -128,7 +128,7 @@ def random_rv(seed: int, blocks: int = 300, base: int = 0x2000_0800) -> list:
     a.label("end")
     a.j("end")
     words = a.assemble()
-    assert len(words) <= 0x3800 // 4, f"random program of {len(words)} words overlaps the Resident Loader"
+    assert len(words) <= 0x3800 // 4, f"random program of {len(words)} words over 14 KB"
     return words
 
 

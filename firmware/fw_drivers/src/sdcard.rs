@@ -4,7 +4,6 @@
 use crate::timer::Timer;
 use fw_common::header::SECTOR;
 use fw_common::map;
-use fw_common::upload::Disk;
 
 const SD_DATA: *mut u32 = map::SD_DATA as *mut u32;
 const SD_CS: *mut u32 = map::SD_CS as *mut u32;
@@ -174,8 +173,8 @@ impl SdCard {
         Self::send_cmd(16, 512, 0xFF);
         Self::deselect();
 
-        // The card is ready: full speed from here, for the Resident Loader too (it
-        // keeps the divider)
+        // The card is ready: full speed from here, also for a second stage that takes
+        // the card over (adopt keeps the divider)
         Self::set_clkdiv(map::SD_DIV_FAST);
         true
     }
@@ -308,16 +307,6 @@ impl SdCard {
 
         Self::deselect();
         matches
-    }
-}
-
-impl Disk for SdCard {
-    fn init(&mut self) -> bool {
-        SdCard::ensure_init()
-    }
-
-    fn write(&mut self, sector: u32, data: &[u8; SECTOR]) -> bool {
-        SdCard::write_block(sector, data)
     }
 }
 

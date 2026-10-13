@@ -100,7 +100,7 @@ class Recorder:
         return bytes(self.xfer(0xFF) for _ in range(n))
 
     def init(self):
-        """The Boot Manager's SdCard::init()."""
+        """fw_drivers' SdCard::init() (the first stage's)."""
         self.deselect()
         for _ in range(16):
             self.xfer(0xFF)
@@ -225,7 +225,7 @@ def bad_sector():
 
 
 def mute_cmd55():
-    """CMD55 unanswered: the Boot Manager's CMD1 fallback"""
+    """CMD55 unanswered: SdCard::init()'s CMD1 fallback"""
     h = Recorder("mute_cmd55", mute_cmds=[55])
     h.init()
     return h.finish()
@@ -238,7 +238,7 @@ def mute_cmd0():
 
 
 SLOW_HZ = 391_304  # 18 MHz / 46: the SPI master's reset divider
-FAST_HZ = 3_000_000  # 18 MHz / 6: the Boot Manager's divider after init
+FAST_HZ = 3_000_000  # 18 MHz / 6: SdCard::init()'s divider after init
 
 
 def sclk_switch():
