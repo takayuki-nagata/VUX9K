@@ -3,62 +3,37 @@
 # SPDX-License-Identifier: MIT
 
 """
-Merge Boot Manager binary and Resident Loader binary into a 4096-word (16KB) hex file.
-- Words 0..3583   (14 KB): Boot Manager (or NOP if empty)
-- Words 3584..4095 (2 KB): Resident Loader
-Without a Resident Loader (the first stage, hw_test), the image may fill all 16 KB.
+Turn an I-RAM image (the first stage, hw_test) into the 4096-word (16 KB) hex file that
+soc_ram's $readmemh loads, the rest filled with NOPs.
 """
 
-import os
 import struct
 import sys
 
 NOP = 0x00000013  # RISC-V addi x0, x0, 0
+WORDS = 4096
 
 
-def merge_hex(bm_path, rl_path, out_hex_path):
-    bm_data = b""
-    if bm_path and os.path.exists(bm_path):
-        with open(bm_path, "rb") as f:
-            bm_data = f.read()
+def merge_hex(bin_path, out_hex_path):
+    with open(bin_path, "rb") as f:
+        data = f.read()
+    if len(data) > WORDS * 4:
+        sys.exit(f"{bin_path}: {len(data)} bytes, more than the {WORDS * 4} that fit")
+    data += b"\x00" * (-len(data) % 4)
 
-    rl_data = b""
-    if rl_path and os.path.exists(rl_path):
-        with open(rl_path, "rb") as f:
-            rl_data = f.read()
-
-    # If rl_data was extracted with absolute offset from 0, slice at 0x3800 (14336 bytes)
-    if len(rl_data) >= 0x3800:
-        rl_data = rl_data[0x3800:]
-
-    words = [NOP] * 4096
-    limit = 3584 * 4 if rl_data else 4096 * 4
-    if len(bm_data) > limit:
-        sys.exit(f"{bm_path}: {len(bm_data)} bytes, more than the {limit} that fit")
-
-    # 1. Boot Manager (up to 14 KB / 3584 words; 16 KB alone)
-    for i in range(0, len(bm_data), 4):
-        chunk = bm_data[i : i + 4]
-        if len(chunk) < 4:
-            chunk = chunk + b"\x00" * (4 - len(chunk))
-        words[i // 4] = struct.unpack("<I", chunk)[0]
-
-    # 2. Resident Loader (up to 2 KB / 512 words) at word offset 3584 (0x3800)
-    for i in range(0, min(len(rl_data), 512 * 4), 4):
-        chunk = rl_data[i : i + 4]
-        if len(chunk) < 4:
-            chunk = chunk + b"\x00" * (4 - len(chunk))
-        words[3584 + (i // 4)] = struct.unpack("<I", chunk)[0]
+    words = [NOP] * WORDS
+    for i in range(0, len(data), 4):
+        words[i // 4] = struct.unpack("<I", data[i : i + 4])[0]
 
     with open(out_hex_path, "w") as f:
         for w in words:
             f.write(f"{w:08x}\n")
 
-    print(f"Generated {out_hex_path} (4096 words / 16 KB, {len(bm_data)} + {len(rl_data)} bytes)")
+    print(f"Generated {out_hex_path} ({WORDS} words / 16 KB, {len(data)} bytes used)")
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 4:
-        print("Usage: python3 merge_firmware_hex.py <boot_manager.bin> <resident_loader.bin> <output.hex>")
+    if len(sys.argv) != 3:
+        print("Usage: python3 merge_firmware_hex.py <image.bin> <output.hex>")
         sys.exit(1)
-    merge_hex(sys.argv[1], sys.argv[2], sys.argv[3])
+    merge_hex(sys.argv[1], sys.argv[2])

@@ -45,7 +45,7 @@ release/`.
   with a0 = SDHC, a1 = the FAT32 partition's LBA (0: none mounted), a2 = `STAGE1_VERSION`;
   S2 held or a key within `AUTOBOOT_MS` of its banner keeps it at its prompt (`s1> `).
   Its data and stack are in the PSRAM (`S1_RAM_BASE`), never in D-RAM (`hw_smoke.py`
-  needs D-RAM's preload all zero; D-RAM goes away in B4b of the roadmap). It doesn't write
+  needs D-RAM's preload all zero, and D-RAM is to go away). It doesn't write
   the card: installing a second stage is the second stage's job (`fat::stage2::install`),
   after a RAM boot (`u`) of it if need be. Keep it small: 14 KB of 16 KB, and a later ROM
   may be 8 KB. Its `t` and `d` commands were dropped for room; what a feature costs is
@@ -55,8 +55,8 @@ release/`.
   the second stage gets it in a2, `make dist` puts it in MANIFEST.json, and the tests read it
   from there (`sim/emu/s1_env.py`, `sim/integration/soc_env.py`, `scripts/test_hardware.py`);
   don't hard-code it.
-- **Code in the PSRAM is slow**: every fetch waits ~35 cycles (no cache before B4a of the
-  roadmap). The second stage's transfer loop lost UART bytes at 115200 baud until the
+- **Code in the PSRAM is slow**: every fetch waits ~35 cycles (there is no cache in front of
+  it). The second stage's transfer loop lost UART bytes at 115200 baud until the
   receive stopped calling `mul_u32` for its timeout on every byte (`fw_drivers`'
   `Uart::read_byte_timeout` returns a byte that is there at once; `ms_ticks` shifts).
   Keep per-byte paths of code that runs from the PSRAM free of loops and calls.

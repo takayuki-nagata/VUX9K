@@ -7,7 +7,7 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Takayuki Nagata"]
 license = "MIT"
-description = "Hardware-independent Boot Manager logic, tested on the host"
+description = "Hardware-independent firmware logic (FAT32, file header, transfer, boot), tested on the host"
 
 [features]
 # fat::write and fat::stage2::install: the writes an update of the second stage needs

@@ -23,7 +23,7 @@ import struct
 import sys
 from dataclasses import dataclass, field
 
-from rv32_asm import Asm, b_type, i_type, r_type
+from rv32_asm import Asm, b_type, i_type, j_type, r_type
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 UART_BIT = 156  # soc_pkg::UART_CNT: 18 MHz / 115200
@@ -379,6 +379,44 @@ def hack_soft_reset(key_by_addition: bool = True) -> list:
     return a.assemble()
 
 
+BOOT_MODE_CODE = 0x400  # boot_mode_hack's RV32 code, clear of the Hack program it writes at 0
+
+
+def boot_mode_hack() -> list:
+    """RV32 writes a Hack program starting with `@0` over I-RAM word 0, gives Hack in GPIO
+    0x8 (read back), and soft-resets: the CPU must start it in Hack mode, which prints 'H'.
+    Without the mode the first-instruction guess can't tell `@0` from RV32 (README, "ISA
+    selection"); a loader gives it for every program it starts."""
+    import hack_asm
+
+    h = hack_asm.Asm()
+    h.at(0)  # first instruction 0x0000
+    h.c("D=A")
+    h.at(ord("H"))
+    h.c("D=D+A")
+    h.at(0x6000)  # UART data
+    h.c("M=D")
+    h.label("halt")
+    h.at("halt")
+    h.c("0;JMP")
+
+    a = Asm(origin=BOOT_MODE_CODE)
+    for i, w in enumerate(h.assemble()):
+        a.li("t0", w)
+        a.sw("t0", 4 * i, "zero")  # I-RAM word i
+    a.lui("s1", 0x40003)  # GPIO
+    a.addi("t0", "zero", 0x100)  # valid, Hack
+    a.sw("t0", 8, "s1")
+    a.lw("s2", 8, "s1")
+    a.lui("t0", 0xA)
+    a.addi("t0", "t0", 0x55A)  # SOFT_RESET_KEY's low half (0x0000_A55A)
+    a.sw("t0", 0xC, "s1")
+    a.label("spin")
+    a.j("spin")
+
+    return [j_type(BOOT_MODE_CODE, "zero")] + [0] * (BOOT_MODE_CODE // 4 - 1) + a.assemble()
+
+
 # --- SD SPI master: divider register --------------------------------------------------
 def sd_clkdiv() -> list:
     """SD SPI bytes at several dividers (reset 23, 0 -> 3, 5, 255, 2 -> 3): CMD0 and CMD8
@@ -496,6 +534,7 @@ def programs() -> list:
         )
     )
     progs.append(Program("hack_soft_reset", cycles=20_000, imem_words=hack_soft_reset()))
+    progs.append(Program("boot_mode_hack", cycles=6_000, imem_words=boot_mode_hack()))
     progs.append(Program("sd_clkdiv", cycles=30_000, imem_words=sd_clkdiv()))
     # The window programs finish by cycle ~3,600 / ~4,000 (window waits included); xmem
     # then takes timer interrupts in I-RAM until the end

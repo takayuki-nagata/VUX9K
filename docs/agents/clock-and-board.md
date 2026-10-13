@@ -39,8 +39,7 @@ eqy can't see this (zero-delay models, and both sides of eqy come from Yosys). S
   (`timebase-frequency`/`clock-frequency` in `vux9k-common.dtsi`,
   `SYS_CLOCK_HW_CYCLES_PER_SEC`), and the test constants (`tb_soc_top.sv`'s half period,
   `soc_env.py`, `virtual_serial.py`, `lockstep_programs.UART_BIT`, `sim/emu/vux9k.py`,
-  `test_sdcard_spi.CLK_DIV_HALF`, `test_sd_transcripts.SLOW_HZ`/`FAST_HZ`, the tick windows in `test_soc_boot.py` and
-  `test_boot_manager.py`). The PSRAM controller takes `soc_pkg::CLK_HZ` as a parameter, so
+  `test_sdcard_spi.CLK_DIV_HALF`, `test_sd_transcripts.SLOW_HZ`/`FAST_HZ`, `stage1`'s `AUTOBOOT_MS` window). The PSRAM controller takes `soc_pkg::CLK_HZ` as a parameter, so
   its cycle counts change with the clock too: `soc_pkg`'s `XMEM_READ_LATENCY`/
   `XMEM_WRITE_LATENCY` and `PSRAM_INIT_CYCLES` (and the assumption that the power-up ends
   inside the POR), with their copies in the wait-state window's row of sync-points.md (the

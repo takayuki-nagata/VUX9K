@@ -8,7 +8,7 @@ Line coverage of the firmware and demos from emulator runs (make coverage-fw).
 The emulator records each executed instruction as (PC, ISA, instruction word)
 (sim/emu/vux9k.py, VUX9K_COV_DIR). A hit counts for an image only where the image
 has that same word at that PC, so code loaded later over the same addresses (SD
-slots over the Boot Manager) is not credited to it.
+a second stage over the first) is not credited to it.
 
 - RV32 images: ELF files with a DWARF line table (the firmware's `coverage` cargo
   profile: release code plus line tables; the Makefile first checks that its code is

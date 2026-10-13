@@ -137,7 +137,7 @@ Which SoC build has what (`sim_runner.psram_word_model`, `sources_for`):
   accelerated: the first window access waits for it. The model reports protocol/timing
   violations only by counting them in `error_count`, so a test that touches the window calls
   `soc_env.check_psram_pins(dut)` after its accesses (`test_soc_rv32i`'s `test_soc_mmio_map`);
-  it skips the check, saying so in the log, on Verilator, which has no W955 model. The window
+  it skips the check, saying so in the log, on Verilator RTL, which has the word model instead. The window
   test on Icarus is `make sim-psram-icarus` (test-slow; `sim-soc-mmio` in `test-sim` is
   Verilator). Full-SoC Icarus GLS with the W955 model is too slow to use (>30 min for
   `test_soc_gls_fast`).

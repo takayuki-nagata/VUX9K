@@ -4,7 +4,7 @@
 """CPU basics on the emulator, through programs (ported from sim/emulator/test_emulator.py)."""
 
 import pytest
-from lockstep_programs import hack_soft_reset
+from lockstep_programs import boot_mode_hack, hack_soft_reset
 from rv32_asm import Asm
 from vux9k import Soc
 
@@ -129,3 +129,13 @@ def test_hack_soft_reset_key(key_by_addition):
         assert sent.count(b"R") >= 2, sent  # restarted from 0 after the soft reset
     else:
         assert sent == b"R", sent
+
+
+def test_boot_mode_starts_hack_at_0():
+    """The mode in GPIO 0x8 decides the ISA after a soft reset (lockstep_programs.boot_mode_hack):
+    a Hack program starting with `@0` runs as Hack and prints 'H'."""
+    soc = Soc("real")
+    soc.load_iram_words(boot_mode_hack())
+    soc.run(5_000)
+    assert not soc.riscv_mode
+    assert soc.uart_received() == b"H"

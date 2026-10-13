@@ -134,6 +134,12 @@ enum Num {
 }
 
 /// Print why a second stage can't start, on one line without its end.
+// OutOfWindow's message spells the window out (no number formatting for a range)
+const _: () = assert!(
+    map::STAGE2_BASE == 0x8070_0000 && map::STAGE2_BYTES == 0x10_0000,
+    "update OutOfWindow's text in put_boot_error"
+);
+
 pub fn put_boot_error(out: &mut impl Sink, e: BootError) {
     let (what, n) = match e {
         BootError::Fat(f) => match f {

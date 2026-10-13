@@ -14,8 +14,8 @@ Read before changing `zephyr_workspace/`. Index and the rules that apply everywh
 mtime +0x0 / mtimecmp +0x8 layout is `timer_core`'s, so Zephyr's in-tree
 `riscv_machine_timer` driver serves it):
 - `vux9k`: the real board. flash = I-RAM 0x0000-0x37FF, sram = D-RAM up to 0x1FF8: limits
-  the Boot Manager's Resident Loader and mailbox set, kept until the board moves to the PSRAM
-  (B3d of the roadmap; nothing loads an app into I-RAM in the meantime). The linker
+  the old boot manager's resident loader and mailbox set, kept until the board target moves
+  to the PSRAM (nothing loads an app into I-RAM until then). The linker
   enforces both, so an app that outgrows the board fails to link.
 - `vux9k/vux9k/ext`: 512 KB/256 KB, **emulator only** (`vux9k-emu --profile extended`).
   bc_clone_rs (`make build-zephyr`, ~260 KB) runs only here; never present it as

@@ -6,7 +6,7 @@
 
 For each nextpnr seed routed under --seed-dir (seed_<N>/soc_pnr.json, as run_pnr.py
 leaves them; `make timing` routes them all), put firmware/hw_test into the I-RAM block
-RAMs' initial contents in place of the Boot Manager, pack, load it into the board's
+RAMs' initial contents in place of the first stage, pack, load it into the board's
 SRAM and read hw_test's verdict from the UART. Only the INIT_RAM_* parameters change,
 so the test runs on exactly that seed's placement and routing (the bitstream is
 otherwise byte-identical to one built from scratch with hw_test as firmware.hex).
@@ -102,7 +102,7 @@ def hw_test_result(buf):
     """The RESULT line hw_test printed after its banner in buf, or None.
 
     The board's USB bridge hands over output sent while the port was closed (the previous
-    seed's RESULT lines, a Boot Manager menu), so only a RESULT after this boot's banner counts.
+    seed's RESULT lines, the first stage's prompt), so only a RESULT after this boot's banner counts.
     """
     start = buf.find(BANNER)
     return RESULT.search(buf, start) if start >= 0 else None

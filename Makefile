@@ -126,7 +126,7 @@ $(FIRMWARE_BUILD_DIR)/firmware.hex: $(FIRMWARE_SRCS)
 	@mkdir -p $(FIRMWARE_BUILD_DIR)
 	cd firmware/stage1 && $(CARGO) build --release
 	$(PYTHON) scripts/elf2bin.py firmware/target/riscv32i-unknown-none-elf/release/stage1 $(FIRMWARE_BUILD_DIR)/firmware.bin $(FIRMWARE_BUILD_DIR)
-	$(PYTHON) scripts/merge_firmware_hex.py $(FIRMWARE_BUILD_DIR)/firmware.bin "" $(FIRMWARE_BUILD_DIR)/firmware.hex
+	$(PYTHON) scripts/merge_firmware_hex.py $(FIRMWARE_BUILD_DIR)/firmware.bin $(FIRMWARE_BUILD_DIR)/firmware.hex
 	@# soc_ram.veryl's $$readmemh() resolves these bare filenames relative to each tool's own
 	@# process cwd. yosys/nextpnr run from the repo root, so they need these symlinks (not cp, to stay
 	@# identical to build/firmware/); cocotb tests get their own per-run symlinks from sim/runners/sim_runner.py.
@@ -152,7 +152,7 @@ $(HWTEST_DIR)/hw_test.hex: $(HWTEST_SRCS)
 	@mkdir -p $(HWTEST_DIR)
 	cd firmware/hw_test && $(CARGO) build --release
 	$(PYTHON) scripts/elf2bin.py firmware/target/riscv32i-unknown-none-elf/release/hw_test $(HWTEST_DIR)/hw_test.bin $(HWTEST_DIR)
-	$(PYTHON) scripts/merge_firmware_hex.py $(HWTEST_DIR)/hw_test.bin "" $(HWTEST_DIR)/hw_test.hex
+	$(PYTHON) scripts/merge_firmware_hex.py $(HWTEST_DIR)/hw_test.bin $(HWTEST_DIR)/hw_test.hex
 
 hwtest: $(HWTEST_DIR)/hw_test.hex
 
@@ -428,7 +428,7 @@ test-isa-waits: veryl act4-elfs
 # ===== Simulation - SoC Integration =====
 
 sim-boot: veryl firmware
-	@echo "=== Running Hardware Boot Manager & Bridge Cocotb Tests ==="
+	@echo "=== Running First Stage & Bridge Cocotb Tests ==="
 	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_boot]"
 
 sim-soc: veryl firmware sim-boot test-emu

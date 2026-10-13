@@ -58,6 +58,9 @@ SECTIONS
   _stack_end = ORIGIN(S2) + LENGTH(S2);
   _stack_zero = _stack_end - 8K;
 
+  /* start.s zeroes the stack's 8 KB: the image and .bss must end below it */
+  ASSERT(_ebss <= _stack_zero, "stage2: the image and .bss run into the stack")
+
   /DISCARD/ :
   {
     *(.eh_frame)

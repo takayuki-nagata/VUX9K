@@ -69,6 +69,9 @@ SECTIONS
     _stack_zero = _stack_end - 8K;
   } > S1_RAM
 
+  ASSERT(_ebss <= _stack_zero, "stage1: .data/.bss run into the stack")
+  ASSERT(_stack_end == 0x80700000, "stage1: S1_RAM must end at fw_common::map::STAGE2_BASE")
+
   /DISCARD/ :
   {
     *(.eh_frame)

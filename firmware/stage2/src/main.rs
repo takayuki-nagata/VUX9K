@@ -66,12 +66,19 @@ fn report(what: &str, r: Result<(), BootError>) {
     }
 }
 
+/// The card the first stage handed over, or else one initialized here (inserted after a
+/// RAM boot without one); if that fails, the mount reports the read error.
+fn card() -> SdCard {
+    SdCard::ensure_init();
+    SdCard
+}
+
 /// `n`: install the received file as `\VUX9K\STAGE2.BIN`.
 fn install_received() {
     let Some(file) = receive() else {
         return;
     };
-    let r = Volume::mount(SdCard)
+    let r = Volume::mount(card())
         .map_err(BootError::from)
         .and_then(|mut vol| install(&mut vol, STAGE2_WINDOW, file));
     report("[INSTALL] ", r);
@@ -83,7 +90,7 @@ fn write_unchecked() {
     let Some(file) = receive() else {
         return;
     };
-    let r = Volume::mount(SdCard).and_then(|mut vol| {
+    let r = Volume::mount(card()).and_then(|mut vol| {
         let dir = stage2::dir(&mut vol)?;
         if let Some(bin) = vol.find(&dir, &stage2::BIN)? {
             vol.remove(&bin)?;

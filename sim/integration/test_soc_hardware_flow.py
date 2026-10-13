@@ -19,7 +19,7 @@ import sys
 import cocotb
 
 sys.path.append(os.path.dirname(__file__))
-from soc_env import S1_PROMPT, S2_PROMPT, fat_sectors, send_and_wait, stage2_file, start_soc, v4_file
+from soc_env import S1_PROMPT, S2_PROMPT, STAGE1_VERSION, fat_sectors, send_and_wait, stage2_file, start_soc, v4_file
 
 TIMEOUT = 4_000_000
 BLOCK = 512
@@ -55,7 +55,7 @@ async def test_soc_hardware_flow(dut):
     await upload_v2(ser, stage2_file())
     resp = await send_and_wait(ser, "", S2_PROMPT, timeout_cycles=TIMEOUT, settle_bits=0)
     assert "[BOOT] Starting at 0x80700000" in resp, resp
-    assert "[S2] a0=0x00000001 a1=0x00000800 a2=0x00000001" in resp, resp
+    assert f"[S2] a0=0x00000001 a1=0x00000800 a2=0x{STAGE1_VERSION:08x}" in resp, resp
     dut._log.info("[PASS] 2: second stage RAM-booted, a0-a2 handed over")
 
     # Install: `n`, then a small STAGE2.BIN that prints '#'

@@ -7,7 +7,7 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Takayuki Nagata"]
 license = "MIT"
-description = "Board self-test run from block RAM in place of the Boot Manager (make hw-smoke)"
+description = "Board self-test run from block RAM in place of the first stage (make hw-smoke)"
 
 [dependencies]
 fw_common = { path = "../fw_common" }
