@@ -21,6 +21,9 @@ def hack_run():
     assert os.path.exists(HACK_HEX), f"{HACK_HEX} missing; run `make build-hack` first"
     soc = start_soc(imem_words=read_hex_words(HACK_HEX))
     out = wait_for(soc, DONE, timeout_cycles=20_000_000)
+    # The closing rule, then main returns into the startup code's halt loop
+    out += wait_for(soc, b"=\n", timeout_cycles=2_000_000, start=len(out.encode()))
+    soc.run(100_000)
     return soc, out
 
 
@@ -46,3 +49,13 @@ def test_hack_report_line(hack_run, line):
 def test_hack_no_failures(hack_run):
     _, out = hack_run
     assert "[FAIL]" not in out
+
+
+def test_hack_demo_returns_to_its_halt_loop(hack_run):
+    soc, out = hack_run
+    assert out.endswith("=" * 41 + "\n"), out[-60:]
+    pc = soc.pc
+    end = len(soc.uart_received())
+    soc.run(10_000)
+    assert soc.pc in (pc, pc + 1, pc - 1), "not in the 2-instruction halt loop"
+    assert len(soc.uart_received()) == end, "output after the report"
