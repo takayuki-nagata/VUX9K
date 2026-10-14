@@ -412,13 +412,23 @@ impl<D: BlockDevice> Volume<D> {
         })
     }
 
-    /// The free clusters, counted in the FAT (FSInfo's count isn't kept).
+    /// The free clusters, counted in the FAT (FSInfo's count isn't kept). A FAT sector at
+    /// a time: through `fat_entry` it took ~5,000 cycles a cluster from the PSRAM.
     pub fn free_clusters(&mut self) -> Result<u32, FatError> {
         let mut n = 0;
-        for c in 2..self.cluster_end {
-            if self.fat_entry(c)? == 0 {
-                n += 1;
+        let mut c = 2;
+        while c < self.cluster_end {
+            self.load_fat(c >> 7)?;
+            let end = ((c | 127) + 1).min(self.cluster_end);
+            let at = ((c & 127) << 2) as usize;
+            let len = ((end - c) << 2) as usize;
+            for e in self.fat_buf[at..at + len].chunks_exact(4) {
+                // A free entry's 28 bits are 0
+                if e[0] | e[1] | e[2] | (e[3] & 0x0F) == 0 {
+                    n += 1;
+                }
             }
+            c = end;
         }
         Ok(n)
     }

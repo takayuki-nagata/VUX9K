@@ -41,7 +41,14 @@ pub const GPIO_SOFT_RESET: usize = 0x4000_300C;
 pub const SOFT_RESET_KEY: u32 = 0x5A5A_A55A;
 
 // ----- Memories -------------------------------------------------------------------
+/// I-RAM: the first stage at power-on; a store there replaces it (whole words: no byte
+/// enables), and every soft reset starts what is there.
+pub const IRAM_BASE: usize = 0x0000_0000;
+pub const IRAM_BYTES: usize = 16 * 1024;
+/// The part of I-RAM an RV32 application loads into (the `vux9k` Zephyr board's 14 KB).
+pub const IRAM_APP_BYTES: usize = 0x3800;
 pub const DRAM_BASE: usize = 0x2000_0000;
+pub const DRAM_BYTES: usize = 8 * 1024;
 /// The wait-state window (soc_pkg::RV_REGION_XMEM, XMEM_WORDS): the 8 MB PSRAM, code and
 /// data, every access slower than I-RAM/D-RAM; its `XMEM_BYTES` repeat every 8 MB across
 /// 0x8xxx_xxxx (the PSRAM's register space is not reachable). Contents are undefined at

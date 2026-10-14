@@ -1646,6 +1646,46 @@ mod write {
             }
         }
 
+        #[test]
+        fn free_clusters_reads_28_bits_to_the_volumes_end() {
+            let mut img = image("vuxtool_s1");
+            let l = layout(&img);
+            let last = l.clusters + 1;
+            let want = free_in_fat(&img);
+            assert_eq!(
+                le32(&img, l.fat + 4 * last as usize),
+                0,
+                "the last cluster is free"
+            );
+            // The reserved top 4 bits don't make an entry used; any of the 28 others do
+            patch(
+                &mut img,
+                l.fat + 4 * last as usize,
+                &0xF000_0000u32.to_le_bytes(),
+            );
+            assert_eq!(mount(img.clone()).unwrap().free_clusters().unwrap(), want);
+            for bit in [0, 8, 16, 27] {
+                let mut used = img.clone();
+                patch(
+                    &mut used,
+                    l.fat + 4 * last as usize,
+                    &(1u32 << bit).to_le_bytes(),
+                );
+                assert_eq!(mount(used).unwrap().free_clusters().unwrap(), want - 1);
+            }
+            // Entries past the last cluster (the FAT's last sector's rest) don't count
+            let past = l.fat + 4 * (last as usize + 1);
+            if past % SECTOR != 0 {
+                patch(&mut img, past, &[0; 4]);
+                assert_eq!(mount(img.clone()).unwrap().free_clusters().unwrap(), want);
+            }
+            // A FAT sector that can't be read
+            let mut d = disk(img);
+            d.fail_read = Some(((l.fat + 4 * last as usize) / SECTOR) as u32);
+            let mut vol = Volume::mount(d).unwrap();
+            assert!(matches!(vol.free_clusters(), Err(FatError::Io(_))));
+        }
+
         /// The raw entry at slot `n` of directory cluster `c`: (name, attr, cluster).
         fn raw_slot(img: &[u8], c: u32, n: usize) -> ([u8; 11], u8, u32) {
             let at = slot(img, c, n);
