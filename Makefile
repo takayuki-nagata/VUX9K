@@ -39,7 +39,7 @@ HACK_BUILD_DIR := $(BUILD_DIR)/hack
 ZEPHYR_BUILD_DIR ?= $(BUILD_DIR)/zephyr
 SYNTH_DIR := $(BUILD_DIR)/synth
 
-.PHONY: all hello apps sim-stage2 sim-zephyr-demo-gls lint-rtl check-rtl-syntax coverage-fcov mutation act4-elfs test-act4 test-act4-gls test-act4-emu test-isa-waits emu emu-py emu-test emu-bench test-isa-emu test-emu test-fw-host test-fat firmware-size coverage-fw coverage-rust coverage-rust-tool sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hw-dist test-hw-irq-echo dist check-dist test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware hwtest hw-smoke sim-unit sim-psram-contract sim-psram-icarus sim-unit-random sim-boot sim-soc sim test-isa test-isa-gls zephyr-bc-lib build-zephyr build-zephyr-demo build-zephyr-irq-echo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-irq-echo-rtl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
+.PHONY: all hello apps sim-stage2 sim-zephyr-demo-gls sim-hw-suite-emu lint-rtl check-rtl-syntax coverage-fcov mutation act4-elfs test-act4 test-act4-gls test-act4-emu test-isa-waits emu emu-py emu-test emu-bench test-isa-emu test-emu test-fw-host test-fat firmware-size coverage-fw coverage-rust coverage-rust-tool sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hw-dist test-hw-irq-echo dist check-dist test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware hwtest hw-smoke sim-unit sim-psram-contract sim-psram-icarus sim-unit-random sim-boot sim-soc sim test-isa test-isa-gls zephyr-bc-lib build-zephyr build-zephyr-demo build-zephyr-irq-echo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-irq-echo-rtl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
 
 all: test-ci
 
@@ -500,6 +500,12 @@ sim-zephyr-demo-gls: synth-top firmware apps
 	@echo "=== Running the Zephyr Rust demo through the second stage's run on the GLS netlist ==="
 	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc_gls[test_soc_zephyr_s2]"
 
+# The board suite (scripts/test_hardware.py) against the emulator at the board's speed (~3 min,
+# wall-clock timeouts, so test-slow): catches the suite drifting from the second stage's commands
+sim-hw-suite-emu: emu firmware apps
+	@echo "=== Running the board test suite against the emulator ==="
+	VUX9K_HW_SUITE_EMU=1 $(PYTHON) -m pytest sim/emu/test_hw_dist.py -k test_suite_on_the_emulator
+
 sim-zephyr: sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-irq-echo-rtl
 
 sim-hack-emu: emu build-hack
@@ -724,7 +730,7 @@ test-sim: check lint-rtl emu-test test-isa-emu firmware test-fw-host test-fat fi
 # Nightly / on demand (CI schedule + workflow_dispatch): the gate-level flashing flow, the
 # full flow on 4-state Icarus, the real PSRAM controller on its pin model (SoC RTL, controller
 # netlist), and the unit tests with a new random seed
-test-slow: sim-gls-hw-flow sim-hw-flow-icarus sim-lockstep-slow sim-zephyr-demo-gls sim-psram-icarus sim-unit-random
+test-slow: sim-gls-hw-flow sim-hw-flow-icarus sim-lockstep-slow sim-zephyr-demo-gls sim-hw-suite-emu sim-psram-icarus sim-unit-random
 	@echo "========================================================================"
 	@echo "  [SLOW] GLS FLOW, ICARUS FLOW, PSRAM ON ICARUS & LONG LOCKSTEP PASSED!    "
 	@echo "========================================================================"

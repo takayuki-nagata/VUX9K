@@ -110,7 +110,9 @@ def test_bitstream_load_errors(tmp_path):
 EMU = os.environ.get("VUX9K_EMU_BIN") or os.path.join(REPO_ROOT, "build", "emu", "target", "release", "vux9k-emu")
 
 
-@pytest.mark.skipif(os.environ.get("VUX9K_HW_SUITE_EMU") != "1", reason="VUX9K_HW_SUITE_EMU=1 runs it (~3 min)")
+@pytest.mark.skipif(
+    os.environ.get("VUX9K_HW_SUITE_EMU") != "1", reason="make sim-hw-suite-emu runs it (~3 min, test-slow)"
+)
 def test_suite_on_the_emulator(tmp_path):
     img = tmp_path / "sd.img"
     img.write_bytes(test_hardware.vux_tool.build_fat32_image({}))  # no \VUX9K\: install makes it

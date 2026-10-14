@@ -22,7 +22,8 @@ What `test-sim` and `test-slow` cover, and which long tests to run by hand for w
 boot and install flow), `sim-stage2` (below), `sim-zephyr-demo-rtl`, `sim-zephyr-irq-echo-rtl` and `sim-soc-gls-fast`. `make test-slow` (CI nightly + manual `workflow_dispatch`) adds
 `sim-gls-hw-flow`, `sim-hw-flow-icarus`, `sim-lockstep-slow` (with `s2_run_hello`, the real
 second stage booted from the card running the hello demo: ~20M cycles, ~5M instructions traced),
-`sim-zephyr-demo-gls` (below), `sim-psram-icarus` (below) and
+`sim-zephyr-demo-gls` (below), `sim-hw-suite-emu` (the board suite against the emulator,
+below), `sim-psram-icarus` (below) and
 `sim-unit-random` (the unit tests with the date as random seed). Until 2026-09 the flashing flow ran in
 no tier at all (25–35 min RTL / many hours GLS on Icarus); on Verilator it's ~16 s
 RTL / ~3–6 min GLS, which is what made it affordable per PR.
@@ -95,8 +96,9 @@ clock-and-board.md, "Board UART output that is noise: ModemManager and the bridg
   second stage under test again. Without `ZEPHYR.BIN` (no Zephyr) test 13 is skipped. It runs
   against the emulator too, where the two bitstream-load tests are skipped: `vux9k-emu --tcp
   PORT --sd <mkfat image>` and `--port socket://127.0.0.1:PORT` (~3 min at the board's speed;
-  `VUX9K_HW_SUITE_EMU=1 pytest sim/emu/test_hw_dist.py` runs it; at `--speed 0` test 7 misses
-  the first stage's key window).
+  `make sim-hw-suite-emu`, in test-slow, runs it: its timeouts are wall-clock, so a loaded
+  host could fail it in `test-sim`; run it by hand after changing the second stage's commands
+  or the suite; at `--speed 0` test 7 misses the first stage's key window).
 - `make test-hw-irq-echo` (`scripts/hw_irq_echo.py`): the interrupt-driven UART echo put on
   the card and started by the running second stage, then the bitstream loaded again. The
   upgrade test from the previous release went with the Boot Manager's slots.
