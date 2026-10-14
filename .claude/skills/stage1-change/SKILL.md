@@ -1,6 +1,6 @@
 ---
 name: stage1-change
-description: Checklist for changing the VUX9K first stage or the provisional second stage (firmware/stage1, firmware/stage2, fw_common, fw_drivers, transfer v2, the RAM boot, installing STAGE2.BIN, the v4 header) - version bump, size budget, header parsers, tests to run. Use before committing any change to the boot chain.
+description: Checklist for changing the VUX9K first stage or the second stage (firmware/stage1, firmware/stage2 with its commands and launcher, fw_common, fw_drivers, transfer v2, the RAM boot, installing STAGE2.BIN, the v4 header) - version bump, size budget, header parsers, tests to run. Use before committing any change to the boot chain.
 ---
 
 # First stage / second stage change
@@ -11,8 +11,17 @@ Read docs/agents/firmware.md first; the rows below are its rules in checklist fo
       (`make test-fw-host`); MMIO drivers in `fw_drivers`; addresses come from `fw_common::map`.
 - [ ] `STAGE1_VERSION` raised in `firmware/stage1/src/main.rs` for a first-stage change (the
       second stage gets it in a2; tests and `make dist` read it from there).
+- [ ] `STAGE2_VERSION` raised in `firmware/stage2/src/main.rs` for a second-stage change
+      (STAGE2.BIN's header, the banner and `info` take it from there).
 - [ ] `make firmware-size`: the first stage <= 16 KB (it is in the bitstream: measure what a
-      feature costs by building without it).
+      feature costs by building without it), and `build/firmware/firmware.hex` unchanged
+      after a change that wasn't meant for the first stage (fw_common code only the second
+      stage uses goes behind `fat-full`). Note the second stage's size (35 KB: a RAM boot of
+      it is ~54M cycles on the RTL).
+- [ ] Second-stage commands or their output changed (`shell.rs`'s `HELP`/`CARD_CMDS`,
+      `[ERR]`/`[PUT]`/`[RUN]`/`[INSTALL]` lines): `tools/vux_tool.py`'s `s2_cmd`/`put`/
+      `run_app`/`install_stage2`, `scripts/test_hardware.py`, `sim/emu/test_stage2.py`,
+      `test_soc_hardware_flow.py`. The launcher writes I-RAM only after the CRC checked.
 - [ ] The first stage keeps its data in the PSRAM (`S1_RAM_BASE`), never D-RAM, and writes
       nothing to the card.
 - [ ] Code that runs from the PSRAM (the second stage): no calls or loops on per-byte
@@ -22,7 +31,7 @@ Read docs/agents/firmware.md first; the rows below are its rules in checklist fo
       changed: both sides and `sim/emu/test_upload_v2.py`'s transcripts.
 - [ ] SD init: `SD_DIV_INIT` before card init, `SD_DIV_FAST` after. Card-type logic tested
       with the strict emulator card.
-- [ ] Tests: the emulator tests (`sim/emu/test_stage1*.py`), `test-sim`, and `sim-gls-hw-flow`
+- [ ] Tests: the emulator tests (`sim/emu/test_stage1*.py`, `test_stage2.py`), `test-sim`, and `sim-gls-hw-flow`
       by hand when transfer v2, the RAM boot, the install or the SD boot chain changed
       (docs/agents/test-tiers.md). Firmware coverage thresholds still met (`coverage-fw`).
 - [ ] Board: `test-hw` / `test-hw-dist` before the change ships (a FAT32 card with `\VUX9K\`).

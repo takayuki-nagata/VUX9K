@@ -221,7 +221,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
         record(name, not bad, "each refused, still at the prompt" if not bad else "; ".join(bad))
 
         # 5. Install two second stages: the second keeps the first as STAGE2.OLD
-        name = f"5. Install STAGE2.BIN v{v_a}, then v{v_b} (second stage 'n')"
+        name = f"5. Install STAGE2.BIN v{v_a}, then v{v_b} (second stage 'install')"
         try:
             vux_tool.ram_boot(ser, stage2)
             vux_tool.install_stage2(ser, with_version(stage2, v_a))
@@ -235,7 +235,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
 
         # 6. Soft reset back to the first stage, which boots the new one
         name = f"6. Soft reset to the first stage, which boots v{v_b}"
-        ser.write(b"r")
+        ser.write(b"reset\r")
         ser.flush()
         got, out = vux_tool.read_until(ser, (vux_tool.S2_PROMPT,), 20.0)
         ok = got is not None and f"[BOOT] STAGE2.BIN v{v_b} " in out and "VUX9K Stage 1" in out
@@ -249,11 +249,11 @@ def run_hardware_test_suite(port="auto", baud=115200):
         record(name, ok, "both checked [OK]" if ok else fail_msg("Unexpected files.", out))
 
         # 8. A broken STAGE2.BIN: the first stage boots STAGE2.OLD
-        name = "8. Broken STAGE2.BIN: boot from STAGE2.OLD (second stage 'x')"
+        name = "8. Broken STAGE2.BIN: boot from STAGE2.OLD (second stage 'install -u')"
         try:
             vux_tool.ram_boot(ser, stage2)
             vux_tool.install_stage2(ser, with_version(stage2, v_c, crc_override=0), unchecked=True)
-            ser.write(b"r")
+            ser.write(b"reset\r")
             ser.flush()
             got, out = vux_tool.read_until(ser, (vux_tool.S2_PROMPT,), 20.0)
             ok = got is not None and f"[BOOT] STAGE2.OLD (STAGE2.BIN missing or broken) v{v_a} " in out
@@ -266,7 +266,7 @@ def run_hardware_test_suite(port="auto", baud=115200):
         name = "9. Install the second stage under test and boot it"
         try:
             vux_tool.install_stage2(ser, stage2)
-            ser.write(b"r")
+            ser.write(b"reset\r")
             ser.flush()
             h = vux_tool.ImageHeader.parse(stage2)
             got, out = vux_tool.read_until(ser, (vux_tool.S2_PROMPT,), 20.0)

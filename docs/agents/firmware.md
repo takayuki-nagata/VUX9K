@@ -14,12 +14,15 @@ Read before changing anything under `firmware/` or the file format in `tools/vux
 ## Cargo workspace gotcha: rustflags paths are workspace-root-relative
 
 `firmware/` is a Cargo workspace: `stage1` (the first stage, the boot ROM in I-RAM,
-`build/firmware/firmware.{bin,hex}`), `stage2` (a provisional second stage, linked into
-the PSRAM and wrapped as the v4 file `build/firmware/stage2/STAGE2.BIN`), `hw_test`,
+`build/firmware/firmware.{bin,hex}`), `stage2` (the second stage, file manager and
+launcher, linked into the PSRAM and wrapped as the v4 file
+`build/firmware/stage2/STAGE2.BIN`; built with the `coverage` profile, see "Firmware
+coverage"), `hw_test`,
 `fw_drivers` (the MMIO drivers they share) and `fw_common` (the hardware-independent
 logic, no MMIO, tested on the host with `cargo test -p fw_common --target <host triple>
 --features fat-full` and again with `fat-write` alone — `make test-fw-host`; `make
-firmware-size` holds the first stage to the 16 KB it runs from).
+firmware-size` holds the first stage to the 16 KB it runs from and prints the second's
+size, 35 KB, which a RAM boot sends at ~1550 cycles a byte on the RTL).
 **When you build a member from within its own directory (`cd firmware/stage1
 && cargo build`), rustc/the linker still runs with cwd = the workspace root
 (`firmware/`), not the member directory.** This means each member's
@@ -55,6 +58,28 @@ release/`.
   the second stage gets it in a2, `make dist` puts it in MANIFEST.json, and the tests read it
   from there (`sim/emu/s1_env.py`, `sim/integration/soc_env.py`, `scripts/test_hardware.py`);
   don't hard-code it.
+- **Raise `STAGE2_VERSION` with every second-stage change** (`firmware/stage2/src/main.rs`):
+  the Makefile's `mkv4 --version` reads it from there into `STAGE2.BIN`'s header, the
+  banner (`VUX9K Stage 2 (vN)`) and `info` show it, and `sim/emu/s1_env.py` reads it.
+- **The second stage is a line prompt** (`s2> `, echo and backspace; `fw_common::shell`):
+  the commands are `firmware/stage2/src/shell.rs`'s `HELP` and `CARD_CMDS`, an error is one
+  `[ERR] ` line, `put`/`install` speak transfer v2 after their line, `install`'s result is
+  `[INSTALL] ...` (`install -u`: `[UNCHECKED] ...`). `tools/vux_tool.py` (`s2_cmd`, `put`,
+  `run_app`, `install_stage2`, `enter_s1`'s `reset`), `scripts/test_hardware.py` and the
+  emulator tests (`sim/emu/test_stage2.py`, `s1_env.s2_cmd`) depend on those strings.
+- **The launcher writes I-RAM only after the CRC checked** (`fw_common::launch`, `run`): a
+  file loads within `LOAD_WINDOW` through `staging` (I-RAM addresses into the PSRAM at
+  `SCRATCH`), `plan` then picks the target from the checked header (RV32 at 0: I-RAM, 14 KB;
+  RV32 in `XMEM_BASE..STAGE2_BASE`: the PSRAM, a jump with a0-a2 as the first stage hands them
+  over; Hack: I-RAM, 16 KB, at a word), and only then does the second stage copy into I-RAM
+  (whole words, the last one's bytes past the payload 0), zero D-RAM, set `GPIO_BOOT_MODE` and
+  soft-reset. So a refused file leaves the first stage in I-RAM. The windows are spelled out in
+  `put_run_error`'s text (a const assert).
+- **`fw_common` code that only the second stage needs stays out of the first stage's
+  build**: merely adding `launch` to `lib.rs` changed the first stage's binary (36 bytes), so
+  it is behind `fat-full`, as is the nibble-table `crc32_update` (the bitwise one, which the
+  first stage keeps, cost ~1,800 cycles a byte from the PSRAM). Check
+  `build/firmware/firmware.hex` is unchanged after any `fw_common` change.
 - **Code in the PSRAM is slow**: every fetch waits ~35 cycles (there is no cache in front of
   it). The second stage's transfer loop lost UART bytes at 115200 baud until the
   receive stopped calling `mul_u32` for its timeout on every byte (`fw_drivers`'
@@ -138,8 +163,11 @@ demo's assembly, checked instruction by instruction against the binary. Output:
   (e.g. the `loop {}` after a soft-reset store, a panic handler nothing reaches). It
   counts for every image that links the line: a library line excluded for one stage's
   use (e.g. `find_entry` on a non-directory) must be unreachable from every stage measured.
-  Don't use it for code that is merely untested — add the test. The provisional second
-  stage is not measured until it is the real one.
+  Don't use it for code that is merely untested — add the test.
+- The second stage (`stage2`) is measured from its `coverage` ELF, which is also what
+  `STAGE2.BIN` is made from: with line tables rustc ordered its functions differently from
+  the release build. The emulator's coverage key keeps 31 bits of the PC, so
+  `coverage_fw.py` puts bit 31 back for code in the PSRAM.
 - Raise a threshold when coverage rises; never lower one to get a run through.
 - The Hack demo in CI is assembled from the committed `hack_demo/src/main.asm` (`hcc`
   isn't installed there). After changing `main.c`, regenerate it with `hcc -S`.

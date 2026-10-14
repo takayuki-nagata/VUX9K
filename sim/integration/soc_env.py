@@ -38,7 +38,7 @@ STAGE2_BASE = 0x8070_0000
 
 
 HASH_PAYLOAD = hash_program(STAGE2_BASE)
-# The provisional second stage (make firmware)
+# The second stage (make firmware)
 STAGE2_RAW = os.path.join(REPO_ROOT, "build", "firmware", "stage2", "stage2.bin")
 
 CLK_PERIOD_PS = 55556  # 18.0 MHz SoC clock (tb_soc_top.sv: 2 x 27778 ps)
@@ -63,7 +63,7 @@ def v4_file(payload: bytes = HASH_PAYLOAD, version: int = 1, **kw) -> bytes:
 
 
 def stage2_file(version: int = 1) -> bytes:
-    """The provisional second stage (16 KB) as a v4 file, as `make firmware` builds it."""
+    """The second stage (35 KB) as a v4 file, as `make firmware` builds it."""
     with open(STAGE2_RAW, "rb") as f:
         return v4_file(f.read(), version)
 

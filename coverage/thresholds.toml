@@ -5,8 +5,12 @@
 # Lines that can't run by design carry a `cov:exclude(reason)` comment instead.
 # hack_demo: the rest is its [FAIL] reporting, reached only if a self-test fails.
 [line]
-# The first stage; the provisional second stage (firmware/stage2) is not measured
+# The two stages. stage2's 7 lines left: fw_common lines the second stage can't reach (create's
+# Exists after its callers removed the name, list on a file, a read-back that differs: the
+# emulator's card has no such fault), loop ends the line table puts on a `}` or a fn line, and
+# SdCard::init's 1000 tries of a card that never gets ready (~2G cycles from the PSRAM)
 stage1 = 100.0
+stage2 = 99.2
 zephyr_demo = 100.0
 hack_demo = 90.0
 

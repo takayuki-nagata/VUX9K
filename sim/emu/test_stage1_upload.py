@@ -10,7 +10,7 @@ sim/integration/test_soc_hardware_flow.py.
 """
 
 import pytest
-from s1_env import BANNER, FAT_LBA, STAGE1_VERSION, STAGE2_BASE, card, handoff, stage2, start
+from s1_env import BANNER, FAT_LBA, S2_NAME, STAGE1_VERSION, STAGE2_BASE, card, handoff, stage2, start
 from vux9k import EmuClock, EmuSerial, vux_tool
 
 BIN = "VUX9K/STAGE2.BIN"
@@ -79,9 +79,9 @@ def test_install_keeps_the_previous_as_old(tool):
     assert vux_tool.install_stage2(ser, stage2(version=2)) == "[INSTALL] OK"
     assert vux_tool.install_stage2(ser, stage2(version=3)) == "[INSTALL] OK"
     # Back to the first stage, which boots the new one
-    ser.write(b"r")
+    ser.write(b"reset\r")
     got, out = vux_tool.read_until(ser, ("s2> ",), 5.0)
-    assert got and '[BOOT] STAGE2.BIN v3 "VUX9K stage 2 (provisional)"' in out, out
+    assert got and f'[BOOT] STAGE2.BIN v3 "{S2_NAME}"' in out, out
     vux_tool.enter_s1(ser)
     out = vux_tool.send_cmd_and_wait(ser, "i", prompt="s1> ")
     assert "STAGE2.BIN: v3 " in out and "STAGE2.OLD: v2 " in out, out
@@ -97,12 +97,14 @@ def test_install_refuses_a_bad_file(tool):
         vux_tool.install_stage2(ser, stage2(load_addr=0x8000_0000))
 
 
-def test_install_needs_the_directory(tool):
+def test_install_makes_the_directory(tool):
     soc, ser = tool({"README.TXT": b"x"})
     vux_tool.enter_s1(ser)
     vux_tool.ram_boot(ser, stage2())
-    with pytest.raises(vux_tool.UploadError, match=r"\[INSTALL\] not found"):
-        vux_tool.install_stage2(ser, stage2())
+    assert vux_tool.install_stage2(ser, stage2(version=6)) == "[INSTALL] OK"
+    ser.write(b"reset\r")
+    got, out = vux_tool.read_until(ser, ("s2> ",), 5.0)
+    assert got and "[BOOT] STAGE2.BIN v6 " in out, out
 
 
 def test_broken_bin_boots_old(tool):
@@ -111,7 +113,7 @@ def test_broken_bin_boots_old(tool):
     vux_tool.ram_boot(ser, stage2())
     vux_tool.install_stage2(ser, stage2(version=4))  # v1 becomes .OLD
     assert vux_tool.install_stage2(ser, stage2(version=5, crc_override=0), unchecked=True) == "[UNCHECKED] OK"
-    ser.write(b"r")
+    ser.write(b"reset\r")
     got, out = vux_tool.read_until(ser, ("s2> ",), 5.0)
     assert got and "[BOOT] STAGE2.OLD (STAGE2.BIN missing or broken) v1 " in out, out
 

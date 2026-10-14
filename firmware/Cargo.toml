@@ -16,7 +16,8 @@ opt-level = "z"
 codegen-units = 1
 
 # The release code plus DWARF line tables, for coverage (make coverage-fw checks that
-# the code is byte-identical to the release image before using it)
+# the code is byte-identical to the release image before using it). The second stage is
+# built with it: its functions came out in another order with the line tables
 [profile.coverage]
 inherits = "release"
 debug = "line-tables-only"

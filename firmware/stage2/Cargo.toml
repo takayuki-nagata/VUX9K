@@ -9,5 +9,5 @@ authors = ["Takayuki Nagata"]
 license = "MIT"
 
 [dependencies]
-fw_common = { path = "../fw_common", features = ["fat-write"] }
+fw_common = { path = "../fw_common", features = ["fat-full"] }
 fw_drivers = { path = "../fw_drivers" }

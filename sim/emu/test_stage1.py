@@ -12,15 +12,19 @@ from s1_env import (
     BOOT_CYCLES,
     FAT_LBA,
     S1_PROMPT,
+    S2_BANNER,
+    S2_NAME,
     S2_PROMPT,
     STAGE1_VERSION,
     STAGE2_BASE,
+    STAGE2_VERSION,
     boot,
     card,
     cmd,
     entry_at,
     fixture,
     handoff,
+    s2_cmd,
     stage2,
     start,
     to_prompt,
@@ -41,9 +45,9 @@ def broken(data: bytes) -> bytes:
 def test_boots_stage2_from_the_card():
     soc, out = boot()
     assert BANNER in out
-    assert '[BOOT] STAGE2.BIN v1 "VUX9K stage 2 (provisional)" ' in out, out
+    assert f'[BOOT] STAGE2.BIN v{STAGE2_VERSION} "{S2_NAME}" ' in out, out
     assert f"[BOOT] Starting at 0x{STAGE2_BASE:08X}" in out
-    assert "VUX9K Stage 2 (provisional)" in out
+    assert S2_BANNER in out
     # SDHC, the partition at LBA 2048, the first stage's version
     assert handoff(out) == (1, FAT_LBA, STAGE1_VERSION)
     assert soc.pc >= STAGE2_BASE
@@ -144,7 +148,7 @@ def test_sd_info():
     out = cmd(soc, "i")
     assert "[SD] SDHC card\n" in out
     assert f"[FAT] FAT32 at LBA {FAT_LBA}, 512 B clusters\n" in out
-    assert '[FAT] \\VUX9K\\STAGE2.BIN: v3 "VUX9K stage 2 (provisional)" ' in out
+    assert f'[FAT] \\VUX9K\\STAGE2.BIN: v3 "{S2_NAME}" ' in out
     assert " B [OK]\n" in out
     assert "[FAT] \\VUX9K\\STAGE2.OLD: CRC mismatch\n" in out
     soc = start(bytes(1024 * 1024))
@@ -156,7 +160,7 @@ def test_soft_reset_returns_to_the_first_stage():
     soc, _ = boot()
     # From the second stage: the first stage boots it again
     mark = len(soc.uart_received())
-    out = cmd(soc, "r", until=S2_PROMPT)
+    out = s2_cmd(soc, "reset", until=S2_PROMPT)
     assert BANNER in out and "[BOOT] STAGE2.BIN " in out
     assert len(soc.uart_received()) > mark
     # From the first stage's prompt

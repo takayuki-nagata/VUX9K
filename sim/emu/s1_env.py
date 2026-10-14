@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 """Shared setup for the two-stage boot's tests on the emulator: the first stage
-(firmware/stage1) and the provisional second stage (firmware/stage2) on FAT32 cards."""
+(firmware/stage1) and the second stage (firmware/stage2) on FAT32 cards."""
 
 import os
 import re
@@ -32,16 +32,23 @@ with open(os.path.join(REPO_ROOT, "firmware", "stage1", "src", "main.rs")) as _f
     assert _m, "STAGE1_VERSION not found in main.rs"
     STAGE1_VERSION = int(_m.group(1))
 BANNER = f"VUX9K Stage 1 (v{STAGE1_VERSION})"
+with open(os.path.join(REPO_ROOT, "firmware", "stage2", "src", "main.rs")) as _f:
+    _m = re.search(r"const STAGE2_VERSION: u32 = (\d+);", _f.read())
+    assert _m, "STAGE2_VERSION not found in main.rs"
+    STAGE2_VERSION = int(_m.group(1))
+S2_BANNER = f"VUX9K Stage 2 (v{STAGE2_VERSION})"
+# The second stage's v4 name (the Makefile's mkv4)
+S2_NAME = "VUX9K stage 2"
 # The banner's last line: the key window starts after it
 BANNER_END = b"3 MHz\n"
 
 
-def stage2(version=1, **kw) -> bytes:
-    """The provisional second stage as a v4 file (as `make stage2` builds it)."""
+def stage2(version=STAGE2_VERSION, **kw) -> bytes:
+    """The second stage as a v4 file (as `make firmware` builds it)."""
     with open(STAGE2_RAW, "rb") as f:
         raw = f.read()
     kw.setdefault("load_addr", STAGE2_BASE)
-    data, _ = vux_tool.build_vux9_v4_image(raw, name="VUX9K stage 2 (provisional)", version=version, **kw)
+    data, _ = vux_tool.build_vux9_v4_image(raw, name=S2_NAME, version=version, **kw)
     return data
 
 
@@ -89,8 +96,8 @@ def start(image=None, *, files=None, card_present=True, sd_card=None, button=Fal
 
 
 def boot(stage2_file=None, **kw):
-    """Power on with a card holding \\VUX9K\\STAGE2.BIN (the provisional second stage
-    unless given) and run to its prompt; returns (soc, output)."""
+    """Power on with a card holding \\VUX9K\\STAGE2.BIN (the second stage unless given)
+    and run to its prompt; returns (soc, output)."""
     files = kw.pop("files", None) or {"VUX9K/STAGE2.BIN": stage2_file or stage2()}
     soc = start(files=files, **kw)
     return soc, wait_for(soc, S2_PROMPT, BOOT_CYCLES)
@@ -120,3 +127,29 @@ def handoff(out: str):
     m = re.search(r"\[S2\] a0=0x([0-9A-F]{8}) a1=0x([0-9A-F]{8}) a2=0x([0-9A-F]{8})", out)
     assert m, out
     return tuple(int(g, 16) for g in m.groups())
+
+
+def boot_s2(files=None, image=None, **kw):
+    """Power on with a card holding the second stage as \\VUX9K\\STAGE2.BIN and `files`
+    ({"DIR/NAME.EXT": bytes}), or the card `image` as it is (it must hold the second
+    stage), and run to the second stage's prompt; returns (soc, output)."""
+    if image is None:
+        image = card({"VUX9K/STAGE2.BIN": stage2()} | (files or {}))
+    soc = start(image, **kw)
+    out = wait_for(soc, S2_PROMPT, BOOT_CYCLES)
+    assert S2_BANNER in out, out
+    return soc, out
+
+
+def s2_cmd(soc, line: str, until: bytes = S2_PROMPT, timeout_cycles: int = BOOT_CYCLES) -> str:
+    """A command line at the second stage's prompt (after a short pause, like a person);
+    returns what it printed, without the echo of the line (and up to `until`, the next
+    prompt by default, which is left out)."""
+    soc.run(50 * UART_BIT)
+    start_at = len(soc.uart_received())
+    soc.uart_send(line.encode() + b"\r")
+    resp = wait_for(soc, until, timeout_cycles=timeout_cycles, start=start_at)
+    echo = line + "\n"
+    assert resp.startswith(echo), f"missing echo of {line!r}: {resp!r}"
+    resp = resp[len(echo) :]
+    return resp[: -len(until)] if until == S2_PROMPT else resp

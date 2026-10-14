@@ -39,10 +39,10 @@ without its error check (sim.md, "The PSRAM word model and its contract test"). 
 controller tag or a change to the window's bridge.
 
 `test_soc_hardware_flow.py` is the only RTL test that drives the two-stage boot's whole
-UART and SD chain: transfer v2 carries the provisional second stage (16 KB, ~25M cycles at
-115200 baud) to the first stage's `u` for a RAM boot, the second stage installs a new
-`\VUX9K\STAGE2.BIN` on the FAT32 card (`n`), and after its soft reset the first stage boots
-that file. The first stage's other commands are `test_soc_boot.py`'s. RTL reads the card
+UART and SD chain: transfer v2 carries the second stage (35 KB, ~54M cycles at 115200
+baud) to the first stage's `u` for a RAM boot, the second stage installs a new
+`\VUX9K\STAGE2.BIN` on the FAT32 card (`install`), and after its `reset` the first stage
+boots that file. The first stage's other commands are `test_soc_boot.py`'s. RTL reads the card
 at ~250 cycles a byte as the board does: the other SoC tests boot a 28-byte `STAGE2.BIN`
 (`soc_env.v4_file`), not the second stage.
 

@@ -9,6 +9,8 @@ For the two-stage boot on the Tang Nano 9K and its emulator:
 - VUX9 v4 files (mkv4) and FAT32 card images (mkfat),
 - the first stage's prompt: card report (sd-info), RAM boot of a second stage (run),
   and installing a second stage as \\VUX9K\\STAGE2.BIN (install-stage2),
+- the second stage's prompt: files on the card (ls, put) and starting an application
+  (run-app),
 - transfer v2 (send_upload_v2) and the functions the tests use.
 """
 
@@ -41,7 +43,7 @@ MODE_RISCV = 1
 # magic, header_version (u16), reserved (u16, 0), mode, size, load_addr, entry_point,
 # crc32, version (the application's), name (32 bytes, NUL-padded); little-endian
 HEADER_FORMAT = "<IHHIIIIII32s"
-# The first stage's and the provisional second stage's prompts
+# The first stage's and the second stage's prompts
 S1_PROMPT = "s1> "
 S2_PROMPT = "s2> "
 
@@ -486,9 +488,110 @@ def enter_s1(ser, timeout=10.0, drain=True):
         if got == S1_PROMPT:
             return text
         if got == S2_PROMPT:
-            ser.write(b"r")
+            ser.write(b"reset\r")
             ser.flush()
     raise TimeoutError(f"no first-stage prompt; got {text[-400:]!r}")
+
+
+def enter_s2(ser, timeout=20.0):
+    """Get to the second stage's prompt: Enter until a prompt answers, and from the first
+    stage's, boot the card's second stage (`b`). Returns the text read; raises
+    TimeoutError."""
+    drain_serial(ser, timeout=0.05)
+    text = ""
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        ser.write(b"\r")
+        ser.flush()
+        got, t = read_until(ser, (S1_PROMPT, S2_PROMPT), 0.05)
+        text += t
+        if got == S2_PROMPT:
+            return text
+        if got == S1_PROMPT:
+            ser.write(b"b")
+            ser.flush()
+            got, t = read_until(ser, (S2_PROMPT,), max(0.0, end - time.monotonic()))
+            text += t
+            if got:
+                return text
+    raise TimeoutError(f"no second-stage prompt; got {text[-400:]!r}")
+
+
+class S2Error(Exception):
+    """A second-stage command that failed: its [ERR] line."""
+
+
+def _s2_reply(text, line):
+    """What a command printed: text without the echo of its line and the prompt."""
+    echo = line + "\n"
+    at = text.find(echo)
+    text = text[at + len(echo) :] if at >= 0 else text
+    return text[: text.rfind(S2_PROMPT)] if S2_PROMPT in text else text
+
+
+def _s2_check(out):
+    err = next((ln for ln in out.splitlines() if ln.startswith("[ERR]")), None)
+    if err:
+        raise S2Error(err)
+    return out
+
+
+def s2_cmd(ser, line, timeout=10.0, check=True):
+    """At the second stage's prompt: run the command line and return what it printed
+    (without its echo and the next prompt). With check, a reply with an [ERR] line raises
+    S2Error; no prompt within timeout raises TimeoutError."""
+    drain_serial(ser, timeout=0.05)
+    ser.write(line.encode() + b"\r")
+    ser.flush()
+    got, text = read_until(ser, (line + "\n",), timeout)
+    if got:
+        got, rest = read_until(ser, (S2_PROMPT,), timeout)
+        text += rest
+    if not got:
+        raise TimeoutError(f"no prompt after {line!r}; got {text[-400:]!r}")
+    out = _s2_reply(text, line)
+    return _s2_check(out) if check else out
+
+
+def put(ser, path, data, timeout=10.0):
+    """At the second stage's prompt: write data to the card as path (8.3 names; an existing
+    file is replaced) with `put` over transfer v2. Returns the [PUT] line; raises
+    UploadError for the transfer, S2Error for the card."""
+    drain_serial(ser, timeout=0.05)
+    line = f"put {path}"
+    ser.write(line.encode() + b"\r")
+    ser.flush()
+    try:
+        send_upload_v2(ser, data, timeout=timeout)
+    except UploadError:
+        read_until(ser, (S2_PROMPT,), timeout)
+        raise
+    got, text = read_until(ser, (S2_PROMPT,), timeout + 0.002 * len(data))
+    if not got:
+        raise TimeoutError(f"no prompt after put; got {text[-400:]!r}")
+    _s2_check(text)
+    return next((ln for ln in text.splitlines() if ln.startswith("[PUT]")), text.strip())
+
+
+def run_app(ser, path, timeout=30.0):
+    """At the second stage's prompt: start the v4 file path on the card with `run`.
+    Returns the text up to and including the [RUN] line (the application's output follows
+    on ser); raises S2Error when the second stage refuses it."""
+    drain_serial(ser, timeout=0.05)
+    ser.write(f"run {path}\r".encode())
+    ser.flush()
+    text = ""
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        _, t = read_until(ser, ("\n",), max(0.0, end - time.monotonic()))
+        text += t
+        at = text.find("[RUN] ")
+        if at >= 0 and "\n" in text[at:]:
+            return text[: text.index("\n", at) + 1]
+        if S2_PROMPT in text[text.find("\n") + 1 :]:
+            _s2_check(text)
+            raise S2Error(text.strip())
+    raise TimeoutError(f"no [RUN] line after run {path}; got {text[-400:]!r}")
 
 
 def ram_boot(ser, data, timeout=10.0):
@@ -511,10 +614,11 @@ def ram_boot(ser, data, timeout=10.0):
 
 def install_stage2(ser, data, unchecked=False, timeout=30.0):
     """At the second stage's prompt: install the v4 file data as \\VUX9K\\STAGE2.BIN
-    (`n`; the previous one becomes STAGE2.OLD), or write it there unchecked (`x`, tests).
-    Returns the result line; raises UploadError unless it ends in OK."""
+    (`install`; the previous one becomes STAGE2.OLD, \\VUX9K\\ is made if missing), or write
+    it there unchecked (`install -u`, tests). Returns the result line; raises UploadError
+    unless it ends in OK."""
     drain_serial(ser, timeout=0.05)
-    ser.write(b"x" if unchecked else b"n")
+    ser.write(b"install -u\r" if unchecked else b"install\r")
     ser.flush()
     send_upload_v2(ser, data, timeout=timeout)
     got, text = read_until(ser, (S2_PROMPT,), timeout)
@@ -758,10 +862,38 @@ def cmd_install_stage2(args):
         enter_s1(ser)
         ram_boot(ser, data)
         print(install_stage2(ser, data))
-        ser.write(b"r")
+        ser.write(b"reset\r")
         ser.flush()
         _, text = read_until(ser, (S2_PROMPT, S1_PROMPT), 20.0)
         print(text)
+    finally:
+        ser.close()
+
+
+def cmd_ls(args):
+    ser = open_port(args.port, baudrate=args.baud)
+    try:
+        enter_s2(ser)
+        print(s2_cmd(ser, f"ls {args.path}" if args.path else "ls", timeout=30.0), end="")
+    finally:
+        ser.close()
+
+
+def cmd_put(args):
+    data = _read_file(args.file)
+    ser = open_port(args.port, baudrate=args.baud)
+    try:
+        enter_s2(ser)
+        print(put(ser, args.path, data))
+    finally:
+        ser.close()
+
+
+def cmd_run_app(args):
+    ser = open_port(args.port, baudrate=args.baud)
+    try:
+        enter_s2(ser)
+        print(run_app(ser, args.path), end="")
     finally:
         ser.close()
 
@@ -787,7 +919,7 @@ def main():
         action="append",
         default=[],
         metavar="PATH=FILE",
-        help="Put FILE at PATH (8.3 names, e.g. VUX9K/STAGE2.BIN); repeatable",
+        help="Put FILE at PATH (8.3 names, directories made as needed, e.g. VUX9K/APPS/HELLO.BIN); repeatable",
     )
     sub_fat.add_argument("--size-mb", type=int, default=4, help="Partition size in MB (default: 4)")
     sub_fat.add_argument("--cluster-sectors", type=int, default=1, help="Sectors per cluster (default: 1)")
@@ -810,6 +942,13 @@ def main():
         "install-stage2", help="Install a second stage (v4 file) as \\VUX9K\\STAGE2.BIN and boot it"
     )
     sub_inst.add_argument("file", help="v4 file (it is RAM-booted, then installs itself)")
+    sub_ls = subparsers.add_parser("ls", help="List a directory on the card (second stage's ls)")
+    sub_ls.add_argument("path", nargs="?", default="", help="Directory or file (default: the root)")
+    sub_put = subparsers.add_parser("put", help="Write a file to the card (second stage's put)")
+    sub_put.add_argument("file", help="File to send")
+    sub_put.add_argument("path", help="Where on the card (8.3 names, e.g. VUX9K/APPS/HELLO.BIN)")
+    sub_runapp = subparsers.add_parser("run-app", help="Start a v4 file on the card (second stage's run)")
+    sub_runapp.add_argument("path", help="v4 file on the card (e.g. VUX9K/APPS/HELLO.BIN)")
 
     args = parser.parse_args()
 
@@ -833,6 +972,12 @@ def main():
         cmd_run(args)
     elif args.command == "install-stage2":
         cmd_install_stage2(args)
+    elif args.command == "ls":
+        cmd_ls(args)
+    elif args.command == "put":
+        cmd_put(args)
+    elif args.command == "run-app":
+        cmd_run_app(args)
 
 
 if __name__ == "__main__":

@@ -110,13 +110,15 @@ check-rtl-syntax: veryl
 	$(YOSYS) -q -p "read_verilog -sv $(filter-out %/soc_ram.sv,$(SOC_RTL_SRCS))"
 	iverilog -g2012 -o /dev/null -s board_top $(SOC_RTL_SRCS) $(GOWIN_CELLS_SV)
 
-# ===== Firmware (Rust: the first stage of the two-stage boot, and a provisional second stage) =====
+# ===== Firmware (Rust: the two-stage boot's first and second stage) =====
 
 # The first stage (firmware/stage1), the boot ROM in I-RAM: build/firmware/firmware.{bin,hex}.
-# The provisional second stage (firmware/stage2) as the v4 file \VUX9K\STAGE2.BIN for the card,
-# linked at fw_common::map::STAGE2_BASE: build/firmware/stage2/STAGE2.BIN
+# The second stage (firmware/stage2: file manager and launcher) as the v4 file \VUX9K\STAGE2.BIN
+# for the card, linked at fw_common::map::STAGE2_BASE, its header's version STAGE2_VERSION from
+# its main.rs: build/firmware/stage2/STAGE2.BIN
 STAGE2_DIR = $(FIRMWARE_BUILD_DIR)/stage2
 STAGE2_BASE = 0x80700000
+STAGE2_VERSION = $(shell sed -n 's/^const STAGE2_VERSION: u32 = \([0-9]*\);.*/\1/p' firmware/stage2/src/main.rs)
 FW_LIB_SRCS = $(wildcard firmware/fw_common/src/*.rs firmware/fw_common/src/*/*.rs) firmware/fw_common/Cargo.toml \
 	$(wildcard firmware/fw_drivers/src/*.rs) firmware/fw_drivers/Cargo.toml firmware/Cargo.toml
 FIRMWARE_SRCS = $(wildcard firmware/stage1/src/*.rs firmware/stage1/bootstrap/*) firmware/stage1/Cargo.toml $(FW_LIB_SRCS)
@@ -133,11 +135,14 @@ $(FIRMWARE_BUILD_DIR)/firmware.hex: $(FIRMWARE_SRCS)
 	ln -sf $(CURDIR)/$(FIRMWARE_BUILD_DIR)/firmware.hex ./firmware.hex
 	ln -sf $(CURDIR)/$(FIRMWARE_BUILD_DIR)/firmware_d0.hex $(CURDIR)/$(FIRMWARE_BUILD_DIR)/firmware_d1.hex $(CURDIR)/$(FIRMWARE_BUILD_DIR)/firmware_d2.hex $(CURDIR)/$(FIRMWARE_BUILD_DIR)/firmware_d3.hex .
 
+# (Built with the coverage profile, the release code plus line tables: with debug info, rustc
+# orders the second stage's functions differently, so coverage-fw maps the very ELF that runs)
 $(STAGE2_DIR)/STAGE2.BIN: $(STAGE2_SRCS) tools/vux_tool.py
 	@mkdir -p $(STAGE2_DIR)
-	cd firmware/stage2 && $(CARGO) build --release
-	$(PYTHON) scripts/elf2bin.py --base $(STAGE2_BASE) firmware/target/riscv32i-unknown-none-elf/release/stage2 $(STAGE2_DIR)/stage2.bin
-	$(PYTHON) tools/vux_tool.py mkv4 --load-addr $(STAGE2_BASE) --name "VUX9K stage 2 (provisional)" $(STAGE2_DIR)/stage2.bin $@
+	cd firmware/stage2 && $(CARGO) build --profile coverage
+	$(PYTHON) scripts/elf2bin.py --base $(STAGE2_BASE) firmware/target/riscv32i-unknown-none-elf/coverage/stage2 $(STAGE2_DIR)/stage2.bin
+	@[ -n "$(STAGE2_VERSION)" ] || { echo "STAGE2_VERSION not found in firmware/stage2/src/main.rs"; exit 1; }
+	$(PYTHON) tools/vux_tool.py mkv4 --load-addr $(STAGE2_BASE) --version $(STAGE2_VERSION) --name "VUX9K stage 2" $(STAGE2_DIR)/stage2.bin $@
 
 firmware: $(FIRMWARE_BUILD_DIR)/firmware.hex $(STAGE2_DIR)/STAGE2.BIN
 
@@ -171,6 +176,9 @@ coverage-fw: emu-py firmware build-hack build-zephyr-demo build-zephyr
 	cd firmware/stage1 && $(CARGO) build --profile coverage
 	$(PYTHON) scripts/elf2bin.py $(FW_TARGET)/coverage/stage1 $(FW_COV_DIR)/stage1.bin > /dev/null
 	cmp $(FW_COV_DIR)/stage1.bin $(FIRMWARE_BUILD_DIR)/firmware.bin
+	@# (the second stage's image is built from its coverage ELF: see STAGE2.BIN above)
+	$(PYTHON) scripts/elf2bin.py --base $(STAGE2_BASE) $(FW_TARGET)/coverage/stage2 $(FW_COV_DIR)/stage2.bin > /dev/null
+	cmp $(FW_COV_DIR)/stage2.bin $(STAGE2_DIR)/stage2.bin
 	@# The Hack demo's assembly, made the way hack_demo/Makefile made the binary
 	if command -v msp430-gcc >/dev/null 2>&1 && [ -f $(VENV_PATH)/bin/hcc ]; then \
 		$(VENV_PATH)/bin/hcc -S hack_demo/src/main.c -o $(FW_COV_DIR)/hack_demo.asm; \
@@ -178,6 +186,7 @@ coverage-fw: emu-py firmware build-hack build-zephyr-demo build-zephyr
 	VUX9K_COV_DIR=$(FW_COV_DIR)/hits $(PYTHON) -m pytest -q sim/emu
 	$(PYTHON) scripts/coverage_fw.py --hits $(FW_COV_DIR)/hits \
 		--elf stage1=$(FW_TARGET)/coverage/stage1=firmware/stage1/,firmware/fw_common/,firmware/fw_drivers/ \
+		--elf stage2=$(FW_TARGET)/coverage/stage2=firmware/stage2/,firmware/fw_common/,firmware/fw_drivers/ \
 		--elf zephyr_demo=$(ZEPHYR_DEMO_BUILD_DIR)/zephyr/zephyr.elf=zephyr_workspace/app/ \
 		--hack hack_demo=$(FW_COV_DIR)/hack_demo.asm=$(HACK_BUILD_DIR)/firmware.bin \
 		--lcov $(FW_COV_DIR)/fw.info --summary $(FW_COV_DIR)/summary.md --thresholds coverage/thresholds.toml
@@ -239,6 +248,9 @@ firmware-size: firmware
 	@s1=$$(stat -c %s $(FIRMWARE_BUILD_DIR)/firmware.bin); \
 	echo "First stage     $$s1 / $(S1_MAX_BYTES) bytes"; \
 	[ $$s1 -le $(S1_MAX_BYTES) ] || { echo "firmware over its size budget"; exit 1; }
+	@# The second stage has room in its 1 MB window; its size is what a RAM boot sends (RTL: ~1550
+	@# cycles a byte at 115200 baud) and what the first stage reads from the card
+	@echo "Second stage    $$(stat -c %s $(STAGE2_DIR)/stage2.bin) bytes"
 
 # ===== Emulator (emu/: host-only Rust workspace, toolchain pinned by emu/rust-toolchain.toml) =====
 

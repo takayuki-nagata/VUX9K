@@ -6,9 +6,10 @@ Cocotb End-to-End Hardware Test Flow Runner (test_soc_hardware_flow.py)
 
 The one RTL test that drives the two-stage boot's whole UART and SD chain: transfer v2
 (fw_common::upload::upload_v2, as tools/vux_tool.py's send_upload_v2 speaks it) carries
-the provisional second stage into the PSRAM for a RAM boot; the second stage writes a new
-\\VUX9K\\STAGE2.BIN to the FAT32 card (fat::stage2::install); after a soft reset the first
-stage boots that file. The first stage's other commands are test_soc_boot.py's.
+the second stage into the PSRAM for a RAM boot; its `install` line writes a new
+\\VUX9K\\STAGE2.BIN to the FAT32 card (fat::stage2::install); after its `reset` the first
+stage boots that file. The first stage's other commands are test_soc_boot.py's; the
+second stage's are sim/emu/test_stage2.py's.
 """
 
 import binascii
@@ -49,7 +50,7 @@ async def test_soc_hardware_flow(dut):
     assert "[BOOT] STAGE2.BIN: not found; STAGE2.OLD: not found" in resp, resp
     dut._log.info("[PASS] 1: first stage at its prompt (no STAGE2.BIN)")
 
-    # RAM boot: `u`, then the second stage over transfer v2 (16 KB: ~25M cycles at 115200)
+    # RAM boot: `u`, then the second stage over transfer v2 (35 KB: ~54M cycles at 115200)
     ser.reset_input_buffer()
     ser.write(b"u")
     await upload_v2(ser, stage2_file())
@@ -58,16 +59,16 @@ async def test_soc_hardware_flow(dut):
     assert f"[S2] a0=0x00000001 a1=0x00000800 a2=0x{STAGE1_VERSION:08x}" in resp, resp
     dut._log.info("[PASS] 2: second stage RAM-booted, a0-a2 handed over")
 
-    # Install: `n`, then a small STAGE2.BIN that prints '#'
+    # Install: the `install` line, then a small STAGE2.BIN that prints '#'
     ser.reset_input_buffer()
-    ser.write(b"n")
+    ser.write(b"install\r")
     await upload_v2(ser, v4_file(version=7))
     resp = await send_and_wait(ser, "", S2_PROMPT, timeout_cycles=20_000_000, settle_bits=0)
     assert "[INSTALL] OK" in resp, resp
     dut._log.info("[PASS] 3: STAGE2.BIN installed on the card")
 
-    # Soft reset: the first stage boots the installed file
-    resp = await send_and_wait(ser, "r", "[BOOT] Starting at 0x80700000".encode(), timeout_cycles=10_000_000)
+    # Soft reset (`reset`): the first stage boots the installed file
+    resp = await send_and_wait(ser, "reset\r", "[BOOT] Starting at 0x80700000".encode(), timeout_cycles=10_000_000)
     assert '[BOOT] STAGE2.BIN v7 "test" 28 B' in resp, resp
     await ser.wait_for(b"#", timeout_cycles=500_000)
     dut._log.info("[PASS] 4: soft reset, the first stage booted the installed STAGE2.BIN ('#')")
