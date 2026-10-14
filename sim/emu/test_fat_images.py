@@ -4,13 +4,15 @@
 """FAT32 images from the real tools and from vux_tool, for fw_common::fat's host tests.
 
 firmware/fw_common/tests/fat_images/ holds card images made by mkfs.fat and mtools
-(`mkfs_*`) and by tools/vux_tool.py's build_fat32_image (`vuxtool_*`), stored
-sparse (`<name>.sparse`: only the sectors that aren't all zero) so that the host tests need
-neither tool, each with a `<name>.files` list (`path size crc32` per file, by 8.3 name) of what fw_common
-must read from it. This test rebuilds them and checks they are what the tools make today
-(they are byte-for-byte reproducible: fixed volume ID, SOURCE_DATE_EPOCH, file times), that
-fsck.fat finds nothing wrong with them, that mtools reads vux_tool's files back, and that
-they stay clean after fw_common writes to them (the `fat_host` example: install, remove).
+(`mkfs_*`) and by tools/vux_tool.py's build_fat32_image (`vuxtool_*`), stored sparse
+(`<name>.sparse`: only the sectors that aren't all zero) so that the host tests need neither
+tool, each with a `<name>.files` list (`path size crc32` per file, by the name fw_common
+opens it with: 8.3, or for mkfs_lfn long names) of what fw_common must read from it. This
+test rebuilds them and checks they are what the tools make today (they are byte-for-byte
+reproducible: fixed volume ID, SOURCE_DATE_EPOCH, file times), that fsck.fat finds nothing
+wrong with them, that mtools reads vux_tool's files back, and that they stay clean after
+fw_common writes to them (the `fat_host` example: install, remove, mkdir, rmdir, move, and
+its free-cluster count against fsck.fat's).
 VUX9_VECTORS_UPDATE=1 rewrites them.
 
 The checks with dosfstools and mtools are skipped without them, and fail instead when
@@ -100,7 +102,8 @@ def run_tool(*cmd, **kw):
 def fsck(path, tmp_dir, fsinfo_unknown=False):
     """fsck.fat -n on the partition of card image `path`: nothing but its banner, the
     small-FAT32 warning and the summary; with fsinfo_unknown, also its note that FSInfo's
-    free count is unknown (fw_common sets it so instead of keeping it right)."""
+    free count is unknown (fw_common sets it so instead of keeping it right). Returns the
+    free clusters by the summary."""
     part = os.path.join(tmp_dir, "partition.img")
     with open(path, "rb") as f, open(part, "wb") as out:
         f.seek(PART_LBA * SECTOR)
@@ -114,6 +117,9 @@ def fsck(path, tmp_dir, fsinfo_unknown=False):
         expected += ("Free cluster summary uninitialized",)
     extra = [ln for ln in out if ln.strip() and not ln.startswith(expected) and not ln.startswith(part + ":")]
     assert r.returncode == 0 and not extra, "\n".join(out)
+    m = re.search(r"(\d+)/(\d+) clusters$", r.stdout, re.M)
+    assert m, "\n".join(out)
+    return int(m.group(2)) - int(m.group(1))
 
 
 def mtype(path, name):
@@ -225,6 +231,25 @@ def build_mkfs_s8_1fat(card, tmp):
     card.put("VUX9K/Long File Name.txt", b"lfn\n", tmp, short="VUX9K/LONGFI~1.TXT")
 
 
+def build_mkfs_lfn(card, tmp):
+    """512-byte clusters, two FATs, no second stage (an install makes \\VUX9K\\): long names
+    for directories and files (one of four entries, 52 characters and no end mark; one of
+    exactly 13; one not in ASCII), a lowercase 8.3 name (no long name), a directory in a
+    long-named one, and a removed long-named file. Listed by the names fw_common resolves
+    (`Volume::resolve`, feature fat-full): long names, with `?` for what isn't ASCII."""
+    card.mkdir("Projects Folder")
+    card.put("Projects Folder/A Very Long File Name That Needs Several Entries.txt", data(700, 4), tmp)
+    card.mkdir("Projects Folder/sub")
+    card.put("Projects Folder/sub/x.txt", b"nested\n", tmp)
+    card.put("Deleted Long Name.txt", b"gone\n", tmp)
+    card.put("\u00dcn\u00efc\u00f6d\u00e9 file.txt", b"unicode\n", tmp, short="?n?c?d? file.txt")
+    card.delete("Deleted Long Name.txt")
+    card.put("ABCDEFGHIJ.KL", b"thirteen\n", tmp)
+    card.put("Mixed Case.Txt", b"mixed\n", tmp)
+    card.put("lower.txt", b"lower\n", tmp)
+    card.put("README.TXT", b"hello\n", tmp)
+
+
 def vuxtool_files(cluster_sectors):
     if cluster_sectors == 1:
         files = {
@@ -245,6 +270,7 @@ def vuxtool_files(cluster_sectors):
 IMAGES = {
     "mkfs_s1": (8192, 1, 2, build_mkfs_s1),
     "mkfs_s8_1fat": (8192, 8, 1, build_mkfs_s8_1fat),
+    "mkfs_lfn": (8192, 1, 2, build_mkfs_lfn),
     "vuxtool_s1": (8192, 1, 2, None),
     "vuxtool_s8": (16384, 8, 2, None),
 }
@@ -376,12 +402,12 @@ def test_mkfat_cli(tmp_path):
 
 @pytest.fixture(scope="module")
 def fat_host():
-    """The fat_host example (fw_common::fat with fat-write, on an image file), built."""
+    """The fat_host example (fw_common::fat with fat-full, on an image file), built."""
     host = subprocess.run(["rustc", "-vV"], capture_output=True, text=True, check=True).stdout
     triple = next(ln.split()[1] for ln in host.splitlines() if ln.startswith("host:"))
     fw = os.path.join(REPO_ROOT, "firmware")
     subprocess.run(
-        ["cargo", "build", "-q", "-p", "fw_common", "--example", "fat_host", "--features", "fat-write",
+        ["cargo", "build", "-q", "-p", "fw_common", "--example", "fat_host", "--features", "fat-full",
          "--target", triple],
         cwd=fw, check=True, timeout=600,
     )  # fmt: skip
@@ -411,8 +437,11 @@ def test_fw_common_writes_pass_fsck(name, tmp_path, fat_host):
     def read(p):
         return mtype(path, p) if use_mtools else fat_host_run(fat_host, path, "cat", p)
 
-    previous = read("VUX9K/STAGE2.BIN")
-    assert fat_host_run(fat_host, path, "cat", "VUX9K/STAGE2.BIN") == previous
+    # mkfs_lfn has no second stage: the first install makes \\VUX9K\\
+    has_stage2 = "VUX9K" in ls(fat_host, path, "")
+    previous = read("VUX9K/STAGE2.BIN") if has_stage2 else None
+    if has_stage2:
+        assert fat_host_run(fat_host, path, "cat", "VUX9K/STAGE2.BIN") == previous
     # Two installs: the first new image over 128 clusters (the chain crosses FAT sectors)
     for version, size in ((7, 70_000), (8, 900)):
         new = stage2(size, version, seed=version)
@@ -420,15 +449,85 @@ def test_fw_common_writes_pass_fsck(name, tmp_path, fat_host):
         fat_host_run(fat_host, path, "install", str(tmp_path / "new.bin"))
         fsck(path, str(tmp_path), fsinfo_unknown=True)
         assert read("VUX9K/STAGE2.BIN") == new
-        assert read("VUX9K/STAGE2.OLD") == previous
+        if previous is None:
+            assert "STAGE2.OLD" not in ls(fat_host, path, "VUX9K")
+        else:
+            assert read("VUX9K/STAGE2.OLD") == previous
         assert fat_host_run(fat_host, path, "boot") == f"BIN {version}\n".encode()
         previous = new
     # Removing files, long-named ones with their long-name entries (fsck.fat reports
     # long-name entries left without their 8.3 entry)
-    listing = fat_host_run(fat_host, path, "ls", "VUX9K").decode().split()
-    for short in [n for n in listing if "~" in n] + ["STAGE2.OLD"]:
+    for short in [n for n in ls(fat_host, path, "VUX9K") if "~" in n] + ["STAGE2.OLD"]:
         fat_host_run(fat_host, path, "rm", f"VUX9K/{short}")
         fsck(path, str(tmp_path), fsinfo_unknown=True)
-    assert not [n for n in fat_host_run(fat_host, path, "ls", "VUX9K").decode().split() if "~" in n]
+    assert not [n for n in ls(fat_host, path, "VUX9K") if "~" in n]
     if use_mtools:
         assert "Long File Name" not in mdir(path, "VUX9K")
+
+
+def ls(binary, image, path):
+    """The 8.3 names fat_host lists in `path`."""
+    return [ln.split("\t")[0] for ln in fat_host_run(binary, image, "ls", path).decode().splitlines()]
+
+
+def fat_host_fails(binary, *args):
+    """fat_host's error message for a command that must fail."""
+    r = subprocess.run([binary, *args], capture_output=True, timeout=60)
+    assert r.returncode != 0
+    return r.stderr.decode()
+
+
+@needs_tools
+@pytest.mark.parametrize("name", [*sorted(IMAGES), "full_size"])
+def test_fw_common_directory_changes_pass_fsck(name, tmp_path, fat_host):
+    """mkdir, moves across and within directories, rmdir and the free-cluster count by
+    fw_common (feature fat-full), each followed by fsck.fat (and read back with mtools
+    where it can read the image); a long-named file moved loses its long name cleanly."""
+    if name == "full_size":
+        path = str(tmp_path / "card.img")
+        with open(path, "wb") as f:
+            f.write(vux_tool.build_fat32_image(vuxtool_files(1), part_sectors=FULL_SIZE_SECTORS))
+    else:
+        path = write_fixture(name, tmp_path)
+    use_mtools = name == "full_size" or MTOOLS_SMALL_FAT32
+
+    def step(*args):
+        fat_host_run(fat_host, path, *args)
+        free = fsck(path, str(tmp_path), fsinfo_unknown=True)
+        assert fat_host_run(fat_host, path, "free") == f"{free}\n".encode()
+
+    def read(p):
+        return mtype(path, p) if use_mtools else fat_host_run(fat_host, path, "cat", p)
+
+    free = fsck(path, str(tmp_path))
+    assert fat_host_run(fat_host, path, "free") == f"{free}\n".encode()
+    content = data(3000, 11)
+    (tmp_path / "a.bin").write_bytes(content)
+    step("mkdir", "TEST")
+    step("mkdir", "test/SUB")
+    assert ls(fat_host, path, "TEST/SUB") == [".", ".."]
+    if use_mtools:
+        assert "SUB" in mdir(path, "TEST")
+    step("put", "TEST/A.BIN", str(tmp_path / "a.bin"))
+    step("mv", "TEST/A.BIN", "TEST/SUB/B.BIN")
+    assert ls(fat_host, path, "TEST") == [".", "..", "SUB"]
+    step("mv", "TEST/SUB/B.BIN", "/TEST/SUB/C.BIN")
+    assert read("TEST/SUB/C.BIN") == content
+    assert "NotEmpty" in fat_host_fails(fat_host, path, "rmdir", "TEST")
+    assert "WrongType" in fat_host_fails(fat_host, path, "mv", "TEST/SUB", "X")
+    # A long-named file moved to the root: its long-name entries go with the old entry
+    listing = fat_host_run(fat_host, path, "ls", "VUX9K" if name != "mkfs_lfn" else "Projects Folder").decode()
+    long_named = [ln.split("\t") for ln in listing.splitlines() if "\t" in ln]
+    if long_named:
+        short, long = long_named[0]
+        where = "VUX9K" if name != "mkfs_lfn" else "Projects Folder"
+        before = fat_host_run(fat_host, path, "cat", f"{where}/{long}")
+        step("mv", f"{where}/{long}", "MOVED.TXT")
+        assert read("MOVED.TXT") == before
+        assert short not in ls(fat_host, path, where)
+        if use_mtools:
+            assert long not in mdir(path, where)
+    step("rm", "TEST/SUB/C.BIN")
+    step("rmdir", "TEST/SUB/")
+    step("rmdir", "TEST")
+    assert "TEST" not in ls(fat_host, path, "")

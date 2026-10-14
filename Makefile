@@ -184,8 +184,10 @@ coverage-fw: emu-py firmware build-hack build-zephyr-demo build-zephyr
 
 # Host tests of the firmware's hardware-independent logic (firmware/fw_common)
 HOST_TARGET ?= $(shell rustc -vV | sed -n 's/^host: //p')
-# (with fat-write, so the update's FAT writes are tested; the plain build is built too)
+# (with fat-full, so the FAT writes are tested; again with fat-write alone, which the second
+# stage's install without the file manager uses; the plain build, the first stage's, is built too)
 test-fw-host:
+	cd firmware && $(CARGO) test -p fw_common --target $(HOST_TARGET) --features fat-full
 	cd firmware && $(CARGO) test -p fw_common --target $(HOST_TARGET) --features fat-write
 	cd firmware && $(CARGO) build -p fw_common --target $(HOST_TARGET)
 
@@ -224,7 +226,7 @@ coverage-rust: coverage-rust-tool firmware hwtest build-hack build-zephyr build-
 		$(CARGO) llvm-cov report --release --json --summary-only --output-path $(RUST_COV_REPORT)/emu.json && \
 		$(CARGO) llvm-cov report --release --lcov --output-path $(RUST_COV_REPORT)/emu.info
 	cd firmware && export CARGO_TARGET_DIR=$(CURDIR)/$(RUST_COV_DIR)/fw-target && \
-		$(CARGO) llvm-cov test -p fw_common --target $(HOST_TARGET) --features fat-write \
+		$(CARGO) llvm-cov test -p fw_common --target $(HOST_TARGET) --features fat-full \
 			--json --summary-only --output-path $(RUST_COV_REPORT)/fw_common.json && \
 		$(CARGO) llvm-cov report -p fw_common --target $(HOST_TARGET) --lcov --output-path $(RUST_COV_REPORT)/fw_common.info
 	$(PYTHON) scripts/coverage_rust.py $(RUST_COV_REPORT)/emu.json $(RUST_COV_REPORT)/fw_common.json \

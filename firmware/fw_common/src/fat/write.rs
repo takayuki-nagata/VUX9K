@@ -2,15 +2,24 @@
 // SPDX-License-Identifier: MIT
 
 //! The writes an update of the second stage needs (feature `fat-write`): create a file in
-//! an existing directory, rename and remove one. Every FAT copy gets each change, and
+//! an existing directory, rename and remove one; with feature `fat-full` also make and
+//! remove (empty) directories, move a file to another directory and count the free
+//! clusters. Every FAT copy gets each change, and
 //! FSInfo's free count and next-free hint are marked unknown before the first change, so
 //! nothing has to keep them right. Times are fixed at 1980-01-01 00:00 (no clock).
 //!
 //! Order for power loss: a new file's data and chain reach the card before its directory
 //! entry, and a removed file's entry goes before its chain, so an interrupted change
 //! leaves at most clusters no entry uses (which fsck reports, and nothing reads).
+//! The same for directories: a new one's cluster is zeroed, given `.` and `..` and
+//! linked (end of chain) before the parent's entry for it is written; a removed one's
+//! entry goes before its cluster chain. A moved file gets its entry in the destination
+//! before the source's is removed (its chain stays where it is), so a cut leaves it
+//! under both names at worst, never under none.
 
 use super::dir::{DirEntry, ATTR_DIR, DELETED, ENTRY};
+#[cfg(feature = "fat-full")]
+use super::names::{DOT, DOTDOT};
 use super::{le32, read, BlockDevice, FatError, Volume, ENTRY_MASK, EOC_MIN, SECTOR};
 
 const ATTR_ARCHIVE: u8 = 0x20;
@@ -225,19 +234,11 @@ impl<D: BlockDevice> Volume<D> {
                 return Err(e);
             }
         };
-        read(&mut self.dev, lba, &mut self.buf)?;
-        let e = &mut self.buf[index as usize * ENTRY..(index as usize + 1) * ENTRY];
-        e.fill(0);
-        e[..11].copy_from_slice(name);
-        e[11] = ATTR_ARCHIVE;
-        for at in [16, 18, 24] {
-            // creation, access and write dates
-            e[at..at + 2].copy_from_slice(&DATE_1980.to_le_bytes());
-        }
-        e[20..22].copy_from_slice(&((first >> 16) as u16).to_le_bytes());
-        e[26..28].copy_from_slice(&(first as u16).to_le_bytes());
-        e[28..32].copy_from_slice(&(data.len() as u32).to_le_bytes());
-        self.write_sector(lba, Buf::Data)?;
+        self.write_entry(
+            lba,
+            index,
+            &entry_bytes(name, ATTR_ARCHIVE, first, data.len() as u32),
+        )?;
         Ok(DirEntry {
             name: *name,
             attr: ATTR_ARCHIVE,
@@ -248,6 +249,13 @@ impl<D: BlockDevice> Volume<D> {
             lfn_lba: lba,
             lfn_index: index,
         })
+    }
+
+    /// Put the 32-byte entry `raw` into slot (lba, index).
+    fn write_entry(&mut self, lba: u32, index: u8, raw: &[u8; ENTRY]) -> Result<(), FatError> {
+        read(&mut self.dev, lba, &mut self.buf)?;
+        self.buf[index as usize * ENTRY..(index as usize + 1) * ENTRY].copy_from_slice(raw);
+        self.write_sector(lba, Buf::Data)
     }
 
     /// Rename a file within its directory (`dir`, where `entry` was found) to `name`.
@@ -284,6 +292,151 @@ impl<D: BlockDevice> Volume<D> {
         }
         Ok(())
     }
+}
+
+#[cfg(feature = "fat-full")]
+impl<D: BlockDevice> Volume<D> {
+    /// Make the directory `name` (8.3) in directory `parent`: one cluster, zeroed, with
+    /// `.` and `..` (cluster 0 for the root), linked before `parent`'s entry for it.
+    pub fn mkdir(&mut self, parent: &DirEntry, name: &[u8; 11]) -> Result<DirEntry, FatError> {
+        if !parent.is_dir() {
+            return Err(FatError::WrongType);
+        }
+        if self.find(parent, name)?.is_some() {
+            return Err(FatError::Exists);
+        }
+        self.begin_change()?;
+        let c = self.alloc_cluster(None)?;
+        let up = if parent.cluster == self.root {
+            0
+        } else {
+            parent.cluster
+        };
+        let slot = (|| {
+            self.buf = [0; SECTOR];
+            let lba = self.cluster_lba(c);
+            for s in 1..1u32 << self.cluster_shift {
+                self.write_sector(lba + s, Buf::Data)?;
+            }
+            self.buf[..ENTRY].copy_from_slice(&entry_bytes(&DOT, ATTR_DIR, c, 0));
+            self.buf[ENTRY..2 * ENTRY].copy_from_slice(&entry_bytes(&DOTDOT, ATTR_DIR, up, 0));
+            self.write_sector(lba, Buf::Data)?;
+            self.flush_fat()?;
+            let (lba, index) = self.free_slot(parent)?;
+            self.write_entry(lba, index, &entry_bytes(name, ATTR_DIR, c, 0))?;
+            Ok((lba, index))
+        })();
+        match slot {
+            Ok((lba, index)) => Ok(DirEntry {
+                name: *name,
+                attr: ATTR_DIR,
+                cluster: c,
+                size: 0,
+                lba,
+                index,
+                lfn_lba: lba,
+                lfn_index: index,
+            }),
+            Err(e) => {
+                // No entry points to the cluster: give it back where the card allows
+                let _ = self.free_chain(c);
+                Err(e)
+            }
+        }
+    }
+
+    /// Remove the directory `entry` if it holds nothing but `.` and `..` (`NotEmpty`
+    /// else; `BadName` for the root, `.` and `..`): its entry (and long name), then its
+    /// clusters.
+    pub fn rmdir(&mut self, entry: &DirEntry) -> Result<(), FatError> {
+        if !entry.is_dir() {
+            return Err(FatError::WrongType);
+        }
+        // The root has no entry (LBA 0 is the MBR's)
+        if entry.lba == 0 || entry.name[0] == b'.' {
+            return Err(FatError::BadName);
+        }
+        if self
+            .find_entry(entry, &mut |e| e.name != DOT && e.name != DOTDOT)?
+            .is_some()
+        {
+            return Err(FatError::NotEmpty);
+        }
+        self.begin_change()?;
+        self.delete_slots(entry, false)?;
+        self.free_chain(entry.cluster)
+    }
+
+    /// Move the file `entry` from directory `src_dir` (where it was found) to `dst_dir`
+    /// as `name` (8.3; a long name it had is dropped). Its clusters stay; the new entry is
+    /// written before the old one is removed. Within one directory it is a rename.
+    pub fn move_to(
+        &mut self,
+        src_dir: &DirEntry,
+        entry: &DirEntry,
+        dst_dir: &DirEntry,
+        name: &[u8; 11],
+    ) -> Result<DirEntry, FatError> {
+        if entry.is_dir() || !dst_dir.is_dir() {
+            return Err(FatError::WrongType);
+        }
+        if src_dir.cluster == dst_dir.cluster {
+            self.rename(src_dir, entry, name)?;
+            return Ok(DirEntry {
+                name: *name,
+                lfn_lba: entry.lba,
+                lfn_index: entry.index,
+                ..*entry
+            });
+        }
+        if self.find(dst_dir, name)?.is_some() {
+            return Err(FatError::Exists);
+        }
+        self.begin_change()?;
+        // The entry as it is (attributes, times, chain, size) under the new name
+        read(&mut self.dev, entry.lba, &mut self.buf)?;
+        let at = entry.index as usize * ENTRY;
+        let mut raw = [0u8; ENTRY];
+        raw.copy_from_slice(&self.buf[at..at + ENTRY]);
+        raw[..11].copy_from_slice(name);
+        let (lba, index) = self.free_slot(dst_dir)?;
+        self.write_entry(lba, index, &raw)?;
+        self.delete_slots(entry, false)?;
+        Ok(DirEntry {
+            name: *name,
+            lba,
+            index,
+            lfn_lba: lba,
+            lfn_index: index,
+            ..*entry
+        })
+    }
+
+    /// The free clusters, counted in the FAT (FSInfo's count isn't kept).
+    pub fn free_clusters(&mut self) -> Result<u32, FatError> {
+        let mut n = 0;
+        for c in 2..self.cluster_end {
+            if self.fat_entry(c)? == 0 {
+                n += 1;
+            }
+        }
+        Ok(n)
+    }
+}
+
+/// A new directory entry: `name`, `attr`, first cluster, size, dated 1980-01-01.
+fn entry_bytes(name: &[u8; 11], attr: u8, first: u32, size: u32) -> [u8; ENTRY] {
+    let mut e = [0u8; ENTRY];
+    e[..11].copy_from_slice(name);
+    e[11] = attr;
+    for at in [16, 18, 24] {
+        // creation, access and write dates
+        e[at..at + 2].copy_from_slice(&DATE_1980.to_le_bytes());
+    }
+    e[20..22].copy_from_slice(&((first >> 16) as u16).to_le_bytes());
+    e[26..28].copy_from_slice(&(first as u16).to_le_bytes());
+    e[28..32].copy_from_slice(&size.to_le_bytes());
+    e
 }
 
 /// Which buffer `write_sector` writes.

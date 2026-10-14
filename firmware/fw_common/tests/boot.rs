@@ -220,6 +220,12 @@ fn boot_errors_read_as_text() {
         put_boot_error(&mut b, e);
         assert_eq!(String::from_utf8(b.0).unwrap(), want);
     }
+    #[cfg(feature = "fat-full")]
+    {
+        let mut b = Buf(Vec::new());
+        put_boot_error(&mut b, FatError::NotEmpty.into());
+        assert_eq!(String::from_utf8(b.0).unwrap(), "not empty");
+    }
     for (e, want) in [
         (ImageError::Empty, "empty"),
         (ImageError::OutOfWindow, "loads outside 80700000-807FFFFF"),

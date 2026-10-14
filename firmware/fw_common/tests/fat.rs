@@ -650,10 +650,25 @@ mod write {
         out
     }
 
-    /// Clusters the directory tree uses (raw directory walk).
+    /// Clusters the directory tree uses (raw directory walk). Every directory but the
+    /// root starts with `.` (itself) and `..` (its parent, 0 for the root).
     fn reachable(img: &[u8], l: &Layout, dir: u32, out: &mut BTreeSet<u32>) {
+        walk_tree(img, l, dir, 0, out)
+    }
+
+    fn walk_tree(img: &[u8], l: &Layout, dir: u32, parent: u32, out: &mut BTreeSet<u32>) {
         let clusters = chain(img, l, dir);
         out.extend(&clusters);
+        if dir != l.root {
+            let at = l.data + (clusters[0] as usize - 2) * l.cluster;
+            let up = if parent == l.root { 0 } else { parent };
+            for (slot, name, cluster) in [(0, b".          ", dir), (1, b"..         ", up)] {
+                let e = &img[at + 32 * slot..at + 32 * slot + 32];
+                let first = (u16::from_le_bytes([e[20], e[21]]) as u32) << 16
+                    | u16::from_le_bytes([e[26], e[27]]) as u32;
+                assert_eq!((&e[..11], e[11] & 0x10, first), (&name[..], 0x10, cluster));
+            }
+        }
         for c in clusters {
             let at = l.data + (c as usize - 2) * l.cluster;
             for e in img[at..at + l.cluster].chunks(32) {
@@ -666,7 +681,7 @@ mod write {
                 let first = (u16::from_le_bytes([e[20], e[21]]) as u32) << 16
                     | u16::from_le_bytes([e[26], e[27]]) as u32;
                 if e[11] & 0x10 != 0 {
-                    reachable(img, l, first, out);
+                    walk_tree(img, l, first, dir, out);
                 } else {
                     let ch = chain(img, l, first);
                     let size = le32(e, 28) as usize;
@@ -955,15 +970,18 @@ mod write {
             assert_eq!(install(&mut vol, PSRAM, img), Err(want));
             assert_eq!(vol.device().writes, 0);
         }
-        // No VUX9K directory
-        let mut img = image("mkfs_s1");
-        let e = entry_at(&img, b"VUX9K      ");
-        img[e] = 0xE5;
-        let mut vol = mount(img).unwrap();
-        assert_eq!(
-            install(&mut vol, PSRAM, &good),
-            Err(BootError::Fat(FatError::NotFound))
-        );
+        // No VUX9K directory: fat-full makes one (full::install_makes_the_directory)
+        #[cfg(not(feature = "fat-full"))]
+        {
+            let mut img = image("mkfs_s1");
+            let e = entry_at(&img, b"VUX9K      ");
+            img[e] = 0xE5;
+            let mut vol = mount(img).unwrap();
+            assert_eq!(
+                install(&mut vol, PSRAM, &good),
+                Err(BootError::Fat(FatError::NotFound))
+            );
+        }
     }
 
     #[test]
@@ -1284,6 +1302,798 @@ mod write {
                 &vol.device().img[PART + SECTOR..PART + 2 * SECTOR],
                 &fsinfo[..]
             );
+        }
+    }
+
+    // ----- The file manager's reads and writes (feature fat-full) ---------------------
+
+    #[cfg(feature = "fat-full")]
+    mod full {
+        use super::*;
+
+        /// Each entry of `dir` as (8.3 name, long name), through `list`; each entry also
+        /// as `find` gives it (the same slots for its long name).
+        fn listing(vol: &mut Volume<MemDisk>, dir: &DirEntry) -> Vec<(String, Option<String>)> {
+            let mut out = Vec::new();
+            let mut entries = Vec::new();
+            let found = vol
+                .list(dir, &mut |e, long| {
+                    let mut buf = [0u8; 12];
+                    let n = e.display_name(&mut buf);
+                    out.push((
+                        String::from_utf8_lossy(&buf[..n]).into_owned(),
+                        long.map(|l| String::from_utf8(l.to_vec()).unwrap()),
+                    ));
+                    entries.push(*e);
+                    false
+                })
+                .unwrap();
+            assert_eq!(found, None);
+            for e in entries {
+                assert_eq!(vol.find(dir, &e.name).unwrap(), Some(e));
+            }
+            out
+        }
+
+        fn longs(vol: &mut Volume<MemDisk>, path: &str) -> Vec<Option<String>> {
+            let root = vol.root();
+            let dir = vol.resolve(&root, path.as_bytes()).unwrap();
+            listing(vol, &dir).into_iter().map(|(_, l)| l).collect()
+        }
+
+        fn resolve(vol: &mut Volume<MemDisk>, path: &str) -> Result<DirEntry, FatError> {
+            let root = vol.root();
+            vol.resolve(&root, path.as_bytes())
+        }
+
+        fn s(x: &str) -> Option<String> {
+            Some(x.into())
+        }
+
+        const AVERY: &str = "A Very Long File Name That Needs Several Entries.txt";
+
+        /// Its bytes (test_fat_images.py's data(700, 4)).
+        fn avery_data() -> Vec<u8> {
+            (0..700u32).map(|i| (i * 7 + 7) as u8).collect()
+        }
+
+        /// A file's bytes, by a path `resolve` takes.
+        fn read_path(vol: &mut Volume<MemDisk>, path: &str) -> Result<Vec<u8>, FatError> {
+            let f = resolve(vol, path)?;
+            let mut out = Vec::new();
+            vol.for_each_sector(&f, &mut |d| out.extend_from_slice(d))?;
+            Ok(out)
+        }
+
+        #[test]
+        fn reads_every_file_of_the_long_name_image() {
+            let mut vol = mount(image("mkfs_lfn")).unwrap();
+            for (path, size, crc) in manifest("mkfs_lfn") {
+                let f = resolve(&mut vol, &path).unwrap();
+                let mut data = std::vec![0u8; f.size as usize];
+                vol.read_to(&f, &mut data).unwrap();
+                assert_eq!(data.len() as u32, size, "{path}");
+                assert_eq!(
+                    crc32_update(&data, 0xFFFF_FFFF) ^ 0xFFFF_FFFF,
+                    crc,
+                    "{path}"
+                );
+            }
+        }
+
+        #[test]
+        fn lists_long_names() {
+            let mut vol = mount(image("mkfs_lfn")).unwrap();
+            // The volume label and the removed long-named file aren't listed; a lowercase
+            // 8.3 name has no long name; what isn't ASCII reads as ?; 13 characters fill
+            // an entry without an end mark
+            assert_eq!(
+                longs(&mut vol, ""),
+                [
+                    s("Projects Folder"),
+                    s("ABCDEFGHIJ.KL"),
+                    None,
+                    s("?n?c?d? file.txt"),
+                    s("Mixed Case.Txt"),
+                    None
+                ]
+            );
+            let root = vol.root();
+            let names: Vec<String> = listing(&mut vol, &root)
+                .into_iter()
+                .map(|(n, _)| n)
+                .collect();
+            assert_eq!(names[..3], ["PROJEC~1", "ABCDEF~1.KL", "LOWER.TXT"]);
+            // Four entries, 52 characters (no end mark)
+            assert_eq!(longs(&mut vol, "PROJEC~1"), [None, None, s(AVERY), None]);
+            // On mkfs_s1: a run that crosses into the directory's second cluster
+            let mut vol = mount(image("mkfs_s1")).unwrap();
+            let l = longs(&mut vol, "VUX9K");
+            assert_eq!(l[4], s("Long File Name.txt"));
+            assert_eq!(l[l.len() - 1], s("A Rather Long File Name 01.dat"));
+            // list stops where f says, and refuses a file
+            let dir = resolve(&mut vol, "VUX9K").unwrap();
+            let stop = vol
+                .list(&dir, &mut |_, l| l == Some(b"Long File Name.txt"))
+                .unwrap();
+            assert_eq!(stop.unwrap().name, *b"LONGFI~1TXT");
+            let file = resolve(&mut vol, "B.BIN").unwrap();
+            assert_eq!(vol.list(&file, &mut |_, _| true), Err(FatError::WrongType));
+        }
+
+        #[test]
+        fn long_name_runs_that_do_not_spell_a_name() {
+            // PROJEC~1's run: slot e - 64 (part 2, the last, bit 6) and e - 32 (part 1)
+            let img = image("mkfs_lfn");
+            let e = entry_at(&img, b"PROJEC~1   ");
+            let one = entry_at(&img, b"ABCDEF~1KL ");
+            let cases: [(&str, fn(&mut Vec<u8>, usize, usize)); 8] = [
+                // The checksum of one part, or of both
+                ("one checksum", |i, e, _| i[e - 32 + 13] ^= 1),
+                ("both checksums", |i, e, _| {
+                    i[e - 32 + 13] ^= 1;
+                    i[e - 64 + 13] ^= 1;
+                }),
+                // Parts out of order, a part number out of range, a run without its start
+                ("order", |i, e, _| i[e - 32] = 0x02),
+                ("part 21", |i, e, _| i[e - 64] = 0x40 | 21),
+                ("part 0", |i, e, _| i[e - 64] = 0x40),
+                ("part 0 inside", |i, e, _| i[e - 32] = 0x20),
+                ("deleted start", |i, e, _| i[e - 64] = 0xE5),
+                // A name of no characters
+                ("empty", |i, _, one| {
+                    i[one - 32 + 1] = 0;
+                    i[one - 32 + 2] = 0;
+                }),
+            ];
+            for (what, break_it) in cases {
+                let mut img = image("mkfs_lfn");
+                break_it(&mut img, e, one);
+                let mut vol = mount(img).unwrap();
+                let l = longs(&mut vol, "");
+                let want = if what == "empty" {
+                    [s("Projects Folder"), None]
+                } else {
+                    [None, s("ABCDEFGHIJ.KL")]
+                };
+                assert_eq!(l[..2], want, "{what}");
+            }
+        }
+
+        #[test]
+        fn paths_by_long_name_with_dot_and_dot_dot() {
+            let mut vol = mount(image("mkfs_lfn")).unwrap();
+            let root = vol.root();
+            let x = resolve(&mut vol, "PROJEC~1/SUB/X.TXT").unwrap();
+            for p in [
+                "Projects Folder/sub/x.txt",
+                "/projects folder\\SUB/./x.txt",
+                "\\PROJECTS FOLDER//sub/../sub/x.txt",
+                "Projects Folder/sub/../../Projects Folder/sub/x.txt",
+            ] {
+                assert_eq!(resolve(&mut vol, p).unwrap(), x, "{p}");
+            }
+            let a = resolve(&mut vol, &std::format!("Projects Folder/{AVERY}")).unwrap();
+            assert_eq!(a.name, *b"AVERYL~1TXT");
+            assert_eq!(
+                resolve(
+                    &mut vol,
+                    &AVERY.to_uppercase().replace("A VERY", "projec~1/a very")
+                )
+                .unwrap(),
+                a
+            );
+            assert_eq!(resolve(&mut vol, "?N?C?D? FILE.TXT").unwrap().size, 8);
+            // From a working directory: relative, `..` (the parent's own entry), absolute
+            let projects = resolve(&mut vol, "PROJEC~1").unwrap();
+            let sub = resolve(&mut vol, "PROJEC~1/SUB").unwrap();
+            for (p, want) in [
+                ("x.txt", x),
+                ("./X.TXT", x),
+                (".", sub),
+                ("", sub),
+                ("..", projects),
+                ("../", projects),
+                ("../..", root),
+                ("../../../..", root),
+                ("/", root),
+            ] {
+                assert_eq!(vol.resolve(&sub, p.as_bytes()).unwrap(), want, "{p}");
+            }
+            assert_eq!(
+                vol.resolve(&sub, b"/readme.txt"),
+                resolve(&mut vol, "README.TXT")
+            );
+            assert_eq!(vol.resolve(&sub, b"\\lower.txt").unwrap().size, 6);
+            for (p, want) in [
+                ("nope", FatError::NotFound),
+                ("Projects Folderx", FatError::NotFound),
+                ("README.TXT/x", FatError::WrongType),
+                ("README.TXT/..", FatError::WrongType),
+                ("README.TXT/.", FatError::WrongType),
+            ] {
+                assert_eq!(resolve(&mut vol, p), Err(want), "{p}");
+            }
+            // mkfs_s1: two levels down
+            let mut vol = mount(image("mkfs_s1")).unwrap();
+            let vux = resolve(&mut vol, "VUX9K").unwrap();
+            assert_eq!(resolve(&mut vol, "VUX9K/SUB/..").unwrap(), vux);
+            assert_eq!(resolve(&mut vol, "vux9k/sub/../sub/x.txt").unwrap().size, 7);
+        }
+
+        /// Offset of slot `n` of the directory whose first cluster is `c`.
+        fn slot(img: &[u8], c: u32, n: usize) -> usize {
+            let l = layout(img);
+            l.data + (c as usize - 2) * l.cluster + 32 * n
+        }
+
+        fn set_cluster(img: &mut [u8], at: usize, c: u32) {
+            img[at + 20..at + 22].copy_from_slice(&((c >> 16) as u16).to_le_bytes());
+            img[at + 26..at + 28].copy_from_slice(&(c as u16).to_le_bytes());
+        }
+
+        #[test]
+        fn dot_dot_as_other_tools_write_it_and_broken() {
+            let img = image("mkfs_s1");
+            let vux = first_cluster(&img, b"VUX9K      ");
+            let sub = first_cluster(&img, b"SUB        ");
+            let root_cluster = layout(&img).root;
+            // `..` naming the root by its cluster instead of 0
+            let mut i = img.clone();
+            set_cluster(&mut i, slot(&img, vux, 1), root_cluster);
+            let mut vol = mount(i).unwrap();
+            let d = resolve(&mut vol, "VUX9K").unwrap();
+            assert_eq!(vol.resolve(&d, b"..").unwrap(), vol.root());
+            assert_eq!(resolve(&mut vol, "VUX9K/SUB/..").unwrap(), d);
+            // VUX9K's `..` gone: SUB's parent can't be placed
+            let mut i = img.clone();
+            i[slot(&img, vux, 1)] = 0xE5;
+            let mut vol = mount(i).unwrap();
+            assert_eq!(resolve(&mut vol, "VUX9K/SUB/.."), Err(FatError::NotFound));
+            // SUB's `..` names SUB: no directory holds an entry for it
+            let mut i = img.clone();
+            set_cluster(&mut i, slot(&img, sub, 1), sub);
+            let mut vol = mount(i).unwrap();
+            assert_eq!(resolve(&mut vol, "VUX9K/SUB/.."), Err(FatError::NotFound));
+        }
+
+        #[test]
+        fn card_errors_in_long_name_lookups() {
+            let mut vol = mount(image("mkfs_lfn")).unwrap();
+            let sub = resolve(&mut vol, "Projects Folder/sub").unwrap();
+            let l = layout(&vol.device().img);
+            let root_lba = ((l.data + (l.root as usize - 2) * l.cluster) / SECTOR) as u32;
+            vol.device().fail_read = Some(root_lba);
+            // A long name (looked up by list alone), and `..` placed in the root
+            assert_eq!(
+                resolve(&mut vol, "Projects Folder"),
+                Err(FatError::Io(root_lba))
+            );
+            assert_eq!(vol.resolve(&sub, b".."), Err(FatError::Io(root_lba)));
+        }
+
+        #[test]
+        fn paths_for_new_entries_and_for_changes() {
+            let mut vol = mount(image("mkfs_lfn")).unwrap();
+            let root = vol.root();
+            let projects = resolve(&mut vol, "Projects Folder").unwrap();
+            let sub = resolve(&mut vol, "Projects Folder/sub").unwrap();
+            for (p, want) in [
+                ("Projects Folder/new.txt", (projects, *b"NEW     TXT")),
+                ("NEWDIR/", (root, *b"NEWDIR     ")),
+                ("/X", (root, *b"X          ")),
+                ("projec~1/sub/..\\Y.Z", (projects, *b"Y       Z  ")),
+            ] {
+                assert_eq!(
+                    vol.resolve_parent(&root, p.as_bytes()).unwrap(),
+                    want,
+                    "{p}"
+                );
+            }
+            assert_eq!(
+                vol.resolve_parent(&sub, b"../../T").unwrap(),
+                (root, *b"T          ")
+            );
+            for (p, want) in [
+                ("", FatError::BadName),
+                ("/", FatError::BadName),
+                ("..", FatError::BadName),
+                ("Projects Folder/Long Name.txt", FatError::BadName),
+                ("nope/X", FatError::NotFound),
+                ("README.TXT/X", FatError::WrongType),
+            ] {
+                assert_eq!(vol.resolve_parent(&root, p.as_bytes()), Err(want), "{p}");
+            }
+            // locate: the entry and the directory it is in
+            let x = resolve(&mut vol, "Projects Folder/sub/x.txt").unwrap();
+            assert_eq!(
+                vol.locate(&root, b"Projects Folder/sub/x.txt").unwrap(),
+                (sub, x)
+            );
+            let a = resolve(&mut vol, &std::format!("PROJEC~1/{AVERY}")).unwrap();
+            let p = std::format!("../{AVERY}");
+            assert_eq!(vol.locate(&sub, p.as_bytes()).unwrap(), (projects, a));
+            assert_eq!(vol.locate(&root, b"sub/").err(), Some(FatError::NotFound));
+            for p in ["", "/", ".", "PROJEC~1/..", "PROJEC~1/./"] {
+                assert_eq!(
+                    vol.locate(&root, p.as_bytes()),
+                    Err(FatError::BadName),
+                    "{p}"
+                );
+            }
+            assert_eq!(vol.locate(&root, b"README.TXT/X"), Err(FatError::WrongType));
+        }
+
+        fn free_in_fat(img: &[u8]) -> u32 {
+            let l = layout(img);
+            (2..l.clusters + 2)
+                .filter(|&c| le32(img, l.fat + 4 * c as usize) & 0x0FFF_FFFF == 0)
+                .count() as u32
+        }
+
+        #[test]
+        fn free_clusters_counts_the_fat() {
+            for name in IMAGES.iter().chain(&["mkfs_lfn"]) {
+                let img = image(name);
+                let want = free_in_fat(&img);
+                let mut vol = mount(img).unwrap();
+                assert_eq!(vol.free_clusters().unwrap(), want, "{name}");
+                let root = vol.root();
+                let n = vol.cluster_bytes() as usize * 3 - 1;
+                vol.create(&root, b"THREE   BIN", &std::vec![1u8; n])
+                    .unwrap();
+                assert_eq!(vol.free_clusters().unwrap(), want - 3, "{name}");
+            }
+        }
+
+        /// The raw entry at slot `n` of directory cluster `c`: (name, attr, cluster).
+        fn raw_slot(img: &[u8], c: u32, n: usize) -> ([u8; 11], u8, u32) {
+            let at = slot(img, c, n);
+            let e = &img[at..at + 32];
+            let first = (u16::from_le_bytes([e[20], e[21]]) as u32) << 16
+                | u16::from_le_bytes([e[26], e[27]]) as u32;
+            (e[..11].try_into().unwrap(), e[11], first)
+        }
+
+        /// The image with every free cluster full of 0x41 (old data).
+        fn stale(mut img: Vec<u8>) -> Vec<u8> {
+            let l = layout(&img);
+            for c in 2..l.clusters + 2 {
+                if le32(&img, l.fat + 4 * c as usize) == 0 {
+                    let at = l.data + (c as usize - 2) * l.cluster;
+                    img[at..at + l.cluster].fill(0x41);
+                }
+            }
+            img
+        }
+
+        fn dots() -> Vec<(String, Option<String>)> {
+            std::vec![(".".into(), None), ("..".into(), None)]
+        }
+
+        #[test]
+        fn mkdir_makes_an_empty_directory() {
+            for name in ["mkfs_lfn", "mkfs_s8_1fat"] {
+                let mut vol = mount(stale(image(name))).unwrap();
+                let free = vol.free_clusters().unwrap();
+                let root = vol.root();
+                let d = vol.mkdir(&root, b"NEWDIR     ").unwrap();
+                assert_eq!(resolve(&mut vol, "newdir").unwrap(), d);
+                assert_eq!(listing(&mut vol, &d), dots());
+                let img = &vol.device().img;
+                assert_eq!(
+                    raw_slot(img, d.cluster, 0),
+                    (*b".          ", 0x10, d.cluster)
+                );
+                assert_eq!(raw_slot(img, d.cluster, 1), (*b"..         ", 0x10, 0));
+                // One level down: `..` names the parent
+                let nest = vol.mkdir(&d, b"NEST       ").unwrap();
+                let img = &vol.device().img;
+                assert_eq!(
+                    raw_slot(img, nest.cluster, 1),
+                    (*b"..         ", 0x10, d.cluster)
+                );
+                assert_eq!(vol.resolve(&nest, b"..").unwrap(), d);
+                vol.create(&nest, b"F       TXT", b"in nest").unwrap();
+                assert_eq!(
+                    read_file(&mut vol, "NEWDIR/NEST/F.TXT").unwrap(),
+                    b"in nest"
+                );
+                assert_eq!(vol.free_clusters().unwrap(), free - 3);
+                consistent(&vol.device().img, true);
+                // Taken names, and a file for a parent
+                assert_eq!(vol.mkdir(&root, b"NEWDIR     "), Err(FatError::Exists));
+                assert_eq!(vol.mkdir(&nest, b"F       TXT"), Err(FatError::Exists));
+                let f = vol.open("NEWDIR/NEST/F.TXT").unwrap();
+                assert_eq!(vol.mkdir(&f, b"X          "), Err(FatError::WrongType));
+            }
+        }
+
+        /// `name` with every free cluster taken by a file `HOG.DAT` in the root, but `keep`.
+        fn hogged(img: Vec<u8>, keep: u32) -> Vec<u8> {
+            let l = layout(&img);
+            let free = free_in_fat(&img);
+            let mut vol = mount(img).unwrap();
+            let root = vol.root();
+            let hog = std::vec![0u8; (free - keep) as usize * l.cluster];
+            vol.create(&root, b"HOG     DAT", &hog).unwrap();
+            assert_eq!(free_in_fat(&vol.device().img), keep);
+            std::mem::take(&mut vol.device().img)
+        }
+
+        #[test]
+        fn mkdir_on_a_full_card_or_card_errors() {
+            // No free cluster
+            let mut vol = mount(hogged(image("mkfs_s8_1fat"), 0)).unwrap();
+            let root = vol.root();
+            assert_eq!(vol.mkdir(&root, b"D          "), Err(FatError::DiskFull));
+            consistent(&vol.device().img, true);
+            // One: the new directory takes it, then VUX9K can't grow for its entry
+            let mut vol = mount(hogged(full_dir_image("mkfs_s8_1fat"), 1)).unwrap();
+            let dir = vol.open("VUX9K").unwrap();
+            assert_eq!(vol.mkdir(&dir, b"D          "), Err(FatError::DiskFull));
+            assert_eq!(vol.free_clusters().unwrap(), 1, "the cluster came back");
+            consistent(&vol.device().img, true);
+            // The card fails at its second write (the new directory's first cluster)
+            let mut vol = Volume::mount(MemDisk {
+                write_limit: Some(1),
+                ..disk(image("mkfs_s8_1fat"))
+            })
+            .unwrap();
+            let root = vol.root();
+            assert!(matches!(
+                vol.mkdir(&root, b"D          "),
+                Err(FatError::Io(_))
+            ));
+        }
+
+        #[test]
+        fn rmdir_removes_empty_directories_only() {
+            let mut vol = mount(image("mkfs_lfn")).unwrap();
+            let img0 = vol.device().img.clone();
+            let free = vol.free_clusters().unwrap();
+            let root = vol.root();
+            // A directory over several clusters (16 entries each), emptied
+            let d = vol.mkdir(&root, b"BIG        ").unwrap();
+            for i in 0..40 {
+                let n = std::format!("F{i:02}     DAT");
+                vol.create(&d, n.as_bytes().try_into().unwrap(), b"x")
+                    .unwrap();
+            }
+            assert_eq!(vol.rmdir(&d), Err(FatError::NotEmpty));
+            let l = layout(&img0);
+            assert!(chain(&vol.device().img, &l, d.cluster).len() >= 3);
+            for i in 0..40 {
+                let f = vol.open(&std::format!("BIG/F{i:02}.DAT")).unwrap();
+                vol.remove(&f).unwrap();
+            }
+            vol.rmdir(&d).unwrap();
+            assert_eq!(vol.free_clusters().unwrap(), free);
+            assert_eq!(resolve(&mut vol, "BIG"), Err(FatError::NotFound));
+            consistent(&vol.device().img, true);
+            // A long-named directory goes with its long name, once emptied
+            let projects = resolve(&mut vol, "Projects Folder").unwrap();
+            assert_eq!(vol.rmdir(&projects), Err(FatError::NotEmpty));
+            let sub = resolve(&mut vol, "Projects Folder/sub").unwrap();
+            assert_eq!(vol.rmdir(&sub), Err(FatError::NotEmpty));
+            let a = std::format!("Projects Folder/{AVERY}");
+            for p in ["Projects Folder/sub/x.txt", a.as_str()] {
+                let (_, f) = vol.locate(&root, p.as_bytes()).unwrap();
+                vol.remove(&f).unwrap();
+            }
+            vol.rmdir(&sub).unwrap();
+            let before = long_name_entries(&vol.device().img, l.root);
+            vol.rmdir(&projects).unwrap();
+            assert_eq!(long_name_entries(&vol.device().img, l.root), before - 2);
+            consistent(&vol.device().img, true);
+            // Not a directory, the root, `.` and `..`
+            let f = resolve(&mut vol, "README.TXT").unwrap();
+            assert_eq!(vol.rmdir(&f), Err(FatError::WrongType));
+            assert_eq!(vol.rmdir(&root), Err(FatError::BadName));
+            let d = vol.mkdir(&root, b"D          ").unwrap();
+            let mut dot_entries = Vec::new();
+            vol.list(&d, &mut |e, _| {
+                dot_entries.push(*e);
+                false
+            })
+            .unwrap();
+            for e in dot_entries {
+                assert_eq!(vol.rmdir(&e), Err(FatError::BadName));
+            }
+            vol.rmdir(&d).unwrap();
+            consistent(&vol.device().img, true);
+        }
+
+        #[test]
+        fn move_to_another_directory_keeps_the_chain() {
+            let mut vol = mount(image("mkfs_lfn")).unwrap();
+            let root = vol.root();
+            let free = vol.free_clusters().unwrap();
+            let sub = resolve(&mut vol, "Projects Folder/sub").unwrap();
+            let readme = resolve(&mut vol, "README.TXT").unwrap();
+            // An entry's bytes after its name, found by name (no long names here)
+            let raw = |vol: &mut Volume<MemDisk>, e: &DirEntry| {
+                let at = entry_at(&vol.device().img, &e.name);
+                vol.device().img[at + 11..at + 32].to_vec()
+            };
+            let before = raw(&mut vol, &readme);
+            let moved = vol.move_to(&root, &readme, &sub, b"MOVED   TXT").unwrap();
+            assert_eq!(vol.find(&sub, b"MOVED   TXT").unwrap(), Some(moved));
+            assert_eq!((moved.cluster, moved.size), (readme.cluster, readme.size));
+            assert_eq!(
+                raw(&mut vol, &moved),
+                before,
+                "attributes, times, chain, size"
+            );
+            assert_eq!(resolve(&mut vol, "README.TXT"), Err(FatError::NotFound));
+            assert_eq!(
+                read_file(&mut vol, "PROJEC~1/SUB/MOVED.TXT").unwrap(),
+                b"hello\n"
+            );
+            assert_eq!(vol.free_clusters().unwrap(), free);
+            consistent(&vol.device().img, true);
+            // A long-named file: its long-name entries go with the old entry
+            let projects = resolve(&mut vol, "Projects Folder").unwrap();
+            let a = resolve(&mut vol, &std::format!("Projects Folder/{AVERY}")).unwrap();
+            let lfn = long_name_entries(&vol.device().img, projects.cluster);
+            let m = vol.move_to(&projects, &a, &root, b"AVERY   TXT").unwrap();
+            assert_eq!(
+                long_name_entries(&vol.device().img, projects.cluster),
+                lfn - 4
+            );
+            assert_eq!(vol.locate(&root, b"avery.txt").unwrap(), (root, m));
+            assert_eq!(read_file(&mut vol, "AVERY.TXT").unwrap(), avery_data());
+            consistent(&vol.device().img, true);
+            // Within one directory: a rename
+            let n = vol.move_to(&root, &m, &root, b"RENAMED TXT").unwrap();
+            assert_eq!(vol.find(&root, b"RENAMED TXT").unwrap(), Some(n));
+            assert_eq!(vol.find(&root, b"AVERY   TXT").unwrap(), None);
+            consistent(&vol.device().img, true);
+            // Taken names (in another directory and in the same), directories, a file as
+            // the destination
+            let lower = resolve(&mut vol, "LOWER.TXT").unwrap();
+            assert_eq!(
+                vol.move_to(&root, &lower, &sub, b"MOVED   TXT"),
+                Err(FatError::Exists)
+            );
+            assert_eq!(
+                vol.move_to(&root, &lower, &root, b"RENAMED TXT"),
+                Err(FatError::Exists)
+            );
+            assert_eq!(
+                vol.move_to(&root, &projects, &sub, b"P          "),
+                Err(FatError::WrongType)
+            );
+            assert_eq!(
+                vol.move_to(&root, &lower, &n, b"P          "),
+                Err(FatError::WrongType)
+            );
+        }
+
+        #[test]
+        fn move_into_a_full_directory() {
+            // VUX9K full to its last slot: it grows by a cluster; with no cluster free the
+            // move fails and the file stays
+            let img = stale(full_dir_image("mkfs_s1"));
+            let l = layout(&img);
+            let vux = first_cluster(&img, b"VUX9K      ");
+            let before = chain(&img, &l, vux).len();
+            let mut vol = mount(img.clone()).unwrap();
+            let (root, f) = vol.locate(&vol.root(), b"README.TXT").unwrap();
+            let dir = vol.open("VUX9K").unwrap();
+            vol.move_to(&root, &f, &dir, b"README  TXT").unwrap();
+            assert_eq!(chain(&vol.device().img, &l, vux).len(), before + 1);
+            assert_eq!(read_file(&mut vol, "VUX9K/README.TXT").unwrap(), b"hello\n");
+            consistent(&vol.device().img, true);
+            let mut vol = mount(hogged(img, 0)).unwrap();
+            let (root, f) = vol.locate(&vol.root(), b"README.TXT").unwrap();
+            let dir = vol.open("VUX9K").unwrap();
+            assert_eq!(
+                vol.move_to(&root, &f, &dir, b"README  TXT"),
+                Err(FatError::DiskFull)
+            );
+            assert_eq!(read_file(&mut vol, "README.TXT").unwrap(), b"hello\n");
+            consistent(&vol.device().img, true);
+        }
+
+        #[test]
+        fn install_makes_the_directory() {
+            let new = v4_image(3000, 3, 9);
+            // mkfs_lfn has no \VUX9K\; on mkfs_s1 its entry is removed (its clusters are
+            // then lost: no `consistent` there)
+            let mut gone = image("mkfs_s1");
+            let e = entry_at(&gone, b"VUX9K      ");
+            gone[e] = 0xE5;
+            for (what, img) in [("mkfs_lfn", image("mkfs_lfn")), ("no VUX9K", gone)] {
+                let mut vol = mount(img).unwrap();
+                install(&mut vol, PSRAM, &new).unwrap();
+                let img = vol.device().img.clone();
+                reachable_ok(&img);
+                if what == "mkfs_lfn" {
+                    consistent(&img, true);
+                }
+                assert_eq!(boot(img.clone()).unwrap().1, 9, "{what}");
+                let mut vol = mount(img).unwrap();
+                let names: Vec<String> = {
+                    let d = vol.open("VUX9K").unwrap();
+                    listing(&mut vol, &d).into_iter().map(|(n, _)| n).collect()
+                };
+                assert_eq!(names, [".", "..", "STAGE2.BIN"], "{what}");
+            }
+            // Cut at every write (the directory first): a later install still succeeds
+            let img = image("mkfs_lfn");
+            let total = install_writes(img.clone(), &new);
+            for limit in 0..total {
+                let (cut, done) = cut_install(img.clone(), &new, Some(limit));
+                assert!(!done);
+                reachable_ok(&cut);
+                if let Some(l) = dir_listing(&cut, "VUX9K") {
+                    assert!(l.len() <= 3, "cut {limit}");
+                }
+                let (fixed, done) = cut_install(cut, &new, None);
+                assert!(done, "cut {limit}");
+                reachable_ok(&fixed);
+                assert_eq!(boot(fixed).unwrap().1, 9, "cut {limit}");
+            }
+            // \VUX9K\ a file: refused, as before
+            let mut img = image("mkfs_s1");
+            img[e + 11] &= !fw_common::fat::ATTR_DIR;
+            let mut vol = mount(img).unwrap();
+            assert_eq!(
+                install(&mut vol, PSRAM, &new),
+                Err(BootError::Fat(FatError::WrongType))
+            );
+        }
+
+        // ----- Power loss ---------------------------------------------------------
+
+        type Op = fn(&mut Volume<MemDisk>) -> Result<(), FatError>;
+
+        /// Run `op` on `img` with the card cut off after each possible number of writes
+        /// (and once without a cut); `check` gets each image left, and whether `op`
+        /// finished. Every image keeps every chain a directory points to valid, and every
+        /// directory its `.` and `..`.
+        fn cut_everywhere(img: &[u8], op: Op, check: &dyn Fn(&[u8], bool)) {
+            let total = {
+                let mut vol = mount(img.to_vec()).unwrap();
+                op(&mut vol).unwrap();
+                vol.device().writes
+            };
+            assert!(total > 2 && total < 200, "{total} writes");
+            for limit in (0..total).map(Some).chain([None]) {
+                let mut vol = Volume::mount(MemDisk {
+                    write_limit: limit,
+                    ..disk(img.to_vec())
+                })
+                .unwrap();
+                let done = op(&mut vol).is_ok();
+                assert_eq!(done, limit.is_none(), "cut {limit:?}");
+                let cut = std::mem::take(&mut vol.device().img);
+                reachable_ok(&cut);
+                check(&cut, done);
+            }
+        }
+
+        /// The listing of `path` on `img`, or None if it doesn't resolve.
+        fn dir_listing(img: &[u8], path: &str) -> Option<Vec<(String, Option<String>)>> {
+            let mut vol = mount(img.to_vec()).unwrap();
+            let d = resolve(&mut vol, path).ok()?;
+            Some(listing(&mut vol, &d))
+        }
+
+        /// The files and directories of mkfs_lfn that no operation here touches.
+        fn others_intact(img: &[u8]) {
+            let mut vol = mount(img.to_vec()).unwrap();
+            for (path, size, _) in manifest("mkfs_lfn") {
+                if !path.contains("Several") && path != "README.TXT" {
+                    assert_eq!(resolve(&mut vol, &path).unwrap().size, size, "{path}");
+                }
+            }
+        }
+
+        #[test]
+        fn power_loss_in_mkdir() {
+            fn op(vol: &mut Volume<MemDisk>) -> Result<(), FatError> {
+                let root = vol.root();
+                let (dir, name) = vol.resolve_parent(&root, b"Projects Folder/NEWDIR")?;
+                vol.mkdir(&dir, &name).map(|_| ())
+            }
+            fn grow(vol: &mut Volume<MemDisk>) -> Result<(), FatError> {
+                let dir = vol.open("VUX9K")?;
+                vol.mkdir(&dir, b"NEWDIR     ").map(|_| ())
+            }
+            // There or not, and when there, empty
+            cut_everywhere(&stale(image("mkfs_lfn")), op, &|img, done| {
+                others_intact(img);
+                match dir_listing(img, "Projects Folder/NEWDIR") {
+                    Some(l) => assert_eq!(l, dots()),
+                    None => assert!(!done),
+                }
+            });
+            // Into a full directory, which grows first
+            cut_everywhere(
+                &stale(full_dir_image("mkfs_s1")),
+                grow,
+                &|img, done| match dir_listing(img, "VUX9K/NEWDIR") {
+                    Some(l) => assert_eq!(l, dots()),
+                    None => assert!(!done),
+                },
+            );
+        }
+
+        #[test]
+        fn power_loss_in_rmdir() {
+            // A directory of three clusters, emptied
+            let img = {
+                let mut vol = mount(stale(image("mkfs_lfn"))).unwrap();
+                let root = vol.root();
+                let d = vol.mkdir(&root, b"BIG        ").unwrap();
+                for i in 0..40 {
+                    let n = std::format!("F{i:02}     DAT");
+                    vol.create(&d, n.as_bytes().try_into().unwrap(), b"x")
+                        .unwrap();
+                }
+                for i in 0..40 {
+                    let f = vol.open(&std::format!("BIG/F{i:02}.DAT")).unwrap();
+                    vol.remove(&f).unwrap();
+                }
+                std::mem::take(&mut vol.device().img)
+            };
+            fn op(vol: &mut Volume<MemDisk>) -> Result<(), FatError> {
+                let (_, d) = vol.locate(&vol.root(), b"BIG")?;
+                vol.rmdir(&d)
+            }
+            cut_everywhere(&img, op, &|img, done| {
+                others_intact(img);
+                if let Some(l) = dir_listing(img, "BIG") {
+                    assert_eq!(l, dots());
+                }
+                if done {
+                    consistent(img, true);
+                }
+            });
+        }
+
+        #[test]
+        fn power_loss_in_move_to() {
+            fn op(vol: &mut Volume<MemDisk>) -> Result<(), FatError> {
+                let root = vol.root();
+                let src = std::format!("Projects Folder/{AVERY}");
+                let (sdir, f) = vol.locate(&root, src.as_bytes())?;
+                let (ddir, name) = vol.resolve_parent(&root, b"Projects Folder/sub/AVERY.TXT")?;
+                vol.move_to(&sdir, &f, &ddir, &name).map(|_| ())
+            }
+            fn grow(vol: &mut Volume<MemDisk>) -> Result<(), FatError> {
+                let (sdir, f) = vol.locate(&vol.root(), b"README.TXT")?;
+                let dir = vol.open("VUX9K")?;
+                vol.move_to(&sdir, &f, &dir, b"README  TXT").map(|_| ())
+            }
+            let src = std::format!("Projects Folder/{AVERY}");
+            // Under one name at least, with its bytes; under the new one only when done
+            cut_everywhere(&stale(image("mkfs_lfn")), op, &|img, done| {
+                others_intact(img);
+                let mut vol = mount(img.to_vec()).unwrap();
+                let old = read_path(&mut vol, &src).ok();
+                let new = read_path(&mut vol, "Projects Folder/sub/AVERY.TXT").ok();
+                assert!(old.is_some() || new.is_some());
+                for got in [&old, &new].into_iter().flatten() {
+                    assert_eq!(*got, avery_data());
+                }
+                if done {
+                    assert!(old.is_none());
+                    consistent(img, true);
+                }
+            });
+            cut_everywhere(&stale(full_dir_image("mkfs_s1")), grow, &|img, done| {
+                let mut vol = mount(img.to_vec()).unwrap();
+                let old = read_file(&mut vol, "README.TXT").ok();
+                let new = read_file(&mut vol, "VUX9K/README.TXT").ok();
+                assert!(old.is_some() || new.is_some());
+                assert!(old.iter().chain(&new).all(|d| d == b"hello\n"));
+                if done {
+                    assert!(old.is_none());
+                }
+            });
         }
     }
 }

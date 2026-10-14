@@ -44,7 +44,7 @@ impl DirEntry {
     }
 
     /// `lfn`: where the long-name run before it starts, if it has one.
-    fn parse(e: &[u8], lba: u32, index: u8, lfn: Option<(u32, u8)>) -> DirEntry {
+    pub(crate) fn parse(e: &[u8], lba: u32, index: u8, lfn: Option<(u32, u8)>) -> DirEntry {
         let mut name = [0u8; 11];
         name.copy_from_slice(&e[..11]);
         DirEntry {
@@ -82,7 +82,7 @@ impl DirEntry {
 }
 
 /// The checksum of an 8.3 name that its long-name entries carry.
-fn checksum(name: &[u8]) -> u8 {
+pub(crate) fn checksum(name: &[u8]) -> u8 {
     name.iter()
         .fold(0u8, |sum, &c| sum.rotate_right(1).wrapping_add(c))
 }

@@ -156,6 +156,8 @@ pub fn put_boot_error(out: &mut impl Sink, e: BootError) {
             FatError::Exists => ("exists", Num::No),
             FatError::DiskFull => ("card full", Num::No),
             FatError::Verify => ("read back differently", Num::No),
+            #[cfg(feature = "fat-full")]
+            FatError::NotEmpty => ("not empty", Num::No),
         },
         BootError::NotV4 => ("not a VUX9 v4 file", Num::No),
         BootError::SizeMismatch => ("file size is not the header's", Num::No),

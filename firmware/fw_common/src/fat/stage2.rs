@@ -4,7 +4,8 @@
 //! The second stage on the card: `\VUX9K\STAGE2.BIN`, a VUX9 v4 file, with the previous
 //! one kept as `STAGE2.OLD`. `select_boot` finds the file to start (`.BIN`, else `.OLD`);
 //! `install` (feature `fat-write`) replaces it so that every point where power can fail
-//! leaves one of the two bootable:
+//! leaves one of the two bootable (with `fat-full` it first makes `\VUX9K\` if the card
+//! has none):
 //!
 //! 1. remove a `STAGE2.NEW` left over from an interrupted install;
 //! 2. write `STAGE2.NEW` and read it back (CRC);
@@ -160,7 +161,15 @@ pub fn install<D: BlockDevice>(
     if !h.crc_matches(&image[HEADER_LEN..]) {
         return Err(BootError::Crc);
     }
-    let dir = dir(vol)?;
+    let dir = match dir(vol) {
+        // With the file manager's writes, a card without \VUX9K\ gets one
+        #[cfg(feature = "fat-full")]
+        Err(FatError::NotFound) => {
+            let root = vol.root();
+            vol.mkdir(&root, &DIR)?
+        }
+        found => found?,
+    };
     if let Some(stale) = vol.find(&dir, &NEW)? {
         vol.remove(&stale)?;
     }

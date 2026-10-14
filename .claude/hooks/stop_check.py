@@ -98,8 +98,8 @@ def plan(paths: list[str]) -> tuple[list[tuple[str, list[str], Path]], list[tupl
     for crate in fw_crates:
         cmd = ["cargo", "check", "--quiet"]
         if crate == "fw_common":
-            # its writes, tests and the fat_host example are behind the fat-write feature
-            cmd += ["--features", "fat-write", "--all-targets"]
+            # its writes, tests and the fat_host example are behind the fat-full feature
+            cmd += ["--features", "fat-full", "--all-targets"]
         checks.append((f"cargo check (firmware/{crate})", cmd, ROOT / "firmware" / crate))
     if "emu/" in rust:
         checks.append(("cargo check (emu)", ["cargo", "check", "--quiet", "--workspace"], ROOT / "emu"))

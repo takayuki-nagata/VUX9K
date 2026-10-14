@@ -12,10 +12,13 @@ description = "Hardware-independent firmware logic (FAT32, file header, transfer
 [features]
 # fat::write and fat::stage2::install: the writes an update of the second stage needs
 fat-write = []
+# fat::names (long names read, paths with . and ..) and write's mkdir, rmdir, move_to and
+# free_clusters: what the second stage's file manager needs (the first stage uses neither)
+fat-full = ["fat-write"]
 
 [dependencies]
 
 # fw_common::fat on an image file (sim/emu/test_fat_images.py)
 [[example]]
 name = "fat_host"
-required-features = ["fat-write"]
+required-features = ["fat-full"]

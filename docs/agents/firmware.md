@@ -18,8 +18,8 @@ Read before changing anything under `firmware/` or the file format in `tools/vux
 the PSRAM and wrapped as the v4 file `build/firmware/stage2/STAGE2.BIN`), `hw_test`,
 `fw_drivers` (the MMIO drivers they share) and `fw_common` (the hardware-independent
 logic, no MMIO, tested on the host with `cargo test -p fw_common --target <host triple>
---features fat-write` — `make test-fw-host`; `make firmware-size` holds the first stage to
-the 16 KB it runs from).
+--features fat-full` and again with `fat-write` alone — `make test-fw-host`; `make
+firmware-size` holds the first stage to the 16 KB it runs from).
 **When you build a member from within its own directory (`cd firmware/stage1
 && cargo build`), rustc/the linker still runs with cwd = the workspace root
 (`firmware/`), not the member directory.** This means each member's
@@ -80,8 +80,9 @@ release/`.
   rebuilt and checked with `fsck.fat` and mtools by `sim/emu/test_fat_images.py`
   (`make test-fat`, which fails instead of skipping without dosfstools/mtools;
   `VUX9_VECTORS_UPDATE=1` rewrites them, byte-for-byte reproducibly). The same test runs
-  fw_common's writes on every image through the `fat_host` example and runs `fsck.fat`
-  after each; its only note allowed then is FSInfo's free count being unknown, which is
+  fw_common's writes (install, remove, mkdir, rmdir, move) on every image through the
+  `fat_host` example and runs `fsck.fat` after each, comparing its free-cluster count with
+  `free_clusters`; its only note allowed then is FSInfo's free count being unknown, which is
   what fw_common sets. mtools before 4.0.49 (CI's Ubuntu 22.04 has 4.0.32) takes a FAT32
   volume of fewer than 65525 clusters, as these images are, for FAT16 and fails on it:
   there the small images get fsck.fat and fat_host only, mtools checks a full-size
@@ -92,16 +93,31 @@ release/`.
   sector count in TotSec16. Callbacks are `&mut dyn FnMut`: generic ones gave each call
   site its own copy of the loops, which costs firmware size and split the host coverage
   per instantiation.
+- **`fw_common::fat`'s features**: none for the first stage (it must not grow: check its
+  binary is unchanged after touching `fat/`); `fat-write` (create, rename, remove,
+  `stage2::install`); `fat-full` (with `fat-write`; the second stage's file manager):
+  `fat/names.rs` (`list` with long names, read only and ASCII with `?`; `resolve`,
+  `resolve_parent`, `locate` for paths with `.` and `..`, 8.3 name first, then long name)
+  and `mkdir`, `rmdir`, `move_to`, `free_clusters`, and `install` making a missing
+  `\VUX9K\`. New entries get 8.3 names only. What the first stage prints for an error
+  (`boot::put_boot_error`) is in its binary, so `FatError::NotEmpty` exists only with
+  `fat-full`.
 - **Writes are ordered for power loss** (feature `fat-write`, `fat/write.rs`): a new file's
   data and chain reach the card before its directory entry, a removed file's entry goes
-  before its chain, so an interrupted change only leaves clusters nothing uses.
+  before its chain, so an interrupted change only leaves clusters nothing uses. With
+  `fat-full`: a new directory's cluster is zeroed, given `.`/`..` and linked before its
+  entry; a removed one's entry goes before its chain; a moved file's new entry is written
+  before the old one is removed (a cut can leave it under both names, never under none;
+  the two then share one chain, and removing either frees the other's clusters — nothing
+  detects that yet, `fsck.fat` on a PC does).
   `fat::stage2::install` replaces `\VUX9K\STAGE2.BIN` through `.NEW` and `.OLD` so that
   one of them is always bootable for `select_boot` (a `.BIN` that doesn't load is replaced
   without touching `.OLD`); `tests/fat.rs` cuts the card off after every possible write of
   an install, and of the install after a cut one, and checks exactly that, that every
   chain a directory points to stays valid, and that the next install recovers. Its
   free clusters hold old bytes where order matters (a directory cluster must be zeroed
-  before it is linked). Keep a new write step inside those tests.
+  before it is linked). Keep a new write step inside those tests (mkdir, rmdir and move_to have theirs in
+  `tests/fat.rs`'s `full` module, which also checks every directory's `.` and `..`).
 - **The SD SCLK divider survives a soft reset** (`0x4000_200C`; only power-on resets it).
   `SdCard::init` sets `SD_DIV_INIT` before every card init (a strict card reports a
   faster SCLK before it is ready) and `SD_DIV_FAST` after it. A second stage that takes

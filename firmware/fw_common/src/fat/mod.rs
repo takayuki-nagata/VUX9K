@@ -5,7 +5,11 @@
 //! (long-name entries are skipped), files read by following their cluster chains.
 //! Feature `fat-write` adds the few writes an update needs (`write`: create, rename and
 //! remove files, all FAT copies kept equal, FSInfo's counts marked unknown) and the
-//! second stage's install (`stage2::install`).
+//! second stage's install (`stage2::install`). Feature `fat-full` (with `fat-write`) adds
+//! what a file manager needs (`names`: long names read, listed and looked up, paths with
+//! `.` and `..` resolved from a working directory; `write`: directories made and removed,
+//! files moved between them, free space counted); long names are only read, everything
+//! written gets an 8.3 name.
 //!
 //! A volume is FAT32 when its BPB says so (`FATSz16 == 0`), whatever its cluster count,
 //! so small test images work; FAT16 and exFAT are refused (`NotFat32`). No multiply or
@@ -14,6 +18,8 @@
 //! (sim/emu/test_fat_images.py), which the host tests read.
 
 mod dir;
+#[cfg(feature = "fat-full")]
+mod names;
 pub mod stage2;
 #[cfg(feature = "fat-write")]
 mod write;
@@ -42,7 +48,8 @@ pub enum FatError {
     /// A cluster chain that leaves the volume, ends early, runs past the file's size or
     /// loops; names the cluster where it went wrong.
     BadChain(u32),
-    /// A path component that is not a valid 8.3 name.
+    /// A path component that is not a valid 8.3 name (or, for `rmdir`, the root, `.` or
+    /// `..`).
     BadName,
     NotFound,
     /// A directory where a file was expected, or the reverse.
@@ -55,6 +62,10 @@ pub enum FatError {
     DiskFull,
     /// A file read back differently from what was written.
     Verify,
+    /// A directory to be removed still holds entries besides `.` and `..`. (Only with
+    /// `fat-full`: the first stage's messages stay as they are.)
+    #[cfg(feature = "fat-full")]
+    NotEmpty,
 }
 
 /// FAT32 entries are 28 bits; values from here on end a chain.
