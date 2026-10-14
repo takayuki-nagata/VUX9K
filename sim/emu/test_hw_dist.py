@@ -1,16 +1,23 @@
 # Copyright (c) 2026 Takayuki Nagata
 # SPDX-License-Identifier: MIT
 
-"""Host-side checks of the board-test script's handling of a `make dist` tree (no board).
+"""Host-side checks of the board-test script (scripts/test_hardware.py), no board.
 
 `test_hardware.py --dist DIR` checks the first stage's version against the one DIR ships
 (MANIFEST.json), not the working tree's main.rs: a dist of another commit has another
-first stage in its bitstream, and installs its own second stage.
+first stage in its bitstream, and installs its own second stage and demos. The demos'
+expectations are the emulator tests'. With VUX9K_HW_SUITE_EMU=1 the whole suite also runs
+against `vux9k-emu --tcp` (~3 min at the board's speed; the tests that need a bitstream
+load are skipped there).
 """
 
 import json
 import os
+import socket
+import subprocess
 import sys
+
+import pytest
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "scripts")):
@@ -25,6 +32,7 @@ def make_dist(tmp_path, s1_version):
     for rel in test_hardware.DIST_FILES.values():
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_bytes(b"\0" * 8)
+    (tmp_path / test_hardware.DIST_APPS_DIR).mkdir(parents=True, exist_ok=True)
     (tmp_path / "MANIFEST.json").write_text(json.dumps({"stage1_version": s1_version}))
     return str(tmp_path)
 
@@ -33,8 +41,8 @@ def run_main(monkeypatch, argv):
     """test_hardware.main() with argv, the board replaced; the S1_VERSION and FILES it ran with."""
     seen: dict = {}
 
-    def suite(port="auto", baud=115200):
-        seen.update(s1=test_hardware.S1_VERSION, files=dict(test_hardware.FILES))
+    def suite(port="auto", baud=115200, loader=None, reload=True):
+        seen.update(s1=test_hardware.S1_VERSION, files=dict(test_hardware.FILES), reload=reload)
         return True
 
     monkeypatch.setattr(test_hardware, "S1_VERSION", test_hardware.S1_VERSION)
@@ -52,6 +60,10 @@ def test_dist_stage1_version_comes_from_the_manifest(tmp_path, monkeypatch):
     seen = run_main(monkeypatch, ["--dist", dist])
     assert seen["s1"] == own + 7
     assert seen["files"]["stage2"] == os.path.join(dist, "sd", "VUX9K", "STAGE2.BIN")
+    assert seen["files"]["apps"] == os.path.join(dist, "sd", "VUX9K", "APPS")
+    assert seen["files"]["pack_fs"] == os.path.join(dist, "bitstream", "pack.fs")
+    assert seen["reload"]
+    assert not run_main(monkeypatch, ["--dist", dist, "--no-reload"])["reload"]
 
 
 def test_without_dist_the_version_comes_from_main_rs(monkeypatch):
@@ -68,3 +80,63 @@ def test_installs_carry_the_test_versions():
     out = "[S2] a0=0x00000001 a1=0x00000800 a2=0x00000001\n"
     assert test_hardware.handoff(out) == (1, 2048, 1)
     assert test_hardware.handoff("no handoff") is None
+
+
+def test_ls_and_hello_parsing():
+    out = "SUB          <DIR>\nDATA.TXT          792\nLONGNA~1.TXT        3  Long name.txt\n"
+    assert test_hardware.ls_entries(out) == {"SUB": None, "DATA.TXT": 792, "LONGNA~1.TXT": 3}
+    assert test_hardware.ls_entries("") == {}
+    assert test_hardware.hello_regs("[HELLO] a0=0x00000000 a1=0x00002000 a2=0x00000002\n") == (0, 0x2000, 2)
+    assert test_hardware.hello_regs("[S2] a0=0x00000000 a1=0x00002000 a2=0x00000002") is None
+
+
+def test_demo_expectations_are_the_emulator_tests():
+    import test_hack_demo
+    import test_hello_demo
+
+    assert test_hardware.HELLO_LAST.encode() == test_hello_demo.LAST_LINE
+    assert test_hardware.HACK_DONE.encode() == test_hack_demo.DONE
+    src = open(os.path.join(REPO_ROOT, "sim", "emu", "test_hack_demo.py")).read()
+    assert all(f'"{ln}"' in src for ln in test_hardware.HACK_LINES)
+    src = open(os.path.join(REPO_ROOT, "sim", "emu", "test_zephyr_demo.py")).read()
+    assert all(ln in src for ln in (*test_hardware.ZEPHYR_LINES, test_hardware.ZEPHYR_END))
+
+
+def test_bitstream_load_errors(tmp_path):
+    assert test_hardware.load_bitstream(None, str(tmp_path / "pack.fs")) == "no openFPGALoader (--loader)"
+    assert "missing" in test_hardware.load_bitstream("openFPGALoader", str(tmp_path / "pack.fs"))
+
+
+EMU = os.environ.get("VUX9K_EMU_BIN") or os.path.join(REPO_ROOT, "build", "emu", "target", "release", "vux9k-emu")
+
+
+@pytest.mark.skipif(os.environ.get("VUX9K_HW_SUITE_EMU") != "1", reason="VUX9K_HW_SUITE_EMU=1 runs it (~3 min)")
+def test_suite_on_the_emulator(tmp_path):
+    img = tmp_path / "sd.img"
+    img.write_bytes(test_hardware.vux_tool.build_fat32_image({}))  # no \VUX9K\: install makes it
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    emu = subprocess.Popen(
+        [EMU, "--tcp", str(port), "--sd", str(img)], cwd=REPO_ROOT, stderr=subprocess.PIPE, text=True
+    )
+    try:
+        assert emu.stderr
+        while "waiting for a UART client" not in (line := emu.stderr.readline()):
+            assert line, "the emulator stopped before listening"
+        r = subprocess.run(
+            [
+                sys.executable,
+                os.path.join(REPO_ROOT, "scripts", "test_hardware.py"),
+                "--port",
+                f"socket://127.0.0.1:{port}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+    finally:
+        emu.kill()
+        emu.wait()
+    assert r.returncode == 0, r.stdout[-3000:]
+    assert "Score       : 12/12" in r.stdout and "(and 2 skipped)" in r.stdout, r.stdout[-2000:]

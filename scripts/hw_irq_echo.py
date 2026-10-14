@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+# Copyright (c) 2026 Takayuki Nagata
+# SPDX-License-Identifier: MIT
+
+"""
+The Zephyr interrupt-driven UART echo (make build-zephyr-irq-echo) on the board: put on the
+card as \\VUX9K\\APPS\\IRQECHO.BIN through the second stage (`put`, the file left there) and
+started with its `run`, then sent bursts longer than both 32-byte UART FIFOs; each must come
+back upper-cased with "rx=<n> drop=0 err=0" (no byte lost in the app or by the UART). The
+application runs in I-RAM in place of the first stage and never returns, so the bitstream
+is loaded into the FPGA's SRAM from --pack-fs at the end (not openFPGALoader --reset, which
+loads the flash's bitstream). Needs the board at a prompt of either stage with a second stage
+on the card (as make test-hw leaves it); the card stays in the board.
+"""
+
+import argparse
+import os
+import sys
+import time
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, REPO_ROOT)
+sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
+
+from test_hardware import CARD_APPS, find_loader, load_bitstream, mkdir_p, usb_hub_neighbours  # noqa: E402
+
+import tools.vux_tool as vux_tool  # noqa: E402 (needs REPO_ROOT on sys.path)
+
+ALPHABET = b"abcdefghijklmnopqrstuvwxyz0123456789"
+
+
+def read_until(ser, token: bytes, timeout: float) -> bytes:
+    """Bytes read until token arrives; raises TimeoutError with the output otherwise."""
+    out = b""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        out += ser.read(256)
+        if token in out:
+            return out
+    raise TimeoutError(f"{token!r} not received within {timeout} s; got {out!r}")
+
+
+def burst(n: int, k: int) -> bytes:
+    """n bytes, a different rotation of ALPHABET for each burst k."""
+    return bytes(ALPHABET[(i + 7 * k) % len(ALPHABET)] for i in range(n))
+
+
+def v4_file(data: bytes) -> bytes:
+    """data as the card's v4 file: IRQECHO.BIN as it is, a raw zephyr.bin wrapped (RV32 at 0)."""
+    if vux_tool.ImageHeader.parse(data):
+        return data
+    return vux_tool.build_vux9_v4_image(data, name="Zephyr irq_echo", mode="riscv", load_addr=0)[0]
+
+
+def run(ser, image: bytes, size: int, count: int) -> bool:
+    try:
+        vux_tool.enter_s2(ser)
+    except TimeoutError as e:
+        hint = vux_tool.garbled_hint(str(e))
+        print(f"[FAIL] no second-stage prompt: {e}" + (f"\n       -> {hint}" if hint else ""))
+        return False
+    mkdir_p(ser, CARD_APPS)
+    print(vux_tool.put(ser, f"{CARD_APPS}/IRQECHO.BIN", image, timeout=20.0))
+    print(vux_tool.run_app(ser, f"{CARD_APPS}/IRQECHO.BIN").strip().splitlines()[-1])
+    read_until(ser, b"irq_echo ready\n", timeout=10.0)
+    time.sleep(0.2)
+
+    passed = True
+    for k in range(count):
+        data = burst(size, k)
+        ser.write(data + b"\n")
+        ser.flush()
+        out = read_until(ser, b"err=", timeout=5.0)
+        out += read_until(ser, b"\n", timeout=1.0) if not out.endswith(b"\n") else b""
+        expected = data.upper() + f"\nrx={size} drop=0 err=0\n".encode()
+        good = out == expected
+        passed &= good
+        print(f"[{'PASS' if good else 'FAIL'}] burst {k + 1}/{count}: {size} bytes")
+        if not good:
+            print(f"       expected {expected!r}\n       got      {out!r}")
+    return passed
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
+    parser.add_argument("--bin", required=True, help="the echo app: IRQECHO.BIN (make apps) or its zephyr.bin")
+    parser.add_argument(
+        "--pack-fs",
+        default=os.path.join(REPO_ROOT, "build", "synth", "pack.fs"),
+        help="bitstream to load into SRAM afterwards (back to the first stage)",
+    )
+    parser.add_argument("--loader", default="openFPGALoader", help="openFPGALoader to load it with")
+    parser.add_argument("--port", default="auto", help="serial port (default: auto)")
+    parser.add_argument("--size", type=int, default=256, help="bytes per burst (default: 256)")
+    parser.add_argument("--count", type=int, default=5, help="bursts (default: 5)")
+    args = parser.parse_args()
+
+    with open(args.bin, "rb") as f:
+        image = v4_file(f.read())
+    ser = vux_tool.open_port(args.port, baudrate=115200, timeout=0.1)
+    neighbours = usb_hub_neighbours(ser.port)
+    if neighbours:
+        print(f"[WARN] USB devices share the board's hub ({', '.join(neighbours)}); output can be lost")
+    mm_hint = vux_tool.modemmanager_hint(ser.port)
+    if mm_hint:
+        ser.close()
+        print(f"[FAIL] {mm_hint}")
+        sys.exit(1)
+    try:
+        passed = run(ser, image, args.size, args.count)
+    except (TimeoutError, vux_tool.UploadError, vux_tool.S2Error) as e:
+        print(f"[FAIL] {e}")
+        passed = False
+    finally:
+        ser.close()
+        if str(args.port).startswith("socket://"):
+            print("[INFO] the emulator: no bitstream to load")
+        else:
+            err = load_bitstream(find_loader(args.loader), args.pack_fs)
+            if err:
+                print(f"[WARN] {err}: the board stays in the echo app until the bitstream is loaded")
+    print("IRQ echo on the board: " + ("PASSED" if passed else "FAILED"))
+    sys.exit(0 if passed else 1)
+
+
+if __name__ == "__main__":
+    main()

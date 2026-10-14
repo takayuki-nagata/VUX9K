@@ -7,16 +7,25 @@ VUX9K Automated Hardware Test Suite (test_hardware.py)
 End-to-end checks of the two-stage boot on a Sipeed Tang Nano 9K with a FAT32 MicroSD card
 (README, "Real Hardware Test Suite", lists the tests): the first stage's prompt and card
 report, a RAM boot of the second stage and its refusals, installing second stages on the
-card (\\VUX9K\\STAGE2.BIN, the previous one kept as STAGE2.OLD), the fall back to
-STAGE2.OLD, and the soft reset back to the first stage. It writes only in \\VUX9K\\,
-which must exist on the card, and leaves the second stage under test installed there.
+card (\\VUX9K\\STAGE2.BIN, the previous one kept as STAGE2.OLD; install makes \\VUX9K\\
+if it is missing), the fall back to STAGE2.OLD, the soft reset back to the first stage, the
+second stage's file commands, and the demos started by its `run`: HELLO.BIN in the PSRAM,
+then HACK.BIN and ZEPHYR.BIN in I-RAM, which replace the first stage until the bitstream is
+loaded into the FPGA's SRAM again (openFPGALoader, never --reset: that loads the flash's
+bitstream). The card stays in the board. The suite writes only in \\VUX9K\\: test versions
+9001-9003, \\VUX9K\\TEST\\ (removed again), the demos in \\VUX9K\\APPS\\ (left there, the
+card's documented layout), and last the second stage under test as STAGE2.BIN and STAGE2.OLD.
+Against the emulator (`--port socket://...`) the tests that need a bitstream load are skipped.
 """
 
 import argparse
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
+import time
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
@@ -45,11 +54,36 @@ S1_VERSION = stage1_version()
 FILES = {
     "pack_fs": os.path.join(REPO_ROOT, "build", "synth", "pack.fs"),
     "stage2": os.path.join(REPO_ROOT, "build", "firmware", "stage2", "STAGE2.BIN"),
+    "apps": os.path.join(REPO_ROOT, "build", "firmware", "apps"),
 }
 DIST_FILES = {
     "pack_fs": "bitstream/pack.fs",
     "stage2": "sd/VUX9K/STAGE2.BIN",
 }
+# The demos the second stage starts (make apps / the dist's sd/VUX9K/APPS/): name -> file.
+# ZEPHYR.BIN is missing from a build without Zephyr; its test is skipped then.
+APPS = ("HELLO.BIN", "HACK.BIN", "ZEPHYR.BIN")
+DIST_APPS_DIR = "sd/VUX9K/APPS"
+# Where on the card the suite puts its files
+CARD_APPS = "VUX9K/APPS"
+CARD_TEST = "VUX9K/TEST"
+# What the demos print (the emulator's tests: sim/emu/test_hello_demo.py, test_hack_demo.py,
+# test_zephyr_demo.py)
+HELLO_LAST = "[HELLO] Press r for the first stage.\n"
+HACK_LINES = (
+    "VUX9K SoC Hack 16-bit C Firmware Test",
+    "Factorial(6) = 720 ... [PASS]",
+    "Fibonacci(10) = 55 ... [PASS]",
+    "Array Sum = 150 ... [PASS]",
+)
+HACK_DONE = "ALL HACK C FIRMWARE TESTS PASSED (100%)!"
+HACK_END = "=" * 41 + "\n"  # the closing rule after HACK_DONE
+ZEPHYR_LINES = (
+    "Zephyr RTOS Booting on VUX9K SoC!",
+    "[Rust Task] Task iteration 5 completed [OK]",
+    "All Rust application tasks finished successfully!",
+)
+ZEPHYR_END = "Entering sleep loop."
 # Versions the suite installs, apart from what a release ships
 TEST_VERSIONS = (9001, 9002, 9003)
 
@@ -73,6 +107,89 @@ def handoff(text):
     """a0, a1, a2 as the second stage printed them, or None."""
     m = re.search(r"\[S2\] a0=0x([0-9A-F]{8}) a1=0x([0-9A-F]{8}) a2=0x([0-9A-F]{8})", text)
     return tuple(int(g, 16) for g in m.groups()) if m else None
+
+
+def hello_regs(text):
+    """a0, a1, a2 as the hello demo printed them, or None."""
+    m = re.search(r"\[HELLO\] a0=0x([0-9A-F]{8}) a1=0x([0-9A-F]{8}) a2=0x([0-9A-F]{8})", text)
+    return tuple(int(g, 16) for g in m.groups()) if m else None
+
+
+def ls_entries(out):
+    """{name: size, or None for a directory} of the second stage's `ls` lines."""
+    entries = {}
+    for line in out.splitlines():
+        name, col = line[:13].strip(), line[13:23].strip()
+        if name:
+            entries[name] = None if col == "<DIR>" else int(col)
+    return entries
+
+
+def remove_tree(ser, path):
+    """Remove path on the card (a file, or a directory with all it holds) with the second
+    stage's rm/rmdir; nothing if it isn't there."""
+    try:
+        out = vux_tool.s2_cmd(ser, f"ls {path}", timeout=30.0)
+    except vux_tool.S2Error as e:
+        if "not found" in str(e):
+            return
+        raise
+    entries = ls_entries(out)
+    leaf = path.rstrip("/").rsplit("/", 1)[-1].upper()
+    if list(entries) == [leaf] and entries[leaf] is not None:  # a file lists itself
+        vux_tool.s2_cmd(ser, f"rm {path}", timeout=30.0)
+        return
+    for name, size in entries.items():
+        if size is None:
+            remove_tree(ser, f"{path}/{name}")
+        else:
+            vux_tool.s2_cmd(ser, f"rm {path}/{name}", timeout=30.0)
+    vux_tool.s2_cmd(ser, f"rmdir {path}", timeout=30.0)
+
+
+def mkdir_p(ser, path):
+    """mkdir path on the card unless it exists."""
+    try:
+        vux_tool.s2_cmd(ser, f"mkdir {path}", timeout=30.0)
+    except vux_tool.S2Error as e:
+        if "exists" not in str(e):
+            raise
+
+
+def find_loader(name="openFPGALoader"):
+    """openFPGALoader as the Makefile's OPENFPGALOADER names it, on PATH or in the OSS CAD
+    Suite's usual place; None if there is none."""
+    found = shutil.which(name)
+    if found:
+        return found
+    home_cad = os.path.expanduser("~/.local/oss-cad-suite/bin/openFPGALoader")
+    return home_cad if os.path.isfile(home_cad) else None
+
+
+def load_bitstream(loader, pack_fs):
+    """Load pack_fs into the FPGA's SRAM (as `make prog-sram`; not --reset, which loads
+    the flash's bitstream): the first stage is back in I-RAM. Returns an error or None."""
+    if not loader:
+        return "no openFPGALoader (--loader)"
+    if not os.path.isfile(pack_fs):
+        return f"{pack_fs} missing"
+    try:
+        r = subprocess.run([loader, "-b", "tangnano9k", pack_fs], capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return f"{loader}: {e}"
+    return None if r.returncode == 0 else f"{loader} failed: {(r.stderr or r.stdout).strip()[-400:]}"
+
+
+def reopen_port(port, baud, timeout=15.0):
+    """The board's UART opened again after a bitstream load (its tty may come back late)."""
+    end = time.monotonic() + timeout
+    while True:
+        try:
+            return vux_tool.open_port(port, baudrate=baud, timeout=0.1)
+        except Exception:
+            if time.monotonic() > end:
+                raise
+            time.sleep(0.5)
 
 
 def usb_hub_neighbours(tty, sysfs="/sys"):
@@ -123,13 +240,17 @@ def print_banner(title):
 
 
 def print_test_result(name, passed, detail=""):
-    status = "\033[92m[PASS]\033[0m" if passed else "\033[91m[FAIL]\033[0m"
+    """passed: True, False, or None for a skipped test."""
+    status = {True: "\033[92m[PASS]\033[0m", False: "\033[91m[FAIL]\033[0m", None: "\033[93m[SKIP]\033[0m"}[passed]
     print(f"{status} {name}")
     if detail:
         print(f"       -> {detail}")
 
 
-def run_hardware_test_suite(port="auto", baud=115200):
+def run_hardware_test_suite(port="auto", baud=115200, loader=None, reload=True):
+    """The tests on the board at port (or the emulator at a socket:// port). loader is the
+    openFPGALoader for the bitstream loads after the I-RAM demos; without reload (or on the
+    emulator) those tests are skipped."""
     print_banner("VUX9K Real Hardware Test Suite (Tang Nano 9K + FAT32 MicroSD)")
     results = []
 
@@ -159,7 +280,73 @@ def run_hardware_test_suite(port="auto", baud=115200):
 
     with open(FILES["stage2"], "rb") as f:
         stage2 = f.read()
+    apps = {}
+    for app in APPS:
+        path = os.path.join(FILES["apps"], app)
+        apps[app] = open(path, "rb").read() if os.path.isfile(path) else None
     v_a, v_b, v_c = TEST_VERSIONS
+    emulator = str(port).startswith("socket://")
+    no_reload = "the emulator has no bitstream to load" if emulator else None if reload else "--no-reload"
+    # Why a bitstream load can't happen on this board (then the I-RAM demos aren't started)
+    no_loader = "no openFPGALoader (--loader)" if not loader else None
+    if not os.path.isfile(FILES["pack_fs"]):
+        no_loader = f"{FILES['pack_fs']} missing"
+    lost = None  # set once the board no longer answers: the tests after it fail with it
+
+    def reload_board():
+        """Load the bitstream into SRAM again (the first stage back in I-RAM) and see its
+        banner after a soft reset this suite causes: (ok, message)."""
+        nonlocal ser, lost
+        try:
+            ser.close()
+        except Exception:
+            pass
+        err = load_bitstream(loader, FILES["pack_fs"])
+        try:
+            ser = reopen_port(port, baud)
+        except Exception as e:
+            lost = f"board UART gone after the bitstream load: {e}"
+            return False, lost
+        if err:
+            lost = f"bitstream not loaded: {err}"
+            return False, lost
+        try:
+            vux_tool.enter_s1(ser, timeout=30.0)
+            ser.write(b"r")
+            ser.flush()
+            out = vux_tool.enter_s1(ser, drain=False)
+        except TimeoutError as e:
+            lost = "no first stage after the bitstream load"
+            return False, fail_msg(lost + ".", str(e))
+        want = f"VUX9K Stage 1 (v{S1_VERSION})"
+        if want not in out:
+            lost = "no first stage after the bitstream load"
+            return False, fail_msg(f"No {want!r} banner after the bitstream load.", out)
+        return True, f"bitstream loaded, {want} back"
+
+    def put_and_run(app):
+        """put apps[app] into \\VUX9K\\APPS\\ and `run` it: the [RUN] text."""
+        vux_tool.enter_s2(ser)
+        mkdir_p(ser, CARD_APPS)
+        vux_tool.put(ser, f"{CARD_APPS}/{app}", apps[app], timeout=20.0)
+        return vux_tool.run_app(ser, f"{CARD_APPS}/{app}")
+
+    def run_iram_demo(name, app, check):
+        """Tests 12 and 13: an I-RAM demo (check(run_text) -> (ok, msg) reads its output),
+        then the bitstream loaded again; skipped or not run where that load can't happen."""
+        if no_reload:
+            return record(name, None, f"skipped: {no_reload} (the demo replaces the first stage until one)")
+        if lost:
+            return record(name, False, f"not run: {lost}")
+        if no_loader:
+            return record(name, False, f"not run: {no_loader}; the demo would replace the first stage until a load")
+        try:
+            ok, msg = check(put_and_run(app))
+        except (vux_tool.UploadError, vux_tool.S2Error, TimeoutError) as e:
+            ok, msg = False, str(e)
+        back, back_msg = reload_board()
+        return record(name, ok and back, f"{msg}; {back_msg}")
+
     try:
         # 1. The first stage's prompt, then its banner after a soft reset
         name = "1. First stage prompt and banner (vux_tool.enter_s1, 'r')"
@@ -229,8 +416,6 @@ def run_hardware_test_suite(port="auto", baud=115200):
             ok, msg = True, "[INSTALL] OK twice"
         except (vux_tool.UploadError, TimeoutError) as e:
             ok, msg = False, str(e)
-            if "[INSTALL] not found" in msg:
-                msg += " -> create the directory VUX9K in the card's root (on a PC) and run again"
         record(name, ok, msg)
 
         # 6. Soft reset back to the first stage, which boots the new one
@@ -275,6 +460,126 @@ def run_hardware_test_suite(port="auto", baud=115200):
         except (vux_tool.UploadError, TimeoutError) as e:
             ok, msg = False, str(e)
         record(name, ok, msg)
+
+        # 10. The second stage's file commands, in \VUX9K\TEST\ only (removed again, also
+        # after a failure; a leftover from an earlier run is removed first)
+        name = "10. File commands in \\VUX9K\\TEST\\ (mkdir, put, ls, cat, mv, rm, rmdir)"
+        text = "".join(f"line {i:03} of the VUX9K board test\n" for i in range(24))  # 792 B: two sectors
+        data, sub = f"{CARD_TEST}/DATA.TXT", f"{CARD_TEST}/SUB"
+        step = "the second stage's prompt"
+
+        def expect(what, got, want):
+            if got != want:
+                raise vux_tool.S2Error(f"{what}: {got!r}, expected {want!r}")
+
+        try:
+            vux_tool.enter_s2(ser)
+            step = "removing a leftover TEST tree"
+            remove_tree(ser, CARD_TEST)
+            step = "the commands"
+            vux_tool.s2_cmd(ser, f"mkdir {CARD_TEST}", timeout=30.0)
+            vux_tool.s2_cmd(ser, f"mkdir {sub}", timeout=30.0)
+            vux_tool.put(ser, data, text.encode(), timeout=20.0)
+            expect(
+                "ls TEST",
+                ls_entries(vux_tool.s2_cmd(ser, f"ls {CARD_TEST}", timeout=30.0)),
+                {"DATA.TXT": len(text), "SUB": None},
+            )
+            expect("cat", vux_tool.s2_cmd(ser, f"cat {data}", timeout=30.0), text)
+            vux_tool.s2_cmd(ser, f"mv {data} {sub}", timeout=30.0)
+            expect("ls TEST after mv", ls_entries(vux_tool.s2_cmd(ser, f"ls {CARD_TEST}", timeout=30.0)), {"SUB": None})
+            expect("cat in SUB", vux_tool.s2_cmd(ser, f"cat {sub}/DATA.TXT", timeout=30.0), text)
+            vux_tool.s2_cmd(ser, f"mv {sub}/DATA.TXT {CARD_TEST}", timeout=30.0)
+            expect("ls SUB after mv back", vux_tool.s2_cmd(ser, f"ls {sub}", timeout=30.0), "")
+            expect("cat after mv back", vux_tool.s2_cmd(ser, f"cat {data}", timeout=30.0), text)
+            vux_tool.s2_cmd(ser, f"rm {data}", timeout=30.0)
+            vux_tool.s2_cmd(ser, f"rmdir {sub}", timeout=30.0)
+            vux_tool.s2_cmd(ser, f"rmdir {CARD_TEST}", timeout=30.0)
+            left = ls_entries(vux_tool.s2_cmd(ser, "ls VUX9K", timeout=30.0))
+            ok = "TEST" not in left
+            msg = f"{len(text)} B put, read back, moved and removed" if ok else f"TEST still there: {left}"
+        except (vux_tool.UploadError, vux_tool.S2Error, TimeoutError) as e:
+            ok, msg = False, f"{step}: {e}"
+            try:
+                remove_tree(ser, CARD_TEST)
+            except (vux_tool.UploadError, vux_tool.S2Error, TimeoutError) as e2:
+                msg += f"; and removing TEST: {e2}"
+        record(name, ok, msg)
+
+        # 11. A PSRAM application: the first stage stays in I-RAM, `r` goes back to it
+        name = "11. HELLO.BIN in the PSRAM ('put', 'run'): a0-a2, 'r' to the first stage and its autoboot"
+        if apps["HELLO.BIN"] is None:
+            record(name, False, f"{os.path.join(FILES['apps'], 'HELLO.BIN')} missing (make apps)")
+        else:
+            try:
+                out = put_and_run("HELLO.BIN")
+                got, out2 = vux_tool.read_until(ser, (HELLO_LAST,), 10.0)
+                regs, expected = hello_regs(out2), (int(sdhc), part_lba, S1_VERSION)
+                ser.write(b"r")
+                ser.flush()
+                back, out3 = vux_tool.read_until(ser, (vux_tool.S2_PROMPT,), 30.0)
+                banner = f"VUX9K Stage 1 (v{S1_VERSION})"
+                if ", PSRAM, " not in out or not got:
+                    ok, msg = False, fail_msg("Not started in the PSRAM.", out + out2)
+                elif regs != expected:
+                    ok, msg = False, fail_msg(f"a0-a2 = {regs}, expected {expected}.", out2)
+                elif not back or "[HELLO] Soft reset" not in out3 or banner not in out3:
+                    ok, msg = False, fail_msg("No first stage and second stage after 'r'.", out3)
+                else:
+                    ok, msg = True, f"a0-a2 = {regs}, back to {banner} and s2>"
+            except (vux_tool.UploadError, vux_tool.S2Error, TimeoutError) as e:
+                ok, msg = False, str(e)
+            record(name, ok, msg)
+
+        # 12, 13. I-RAM applications replace the first stage: last, each followed by a load of
+        # the bitstream into SRAM (not --reset: that loads the flash's)
+        def hack_check(out):
+            if "I-RAM (Hack)" not in out:
+                return False, fail_msg("Not started in I-RAM (Hack).", out)
+            _, rest = vux_tool.read_until(ser, (HACK_DONE,), 20.0)
+            _, tail = vux_tool.read_until(ser, (HACK_END,), 3.0)
+            rest += tail
+            missing = [ln for ln in (*HACK_LINES, HACK_DONE) if ln not in rest]
+            if missing or "[FAIL]" in rest or not rest.endswith(HACK_END):
+                return False, fail_msg(f"Missing {missing} or a [FAIL].", rest)
+            return True, "the Hack demo's report, all [PASS]"
+
+        run_iram_demo("12. HACK.BIN in I-RAM (Hack), then the bitstream loaded again", "HACK.BIN", hack_check)
+
+        def zephyr_check(out):
+            if "I-RAM (RV32)" not in out:
+                return False, fail_msg("Not started in I-RAM (RV32).", out)
+            _, rest = vux_tool.read_until(ser, (ZEPHYR_END,), 30.0)
+            missing = [ln for ln in (*ZEPHYR_LINES, ZEPHYR_END) if ln not in rest]
+            m = re.search(r"k_msleep\(100\) took (\d+) ms", rest)
+            if missing or "VUX9K Stage" in rest or not m or not 100 <= int(m.group(1)) <= 102:
+                return False, fail_msg(f"Missing {missing}, or k_msleep(100) off.", rest)
+            return True, f"the Zephyr demo's tasks finished, k_msleep(100) took {m.group(1)} ms"
+
+        name = "13. ZEPHYR.BIN in I-RAM (RV32), then the bitstream loaded again"
+        if apps["ZEPHYR.BIN"] is None:
+            record(name, None, f"skipped: no ZEPHYR.BIN in {FILES['apps']} (built without Zephyr)")
+        else:
+            run_iram_demo(name, "ZEPHYR.BIN", zephyr_check)
+
+        # 14. Last, after the loads: the second stage under test installed (STAGE2.BIN, and
+        # STAGE2.OLD the same) and booted by the bitstream's first stage
+        name = "14. Install the second stage under test again and boot it (the state left behind)"
+        if lost:
+            record(name, False, f"not run: {lost}")
+        else:
+            try:
+                vux_tool.enter_s2(ser)
+                vux_tool.install_stage2(ser, stage2)
+                ser.write(b"reset\r")
+                ser.flush()
+                h = vux_tool.ImageHeader.parse(stage2)
+                got, out = vux_tool.read_until(ser, (vux_tool.S2_PROMPT,), 20.0)
+                ok = got is not None and h is not None and f"[BOOT] STAGE2.BIN v{h.version} " in out
+                msg = "installed and booted" if ok else fail_msg("Not booted.", out)
+            except (vux_tool.UploadError, TimeoutError) as e:
+                ok, msg = False, str(e)
+            record(name, ok, msg)
     finally:
         try:
             ser.close()
@@ -285,9 +590,10 @@ def run_hardware_test_suite(port="auto", baud=115200):
     # Summary
     # -------------------------------------------------------------
     print_banner("Hardware Test Suite Summary")
-    total_tests = len(results)
+    skipped = sum(1 for _, passed, _ in results if passed is None)
+    total_tests = len(results) - skipped
     passed_tests = sum(1 for _, passed, _ in results if passed)
-    print(f"Total Tests : {total_tests}")
+    print(f"Total Tests : {total_tests} (and {skipped} skipped)")
     print(f"Passed      : {passed_tests}")
     print(f"Failed      : {total_tests - passed_tests}")
     print(f"Score       : {passed_tests}/{total_tests} ({(passed_tests / total_tests) * 100:.1f}%)")
@@ -310,6 +616,12 @@ def main():
     parser.add_argument("--port", default="auto", help="Serial/FTDI port URL (default: auto)")
     parser.add_argument("--baud", type=int, default=115200, help="UART baud rate (default: 115200)")
     parser.add_argument("--dist", metavar="DIR", help="use the files of a `make dist` tree instead of build/")
+    parser.add_argument(
+        "--loader", default="openFPGALoader", help="openFPGALoader for the bitstream loads (default: on PATH)"
+    )
+    parser.add_argument(
+        "--no-reload", action="store_true", help="skip the I-RAM demos, which need a bitstream load afterwards"
+    )
     args = parser.parse_args()
 
     if args.dist:
@@ -318,8 +630,13 @@ def main():
             FILES[key] = os.path.join(args.dist, rel)
             if not os.path.isfile(FILES[key]):
                 sys.exit(f"{FILES[key]} missing: not a `make dist` tree?")
+        FILES["apps"] = os.path.join(args.dist, DIST_APPS_DIR)
+        if not os.path.isdir(FILES["apps"]):
+            sys.exit(f"{FILES['apps']} missing: not a `make dist` tree?")
 
-    success = run_hardware_test_suite(port=args.port, baud=args.baud)
+    success = run_hardware_test_suite(
+        port=args.port, baud=args.baud, loader=find_loader(args.loader), reload=not args.no_reload
+    )
     if not success:
         sys.exit(1)
 
