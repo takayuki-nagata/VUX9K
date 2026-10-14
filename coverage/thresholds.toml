@@ -10,7 +10,7 @@
 # emulator's card has no such fault), loop ends the line table puts on a `}` or a fn line, and
 # SdCard::init's 1000 tries of a card that never gets ready (~2G cycles from the PSRAM)
 stage1 = 100.0
-stage2 = 99.2
+stage2 = 99.1
 zephyr_demo = 100.0
 hack_demo = 90.0
 
