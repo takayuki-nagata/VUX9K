@@ -19,7 +19,7 @@ file. Without one (e.g. plain `make test-emu`) the test is skipped.
 import bisect
 import os
 import sys
-from collections import namedtuple
+from collections import deque, namedtuple
 
 import pytest
 
@@ -36,48 +36,67 @@ Instr = namedtuple("Instr", "cycle riscv pc regs writes trap")
 LONGEST = 3 + 2 * XMEM_WAIT + 7
 
 
-def _parse_trace(path):
-    """{program id: ([Instr], [(cycle, uart_tx level)])} from tb_soc_top's trace."""
-    progs = {}
-    instrs: list = []
-    uart: list = []
-    modes: list = []
+def _index_trace(path):
+    """{program id: (start, end)}: each program's byte range in tb_soc_top's trace."""
+    starts = {}
+    index = {}
+    pos = 0
+    cur = None
+    with open(path, "rb") as f:
+        for line in f:
+            if line.startswith(b"P "):
+                if cur is not None:
+                    index[cur] = (starts[cur], pos)
+                cur = int(line.split()[1], 16)
+                starts[cur] = pos + len(line)
+            pos += len(line)
+    if cur is not None:
+        index[cur] = (starts[cur], pos)
+    return index
+
+
+def _rtl_instrs(path, span, uart):
+    """One program's RTL instructions in order, its UART pin changes appended to uart.
+
+    One at a time: the slow programs have millions (~450 B each as Instr), more than a CI
+    host's memory holds for both sides. The trace is written cycle by cycle, so when the next
+    F comes every M up to the cycle after this FETCH, which sets its ISA, has been read.
+    """
+    modes: list = []  # (cycle, riscv): the mode changes, a handful per program
     cur = None
 
-    def finish():
-        # An instruction runs in the ISA active_mode has in the cycle after its FETCH
-        cycles = [c for c, _ in modes]
-        for k, i in enumerate(instrs):
-            m = bisect.bisect_right(cycles, i.cycle + 1)
-            instrs[k] = i._replace(riscv=modes[m - 1][1] if m else True)
+    def done(i):
+        m = bisect.bisect_right(modes, (i.cycle + 1, True))
+        return i._replace(riscv=modes[m - 1][1] if m else True)
 
-    with open(path) as f:
+    start, end = span
+    with open(path, "rb") as f:
+        f.seek(start)
+        pos = start
         for line in f:
+            pos += len(line)
+            if pos > end:
+                break
             kind, *v = line.split()
-            if kind == "P":
-                finish()
-                instrs, uart, modes = [], [], []
-                progs[int(v[0], 16)] = (instrs, uart)
-                cur = None
-                continue
             c = int(v[0], 16)
-            if kind == "F":
+            if kind == b"F":
+                if cur is not None:
+                    yield done(cur)
                 cur = Instr(c, None, int(v[1], 16), [], [], [])
-                instrs.append(cur)
-            elif kind == "M":
-                modes.append((c, v[1] == "1"))
-            elif kind == "R":
+            elif kind == b"M":
+                modes.append((c, v[1] == b"1"))
+            elif kind == b"R":
                 rd, val = int(v[1], 16), int(v[2], 16)
                 if rd != 0 and cur is not None:
                     cur.regs.append((rd, val))
-            elif kind == "W" and cur is not None:
+            elif kind == b"W" and cur is not None:
                 cur.writes.append((int(v[1], 16), int(v[2], 16), int(v[3], 16)))
-            elif kind == "T" and cur is not None:
+            elif kind == b"T" and cur is not None:
                 cur.trap.append(int(v[1], 16))
-            elif kind == "U":
+            elif kind == b"U":
                 uart.append((c, int(v[1], 16)))
-    finish()
-    return progs
+    if cur is not None:
+        yield done(cur)
 
 
 def _decode_uart(changes, end_cycle):
@@ -119,15 +138,15 @@ def _fmt(i):
     return s
 
 
-def _diff_report(name, rtl, emu, k):
+def _diff_report(name, rtl, emu, lo, k):
+    """rtl/emu: the instructions from number lo on, up to a few past the difference at k."""
     os.makedirs(DIFF_DIR, exist_ok=True)
     path = os.path.join(DIFF_DIR, f"{name}.txt")
-    lo, hi = max(0, k - 20), k + 5
     with open(path, "w") as f:
         f.write(f"# {name}: first difference at instruction {k}\n# {'RTL':<60} | emulator\n")
-        for j in range(lo, hi):
-            a = rtl[j] if j < len(rtl) else None
-            b = emu[j] if j < len(emu) else None
+        for j in range(lo, lo + max(len(rtl), len(emu))):
+            a = rtl[j - lo] if j - lo < len(rtl) else None
+            b = emu[j - lo] if j - lo < len(emu) else None
             mark = ">>" if j == k else "  "
             f.write(f"{mark} {j:>7} {_fmt(a):<60} | {_fmt(b)}\n")
     return path
@@ -141,41 +160,58 @@ def trace():
     if not TRACE:
         pytest.skip("no RTL trace (LOCKSTEP_TRACE); run `make sim-lockstep`")
     assert os.path.exists(TRACE), f"{TRACE} missing"
-    return _parse_trace(TRACE)
+    return _index_trace(TRACE)
 
 
 @pytest.mark.parametrize("pid,prog", PROGRAMS, ids=[p.name for _, p in PROGRAMS])
 def test_lockstep(trace, pid, prog):
     if pid not in trace:
         pytest.skip(f"{prog.name} not in the trace (slow program?)")
-    rtl, rtl_uart = trace[pid]
-    assert rtl, f"{prog.name}: the RTL trace has no instructions"
+    rtl_uart: list = []
+    rtl = _rtl_instrs(TRACE, trace[pid], rtl_uart)
 
     soc = start_soc(sd_sectors=prog.sd_sectors, imem_words=prog.imem_words)
     for cycle, data in prog.uart_rx:
         soc.uart_send(data, at=cycle)
     buttons = sorted(prog.button)
-    emu = []
-    while soc.cycle < prog.cycles:
-        # A button change is applied shortly before it matters (the GPIO keeps one
-        # pending edge); reads look 2 cycles back through the synchronizer
-        while buttons and buttons[0][0] <= soc.cycle + 8:
-            c, pressed = buttons.pop(0)
-            soc.set_button(pressed, at=c)
-        emu.append(_emu_instr(soc.step()))
 
-    # The RTL trace ends mid-instruction at prog.cycles: compare what both completed
-    n = min(len(rtl), len(emu))
-    while n and (rtl[n - 1].cycle >= prog.cycles - LONGEST or emu[n - 1].cycle >= prog.cycles - LONGEST):
-        n -= 1
-    for k in range(n):
-        a, b = rtl[k], emu[k]
+    def emu_instrs():
+        while soc.cycle < prog.cycles:
+            # A button change is applied shortly before it matters (the GPIO keeps one
+            # pending edge); reads look 2 cycles back through the synchronizer
+            while buttons and buttons[0][0] <= soc.cycle + 8:
+                c, pressed = buttons.pop(0)
+                soc.set_button(pressed, at=c)
+            yield _emu_instr(soc.step())
+
+    emu = emu_instrs()
+    # The RTL trace ends mid-instruction at prog.cycles: compare what both completed. Both
+    # sides are streamed (a slow program has millions of instructions); the last few pairs
+    # are kept for the report
+    limit = prog.cycles - LONGEST
+    recent: deque = deque(maxlen=20)
+    k = n_rtl = n_emu = 0
+    while True:
+        a, b = next(rtl, None), next(emu, None)
+        n_rtl += a is not None
+        n_emu += b is not None
+        if a is None or b is None or a.cycle >= limit or b.cycle >= limit:
+            break
         same = (a.cycle, a.riscv, a.pc, a.trap) == (b.cycle, b.riscv, b.pc, b.trap)
         same = same and sorted(a.regs) == sorted(b.regs) and a.writes == b.writes
         if not same:
-            path = _diff_report(prog.name, rtl, emu, k)
+            more = [(next(rtl, None), next(emu, None)) for _ in range(4)]
+            pairs = [*recent, (a, b), *more]
+            rtl_win = [x for x, _ in pairs if x is not None]
+            emu_win = [y for _, y in pairs if y is not None]
+            path = _diff_report(prog.name, rtl_win, emu_win, k - len(recent), k)
             pytest.fail(f"{prog.name}: instruction {k} differs\n  RTL {_fmt(a)}\n  emu {_fmt(b)}\n  (see {path})")
-    assert abs(len(rtl) - len(emu)) <= 2, f"{prog.name}: RTL {len(rtl)} vs emulator {len(emu)} instructions"
+        recent.append((a, b))
+        k += 1
+    n_rtl += sum(1 for _ in rtl)
+    n_emu += sum(1 for _ in emu)
+    assert n_rtl, f"{prog.name}: the RTL trace has no instructions"
+    assert abs(n_rtl - n_emu) <= 2, f"{prog.name}: RTL {n_rtl} vs emulator {n_emu} instructions"
 
     end = prog.cycles - UART_FRAME
     rtl_tx = [x for x in _decode_uart(rtl_uart, prog.cycles) if x[1] < end]
