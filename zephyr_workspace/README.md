@@ -15,14 +15,18 @@ west build -b vux9k <app dir> -- -DEXTRA_ZEPHYR_MODULES=<path to this directory>
 is needed; for example `$ZEPHYR_BASE/samples/hello_world` builds as is. The image is
 `build/zephyr/zephyr.bin`, which includes the initial `.data` (an XIP image copies it
 from I-RAM to D-RAM at startup). Run it on the emulator with
-`vux9k-emu --no-firmware --load build/zephyr/zephyr.bin --mode riscv --stdio`; on the
-board, applications are started by the second stage's launcher (to come).
+`vux9k-emu --no-firmware --load build/zephyr/zephyr.bin --mode riscv --stdio`. On the
+board, the second stage starts it from the microSD card: wrap it as a VUX9 v4 file for
+I-RAM (`vux_tool.py mkv4 --load-addr 0 build/zephyr/zephyr.bin APP.BIN`), put it in the
+card's `\VUX9K\APPS\` (`vux_tool.py put APP.BIN VUX9K/APPS/APP.BIN`, or with a PC), and
+`run` it at the `s2>` prompt (`vux_tool.py run-app VUX9K/APPS/APP.BIN`). It runs in I-RAM in
+place of the first stage until the FPGA is configured again.
 
 ## Boards
 
 | Board | Memory | Runs on |
 |---|---|---|
-| `vux9k` | 14 KB ROM (I-RAM 0x0000-0x37FF), 8 KB RAM less 8 bytes (limits of the boot chain before the two-stage boot, kept until the board moves to the PSRAM) | the board and the emulator |
+| `vux9k` | 14 KB ROM (I-RAM 0x0000-0x37FF, the second stage's window for RV32 applications in I-RAM), 8 KB RAM less 8 bytes (the limit of the boot chain before the two-stage boot, kept until the board moves to the PSRAM) | the board (started by the second stage's `run`) and the emulator |
 | `vux9k/vux9k/ext` | 512 KB ROM, 256 KB RAM | **the emulator only** (`vux9k-emu --profile extended`); not real hardware |
 
 The linker enforces the `vux9k` limits: an application that outgrows the board fails to

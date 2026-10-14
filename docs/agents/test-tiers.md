@@ -83,13 +83,20 @@ None of these run in CI; they need the board. The host setup they check is in
 clock-and-board.md, "Board UART output that is noise: ModemManager and the bridge's shared baud rate".
 - `make hw-smoke` (after `make timing`): `hw_test` on every routed seed's placement. After
   RTL changes, before flashing.
-- `make test-hw`: the two-stage boot suite (`scripts/test_hardware.py`, 9 tests) on a local
+- `make test-hw`: the two-stage boot suite (`scripts/test_hardware.py`, 14 tests) on a local
   build; `make test-hw-dist DIST=<dir>` the same on a `make dist` tree, the first stage's
-  version from its `MANIFEST.json`. The card must be FAT32 with a `\VUX9K\` directory; the
-  suite writes only there (versions 9001-9003, then the second stage under test). It runs
-  against the emulator too: `vux9k-emu --tcp PORT --sd <mkfat image>` and
-  `--port socket://127.0.0.1:PORT`.
-- The demos start on the board through the second stage's `run` (`sd/VUX9K/APPS/`, `make
-  apps`; `vux_tool.py put`/`run-app`); `test_hardware.py` doesn't run them yet (the old
-  slot-based `test-hw-irq-echo` and the upgrade test from the previous release went with the
-  Boot Manager).
+  version and the demos (`sd/VUX9K/APPS/`) from it. The card stays in the board and must be
+  FAT32; `install` makes `\VUX9K\`, and the suite writes only there (versions 9001-9003,
+  `\VUX9K\TEST\` and removes it, the demos in `\VUX9K\APPS\`, last the second stage under
+  test). Besides the boot chain it runs the second stage's file commands and the demos
+  through `put`/`run`: `HELLO.BIN` (PSRAM), then, last because they replace the first stage
+  in I-RAM, `HACK.BIN` and `ZEPHYR.BIN`, each followed by a load of `pack.fs` into SRAM with
+  openFPGALoader (never `--reset`: that loads the flash's bitstream); then it installs the
+  second stage under test again. Without `ZEPHYR.BIN` (no Zephyr) test 13 is skipped. It runs
+  against the emulator too, where the two bitstream-load tests are skipped: `vux9k-emu --tcp
+  PORT --sd <mkfat image>` and `--port socket://127.0.0.1:PORT` (~3 min at the board's speed;
+  `VUX9K_HW_SUITE_EMU=1 pytest sim/emu/test_hw_dist.py` runs it; at `--speed 0` test 7 misses
+  the first stage's key window).
+- `make test-hw-irq-echo` (`scripts/hw_irq_echo.py`): the interrupt-driven UART echo put on
+  the card and started by the running second stage, then the bitstream loaded again. The
+  upgrade test from the previous release went with the Boot Manager's slots.

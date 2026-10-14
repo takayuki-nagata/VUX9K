@@ -33,7 +33,9 @@ git switch --detach $SHA && make timing hw-smoke
 ```
 
 `test-hw-dist` loads the candidate's `pack.fs` and runs the hardware suite with its
-second stage; nothing is rebuilt (the card must be FAT32 with a `VUX9K` directory). `hw-smoke` runs `hw_test` on every seed of a
+second stage and demos (14 tests; it loads `pack.fs` again after each I-RAM demo); nothing
+is rebuilt (the card stays in the board and must be FAT32). `make test-hw-irq-echo` runs
+the interrupt-driven UART echo through the second stage (it builds the demos locally). `hw-smoke` runs `hw_test` on every seed of a
 local place and route of the same commit, which covers the CPU more thoroughly than the
 suite. The candidate's seed is one of them (`MANIFEST.json`); if the local `pack.fs` has
 the same SHA-256 as the candidate's, hw-smoke tested exactly its placement (note it in

@@ -8,10 +8,10 @@ files' hashes. Source: https://github.com/takayuki-nagata/VUX9K
 | Path | What |
 |---|---|
 | `bitstream/pack.fs` | FPGA bitstream (the first stage of the two-stage boot is inside) |
-| `sd/VUX9K/STAGE2.BIN` | The second stage: copy it to the microSD card's FAT32 partition as `VUX9K\STAGE2.BIN` |
+| `sd/VUX9K/STAGE2.BIN` | The second stage, file manager and application launcher: copy it to the microSD card's FAT32 partition as `VUX9K\STAGE2.BIN`, or install it over the serial port (`vux_tool.py install-stage2`) |
 | `sd/VUX9K/APPS/` | The demos as v4 files for the card's `VUX9K\APPS\`, started by the second stage's `run`: `HELLO.BIN` (PSRAM), `ZEPHYR.BIN`, `IRQECHO.BIN` (Zephyr), `HACK.BIN` (Hack) |
 | `demos/` | Zephyr demo (RV32) and Hack demo images, for the emulator's `--load` |
-| `tools/vux_tool.py` | Talks to the boot stages over the serial port: card report, RAM boot, installing the second stage; makes v4 files and FAT32 card images |
+| `tools/vux_tool.py` | Talks to the boot stages over the serial port: card report, RAM boot, installing the second stage, putting files on the card and starting applications; makes v4 files and FAT32 card images |
 | `tools/70-vux9k-board.rules` | udev rule that keeps ModemManager off the board (docs/APP_DEVELOPMENT.md, section 1) |
 | `zephyr/vux9k-zephyr-bsp.tar.gz` | Zephyr board support (module) with a Rust application template |
 | `hack/` | Hack demo's C source, a template for Hack applications |
@@ -22,17 +22,24 @@ files' hashes. Source: https://github.com/takayuki-nagata/VUX9K
 ## Try it
 
 On the board (needs openFPGALoader, Python 3 with pyserial, and a microSD card with one
-FAT32 partition). Copy `sd/VUX9K/STAGE2.BIN` to the card as `VUX9K\STAGE2.BIN` (create
-the directory `VUX9K` in its root), and insert it. If ModemManager runs on your host,
-install `tools/70-vux9k-board.rules` first, as its comment shows; without it the board's
-serial output can turn into noise after each bitstream load.
+FAT32 partition). Copy `sd/VUX9K/` to the card as `VUX9K\` with a PC and insert it, or
+insert the card as it is and install the second stage and a demo over the serial port as
+below. If ModemManager runs on your host, install `tools/70-vux9k-board.rules` first, as its
+comment shows; without it the board's serial output can turn into noise after each
+bitstream load.
 
 ```sh
 openFPGALoader -b tangnano9k bitstream/pack.fs
 pip install -r tools/requirements.txt
+python3 tools/vux_tool.py install-stage2 sd/VUX9K/STAGE2.BIN   # unless the card has it (makes VUX9K\)
 python3 tools/vux_tool.py sd-info          # the card and STAGE2.BIN, as the first stage sees them
-python3 tools/vux_tool.py monitor          # the first stage's banner, then the second stage's s2> prompt
+python3 tools/vux_tool.py monitor          # the second stage's s2> prompt: help, ls, mkdir VUX9K/APPS ...
+python3 tools/vux_tool.py put sd/VUX9K/APPS/HELLO.BIN VUX9K/APPS/HELLO.BIN
+python3 tools/vux_tool.py run-app VUX9K/APPS/HELLO.BIN
 ```
+
+(`put` needs the directory: on a card without `VUX9K\APPS\`, type `mkdir VUX9K/APPS` at
+the `s2>` prompt first.)
 
 Upgrading a board from v0.2.x: write this `bitstream/pack.fs` to the flash
 (`openFPGALoader -b tangnano9k -f bitstream/pack.fs`) and prepare the card as above. The

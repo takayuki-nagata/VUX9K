@@ -148,16 +148,26 @@ version. When `STAGE2.BIN` is missing or broken it starts `STAGE2.OLD`, the prev
 Its data and stack are in the PSRAM below the second stage (`0x806F_0000`-`0x806F_FFFF`).
 
 The **second stage** is a VUX9 v4 file of RV32 code that loads in the top 1 MB of the
-PSRAM (`0x8070_0000`-`0x807F_FFFF`). Until the file manager and launcher replace it,
-`firmware/stage2` is a provisional one: it shows what it was handed and installs a second
-stage it receives over the UART (`fat::stage2::install`: the new file is written as
+PSRAM (`0x8070_0000`-`0x807F_FFFF`). `firmware/stage2` is the file manager and application
+launcher at the `s2> ` prompt ("The second stage's prompt" below): it works on the card's
+files, receives files and second stages over the UART, and starts applications from the
+card. It installs a second stage with `fat::stage2::install`: the new file is written as
 `STAGE2.NEW` and read back, the current `.BIN` becomes `.OLD`, then `.NEW` becomes `.BIN`, so
-one of them stays bootable whenever power fails). The first stage writes nothing to the
+one of them stays bootable whenever power fails. The first stage writes nothing to the
 card.
 
 **The card**: FAT32 (an SDXC card formatted exFAT, or an SDSC card formatted FAT16, must be
-reformatted as FAT32), with the directory `VUX9K` in its root and the second stage as
-`VUX9K\STAGE2.BIN` (a PC can copy it there; a release ships it as `sd/VUX9K/STAGE2.BIN`).
+reformatted as FAT32). What VUX9K uses is in the directory `VUX9K` in its root:
+
+| Path | What |
+|:---|:---|
+| `\VUX9K\STAGE2.BIN` | The second stage the first stage boots (a release ships it as `sd/VUX9K/STAGE2.BIN`; a PC can copy it there, or `vux_tool.py install-stage2` installs it and makes `\VUX9K\` if it is missing) |
+| `\VUX9K\STAGE2.OLD` | The previous one, booted when `STAGE2.BIN` is missing or broken |
+| `\VUX9K\APPS\` | Applications as VUX9 v4 files, started by the second stage's `run` (a release ships the demos as `sd/VUX9K/APPS/`) |
+
+The second stage reads FAT32 only, with 8.3 and long names (long names are read only, and
+shown in ASCII with `?` for other characters); the files and directories it makes get 8.3
+names.
 
 #### VUX9 file header (64 bytes, v4)
 A VUX9 file is a 64-byte header (`struct.pack("<IHHIIIIII32s", ...)`, little-endian)
@@ -205,8 +215,15 @@ python3 tools/vux_tool.py install-stage2 build/firmware/stage2/STAGE2.BIN
 # 3. RAM-boot a second stage without writing the card (development, recovery)
 python3 tools/vux_tool.py run build/firmware/stage2/STAGE2.BIN
 
-# 4. Wrap a binary in a VUX9 v4 header
+# 4. Wrap a binary in a VUX9 v4 header (an application: RV32 loads at 0x80000000 unless
+#    --load-addr says otherwise, Hack at 0)
 python3 tools/vux_tool.py mkv4 build/firmware/stage2/stage2.bin STAGE2.BIN --load-addr 0x80700000
+python3 tools/vux_tool.py mkv4 --mode hack --name "Hack demo" build/hack/firmware.bin HACK.BIN
+
+# 4a. Through the second stage: list the card, put a file on it, start an application
+python3 tools/vux_tool.py ls VUX9K
+python3 tools/vux_tool.py put HACK.BIN VUX9K/APPS/HACK.BIN
+python3 tools/vux_tool.py run-app VUX9K/APPS/HACK.BIN
 
 # 5. Build a FAT32 card image, for the emulator (--sd), without a board
 python3 tools/vux_tool.py mkfat sd.img --file VUX9K/STAGE2.BIN=build/firmware/stage2/STAGE2.BIN
@@ -236,6 +253,43 @@ What keeps a second stage from starting is one `[BOOT] ...` line (e.g. `STAGE2.B
 mismatch; STAGE2.OLD: not found`), and the prompt follows. An exception in the first stage
 (it enables no interrupts) prints `[TRAP] mcause=0x… mepc=0x… mtval=0x…` and stops with
 LEDs 1/3/5 and 0/2/4 blinking in turn; reset the board.
+
+### 3. The second stage's prompt
+
+The second stage prints its banner, `a0`-`a2` as the first stage handed them over, and the
+`s2> ` prompt. It reads lines (echo; Backspace and DEL erase). Paths take `/` or `\`, `.`
+and `..`, and 8.3 or long names, relative to the current directory:
+
+| Command | Description |
+|:---|:---|
+| `help` | The command list |
+| `ls [PATH]` | List a directory (8.3 name, size or `<DIR>`, long name), or show one file |
+| `cd PATH`, `pwd` | Change, show the current directory |
+| `cat FILE`, `hexdump FILE` | Print a file, as it is or in hex |
+| `rm FILE` | Remove a file |
+| `mkdir DIR`, `rmdir DIR` | Make a directory (8.3 name), remove an empty one |
+| `mv SRC DST` | Move or rename a file (`DST` may be a directory) |
+| `put NAME` | Receive a file over the UART (transfer v2: `vux_tool.py put`) as `NAME` (8.3 names; an existing file is replaced) |
+| `run FILE` | Start a VUX9 v4 application (below) |
+| `info` | The card, free space, versions |
+| `install [-u]` | Receive a second stage and install it as `\VUX9K\STAGE2.BIN` (`-u`: unchecked, for tests) |
+| `reset` | Soft reset: back to the first stage, which boots the card again |
+
+An error is one `[ERR] ...` line, and the prompt follows. `run` loads the whole file and
+checks its header and CRC before anything is overwritten, then starts it where its header
+says (`fw_common::launch`):
+
+| Header | Where it runs | How it starts |
+|:---|:---|:---|
+| RV32, load address in `0x8000_0000`-`0x806F_FFFF` | The PSRAM below the second stage | In place: D-RAM zeroed, a jump to the entry point with `a0`-`a2` as the first stage handed them over. The first stage stays in I-RAM: a soft reset goes back to it |
+| RV32, load address `0` (at most 14 KB, `0x0000`-`0x37FF`) | I-RAM | Copied into I-RAM over the first stage, D-RAM zeroed, soft reset in RV32 mode |
+| Hack, a word-aligned load address in I-RAM (at most 16 KB) | I-RAM | As above, in Hack mode |
+
+An I-RAM application replaces the first stage until the FPGA is configured again (power
+cycle, or the bitstream loaded again): a soft reset then restarts the application, not the
+boot. A file `run` refuses (bad magic, CRC, a load address outside these windows, ...) leaves
+everything as it was. An exception in a PSRAM application that set no trap vector of its own
+is reported by the second stage (`[TRAP] ...`).
 
 ---
 
@@ -280,7 +334,8 @@ one machine.
 
 `zephyr_workspace/boards/vux9k/` has two targets: `vux9k`, the real board (18 MHz, the
 SoC timer as `andestech,machine-timer`, tickless at 1000 ticks/s, 14 KB of I-RAM and 8 KB of
-D-RAM, which the link enforces; it moves to the PSRAM once the second stage loads applications), and `vux9k/vux9k/ext`,
+D-RAM, which the link enforces: its applications are started by the second stage's `run` in
+I-RAM, in place of the first stage, until the board moves to the PSRAM), and `vux9k/vux9k/ext`,
 the extended profile for the emulator only. `make build-zephyr-demo` builds the Rust demo
 (`zephyr_workspace/app/`, Zephyr + a Rust staticlib) for the real board; `make
 build-zephyr` builds bc_clone_rs for `ext`. `make build-zephyr-irq-echo` builds
@@ -421,24 +476,33 @@ Short tests run on Icarus, long SoC/GLS runs on Verilator (`SIM_UNIT` / `SIM_SOC
 | **Zephyr Demo** | `make sim-zephyr-demo-rtl` | ~45 sec | The Zephyr Rust demo preloaded into I-RAM on the RTL |
 | **Zephyr UART Interrupts** | `make sim-zephyr-irq-echo-rtl` | ~1 min | The interrupt-driven UART echo preloaded into I-RAM on the RTL: a 64-byte line, longer than both FIFOs, comes back with no overrun |
 | **Static Timing (STA)**| `make sta` | ~15 sec | Exhaustive post-PnR timing analysis, Fmax verification, and critical path breakdown (`build/synth/soc_sta.json`) |
-| **Real Hardware** | `make test-hw` | ~1 min | The two-stage boot on the Tang Nano 9K with a FAT32 card via `scripts/test_hardware.py` (9 tests) |
-| **Real Hardware, Release Tree** | `make test-hw-dist DIST=<dir>` | ~1 min | The same 9 tests with a `make dist` tree's bitstream and second stage, nothing rebuilt: how a release candidate is tested ([`docs/RELEASING.md`](docs/RELEASING.md)) |
+| **Real Hardware** | `make test-hw` | ~4 min | The two-stage boot, the second stage's file commands and the demos it starts, on the Tang Nano 9K with a FAT32 card via `scripts/test_hardware.py` (14 tests) |
+| **Real Hardware, Release Tree** | `make test-hw-dist DIST=<dir>` | ~4 min | The same 14 tests with a `make dist` tree's bitstream, second stage and demos, nothing rebuilt: how a release candidate is tested ([`docs/RELEASING.md`](docs/RELEASING.md)) |
+| **Board UART Interrupts** | `make test-hw-irq-echo` | ~20 sec | The interrupt-driven UART echo on the board (`scripts/hw_irq_echo.py`): put on the card as `\VUX9K\APPS\IRQECHO.BIN` and started by the running second stage's `run`, five 256-byte lines, then the bitstream loaded into SRAM again from `build/synth/pack.fs` |
 
-### Real Hardware Test Suite (9 Automated Checks)
-`scripts/test_hardware.py` needs a FAT32 card with the directory `VUX9K` in its root; it
-writes only there, and leaves the second stage under test installed:
+### Real Hardware Test Suite (14 Automated Checks)
+`scripts/test_hardware.py` needs a FAT32 card in the board (it stays there: the suite sets
+it up itself). It writes only in `\VUX9K\`, which the second stage's `install` makes if it
+is missing: test versions of `STAGE2.BIN`, `\VUX9K\TEST\` (removed again), the demos in
+`\VUX9K\APPS\` (left there, where the card's applications belong), and last the second
+stage under test as `STAGE2.BIN` and `STAGE2.OLD`:
 1. **First stage prompt and banner** (`vux_tool.enter_s1`, then a soft reset: the banner with the expected version)
 2. **SD card and FAT32 volume** (`i`: card type and the partition's LBA)
 3. **RAM boot of the second stage** (`u` / `vux_tool.ram_boot`: `a0`-`a2` as expected)
 4. **RAM boot refusals** (bad magic, bad CRC, a load address outside the window: refused, still at the prompt)
-5. **Install STAGE2.BIN twice** (versions 9001 and 9002, through the second stage's `n`)
+5. **Install STAGE2.BIN twice** (versions 9001 and 9002, through the second stage's `install`)
 6. **Soft reset to the first stage**, which boots version 9002
 7. **The card as the first stage sees it** (`i`: `.BIN` 9002 and `.OLD` 9001)
-8. **A broken STAGE2.BIN** (written unchecked with the second stage's `x`): the first stage boots `STAGE2.OLD`
+8. **A broken STAGE2.BIN** (written unchecked with the second stage's `install -u`): the first stage boots `STAGE2.OLD`
 9. **Install the second stage under test** and boot it
+10. **File commands** in `\VUX9K\TEST\`: `mkdir`, `put` of a two-sector file, `ls`, `cat` read back, `mv` into `TEST\SUB\` and back, `rm`, `rmdir` (a leftover `TEST` tree is removed first, and the tree also after a failure)
+11. **`HELLO.BIN` in the PSRAM** (`put` into `\VUX9K\APPS\`, `run`): `a0`-`a2` as in test 3, then `r` soft-resets to the first stage, which is still in I-RAM and boots the second stage again
+12. **`HACK.BIN` in I-RAM** (Hack mode): the Hack demo's report, all `[PASS]`; then the bitstream is loaded into SRAM again (openFPGALoader with the suite's `pack.fs`, as `make prog-sram`; not `--reset`, which loads the flash's bitstream) and the first stage's banner checked
+13. **`ZEPHYR.BIN` in I-RAM** (RV32): the Zephyr demo's tasks finish and `k_msleep(100)` takes 100-102 ms; then the bitstream again. Skipped, saying so, when the build has no `ZEPHYR.BIN` (no Zephyr)
+14. **Install the second stage under test again**, after the loads, and boot it: what the suite leaves on the card and in the FPGA
 
 > [!NOTE]
-> Before the tests, it warns when other full/low-speed USB devices share the board's USB hub, which makes the board's USB-UART bridge drop output, and it refuses to start while ModemManager could probe the board (see "Host setup" above and `docs/APP_DEVELOPMENT.md`). It runs against the emulator as well: `vux9k-emu --tcp PORT --sd <mkfat image>` and `--port socket://127.0.0.1:PORT`.
+> Before the tests, it warns when other full/low-speed USB devices share the board's USB hub, which makes the board's USB-UART bridge drop output, and it refuses to start while ModemManager could probe the board (see "Host setup" above and `docs/APP_DEVELOPMENT.md`). It runs against the emulator as well: `vux9k-emu --tcp PORT --sd <mkfat image>` and `--port socket://127.0.0.1:PORT` (~3 min; tests 12 and 13 are skipped there, since the emulator has no bitstream to load; `VUX9K_HW_SUITE_EMU=1 pytest sim/emu/test_hw_dist.py` does this run). `--no-reload` skips them on the board, `--loader` names the openFPGALoader (the Makefile passes `OPENFPGALOADER`).
 
 ### Board Smoke Test of Routed Seeds (`make hw-smoke`)
 
@@ -499,9 +563,10 @@ VUX9K/
 │   ├── soc_xmem_bridge.veryl       # CPU side of the PSRAM window: fetch/load/store -> req/rsp, CPU ready
 │   └── soc_top.veryl               # Tang Nano 9K SoC top-level wrapper
 ├── firmware/                       # Cargo workspace: bare-metal Rust boot firmware
-│   ├── Cargo.toml                  # Workspace manifest (members: stage1, stage2, fw_common, fw_drivers, hw_test)
+│   ├── Cargo.toml                  # Workspace manifest (members: stage1, stage2, hello, fw_common, fw_drivers, hw_test)
 │   ├── stage1/                         # The first stage: the boot ROM in I-RAM (bootstrap/: start.s, link.x)
-│   ├── stage2/                         # The provisional second stage (\VUX9K\STAGE2.BIN, runs in the PSRAM)
+│   ├── stage2/                         # The second stage: file manager and launcher (\VUX9K\STAGE2.BIN, runs in the PSRAM)
+│   ├── hello/                          # The hello demo (\VUX9K\APPS\HELLO.BIN), an application in the PSRAM
 │   ├── fw_common/                      # Firmware logic without MMIO (FAT32, v4 header, transfer v2), tested on the host
 │   ├── fw_drivers/                     # MMIO drivers the stages share (UART, GPIO, mtime, MicroSD SPI)
 │   └── hw_test/                        # Board self-test for make hw-smoke (replaces the first stage in BRAM)

@@ -16,7 +16,8 @@ soc/                    Veryl RTL: board_top (PLL), soc_top + peripherals direct
   uart/                 UART controller submodules
 firmware/               Cargo workspace (virtual manifest)
   stage1/               First stage of the two-stage boot: the boot ROM in I-RAM (firmware.hex)
-  stage2/               Provisional second stage: \VUX9K\STAGE2.BIN on the card, runs in PSRAM
+  stage2/               Second stage, file manager and launcher: \VUX9K\STAGE2.BIN on the card, runs in PSRAM
+  hello/                Hello demo, an application in the PSRAM (\VUX9K\APPS\HELLO.BIN, make apps)
   hello/                Hello demo for the PSRAM (\VUX9K\APPS\HELLO.BIN, make apps), started by the second stage's run
   fw_common/            Firmware logic without MMIO (FAT32, v4 header, transfer), host-tested (make test-fw-host)
   fw_drivers/           The MMIO drivers the stages share (UART, GPIO, mtime, SD)

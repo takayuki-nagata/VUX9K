@@ -34,4 +34,5 @@ Read docs/agents/firmware.md first; the rows below are its rules in checklist fo
 - [ ] Tests: the emulator tests (`sim/emu/test_stage1*.py`, `test_stage2.py`), `test-sim`, and `sim-gls-hw-flow`
       by hand when transfer v2, the RAM boot, the install or the SD boot chain changed
       (docs/agents/test-tiers.md). Firmware coverage thresholds still met (`coverage-fw`).
-- [ ] Board: `test-hw` / `test-hw-dist` before the change ships (a FAT32 card with `\VUX9K\`).
+- [ ] Board: `test-hw` / `test-hw-dist` before the change ships (a FAT32 card in the board;
+      `install` makes `\VUX9K\`), and `test-hw-irq-echo` after a change to `run`.

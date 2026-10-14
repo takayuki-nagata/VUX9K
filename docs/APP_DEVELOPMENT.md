@@ -43,14 +43,16 @@ openFPGALoader -b tangnano9k -f bitstream/pack.fs   # flash
 The bitstream contains the first stage of a two-stage boot in block RAM. At power-on (and
 at every reset) it loads the second stage, `\VUX9K\STAGE2.BIN`, from the microSD card into
 the PSRAM and starts it. A terminal on the board's serial port (115200 bps, 8N1) shows the
-first stage's banner, then the second stage's `s2>` prompt; press `h` for its commands.
+first stage's banner, then the second stage's `s2>` prompt; `help` lists its commands.
 Holding button S2 while the board starts keeps the first stage at its own `s1>` prompt.
 
 **microSD card.** The card needs one FAT32 partition (as most cards up to 32 GB come; an
 SDXC card formatted exFAT must be reformatted as FAT32), a directory `VUX9K` in its root,
-and in it the second stage: copy `sd/VUX9K/STAGE2.BIN` there with a PC. Insert the card
-before power-on or reset. With no card, or no `STAGE2.BIN`, the first stage says why and
-stays at its prompt.
+and in it the second stage, `STAGE2.BIN`, with the applications in `VUX9K\APPS\`. Copy
+`sd/VUX9K/` there with a PC, or leave the card in the board and install the second stage
+over the serial port (section 2: `install-stage2` makes the directory), then `put` the
+applications. Insert the card before power-on or reset. With no card, or no `STAGE2.BIN`,
+the first stage says why and stays at its prompt.
 
 ## 2. The second stage and the demos
 
@@ -69,9 +71,13 @@ it write itself to the card as `STAGE2.BIN`, keeping the previous one as `STAGE2
 `STAGE2.BIN` is missing or broken, the first stage starts `STAGE2.OLD`. `run` is the RAM boot
 alone, for trying a second stage or recovering a card. `monitor` opens a plain terminal.
 
-The second stage is a file manager and launcher (`help` lists its commands). `sd/VUX9K/APPS/`
-holds the demos as v4 files for the card; copy the directory to `\VUX9K\APPS\` (or `put`
-them there) and start one with `run`:
+The second stage is a file manager and launcher (`help` lists its commands; the README's
+"The second stage's prompt" describes them): `ls`, `cd`, `cat`, `hexdump`, `rm`, `mkdir`,
+`rmdir`, `mv`, `put` (a file over the serial port), `run`, `info`, `install`, `reset`. It
+reads FAT32 with 8.3 and long names (long names read only); what it writes gets 8.3 names.
+`sd/VUX9K/APPS/` holds the demos as v4 files for the card; copy the directory to
+`\VUX9K\APPS\` (or `put` them there; `put` needs the directory, which `mkdir` makes) and
+start one with `run`:
 
 ```sh
 python3 tools/vux_tool.py put sd/VUX9K/APPS/HELLO.BIN VUX9K/APPS/HELLO.BIN
@@ -81,7 +87,7 @@ python3 tools/vux_tool.py run-app VUX9K/APPS/HELLO.BIN
 | File | What | Where it runs |
 |---|---|---|
 | `HELLO.BIN` | prints the first stage's a0-a2; `r` goes back to the first stage | the PSRAM at `0x8000_0000` |
-| `ZEPHYR.BIN` | the Zephyr Rust demo | I-RAM (replaces the first stage until a reset) |
+| `ZEPHYR.BIN` | the Zephyr Rust demo | I-RAM (replaces the first stage until the FPGA is configured again) |
 | `IRQECHO.BIN` | Zephyr's interrupt-driven UART echo | I-RAM |
 | `HACK.BIN` | the Hack C demo | I-RAM, in Hack mode |
 
@@ -95,9 +101,10 @@ and rebuild applications (section 3).
 ## 3. Building an application
 
 The CPU is RV32I with Zicsr and Zifencei, machine mode only, at 18 MHz, with 16 KB of
-instruction RAM, 8 KB of data RAM and 8 MB of PSRAM. The Zephyr board `vux9k` still links
+instruction RAM, 8 KB of data RAM and 8 MB of PSRAM. The Zephyr board `vux9k` links
 applications into 14 KB of the instruction RAM and the data RAM except its last 8 bytes,
-as on v0.2.x; it moves to the PSRAM with the launcher.
+as on v0.2.x: the second stage's `run` starts them in I-RAM, in place of the first stage,
+until the board moves to the PSRAM.
 Misaligned loads and stores trap, and so does any CSR that isn't implemented
 ([RV32 CSRs](../README.md#rv32-csrs) in the repository's README lists them).
 
@@ -154,6 +161,31 @@ hcc -r hack/main.c -o app.bin    # the image for the emulator (--mode hack)
 
 Hack mode sees the UART at `0x6000`-`0x6003`, the GPIO at `0x6004`-`0x600F` and 2K words
 of RAM ([Hack Mode Address Space](../README.md#hack-mode-address-space-16-bit-word-addresses)).
+
+### Packaging an application for the card
+
+The second stage's `run` starts VUX9 v4 files (the README's "VUX9 file header"):
+`tools/vux_tool.py mkv4` wraps an image in one. The header's ISA and load address decide
+where it runs:
+
+| Application | `mkv4` | Where it runs |
+|---|---|---|
+| Zephyr on the board `vux9k` | `--load-addr 0` (RV32) | I-RAM, at most 14 KB (`0x0000`-`0x37FF`), started by a soft reset |
+| Hack | `--mode hack` (load address 0) | I-RAM, at most 16 KB, in Hack mode |
+| RV32 linked into the PSRAM | the default (`0x8000_0000`) or `--load-addr` inside `0x8000_0000`-`0x806F_FFFF` | the PSRAM, in place |
+
+```sh
+python3 tools/vux_tool.py mkv4 --load-addr 0 --name "my app" build/zephyr/zephyr.bin APP.BIN
+python3 tools/vux_tool.py mkv4 --mode hack --name "my hack app" app.bin HACKAPP.BIN
+```
+
+The PSRAM window is `XMEM_BASE` (`0x8000_0000`) up to the second stage at `STAGE2_BASE`
+(`0x8070_0000`); the entry point defaults to the load address. Code there runs slower: every
+fetch waits ~35 cycles. A PSRAM application starts with `a0` = 1 on an SDHC card (else 0),
+`a1` = the FAT32 partition's first LBA, `a2` = the first stage's version, and the first stage
+still in I-RAM (a soft reset goes back to it); `sd/VUX9K/APPS/HELLO.BIN` is one. The Zephyr
+board `vux9k` doesn't link into the PSRAM. `run` checks the file's header and CRC before
+it writes anything, and refuses a file outside these windows with the first stage untouched.
 
 ## 4. Testing on the emulator
 
@@ -242,8 +274,20 @@ Useful methods of `Soc`: `load_app(image, mode)` (`mode` `"riscv"` or `"hack"`, 
 
 ## 5. Running on the board
 
-Starting applications on the board comes with the second stage's launcher (section 2).
-What applies to anything that runs there:
+Put the application on the card and start it from the second stage's prompt, with the card
+in the board:
+
+```sh
+python3 tools/vux_tool.py put APP.BIN VUX9K/APPS/APP.BIN    # put, over the serial port
+python3 tools/vux_tool.py run-app VUX9K/APPS/APP.BIN        # run; then `monitor` for its output
+```
+
+or copy it to `\VUX9K\APPS\` with a PC and type `run VUX9K/APPS/APP.BIN` at the `s2>`
+prompt in a terminal (`monitor`). An application in I-RAM (Zephyr, Hack) replaces the first
+stage: until the FPGA is configured again (power cycle, or `openFPGALoader -b tangnano9k
+bitstream/pack.fs`; `openFPGALoader --reset` loads the flash's bitstream), a soft reset or
+S1 restarts the application, not the boot. A PSRAM application leaves the first stage in
+I-RAM. What applies to anything that runs there:
 
 Writing `0x5A5A_A55A` to `0x4000_300C` resets the CPU only, like S1, and starts the first
 stage again, which boots the card. A Hack program writes `0x0000_A55A` to `0x600C` instead,

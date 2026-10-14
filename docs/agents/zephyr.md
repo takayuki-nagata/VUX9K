@@ -76,5 +76,6 @@ callback gives, and each line comes back upper-cased in one piece (longer than t
 FIFO, so the timer path runs) with `rx=<n> drop=<n> err=<n>`. It fits the board without
 printk (cbprintf alone is 1.5 KB; with it the app overflowed 14 KB by 1.8 KB). Tests:
 `sim/emu/test_zephyr_irq_echo.py` (loaded into I-RAM, and through the second stage's `run
-VUX9K/APPS/IRQECHO.BIN`) and `sim-zephyr-irq-echo-rtl` (loaded into I-RAM); its board test
-went with the Boot Manager's slots and isn't back yet.
+VUX9K/APPS/IRQECHO.BIN`) and `sim-zephyr-irq-echo-rtl` (loaded into I-RAM); on the board,
+`make test-hw-irq-echo` (`scripts/hw_irq_echo.py`: `put` and `run` through the second stage,
+then the bitstream loaded into SRAM again).
