@@ -41,6 +41,11 @@ S2_BANNER = f"VUX9K Stage 2 (v{STAGE2_VERSION})"
 S2_NAME = "VUX9K stage 2"
 # The banner's last line: the key window starts after it
 BANNER_END = b"3 MHz\n"
+# The demos as v4 files for \VUX9K\APPS\ (make apps)
+APPS_DIR = os.path.join(FIRMWARE_DIR, "apps")
+# `run` to the blank line after its [RUN] line: the second stage, running from the PSRAM,
+# loads ~2,000-2,400 cycles a byte (ZEPHYR.BIN, 13 KB: ~27M)
+RUN_LOAD_CYCLES = 40_000_000
 
 
 def stage2(version=STAGE2_VERSION, **kw) -> bytes:
@@ -153,3 +158,23 @@ def s2_cmd(soc, line: str, until: bytes = S2_PROMPT, timeout_cycles: int = BOOT_
     assert resp.startswith(echo), f"missing echo of {line!r}: {resp!r}"
     resp = resp[len(echo) :]
     return resp[: -len(until)] if until == S2_PROMPT else resp
+
+
+def app(name: str) -> bytes:
+    """A demo's v4 file from APPS_DIR (e.g. "HELLO.BIN")."""
+    path = os.path.join(APPS_DIR, name)
+    assert os.path.exists(path), f"{path} missing; run `make apps`"
+    with open(path, "rb") as f:
+        return f.read()
+
+
+def run_from_card(name: str, data: bytes | None = None, **kw):
+    """Power on with a card holding the second stage and \\VUX9K\\APPS\\<name> (`data`,
+    else the demo's file from APPS_DIR), run to the second stage's prompt and type `run
+    VUX9K/APPS/<name>`, as on the board; returns (soc, mark), mark being where what the
+    application prints starts in soc.uart_received() (after the [RUN] line and the blank
+    line after it). kw goes to start()."""
+    soc, _ = boot_s2({f"VUX9K/APPS/{name}": app(name) if data is None else data}, **kw)
+    out = s2_cmd(soc, f"run VUX9K/APPS/{name}", until=b"\n\n", timeout_cycles=RUN_LOAD_CYCLES)
+    assert out.startswith("[RUN] "), out
+    return soc, len(soc.uart_received())  # (wait_for stops at the end of what it waited for)

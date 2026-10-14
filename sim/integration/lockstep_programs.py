@@ -42,6 +42,7 @@ class Program:
     button: list = field(default_factory=list)  # (cycle, pressed) S2 pin level from cycle
     sd_sectors: dict = field(default_factory=dict)  # lba -> bytes (after the MBR in sector 0)
     slow: bool = False  # only in the long run (make sim-lockstep-slow)
+    needs: list = field(default_factory=list)  # build outputs its setup is made from
 
 
 def _csr_read(rd, csr):
@@ -146,6 +147,8 @@ XMEM_USED = [(0, 0x800), (0x7F_F840, 0x7F_F848)] + [(4 << b, (4 << b) + 4) for b
 # stage) and the start of the second stage's window (STAGE2_BASE), for the s1_* programs
 STAGE2_BASE = 0x8070_0000
 XMEM_USED += [(0x6F_0000, 0x6F_0100), (0x6F_E000, 0x70_0000), (0x70_0000, 0x70_0100)]
+# s2_launch's two parts (S2L_CODE, S2L_COPY, S2L_BYTES each)
+XMEM_USED += [(0x1000, 0x1200), (0x1800, 0x1A00)]
 
 
 def xmem() -> list:
@@ -417,6 +420,114 @@ def boot_mode_hack() -> list:
     return [j_type(BOOT_MODE_CODE, "zero")] + [0] * (BOOT_MODE_CODE // 4 - 1) + a.assemble()
 
 
+# --- the second stage's launcher, by hand: code in the PSRAM starting code -----------------
+S2L_CODE = XMEM + 0x1000  # the launcher's first part, as the second stage's code would run
+S2L_COPY = XMEM + 0x1800  # where the first part copies the second (fence.i, then a jump)
+S2L_BYTES = 0x200  # room for each part (XMEM_USED)
+# 'P' starts at cycle ~11,200 (Hack: ~9,800), 'L' after the soft reset at ~13,400 ('K' ~11,400)
+S2_LAUNCH_CYCLES = 18_000
+
+
+def _put_char(a, ch: int, tag: str):
+    """Send ch once the TX FIFO has room (s1 = the UART)."""
+    a.label(tag)
+    a.lw("t0", 4, "s1")
+    a.andi("t0", "t0", 2)  # TX full
+    a.bnez("t0", tag)
+    a.li("t0", ch)
+    a.sb("t0", 0, "s1")
+
+
+def s2_launch(hack: bool = False) -> list:
+    """What the second stage's `run` does, hand-assembled: I-RAM code writes the launcher
+    into the PSRAM (fence.i) and jumps there; the launcher copies its second part to
+    another PSRAM address word by word (PSRAM loads and stores from PSRAM code), fence.i,
+    jumps there; that part prints 'P', copies a program from the PSRAM into I-RAM word
+    by word (start_iram), gives the boot mode in GPIO 0x8 (RV32 0x101, or Hack 0x100; read
+    back) and soft-resets: the CPU starts the program in that mode, which prints 'L' (RV32)
+    or 'K' (Hack)."""
+    if hack:
+        import hack_asm
+
+        h = hack_asm.Asm()
+        h.at(ord("K"))
+        h.c("D=A")
+        h.at(0x6000)  # UART data
+        h.c("M=D")
+        h.label("halt")
+        h.at("halt")
+        h.c("0;JMP")
+        target = h.assemble()
+    else:
+        t = Asm()
+        t.lui("s1", 0x40000)
+        _put_char(t, ord("L"), "w")
+        t.label("halt")
+        t.j("halt")
+        target = t.assemble()
+
+    # The second part, run at S2L_COPY, with the program it writes into I-RAM after it
+    s = Asm(origin=S2L_COPY)
+    _put_char(s, ord("P"), "w")
+    s.la("a0", "target")
+    s.li("a1", 0)  # I-RAM
+    s.li("a2", len(target))
+    s.label("copy")
+    s.lw("t0", 0, "a0")
+    s.sw("t0", 0, "a1")
+    s.addi("a0", "a0", 4)
+    s.addi("a1", "a1", 4)
+    s.addi("a2", "a2", -1)
+    s.bnez("a2", "copy")
+    s.lui("s2", 0x40003)  # GPIO
+    s.li("t0", 0x100 if hack else 0x101)
+    s.sw("t0", 8, "s2")
+    s.lw("s3", 8, "s2")
+    s.lui("t0", 0xA)
+    s.addi("t0", "t0", 0x55A)  # SOFT_RESET_KEY's low half (0x0000_A55A)
+    s.sw("t0", 0xC, "s2")
+    s.label("spin")
+    s.j("spin")
+    s.label("target")
+    for w in target:
+        s.word(w)
+    second = s.assemble()
+
+    # The first part, run at S2L_CODE, with the second part after it
+    r = Asm(origin=S2L_CODE)
+    r.la("a0", "second")
+    r.li("a1", S2L_COPY)
+    r.li("a2", len(second))
+    r.label("copy")
+    r.lw("t0", 0, "a0")
+    r.sw("t0", 0, "a1")
+    r.addi("a0", "a0", 4)
+    r.addi("a1", "a1", 4)
+    r.addi("a2", "a2", -1)
+    r.bnez("a2", "copy")
+    r.word(0x0000_100F)  # fence.i
+    r.li("t0", S2L_COPY)
+    r.jalr("zero", "t0", 0)
+    r.label("second")
+    for w in second:
+        r.word(w)
+    first = r.assemble()
+    assert 4 * len(first) <= S2L_BYTES and 4 * len(second) <= S2L_BYTES
+
+    # From I-RAM: the first part into the PSRAM, fence.i, a jump there
+    a = Asm()
+    a.li("s1", 0x4000_0000)  # UART, for both parts
+    a.li("s0", S2L_CODE)
+    for k, w in enumerate(first):
+        a.li("t0", w)
+        a.sw("t0", 4 * k, "s0")
+    a.word(0x0000_100F)  # fence.i
+    a.jalr("zero", "s0", 0)
+    words = a.assemble()
+    assert len(words) <= 0x3800 // 4
+    return words
+
+
 # --- SD SPI master: divider register --------------------------------------------------
 def sd_clkdiv() -> list:
     """SD SPI bytes at several dividers (reset 23, 0 -> 3, 5, 255, 2 -> 3): CMD0 and CMD8
@@ -499,20 +610,51 @@ def hash_program(origin: int, soft_reset: bool = False) -> bytes:
     return struct.pack(f"<{len(words)}I", *words)
 
 
-def stage2_card() -> dict:
-    """A FAT32 card with \\VUX9K\\STAGE2.BIN printing '#', as {lba: sector}."""
+def _vux_tool():
     if REPO_ROOT not in sys.path:
         sys.path.insert(0, REPO_ROOT)
     import tools.vux_tool as vux_tool
 
-    data, _ = vux_tool.build_vux9_v4_image(hash_program(STAGE2_BASE), name="test", load_addr=STAGE2_BASE)
-    img = vux_tool.build_fat32_image({"VUX9K/STAGE2.BIN": data})
+    return vux_tool
+
+
+def _card_sectors(files: dict) -> dict:
+    """A FAT32 card holding files ({"VUX9K/STAGE2.BIN": bytes}) as {lba: sector}."""
+    img = _vux_tool().build_fat32_image(files)
     sectors = {}
     for lba in range(len(img) // 512):
         sector = img[lba * 512 : (lba + 1) * 512]
         if any(sector):
             sectors[lba] = sector
     return sectors
+
+
+def stage2_card() -> dict:
+    """A FAT32 card with \\VUX9K\\STAGE2.BIN printing '#', as {lba: sector}."""
+    data, _ = _vux_tool().build_vux9_v4_image(hash_program(STAGE2_BASE), name="test", load_addr=STAGE2_BASE)
+    return _card_sectors({"VUX9K/STAGE2.BIN": data})
+
+
+# The real second stage and the hello demo (make firmware hello), for s2_run_hello
+STAGE2_FILE = os.path.join(REPO_ROOT, "build", "firmware", "stage2", "STAGE2.BIN")
+HELLO_FILE = os.path.join(REPO_ROOT, "build", "firmware", "apps", "HELLO.BIN")
+# The second stage's prompt comes at cycle ~14.44M; the hello demo's last line (its
+# a0-a2 and the key it waits for) has left the UART by ~20.26M
+S2_RUN_HELLO_AT = 14_600_000
+S2_RUN_HELLO_CYCLES = 20_300_000
+
+
+def s2_hello_card() -> dict:
+    """A FAT32 card with the real \\VUX9K\\STAGE2.BIN and \\VUX9K\\APPS\\HELLO.BIN, as
+    {lba: sector}; empty when they haven't been built (test_soc_lockstep fails on that
+    when it runs the program)."""
+    files = {}
+    for dest, path in (("VUX9K/STAGE2.BIN", STAGE2_FILE), ("VUX9K/APPS/HELLO.BIN", HELLO_FILE)):
+        if not os.path.exists(path):
+            return {}
+        with open(path, "rb") as f:
+            files[dest] = f.read()
+    return _card_sectors(files)
 
 
 def programs() -> list:
@@ -536,10 +678,24 @@ def programs() -> list:
     progs.append(Program("hack_soft_reset", cycles=20_000, imem_words=hack_soft_reset()))
     progs.append(Program("boot_mode_hack", cycles=6_000, imem_words=boot_mode_hack()))
     progs.append(Program("sd_clkdiv", cycles=30_000, imem_words=sd_clkdiv()))
+    progs.append(Program("s2_launch", cycles=S2_LAUNCH_CYCLES, imem_words=s2_launch()))
+    progs.append(Program("s2_launch_hack", cycles=S2_LAUNCH_CYCLES, imem_words=s2_launch(hack=True)))
     # The window programs finish by cycle ~3,600 / ~4,000 (window waits included); xmem
     # then takes timer interrupts in I-RAM until the end
     progs.append(Program("xmem", cycles=6_500, imem_words=xmem()))
     progs.append(Program("random_rv_xmem_4", cycles=8_000, imem_words=random_rv(4, base=XMEM + 0x400)))
+    # The whole chain with the real second stage: the first stage boots it from the card,
+    # its `run` starts the hello demo in the PSRAM, which prints a0-a2
+    progs.append(
+        Program(
+            "s2_run_hello",
+            cycles=S2_RUN_HELLO_CYCLES,
+            sd_sectors=s2_hello_card(),
+            uart_rx=[(S2_RUN_HELLO_AT, b"run VUX9K/APPS/HELLO.BIN\r")],
+            slow=True,
+            needs=[STAGE2_FILE, HELLO_FILE],
+        )
+    )
     seeds = os.environ.get("LOCKSTEP_SEEDS", "")
     for s in [int(x) for x in seeds.split(",") if x]:
         progs.append(Program(f"random_rv_{s}", cycles=200_000, imem_words=random_rv(s, blocks=1500), slow=True))

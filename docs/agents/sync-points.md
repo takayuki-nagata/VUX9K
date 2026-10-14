@@ -38,7 +38,7 @@ column, the rest of its row belongs to the same piece of work. Reviews check thi
 | ACT4 configuration | `vux9k.yaml`, `sail.json`, `rvmodel_macros.h`/`link.ld` together | isa-tests.md, "`make test-act4`" |
 | A cocotb test touching a new internal signal | add it to `SOC_RTL_PUBLIC` in `sim/runners/sim_runner.py` (Verilator) | sim.md, "Verilator" |
 | A generated `.sv` path (moving a `.veryl` file) | `Makefile` source lists, `sim/runners/sim_runner.py`, `scripts/run_riscv_tests.py` | layout.md, "Veryl module resolution is directory-agnostic" |
-| Distribution contents | `make_dist.py` `FILES`, `check_dist.py` `REQUIRED`, docs/APP_DEVELOPMENT.md (its Python example is `check_dist.PY_EXAMPLE`); `PINS` when ci.yml changes shape | dist-release.md |
+| Distribution contents | `make_dist.py` `FILES`, `check_dist.py` `REQUIRED` and `CARD_FILES`, docs/APP_DEVELOPMENT.md (its Python examples are `check_dist.PY_EXAMPLE` and `PY_CARD_EXAMPLE`), docs/dist-README.md's table; the Makefile's `apps` for `sd/VUX9K/APPS/`; `PINS` when ci.yml changes shape | dist-release.md |
 | Firmware size | `make firmware-size` (the first stage: 16 KB, about 2 KB left; the second stage's size is printed) | firmware.md, "Cargo workspace gotcha" |
 | `hw_test`'s tests | new checksums from the emulator (`sim/emu/test_hw_test.py` prints them) | clock-and-board.md, "The SoC clock" |
 | Coverage | raise a threshold when coverage rises, never lower one; `cov:exclude(reason)` only for lines that can't run by design (firmware; host Rust has none) | firmware.md, "Firmware coverage"; sim.md, "Unit tests"; quality.md, "Rust coverage: `make coverage-rust` (cargo-llvm-cov, in test-sim)" |

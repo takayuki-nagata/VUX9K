@@ -5,11 +5,13 @@
 """Assemble the application-developer distribution (make dist) into a directory.
 
 The tree holds what an application developer needs: the bitstream (with the first stage
-in it), the second stage for the card (sd/VUX9K/STAGE2.BIN), the demos, vux_tool.py, the
-Zephyr BSP (with the Zephyr demo as a template), the Hack demo's C sources, and the
-emulator (CLI and Python module). Nothing in it depends on a version number:
-MANIFEST.json records the commit, the adopted place-and-route seed, the first stage's
-version and the tool pins (taken from
+in it), the card's files (sd/VUX9K/: the second stage, STAGE2.BIN, and the demos as v4
+files in APPS/, which its `run` starts), the demos' raw images for the emulator (demos/),
+vux_tool.py, the Zephyr BSP (with the Zephyr demo as a template), the Hack demo's C
+sources, and the emulator (CLI and Python module, with the first stage's memory images in
+emu/firmware/ to boot a card image as the board does). Nothing in it depends on a version
+number: MANIFEST.json records the commit, the adopted place-and-route seed, the first and
+second stages' versions and the tool pins (taken from
 .github/workflows/ci.yml, so they can't drift from what CI builds with), and the
 release workflow names the archives after the tag. SHA256SUMS covers every other file.
 """
@@ -35,6 +37,10 @@ FILES = {
     "LICENSE": "LICENSE",
     "bitstream/pack.fs": "build/synth/pack.fs",
     "sd/VUX9K/STAGE2.BIN": "build/firmware/stage2/STAGE2.BIN",
+    "sd/VUX9K/APPS/HELLO.BIN": "build/firmware/apps/HELLO.BIN",
+    "sd/VUX9K/APPS/ZEPHYR.BIN": "build/firmware/apps/ZEPHYR.BIN",
+    "sd/VUX9K/APPS/IRQECHO.BIN": "build/firmware/apps/IRQECHO.BIN",
+    "sd/VUX9K/APPS/HACK.BIN": "build/firmware/apps/HACK.BIN",
     "demos/zephyr-demo.bin": "build/zephyr-demo/zephyr/zephyr.bin",
     "demos/hack-demo.bin": "build/hack/firmware.bin",
     "tools/vux_tool.py": "tools/vux_tool.py",
@@ -45,6 +51,9 @@ FILES = {
     "hack/uart.h": "hack_demo/src/uart.h",
     "emu/vux9k-emu": "build/emu/target/release/vux9k-emu",
     "emu/vux9k_emu.abi3.so": "build/emu/python/vux9k_emu.abi3.so",
+    # The block RAMs as the bitstream holds them (the first stage), for --firmware emu/firmware
+    "emu/firmware/firmware.hex": "build/firmware/firmware.hex",
+    **{f"emu/firmware/firmware_d{i}.hex": f"build/firmware/firmware_d{i}.hex" for i in range(4)},
 }
 # docs/APP_DEVELOPMENT.md links the repository's README as ../README.md; in the dist that
 # path is the dist's own README, so those links go to the README of the source commit
@@ -88,11 +97,12 @@ def tool_pins():
     return pins
 
 
-def stage1_version():
-    with open(os.path.join(REPO_ROOT, "firmware", "stage1", "src", "main.rs")) as f:
-        m = re.search(r"const STAGE1_VERSION: u32 = (\d+);", f.read())
+def stage_version(n):
+    """STAGE1_VERSION or STAGE2_VERSION from firmware/stage<n>/src/main.rs."""
+    with open(os.path.join(REPO_ROOT, "firmware", f"stage{n}", "src", "main.rs")) as f:
+        m = re.search(rf"const STAGE{n}_VERSION: u32 = (\d+);", f.read())
     if not m:
-        sys.exit("make_dist: STAGE1_VERSION not found in firmware/stage1/src/main.rs")
+        sys.exit(f"make_dist: STAGE{n}_VERSION not found in firmware/stage{n}/src/main.rs")
     return int(m.group(1))
 
 
@@ -153,10 +163,11 @@ def third_party_licenses(out_path):
     out = [
         "Third-party software in this distribution",
         "",
-        "demos/zephyr-demo.bin contains the Zephyr RTOS (https://zephyrproject.org),",
-        "licensed under the Apache License 2.0; its text is the LICENSE file in",
-        "zephyr/vux9k-zephyr-bsp.tar.gz. Its Rust part is built with Rust's core library",
-        "(MIT OR Apache-2.0, https://github.com/rust-lang/rust).",
+        "demos/zephyr-demo.bin and sd/VUX9K/APPS/ZEPHYR.BIN and IRQECHO.BIN contain the",
+        "Zephyr RTOS (https://zephyrproject.org), licensed under the Apache License 2.0;",
+        "its text is the LICENSE file in zephyr/vux9k-zephyr-bsp.tar.gz. The Zephyr demo's",
+        "Rust part, sd/VUX9K/STAGE2.BIN and sd/VUX9K/APPS/HELLO.BIN are built with Rust's",
+        "core library (MIT OR Apache-2.0, https://github.com/rust-lang/rust).",
     ]
     linked: dict[str, dict] = {}
     for binary, crate in (("emu/vux9k-emu", "vux9k_emu_cli"), ("emu/vux9k_emu.abi3.so", "vux9k_emu_py")):
@@ -217,7 +228,8 @@ def main():
             "sta_target_mhz": pnr["target_mhz"],
             "sta_closure": pnr["closure"],
         },
-        "stage1_version": stage1_version(),
+        "stage1_version": stage_version(1),
+        "stage2_version": stage_version(2),
         "pins": tool_pins(),
     }
     with open(os.path.join(args.out, "MANIFEST.json"), "w") as f:

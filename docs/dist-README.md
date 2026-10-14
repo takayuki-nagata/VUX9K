@@ -9,12 +9,14 @@ files' hashes. Source: https://github.com/takayuki-nagata/VUX9K
 |---|---|
 | `bitstream/pack.fs` | FPGA bitstream (the first stage of the two-stage boot is inside) |
 | `sd/VUX9K/STAGE2.BIN` | The second stage: copy it to the microSD card's FAT32 partition as `VUX9K\STAGE2.BIN` |
-| `demos/` | Zephyr demo (RV32) and Hack demo images, for the emulator (the board starts applications with the next release's second stage) |
+| `sd/VUX9K/APPS/` | The demos as v4 files for the card's `VUX9K\APPS\`, started by the second stage's `run`: `HELLO.BIN` (PSRAM), `ZEPHYR.BIN`, `IRQECHO.BIN` (Zephyr), `HACK.BIN` (Hack) |
+| `demos/` | Zephyr demo (RV32) and Hack demo images, for the emulator's `--load` |
 | `tools/vux_tool.py` | Talks to the boot stages over the serial port: card report, RAM boot, installing the second stage; makes v4 files and FAT32 card images |
 | `tools/70-vux9k-board.rules` | udev rule that keeps ModemManager off the board (docs/APP_DEVELOPMENT.md, section 1) |
 | `zephyr/vux9k-zephyr-bsp.tar.gz` | Zephyr board support (module) with a Rust application template |
 | `hack/` | Hack demo's C source, a template for Hack applications |
 | `emu/vux9k-emu`, `emu/vux9k_emu.abi3.so` | The emulator: command line and Python module (Linux x86_64) |
+| `emu/firmware/` | The first stage's memory images, for booting a card image on the emulator (`--firmware emu/firmware --sd IMAGE`) |
 | `docs/APP_DEVELOPMENT.md` | The developer guide ("Hardware revisions and compatibility" says what stays compatible between releases) |
 
 ## Try it

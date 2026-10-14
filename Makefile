@@ -39,7 +39,7 @@ HACK_BUILD_DIR := $(BUILD_DIR)/hack
 ZEPHYR_BUILD_DIR ?= $(BUILD_DIR)/zephyr
 SYNTH_DIR := $(BUILD_DIR)/synth
 
-.PHONY: all lint-rtl check-rtl-syntax coverage-fcov mutation act4-elfs test-act4 test-act4-gls test-act4-emu test-isa-waits emu emu-py emu-test emu-bench test-isa-emu test-emu test-fw-host test-fat firmware-size coverage-fw coverage-rust coverage-rust-tool sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hw-dist dist check-dist test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware hwtest hw-smoke sim-unit sim-psram-contract sim-psram-icarus sim-unit-random sim-boot sim-soc sim test-isa test-isa-gls zephyr-bc-lib build-zephyr build-zephyr-demo build-zephyr-irq-echo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-irq-echo-rtl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
+.PHONY: all hello apps sim-stage2 sim-zephyr-demo-gls lint-rtl check-rtl-syntax coverage-fcov mutation act4-elfs test-act4 test-act4-gls test-act4-emu test-isa-waits emu emu-py emu-test emu-bench test-isa-emu test-emu test-fw-host test-fat firmware-size coverage-fw coverage-rust coverage-rust-tool sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hw-dist dist check-dist test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware hwtest hw-smoke sim-unit sim-psram-contract sim-psram-icarus sim-unit-random sim-boot sim-soc sim test-isa test-isa-gls zephyr-bc-lib build-zephyr build-zephyr-demo build-zephyr-irq-echo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-irq-echo-rtl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
 
 all: test-ci
 
@@ -146,6 +146,37 @@ $(STAGE2_DIR)/STAGE2.BIN: $(STAGE2_SRCS) tools/vux_tool.py
 
 firmware: $(FIRMWARE_BUILD_DIR)/firmware.hex $(STAGE2_DIR)/STAGE2.BIN
 
+# The demos as v4 files for the card's \VUX9K\APPS\, started by the second stage's `run`
+# (fw_common::launch picks the target from the header): build/firmware/apps/
+#   HELLO.BIN    firmware/hello, RV32 linked at the PSRAM's start (0x80000000): runs in place
+#   ZEPHYR.BIN   the Zephyr Rust demo, RV32 at 0: I-RAM (replaces the first stage)
+#   IRQECHO.BIN  the Zephyr interrupt-driven UART echo, RV32 at 0: I-RAM
+#   HACK.BIN     the Hack demo, Hack at 0: I-RAM
+# Without Zephyr (its builds skip) ZEPHYR.BIN and IRQECHO.BIN are left out, saying so.
+APPS_DIR = $(FIRMWARE_BUILD_DIR)/apps
+HELLO_BASE = 0x80000000
+HELLO_SRCS = $(wildcard firmware/hello/src/*.rs firmware/hello/bootstrap/*) firmware/hello/Cargo.toml $(FW_LIB_SRCS)
+# mkv4 of $(1) (if it exists; else fail if $(5) is "required") as $(APPS_DIR)/$(2), mode $(3), name $(4)
+define app_v4
+	@if [ -f $(1) ]; then \
+		$(PYTHON) tools/vux_tool.py mkv4 --mode $(3) --load-addr 0 --name "$(4)" $(1) $(APPS_DIR)/$(2); \
+	elif [ "$(5)" = required ]; then echo "$(1) missing"; exit 1; \
+	else rm -f $(APPS_DIR)/$(2); echo "$(1) missing (no Zephyr): $(APPS_DIR)/$(2) left out"; fi
+endef
+
+$(APPS_DIR)/HELLO.BIN: $(HELLO_SRCS) tools/vux_tool.py
+	@mkdir -p $(APPS_DIR)
+	cd firmware/hello && $(CARGO) build --release
+	$(PYTHON) scripts/elf2bin.py --base $(HELLO_BASE) firmware/target/riscv32i-unknown-none-elf/release/hello $(APPS_DIR)/hello.bin
+	$(PYTHON) tools/vux_tool.py mkv4 --load-addr $(HELLO_BASE) --name "VUX9K hello" $(APPS_DIR)/hello.bin $@
+
+hello: $(APPS_DIR)/HELLO.BIN
+
+apps: $(APPS_DIR)/HELLO.BIN build-hack build-zephyr-demo build-zephyr-irq-echo
+	$(call app_v4,$(HACK_BUILD_DIR)/firmware.bin,HACK.BIN,hack,Hack demo,required)
+	$(call app_v4,$(ZEPHYR_DEMO_BUILD_DIR)/zephyr/zephyr.bin,ZEPHYR.BIN,riscv,Zephyr Rust demo,)
+	$(call app_v4,$(ZEPHYR_IRQ_ECHO_BUILD_DIR)/zephyr/zephyr.bin,IRQECHO.BIN,riscv,Zephyr irq_echo,)
+
 # Board self-test (firmware/hw_test), an I-RAM image in place of the first stage for
 # `make hw-smoke`; its D-RAM preload (elf2bin's firmware_d*.hex) goes to its own
 # directory and must stay all zero (scripts/hw_smoke.py checks it)
@@ -171,7 +202,7 @@ hw-smoke: hwtest firmware
 # scripts/coverage_fw.py. Minimums in coverage/thresholds.toml; report in build/coverage/fw/
 FW_COV_DIR = $(BUILD_DIR)/coverage/fw
 FW_TARGET = firmware/target/riscv32i-unknown-none-elf
-coverage-fw: emu-py firmware build-hack build-zephyr-demo build-zephyr
+coverage-fw: emu-py firmware build-hack build-zephyr-demo build-zephyr apps
 	rm -rf $(FW_COV_DIR) && mkdir -p $(FW_COV_DIR)
 	cd firmware/stage1 && $(CARGO) build --profile coverage
 	$(PYTHON) scripts/elf2bin.py $(FW_TARGET)/coverage/stage1 $(FW_COV_DIR)/stage1.bin > /dev/null
@@ -221,7 +252,7 @@ RUST_COV_EMU_ENV = export CARGO_TARGET_DIR=$(RUST_COV_EMU_TARGET) PYO3_PYTHON=$$
 coverage-rust-tool:
 	@$(CARGO) llvm-cov --version >/dev/null 2>&1 || \
 		{ echo "coverage-rust needs cargo-llvm-cov (version: ci.yml): cargo install cargo-llvm-cov --locked"; exit 1; }
-coverage-rust: coverage-rust-tool firmware hwtest build-hack build-zephyr build-zephyr-demo act4-elfs sim-lockstep
+coverage-rust: coverage-rust-tool firmware hwtest build-hack build-zephyr build-zephyr-demo apps act4-elfs sim-lockstep
 	rm -rf $(RUST_COV_DIR)/python $(RUST_COV_REPORT) && mkdir -p $(RUST_COV_DIR)/python $(RUST_COV_REPORT)
 	$(RUST_COV_EMU_ENV) && cd emu && $(CARGO) llvm-cov clean --workspace && \
 		$(CARGO) test --release && $(CARGO) build --release
@@ -391,17 +422,17 @@ test-isa-emu: emu-py
 LOCKSTEP_TRACE_FILE = $(BUILD_DIR)/sim/verilator/tb_soc_top/run_test_soc_lockstep/lockstep.trace
 
 # RTL <-> emulator lockstep: trace the programs on the RTL (Verilator), compare on the emulator
-sim-lockstep: veryl firmware build-hack emu-py
+sim-lockstep: veryl firmware build-hack hello emu-py
 	SIM=verilator $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_lockstep]"
 	LOCKSTEP_TRACE=$(LOCKSTEP_TRACE_FILE) $(PYTHON) -m pytest sim/emu/test_lockstep.py
 
 # The long programs, plus random ones for LOCKSTEP_SEEDS (default 101,102,103)
 LOCKSTEP_SEEDS ?= 101,102,103
-sim-lockstep-slow: veryl firmware build-hack emu-py
+sim-lockstep-slow: veryl firmware build-hack hello emu-py
 	LOCKSTEP_SEEDS=$(LOCKSTEP_SEEDS) LOCKSTEP_SLOW=1 SIM=verilator $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_lockstep]"
 	LOCKSTEP_SEEDS=$(LOCKSTEP_SEEDS) LOCKSTEP_SLOW=1 LOCKSTEP_TRACE=$(LOCKSTEP_TRACE_FILE) $(PYTHON) -m pytest sim/emu/test_lockstep.py
 
-test-emu: emu-py firmware hwtest build-hack build-zephyr build-zephyr-demo build-zephyr-irq-echo
+test-emu: emu-py firmware hwtest build-hack build-zephyr build-zephyr-demo build-zephyr-irq-echo apps
 	@echo "=== Running firmware and demo tests on the emulator ==="
 	$(PYTHON) -m pytest sim/emu
 
@@ -463,6 +494,12 @@ sim-zephyr-irq-echo-rtl: veryl firmware build-zephyr-irq-echo
 	@echo "=== Running the Zephyr interrupt-driven UART echo from I-RAM on the RTL ==="
 	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_zephyr_irq_echo]"
 
+# The Zephyr Rust demo as the board starts it, on the netlist (test-slow): the first stage
+# boots the second from the card, whose `run VUX9K/APPS/ZEPHYR.BIN` puts it in I-RAM (~47M cycles)
+sim-zephyr-demo-gls: synth-top firmware apps
+	@echo "=== Running the Zephyr Rust demo through the second stage's run on the GLS netlist ==="
+	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc_gls[test_soc_zephyr_s2]"
+
 sim-zephyr: sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-irq-echo-rtl
 
 sim-hack-emu: emu build-hack
@@ -478,6 +515,12 @@ sim-hack-rtl: veryl build-hack
 	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_hack]"
 
 sim-hack: sim-hack-emu sim-hack-pytest sim-hack-rtl
+
+# The real second stage booted from the card on the RTL: ls, run HELLO.BIN (PSRAM) and
+# HACK.BIN (I-RAM, Hack); ~51M cycles in two tests
+sim-stage2: veryl firmware apps
+	@echo "=== Running the second stage from the card and its run on the RTL ==="
+	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_stage2]"
 
 sim-hw-flow: veryl firmware build-hack
 	@echo "=== Running SoC Top End-to-End Hardware Verification Flow (RTL Simulation) ==="
@@ -673,7 +716,7 @@ prog-flash: $(SYNTH_DIR)/pack.fs
 
 # Every push/PR (CI). Long SoC runs are on Verilator (SIM_SOC); timings: docs/agents/sim.md,
 # "Verilator".
-test-sim: check lint-rtl emu-test test-isa-emu firmware test-fw-host test-fat firmware-size build-zephyr-demo build-zephyr-irq-echo zephyr-bc-lib build-hack test-emu coverage-fw sim-lockstep build-zephyr emu-bench sim-unit sim-psram-contract coverage-fcov test-isa test-act4 test-act4-emu test-isa-waits coverage-rust sim-gls-unit test-isa-gls test-act4-gls sim-soc-fast sim-soc-fast-icarus sim-soc-mmio sim-boot sim-hack-rtl sim-sd-quirks sim-hw-flow sim-zephyr-demo-rtl sim-zephyr-irq-echo-rtl synth-top sim-soc-gls-fast
+test-sim: check lint-rtl emu-test test-isa-emu firmware test-fw-host test-fat firmware-size build-zephyr-demo build-zephyr-irq-echo zephyr-bc-lib build-hack test-emu coverage-fw sim-lockstep build-zephyr emu-bench sim-unit sim-psram-contract coverage-fcov test-isa test-act4 test-act4-emu test-isa-waits coverage-rust sim-gls-unit test-isa-gls test-act4-gls sim-soc-fast sim-soc-fast-icarus sim-soc-mmio sim-boot sim-hack-rtl sim-sd-quirks sim-hw-flow sim-stage2 sim-zephyr-demo-rtl sim-zephyr-irq-echo-rtl synth-top sim-soc-gls-fast
 	@echo "========================================================================"
 	@echo "  [SIM] ALL RTL, GLS NETLIST, ISA & SOC SIMULATION TESTS PASSED!        "
 	@echo "========================================================================"
@@ -681,7 +724,7 @@ test-sim: check lint-rtl emu-test test-isa-emu firmware test-fw-host test-fat fi
 # Nightly / on demand (CI schedule + workflow_dispatch): the gate-level flashing flow, the
 # full flow on 4-state Icarus, the real PSRAM controller on its pin model (SoC RTL, controller
 # netlist), and the unit tests with a new random seed
-test-slow: sim-gls-hw-flow sim-hw-flow-icarus sim-lockstep-slow sim-psram-icarus sim-unit-random
+test-slow: sim-gls-hw-flow sim-hw-flow-icarus sim-lockstep-slow sim-zephyr-demo-gls sim-psram-icarus sim-unit-random
 	@echo "========================================================================"
 	@echo "  [SLOW] GLS FLOW, ICARUS FLOW, PSRAM ON ICARUS & LONG LOCKSTEP PASSED!    "
 	@echo "========================================================================"
@@ -704,7 +747,7 @@ test-hw: firmware build-hw prog-sram
 
 # The application-developer distribution (docs/APP_DEVELOPMENT.md) in build/dist/;
 # check-dist runs its demos on its own emulator, away from the repository
-dist: bitstream firmware emu-py build-hack build-zephyr-demo
+dist: bitstream firmware emu-py build-hack build-zephyr-demo apps
 	$(PYTHON) scripts/make_dist.py --out $(BUILD_DIR)/dist
 
 check-dist:

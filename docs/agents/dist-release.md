@@ -24,14 +24,18 @@ release was tested with its slots until the two-stage boot replaced them; the mo
 v0.2 to the two-stage boot gets its own test before that release.) The tag message's
 fields (`release_check.py`'s `FIELDS`, all required) and the release notes built from it
 (`release_check.py notes`) live in that script, not in the workflow. Keep in sync:
-- The dist's contents live in `make_dist.py`'s `FILES`, `check_dist.py`'s `REQUIRED` and
-  docs/APP_DEVELOPMENT.md; the docs' Python example is `check_dist.PY_EXAMPLE`, verbatim.
+- The dist's contents live in `make_dist.py`'s `FILES`, `check_dist.py`'s `REQUIRED` (and
+  `CARD_FILES`, the v4 files' mode and load address) and docs/APP_DEVELOPMENT.md; the docs'
+  Python examples are `check_dist.PY_EXAMPLE` and `PY_CARD_EXAMPLE`, verbatim.
 - MANIFEST's tool pins are parsed from `ci.yml`; `make_dist.py` fails if a pattern stops
   matching, so update `PINS` when ci.yml changes shape.
-- The distribution is for applications: the second stage for the card
-  (`sd/VUX9K/STAGE2.BIN`; the first stage is in the bitstream), no firmware hex for the
-  emulator (applications start there with `--no-firmware --load IMAGE --mode riscv|hack`),
-  no SD images.
+- The distribution is for applications: the card's files as they go on it (`sd/VUX9K/`:
+  `STAGE2.BIN`, the demos' v4 files in `APPS/`; the first stage is in the bitstream), the
+  demos' raw images for the emulator (`demos/`: applications start there with
+  `--no-firmware --load IMAGE --mode riscv|hack`), and the first stage's memory images (the
+  `firmware*.hex` the bitstream bakes in, under the dist's `emu` directory) only so that the
+  emulator boots a card image as the board does (`--firmware emu/firmware --sd`); no SD
+  images (`vux_tool.py mkfat` makes them, as `check_dist`'s card run does).
 - What applications may rely on is docs/APP_DEVELOPMENT.md, "Hardware revisions and
   compatibility": a patch release keeps applications and SD cards working; a release that
   breaks them raises minor/major and says so in its tag message's required

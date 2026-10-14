@@ -38,8 +38,19 @@ STAGE2_BASE = 0x8070_0000
 
 
 HASH_PAYLOAD = hash_program(STAGE2_BASE)
-# The second stage (make firmware)
+# The second stage (make firmware): raw, and the v4 file for the card
 STAGE2_RAW = os.path.join(REPO_ROOT, "build", "firmware", "stage2", "stage2.bin")
+STAGE2_BIN = os.path.join(REPO_ROOT, "build", "firmware", "stage2", "STAGE2.BIN")
+with open(os.path.join(REPO_ROOT, "firmware", "stage2", "src", "main.rs")) as _f:
+    _m = re.search(r"const STAGE2_VERSION: u32 = (\d+);", _f.read())
+    assert _m, "STAGE2_VERSION not found in main.rs"
+    STAGE2_VERSION = int(_m.group(1))
+S2_BANNER = f"VUX9K Stage 2 (v{STAGE2_VERSION})"
+# The demos as v4 files for \VUX9K\APPS\ (make apps)
+APPS_DIR = os.path.join(REPO_ROOT, "build", "firmware", "apps")
+# Power-on to the real second stage's prompt: the first stage's key window (1.8M cycles) and
+# its read of the 35 KB STAGE2.BIN from the card (~14.4M cycles in all on the emulator)
+S2_BOOT_CYCLES = 20_000_000
 
 CLK_PERIOD_PS = 55556  # 18.0 MHz SoC clock (tb_soc_top.sv: 2 x 27778 ps)
 UART_BAUD_CYCLES = 156  # 18.0 MHz / 115200 baud
@@ -78,6 +89,34 @@ def fat_sectors(files: dict) -> dict:
         if any(sector):
             out[lba] = sector
     return out
+
+
+def s2_card(*apps: str) -> dict:
+    """fat_sectors() of a card as the dist lays it out: the real second stage as
+    \\VUX9K\\STAGE2.BIN and the named demos of APPS_DIR (e.g. "HELLO.BIN") in
+    \\VUX9K\\APPS\\."""
+    files = {}
+    paths = [("VUX9K/STAGE2.BIN", STAGE2_BIN)] + [(f"VUX9K/APPS/{a}", os.path.join(APPS_DIR, a)) for a in apps]
+    for dest, path in paths:
+        assert os.path.exists(path), f"{path} missing; run `make firmware apps`"
+        with open(path, "rb") as f:
+            files[dest] = f.read()
+    return fat_sectors(files)
+
+
+async def s2_cmd(ser, line: str, until: bytes = S2_PROMPT, timeout_cycles: int = 4_000_000) -> str:
+    """A command line at the second stage's prompt; returns its echo and what it printed
+    up to `until`."""
+    return await send_and_wait(ser, line + "\r", until, timeout_cycles)
+
+
+async def boot_s2(dut, *apps: str, **kw):
+    """Power on with s2_card(*apps) and run to the second stage's prompt (start_soc's
+    keyword arguments in kw); returns (ser, output)."""
+    ser, _ = await start_soc(dut, sd_sectors=s2_card(*apps), **kw)
+    out = await send_and_wait(ser, "", S2_PROMPT, timeout_cycles=S2_BOOT_CYCLES, settle_bits=0)
+    assert S2_BANNER in out, out
+    return ser, out
 
 
 def soc_of(dut):

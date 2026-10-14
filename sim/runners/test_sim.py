@@ -74,6 +74,7 @@ SOC = [
     ("tb_soc_top", "test_soc_zephyr_demo"),
     ("tb_soc_top", "test_soc_zephyr_irq_echo"),
     ("tb_soc_top", "test_soc_sd_quirks"),
+    ("tb_soc_top", "test_soc_stage2"),
     pytest.param("tb_soc_top", "test_soc_hardware_flow", marks=slow),
 ]
 
@@ -81,6 +82,7 @@ SOC = [
 SOC_GLS = [
     ("tb_soc_top", "test_soc_gls_fast"),
     pytest.param("tb_soc_top", "test_soc_hardware_flow", marks=slow),
+    pytest.param("tb_soc_top", "test_soc_zephyr_s2", marks=slow),
 ]
 
 

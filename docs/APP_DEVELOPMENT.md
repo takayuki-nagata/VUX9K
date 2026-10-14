@@ -69,10 +69,23 @@ it write itself to the card as `STAGE2.BIN`, keeping the previous one as `STAGE2
 `STAGE2.BIN` is missing or broken, the first stage starts `STAGE2.OLD`. `run` is the RAM boot
 alone, for trying a second stage or recovering a card. `monitor` opens a plain terminal.
 
-The second stage in this release is provisional: it installs second stages, but it doesn't
-start applications yet. That comes with the next one, the file manager and launcher. Until
-then, run applications on the emulator (section 4); `demos/` holds the Zephyr and Hack
-demos for it.
+The second stage is a file manager and launcher (`help` lists its commands). `sd/VUX9K/APPS/`
+holds the demos as v4 files for the card; copy the directory to `\VUX9K\APPS\` (or `put`
+them there) and start one with `run`:
+
+```sh
+python3 tools/vux_tool.py put sd/VUX9K/APPS/HELLO.BIN VUX9K/APPS/HELLO.BIN
+python3 tools/vux_tool.py run-app VUX9K/APPS/HELLO.BIN
+```
+
+| File | What | Where it runs |
+|---|---|---|
+| `HELLO.BIN` | prints the first stage's a0-a2; `r` goes back to the first stage | the PSRAM at `0x8000_0000` |
+| `ZEPHYR.BIN` | the Zephyr Rust demo | I-RAM (replaces the first stage until a reset) |
+| `IRQECHO.BIN` | Zephyr's interrupt-driven UART echo | I-RAM |
+| `HACK.BIN` | the Hack C demo | I-RAM, in Hack mode |
+
+`demos/` holds the Zephyr and Hack demos' raw images for the emulator (section 4).
 
 **Upgrading from v0.2.x.** v0.2.x kept applications and a Boot Manager in slots between the
 card's partition table and its first partition; this release reads only the FAT32 partition
@@ -185,8 +198,42 @@ assert end is not None, soc.uart_received()
 print(f"demo finished after {soc.cycle} cycles ({soc.cycle / 18e6:.2f} s at 18 MHz)")
 ```
 
+The board's way, from a card: `emu/firmware/` holds the first stage's memory images (what
+the bitstream's block RAM holds), `--firmware emu/firmware` boots them, and the first stage
+starts the second stage from a card image made with `vux_tool.py mkfat`:
+
+```sh
+python3 tools/vux_tool.py mkfat card.img --file VUX9K/STAGE2.BIN=sd/VUX9K/STAGE2.BIN \
+    --file VUX9K/APPS/HELLO.BIN=sd/VUX9K/APPS/HELLO.BIN
+emu/vux9k-emu --firmware emu/firmware --sd card.img --stdio
+```
+
+At the `s2>` prompt, `run VUX9K/APPS/HELLO.BIN` starts the demo (input before the prompt
+is a key for the first stage, which then stays at its own). From Python:
+
+```python
+import sys
+sys.path[:0] = ["emu", "tools"]
+import vux9k_emu
+import vux_tool
+
+files = {}
+for name in ("STAGE2.BIN", "APPS/HELLO.BIN"):
+    with open(f"sd/VUX9K/{name}", "rb") as f:
+        files[f"VUX9K/{name}"] = f.read()
+soc = vux9k_emu.Soc("real")
+hexes = ["firmware.hex"] + [f"firmware_d{i}.hex" for i in range(4)]
+soc.load_readmemh(*(open(f"emu/firmware/{name}").read() for name in hexes))
+soc.sd_insert(vux_tool.build_fat32_image(files))
+assert soc.run_until_tx(b"s2> ", 40_000_000) is not None, soc.uart_received()
+soc.uart_send(b"run VUX9K/APPS/HELLO.BIN\r")
+assert soc.run_until_tx(b"for the first stage.\n", 20_000_000) is not None, soc.uart_received()
+print(soc.uart_received().decode().splitlines()[-2])
+```
+
 Useful methods of `Soc`: `load_app(image, mode)` (`mode` `"riscv"` or `"hack"`, as
-`--load --mode`), `reset()` (power-on reset; load the image again after it),
+`--load --mode`), `load_readmemh(iram, d0, d1, d2, d3)` (memory images, as `--firmware`),
+`sd_insert(image)` (a card, as `--sd`), `reset()` (power-on reset; load the image again after it),
 `run(max_cycles)`,
 `run_until_tx(needle, max_cycles)` (returns the output position after `needle`, or
 `None`), `uart_send(bytes)`, `uart_received()` (output so far),

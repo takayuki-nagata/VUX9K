@@ -85,6 +85,8 @@ async def test_lockstep_trace(dut):
     for pid, prog in enumerate(programs(), 1):
         if prog.slow and not SLOW:
             continue
+        missing = [p for p in prog.needs if not os.path.exists(p)]
+        assert not missing, f"{prog.name} needs {missing} (make firmware hello)"
         dut._log.info(f"lockstep program {pid}: {prog.name} ({prog.cycles} cycles)")
         dut.trace_id.value = pid
         await start_soc(

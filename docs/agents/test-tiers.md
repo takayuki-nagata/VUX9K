@@ -19,9 +19,10 @@ What `test-sim` and `test-slow` cover, and which long tests to run by hand for w
 `test-fat`: the FAT32 images rebuilt with dosfstools/mtools, which CI installs), the unit suites (RTL + GLS), `test-isa`
 (+ `test-isa-gls`, `test-isa-waits`), and the SoC tests: `sim-soc-fast` (+ `-icarus`), `sim-soc-mmio`,
 `sim-boot` (the first stage's prompt), `sim-hack-rtl`, `sim-sd-quirks`, `sim-hw-flow` (RTL RAM
-boot and install flow), `sim-zephyr-demo-rtl`, `sim-zephyr-irq-echo-rtl` and `sim-soc-gls-fast`. `make test-slow` (CI nightly + manual `workflow_dispatch`) adds
-`sim-gls-hw-flow`, `sim-hw-flow-icarus`, `sim-lockstep-slow`,
-`sim-psram-icarus` (below) and
+boot and install flow), `sim-stage2` (below), `sim-zephyr-demo-rtl`, `sim-zephyr-irq-echo-rtl` and `sim-soc-gls-fast`. `make test-slow` (CI nightly + manual `workflow_dispatch`) adds
+`sim-gls-hw-flow`, `sim-hw-flow-icarus`, `sim-lockstep-slow` (with `s2_run_hello`, the real
+second stage booted from the card running the hello demo: ~20M cycles, ~5M instructions traced),
+`sim-zephyr-demo-gls` (below), `sim-psram-icarus` (below) and
 `sim-unit-random` (the unit tests with the date as random seed). Until 2026-09 the flashing flow ran in
 no tier at all (25–35 min RTL / many hours GLS on Icarus); on Verilator it's ~16 s
 RTL / ~3–6 min GLS, which is what made it affordable per PR.
@@ -45,6 +46,16 @@ baud) to the first stage's `u` for a RAM boot, the second stage installs a new
 boots that file. The first stage's other commands are `test_soc_boot.py`'s. RTL reads the card
 at ~250 cycles a byte as the board does: the other SoC tests boot a 28-byte `STAGE2.BIN`
 (`soc_env.v4_file`), not the second stage.
+
+`test_soc_stage2.py` (`sim-stage2`) is the RTL test of the real second stage booted from the
+card (`soc_env.s2_card`: `STAGE2.BIN` and the demos of `make apps` in `\VUX9K\APPS\`): `ls`,
+`run HELLO.BIN` (the PSRAM, a0-a2, `r` back to the first stage; ~21M cycles) and `run
+HACK.BIN` (I-RAM in Hack mode; ~30M cycles). The prompt alone takes ~14.4M cycles (the 35 KB
+file at ~250 cycles a byte), and `run` loads at ~2,000-2,400 cycles a byte (the second stage
+runs from the PSRAM): the 13 KB Zephyr demo through it is ~47M cycles, minutes on the
+netlist, so it runs there only in `sim-zephyr-demo-gls` (`test_soc_zephyr_s2.py`, test-slow);
+the RTL runs the Zephyr demos preloaded into I-RAM. Cycle counts are the emulator's, which the
+lockstep holds to the RTL's; measure a new test there first (`s1_env.run_from_card` in `sim/emu/s1_env.py`).
 
 The SD and RAM-boot RTL tests (`sim-boot`, `sim-hw-flow`, `sim-sd-quirks`, the lockstep's
 `s1_*`) wait at least the first stage's key window (100 ms, 1.8M cycles) when they let it
@@ -78,6 +89,7 @@ clock-and-board.md, "Board UART output that is noise: ModemManager and the bridg
   suite writes only there (versions 9001-9003, then the second stage under test). It runs
   against the emulator too: `vux9k-emu --tcp PORT --sd <mkfat image>` and
   `--port socket://127.0.0.1:PORT`.
-- Starting the Zephyr and Hack demos on the board waits for the second stage that loads
-  applications (the old slot-based `test-hw-irq-echo` and the upgrade test from the previous
-  release went with the Boot Manager).
+- The demos start on the board through the second stage's `run` (`sd/VUX9K/APPS/`, `make
+  apps`; `vux_tool.py put`/`run-app`); `test_hardware.py` doesn't run them yet (the old
+  slot-based `test-hw-irq-echo` and the upgrade test from the previous release went with the
+  Boot Manager).

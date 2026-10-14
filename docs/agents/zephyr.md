@@ -15,8 +15,10 @@ mtime +0x0 / mtimecmp +0x8 layout is `timer_core`'s, so Zephyr's in-tree
 `riscv_machine_timer` driver serves it):
 - `vux9k`: the real board. flash = I-RAM 0x0000-0x37FF, sram = D-RAM up to 0x1FF8: limits
   the old boot manager's resident loader and mailbox set, kept until the board target moves
-  to the PSRAM (nothing loads an app into I-RAM until then). The linker
-  enforces both, so an app that outgrows the board fails to link.
+  to the PSRAM. Until then the second stage's `run` starts such an image (a v4 file loading
+  at 0, `make apps`' `ZEPHYR.BIN`/`IRQECHO.BIN`) by copying it into I-RAM over the first
+  stage and soft-resetting into it (fw_common::launch's I-RAM RV32 target, the same 14 KB
+  window). The linker enforces both limits, so an app that outgrows the board fails to link.
 - `vux9k/vux9k/ext`: 512 KB/256 KB, **emulator only** (`vux9k-emu --profile extended`).
   bc_clone_rs (`make build-zephyr`, ~260 KB) runs only here; never present it as
   running on hardware.
@@ -25,9 +27,11 @@ mtime +0x0 / mtimecmp +0x8 layout is `timer_core`'s, so Zephyr's in-tree
 `printk`/`k_msleep`/`k_uptime_get_32`) calls `rust_main()` from the `rust_demo`
 staticlib. `make build-zephyr-demo` builds it for `vux9k` into `build/zephyr-demo/`
 (cargo output included). It is tested loaded straight into I-RAM, on the emulator
-(`sim/emu/test_zephyr_demo.py`) and the RTL (`sim-zephyr-demo-rtl`); starting it on the
-board waits for the second stage that loads applications. Its `prj.conf` size settings are
-what make it fit in 14 KB.
+(`sim/emu/test_zephyr_demo.py`) and the RTL (`sim-zephyr-demo-rtl`), and as the board
+starts it, the second stage's `run VUX9K/APPS/ZEPHYR.BIN` from the card: on the emulator
+(the same test, same expectations) and on the netlist (`sim-zephyr-demo-gls`, test-slow:
+~47M cycles, most of them the second stage loading 13 KB from the PSRAM). Its `prj.conf`
+size settings are what make it fit in 14 KB.
 
 Two traps found while bringing Zephyr up on the RTL (the old Python emulator hid both):
 - **The SoC must select Zifencei.** The Zephyr SDK has no libgcc multilib for
@@ -71,6 +75,6 @@ revisions and compatibility"); this revision doesn't add them.
 callback gives, and each line comes back upper-cased in one piece (longer than the TX
 FIFO, so the timer path runs) with `rx=<n> drop=<n> err=<n>`. It fits the board without
 printk (cbprintf alone is 1.5 KB; with it the app overflowed 14 KB by 1.8 KB). Tests:
-`sim/emu/test_zephyr_irq_echo.py` and `sim-zephyr-irq-echo-rtl` (loaded into I-RAM like the
-Rust demo); its board test went with the Boot Manager's slots and comes back with the
-second stage that loads applications.
+`sim/emu/test_zephyr_irq_echo.py` (loaded into I-RAM, and through the second stage's `run
+VUX9K/APPS/IRQECHO.BIN`) and `sim-zephyr-irq-echo-rtl` (loaded into I-RAM); its board test
+went with the Boot Manager's slots and isn't back yet.

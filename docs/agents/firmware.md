@@ -17,7 +17,9 @@ Read before changing anything under `firmware/` or the file format in `tools/vux
 `build/firmware/firmware.{bin,hex}`), `stage2` (the second stage, file manager and
 launcher, linked into the PSRAM and wrapped as the v4 file
 `build/firmware/stage2/STAGE2.BIN`; built with the `coverage` profile, see "Firmware
-coverage"), `hw_test`,
+coverage"), `hello` (the hello demo, `\VUX9K\APPS\HELLO.BIN` of `make apps`: an
+application linked at the PSRAM's start that the second stage's `run` starts in place; it
+prints a0-a2 and soft-resets on `r`), `hw_test`,
 `fw_drivers` (the MMIO drivers they share) and `fw_common` (the hardware-independent
 logic, no MMIO, tested on the host with `cargo test -p fw_common --target <host triple>
 --features fat-full` and again with `fat-write` alone — `make test-fw-host`; `make
