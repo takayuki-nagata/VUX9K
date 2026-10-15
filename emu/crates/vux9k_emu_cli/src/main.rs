@@ -29,7 +29,7 @@ use vux9k_emu::{hexfile, Isa, Profile, Soc, Stop};
 const USAGE: &str = "\
 usage: vux9k-emu [options]
 
-  --profile real|extended|isa-test   memory profile (default real; extended is NOT REAL HARDWARE)
+  --profile NAME      memory profile: real (default, the board) or isa-test (riscv-tests)
   --firmware DIR      preload firmware.hex + firmware_d0-3.hex from DIR (default build/firmware)
   --no-firmware       start with empty memories
   --load FILE         raw binary into I-RAM at address 0
@@ -37,7 +37,7 @@ usage: vux9k-emu [options]
                       16-bit instructions, as hcc -r writes them), started in that ISA
                       at its load address
   --load-addr ADDR    with --mode: the image's load address and entry, as in its v4
-                      header: 0 (I-RAM; max 14 KB for riscv on real) or, riscv only, the
+                      header: 0 (I-RAM; max 14 KB) or, riscv only, the
                       PSRAM (0x80000000..); default 0x80000000 for riscv on real (where
                       the vux9k Zephyr board links), else 0
   --hex FILE          $readmemh words into I-RAM from word 0 (e.g. build/hack/firmware.hex)
@@ -99,7 +99,6 @@ fn parse_args() -> Result<Opts, String> {
             "--profile" => {
                 o.profile = match val("--profile")?.as_str() {
                     "real" => Profile::Real,
-                    "extended" => Profile::EXTENDED,
                     "isa-test" => Profile::IsaTest,
                     p => return Err(format!("unknown profile {p:?}")),
                 }
@@ -172,10 +171,10 @@ fn parse_addr(text: &str) -> Result<u32, String> {
 }
 
 /// `--load-addr`'s default: where the board starts such an image (RV32 applications are
-/// linked at the PSRAM's start; Hack runs from I-RAM). Profiles that aren't the board
-/// keep 0.
+/// linked at the PSRAM's start; Hack runs from I-RAM). The isa-test profile, which has
+/// no PSRAM, keeps 0.
 fn default_load_addr(profile: Profile, isa: Isa) -> u32 {
-    if profile.is_real() && isa == Isa::Rv32 {
+    if profile == Profile::Real && isa == Isa::Rv32 {
         XMEM_BASE
     } else {
         0

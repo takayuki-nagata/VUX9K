@@ -13,10 +13,9 @@ use emu_core::{Isa, Profile, Stop};
 fn parse_profile(name: &str) -> PyResult<Profile> {
     match name {
         "real" => Ok(Profile::Real),
-        "extended" => Ok(Profile::EXTENDED),
         "isa-test" => Ok(Profile::IsaTest),
         _ => Err(PyValueError::new_err(format!(
-            "unknown profile {name:?} (real, extended, isa-test)"
+            "unknown profile {name:?} (real, isa-test)"
         ))),
     }
 }
@@ -37,7 +36,7 @@ impl Soc {
         })
     }
 
-    /// Profile description (says NOT REAL HARDWARE for the extended profile).
+    /// Profile description.
     #[getter]
     fn profile(&self) -> String {
         self.inner.profile.describe()

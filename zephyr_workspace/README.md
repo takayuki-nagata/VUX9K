@@ -23,18 +23,17 @@ VUX9K/APPS/APP.BIN`, or with a PC), and `run` it at the `s2>` prompt (`vux_tool.
 VUX9K/APPS/APP.BIN`). It runs in place in the PSRAM; the first stage stays in I-RAM, and
 button S1 (the board's reset) goes back to it and the boot.
 
-## Boards
+## Board
 
 | Board | Memory | Runs on |
 |---|---|---|
 | `vux9k` | the PSRAM: 4 MB ROM from 0x8000_0000 (run in place, XIP; the second stage's `run` loads the image there), 3 MB RAM from 0x8040_0000 | the board (started by the second stage's `run`) and the emulator |
-| `vux9k/vux9k/ext` | 512 KB ROM, 256 KB RAM | **the emulator only** (`vux9k-emu --profile extended`); not real hardware |
 
 The CPU is RV32I + Zicsr + Zifencei, machine mode only, running at 18 MHz. On `vux9k`
 every fetch and data access waits ~35 cycles (the PSRAM has no cache in front of it), so
 code runs 15-20 times slower than from the SoC's block RAMs, which `vux9k` leaves to the
 first stage. Big applications fit `vux9k` as well: bc_clone_rs on Zephyr (~260 KB, with a
-64 KB heap and a 32 KB stack) runs there, slowly. Both boards run the kernel tickless at
+64 KB heap and a 32 KB stack) runs there, slowly. The board runs the kernel tickless at
 1000 ticks/s, so timeouts have 1 ms resolution.
 
 ## UART

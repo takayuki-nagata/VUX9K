@@ -39,11 +39,11 @@ SELF_TESTS = [
 # The board's flash (vux9k.dts): 4 MB of the PSRAM from XMEM_BASE; the second stage's `run`
 # takes an image up to its own window
 FLASH_BYTES = 4 * 1024 * 1024
-# Upper bounds, not measurements (test_record_measurements prints those): from I-RAM on the
-# extended profile the self-tests reached the prompt within 2,000M cycles and a line within
-# 200M; from the PSRAM (+35 cycles a fetch or load, +34 a store) several times that. A
-# bound costs little wall time when it is hit: most of the cycles are waits, which the
-# emulator adds in one step, not one by one.
+# Upper bounds, not measurements (test_record_measurements prints those): from I-RAM, on an
+# emulator profile with bigger memories (since removed), the self-tests reached the prompt
+# within 2,000M cycles and a line within 200M; from the PSRAM (+35 cycles a fetch or load,
+# +34 a store) several times that. A bound costs little wall time when it is hit: most of
+# the cycles are waits, which the emulator adds in one step, not one by one.
 BOOT_CYCLES = 20_000_000_000
 LINE_CYCLES = 2_000_000_000
 # The second stage loads ~2,000-2,400 cycles a byte (s1_env.RUN_LOAD_CYCLES): ~600M for bc

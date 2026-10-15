@@ -391,9 +391,6 @@ fn load_app_rejects_what_the_board_cannot_load() {
         .load_app(&vec![0x13; 14 * 1024 + 4], Isa::Rv32)
         .unwrap_err()
         .contains("fits on the board"));
-    // Not real hardware: up to the profile's I-RAM
-    let mut soc = Soc::new(Profile::EXTENDED);
-    assert!(soc.load_app(&vec![0x13; 256 * 1024], Isa::Rv32).is_ok());
 }
 
 #[test]

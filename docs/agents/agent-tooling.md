@@ -51,8 +51,7 @@ when their trigger happens.
     `SOC_RTL_PUBLIC`); `VERYL_SRCS`; `scripts/run_eqy.py`'s export of path dependencies;
     the guides' `paths:`.
   - A new loader stage or image format: the `stage1-change` skill's budgets and version
-    numbers; once a Zephyr board runs from memory only the extended profile has today, the
-    emulator-only rule in AGENTS.md and zephyr.md.
+    numbers.
   - RV32M in the CPU: the firmware crates' `.cargo/config.toml` targets, zephyr.md's
     libgcc multilib trap, isa-tests.md and sync-points.md's CSR row (`misa`).
 - **When a hook misfires** (blocks correct work, misses a mistake, or makes stops slow):

@@ -7,16 +7,16 @@ paths:
 
 Read before changing `zephyr_workspace/`. Index and the rules that apply everywhere: [`AGENTS.md`](../../AGENTS.md).
 
-## Zephyr: two boards, and what runs on which
+## Zephyr: the board `vux9k`
 
-`zephyr_workspace/boards/vux9k/` defines two HWMv2 targets sharing `vux9k-common.dtsi`
+`zephyr_workspace/boards/vux9k/` defines one HWMv2 target on `vux9k-common.dtsi`
 (18 MHz, `vux9k,uart`, and the SoC timer as `andestech,machine-timer`, whose
 mtime +0x0 / mtimecmp +0x8 layout is `timer_core`'s, so Zephyr's in-tree
 `riscv_machine_timer` driver serves it):
 - `vux9k`: the real board, linked into the PSRAM: flash = `0x8000_0000`, 4 MB (the image,
   run in place, XIP), sram = `0x8040_0000`, 3 MB (to `0x806F_FFFF`; its top 64 KB is the
   first stage's data, which the first stage sets up again at every start). The nodes are in
-  each board's dts with their unit addresses (`flash@80000000`, `memory@80400000`), not in
+  `vux9k.dts` with their unit addresses (`flash@80000000`, `memory@80400000`), not in
   the dtsi. The second stage's `run` loads such an image (a v4 file at `0x8000_0000`, `make
   apps`' `ZEPHYR.BIN`/`IRQECHO.BIN`/`BC.BIN`) in place and jumps to it (fw_common::launch's PSRAM
   target), leaving the first stage in I-RAM: a Zephyr app never returns, but Button S1 (the
@@ -24,9 +24,6 @@ mtime +0x0 / mtimecmp +0x8 layout is `timer_core`'s, so Zephyr's in-tree
   the board tests (`test_hardware.py` 13 and 14, `hw_irq_echo.py`) load the bitstream afterwards.
   Every fetch and data access there waits ~35 cycles (no cache in front of the PSRAM), so
   cycle budgets measured from the I-RAM build don't carry over.
-- `vux9k/vux9k/ext`: 512 KB/256 KB at 0 and `0x2000_0000`, **emulator only** (`vux9k-emu
-  --profile extended`). Nothing builds for it any more; never present what only runs there
-  as running on hardware.
 
 bc_clone_rs (`make build-zephyr`: `vendor/bc_clone_rs/examples/zephyr_app`, its own
 `prj.conf` with a 32 KB main stack and a 64 KB static heap, ~260 KB) is built for `vux9k`

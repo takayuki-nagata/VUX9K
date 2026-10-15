@@ -320,11 +320,9 @@ build/emu/target/release/vux9k-emu --no-firmware --load build/zephyr-demo/zephyr
 
 Interactive modes run at the SoC's 18 MHz, so the firmware's timeouts behave as on
 hardware; `--trace FILE` logs every instruction. Profiles: `real` (default: 16 KB
-I-RAM, 8 KB D-RAM and the 8 MB PSRAM, as the board) and `extended`
-(512 KB / 256 KB, same MMIO and PSRAM) —
-**the extended profile is not real hardware**; it exists for programs too big for the
-board's memories (nothing in the repository needs it any more: bc runs from the PSRAM). Python tests drive the emulator through the `vux9k_emu` module
-(`make emu-py`; helpers in `sim/emu/vux9k.py`).
+I-RAM, 8 KB D-RAM and the 8 MB PSRAM, as the board) and `isa-test` (the riscv-tests
+harness' flat 256 KB RAM, `make test-isa-emu`). Python tests drive the emulator through
+the `vux9k_emu` module (`make emu-py`; helpers in `sim/emu/vux9k.py`).
 
 `make emu-bench` (`scripts/emu_bench.py`) measures how fast that runs (millions of
 instructions per second, driven from Python as the tests do) on a fixed RV32I loop, bc,
@@ -333,14 +331,14 @@ the Zephyr and Hack demos and the first stage, and prints a digest of each final
 speed must not change any. CI prints the numbers but never fails on them; compare them on
 one machine.
 
-### Zephyr boards
+### Zephyr board
 
-`zephyr_workspace/boards/vux9k/` has two targets: `vux9k`, the real board (18 MHz, the
+`zephyr_workspace/boards/vux9k/` has one target, `vux9k`, the real board (18 MHz, the
 SoC timer as `andestech,machine-timer`, tickless at 1000 ticks/s, linked into the PSRAM: the
 image runs in place from `0x8000_0000`, 4 MB, and its RAM is the 3 MB from `0x8040_0000`; the
 second stage's `run` loads its applications there and jumps to them, the first stage staying
-in I-RAM), and `vux9k/vux9k/ext`, the extended profile for the emulator only. `make build-zephyr-demo` builds the Rust demo
-(`zephyr_workspace/app/`, Zephyr + a Rust staticlib) for the real board; `make
+in I-RAM). `make build-zephyr-demo` builds the Rust demo
+(`zephyr_workspace/app/`, Zephyr + a Rust staticlib) for it; `make
 build-zephyr` builds bc_clone_rs for it too (`make apps`' `BC.BIN`, ~260 KB: the second
 stage's load takes about half a minute, and bc runs slowly from the uncached PSRAM). `make build-zephyr-irq-echo` builds
 `zephyr_workspace/irq_echo/`, an echo through the UART driver's interrupt-driven API

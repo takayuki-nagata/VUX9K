@@ -134,9 +134,7 @@ image copies to its RAM at startup.
   C wrappers for Zephyr's API. It needs Rust (`pins.rust`) with the target
   `riscv32i-unknown-none-elf` (`rustup target add riscv32i-unknown-none-elf`). Its
   `prj.conf` keeps it small (minimal libc, `printk` without `printf`, small stacks; 13 KB).
-- The board `vux9k` enforces its 4 MB / 3 MB at link time. The board `vux9k/vux9k/ext`
-  (512 KB / 256 KB) is for the emulator's `extended` profile only; **it does not run on
-  the board**.
+- The board `vux9k` enforces its 4 MB / 3 MB at link time.
 - The console is the SoC's UART. Its driver also has the interrupt-driven API
   (`CONFIG_UART_INTERRUPT_DRIVEN`): RX on the machine external interrupt, TX refilled
   from a kernel timer since the UART has no TX interrupt (`vux9k-zephyr-bsp/README.md`,
@@ -212,8 +210,6 @@ at most 14 KB.
   `--cycles N` stops after N cycles (exit status 1 if `--until` hasn't matched): together a
   test for scripts. Interactive runs keep to 18 MHz; `--speed 0` runs as fast as possible.
 - `--trace FILE` logs every executed instruction.
-- `--profile extended` gives 512 KB / 256 KB for the `vux9k/vux9k/ext` Zephyr board.
-  **Nothing that needs it runs on the board.**
 
 Started this way, an application finds its image at its load address, the CPU in the ISA
 of `--mode` starting there, the other memories zeroed, and an empty SD card (a card image can be given with `--sd

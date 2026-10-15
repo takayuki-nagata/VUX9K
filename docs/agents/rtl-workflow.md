@@ -80,8 +80,6 @@ against the RTL: tb_soc_top.sv writes a trace in RTL builds (`VUX9K_RTL_TRACE`) 
 - **An RTL change that alters behavior needs the matching emulator change in the same
   piece of work**, and a lockstep program that exercises it if none does yet
   (`sim/integration/lockstep_programs.py`). A red lockstep is a finding, not noise.
-- The extended profile (and the `vux9k/vux9k/ext` Zephyr board) is emulator-only.
-  Nothing that only runs there may be presented as running on the board.
 - The SD card exists twice (Python for cocotb, Rust for the emulator); changes go to
   both, and `sim/sd_transcripts/` (regenerated with `SD_TRANSCRIPTS_UPDATE=1 pytest
   sim/emu/test_sd_transcripts.py`) must stay green on both sides.

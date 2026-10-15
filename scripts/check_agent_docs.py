@@ -67,7 +67,7 @@ def headings(path: Path) -> list[str]:
 def looks_like_path(token: str, top: set[str]) -> bool:
     """A path into the source tree: it starts with a top-level entry of the repository. Bare file
     names and paths inside generated or upstream trees (run directories, the riscv-tests env,
-    board names like vux9k/vux9k/ext) are too ambiguous to check."""
+    Zephyr board targets like vux9k/vux9k) are too ambiguous to check."""
     if any(c in token for c in " <>*{}$~|=") or token.startswith(("/", "http", "0x", "-")):
         return False
     first = token.split("/")[0].split(":")[0]

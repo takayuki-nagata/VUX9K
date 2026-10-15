@@ -2,8 +2,8 @@
  * Copyright (c) 2026 Takayuki Nagata
  * SPDX-License-Identifier: Apache-2.0
  *
- * The VUX9K SoC as soc/soc_top.veryl builds it; the board files add the memories (the
- * nodes flash0 and sram0 under soc, each at its own unit address).
+ * The VUX9K SoC as soc/soc_top.veryl builds it; vux9k.dts adds the memories (the nodes
+ * flash0 and sram0 under soc, in the PSRAM).
  */
 
 #include <mem.h>

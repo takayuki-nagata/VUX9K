@@ -56,8 +56,6 @@ except the handful of firmware-hex symlinks described below
   (rtl-workflow.md, "The emulator must follow the RTL").
 - **Don't raise the clock on the strength of STA**; only the fixed-placement board test
   (`make timing` + `make hw-smoke`) counts (clock-and-board.md, "The SoC clock").
-- **The extended profile and the `vux9k/vux9k/ext` Zephyr board are emulator-only.** Never
-  present anything that only runs there as running on the board.
 - **Lost board UART output: check the USB topology (`lsusb -t`) before the firmware**
   (clock-and-board.md, "Board UART output that stops"); **noise instead of output: the
   host's ModemManager** (clock-and-board.md, "Board UART output that is noise: ModemManager

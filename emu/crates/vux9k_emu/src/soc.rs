@@ -63,7 +63,7 @@ pub enum Isa {
     Hack,
 }
 
-/// Largest application image loaded into I-RAM on the real profile (`load_app`; the
+/// Largest application image loaded into I-RAM (`load_app`; the
 /// 14 KB of the second stage's I-RAM RV32 target up to v2; RV32 applications on the board
 /// now run from the PSRAM).
 pub const MAX_APP_BYTES: usize = 14 * 1024;
@@ -121,9 +121,8 @@ pub struct Soc {
     xmem: Vec<u32>,
     iram_mask: u32,
     dram_mask: u32,
-    /// From the profile, for the data bus: see `in_iram_window`; the IsaTest profile
+    /// The IsaTest profile: one flat RAM, `TOHOST` (see `rv_read_word`/`rv_write`).
     isa_test: bool,
-    iram_window: u32,
     /// IsaTest profile: the first value stored to `TOHOST`.
     pub tohost: Option<u32>,
     /// mcycle value set by a CSR write in the current instruction (replaces the count)
@@ -253,7 +252,6 @@ impl Soc {
             iram_mask: (iram_words - 1) as u32,
             dram_mask: (dram_words - 1) as u32,
             isa_test: profile == Profile::IsaTest,
-            iram_window: (profile.iram_bytes() as u32).max(0x1_0000),
             tohost: None,
             mcycle_written: None,
             cov: None,
@@ -315,18 +313,9 @@ impl Soc {
     /// soft reset) instead of guessing it from the code.
     /// Call it after `reset`, which drops the ISA again.
     pub fn load_app(&mut self, bytes: &[u8], isa: Isa) -> Result<(), String> {
-        let max = match self.profile {
-            Profile::Real => MAX_APP_BYTES,
-            p => p.iram_bytes(),
-        };
-        if bytes.is_empty() || bytes.len() > max {
-            let fits = if self.profile.is_real() {
-                " (what fits on the board)"
-            } else {
-                ""
-            };
+        if bytes.is_empty() || bytes.len() > MAX_APP_BYTES {
             return Err(format!(
-                "application image of {} bytes: must be 1 to {max} bytes{fits}",
+                "application image of {} bytes: must be 1 to {MAX_APP_BYTES} bytes (what fits on the board)",
                 bytes.len()
             ));
         }
@@ -519,11 +508,10 @@ impl Soc {
         }
     }
 
-    /// Data addresses that reach I-RAM (the `addr[31:16] == 0` rule of soc_ram/soc_top;
-    /// the extended profile widens it to the I-RAM size).
+    /// Data addresses that reach I-RAM (the `addr[31:16] == 0` rule of soc_ram/soc_top).
     #[inline]
     fn in_iram_window(&self, addr: u32) -> bool {
-        addr < self.iram_window
+        addr >> 16 == 0
     }
 
     /// MMIO read by the instruction fetched in cycle `t`. The registered peripherals
