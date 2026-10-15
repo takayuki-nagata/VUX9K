@@ -478,7 +478,7 @@ Short tests run on Icarus, long SoC/GLS runs on Verilator (`SIM_UNIT` / `SIM_SOC
 | **Static Timing (STA)**| `make sta` | ~15 sec | Exhaustive post-PnR timing analysis, Fmax verification, and critical path breakdown (`build/synth/soc_sta.json`) |
 | **Real Hardware** | `make test-hw` | ~4 min | The two-stage boot, the second stage's file commands and the demos it starts, on the Tang Nano 9K with a FAT32 card via `scripts/test_hardware.py` (14 tests) |
 | **Real Hardware, Release Tree** | `make test-hw-dist DIST=<dir>` | ~4 min | The same 14 tests with a `make dist` tree's bitstream, second stage and demos, nothing rebuilt: how a release candidate is tested ([`docs/RELEASING.md`](docs/RELEASING.md)) |
-| **Board UART Interrupts** | `make test-hw-irq-echo` | ~20 sec | The interrupt-driven UART echo on the board (`scripts/hw_irq_echo.py`): put on the card as `\VUX9K\APPS\IRQECHO.BIN` and started by the running second stage's `run`, five 256-byte lines, then the bitstream loaded into SRAM again from `build/synth/pack.fs` |
+| **Board UART Interrupts** | `make test-hw-irq-echo` | ~20 sec | The interrupt-driven UART echo on the board (`scripts/hw_irq_echo.py`): put on the card as `\VUX9K\APPS\IRQECHO.BIN` and started by the running second stage's `run`, five 256-byte lines, then the bitstream loaded into SRAM again from `build/synth/pack.fs`; `make test-hw-irq-echo-dist DIST=<dir>` takes both from a `make dist` tree |
 
 ### Real Hardware Test Suite (14 Automated Checks)
 `scripts/test_hardware.py` needs a FAT32 card in the board (it stays there: the suite sets

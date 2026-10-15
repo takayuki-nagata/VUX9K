@@ -100,5 +100,8 @@ clock-and-board.md, "Board UART output that is noise: ModemManager and the bridg
   host could fail it in `test-sim`; run it by hand after changing the second stage's commands
   or the suite; at `--speed 0` test 7 misses the first stage's key window).
 - `make test-hw-irq-echo` (`scripts/hw_irq_echo.py`): the interrupt-driven UART echo put on
-  the card and started by the running second stage, then the bitstream loaded again. The
+  the card and started by the running second stage, then the bitstream loaded again
+  (`build/synth/pack.fs`). After `test-hw-dist`, run `make test-hw-irq-echo-dist DIST=<dir>`
+  instead: it takes `IRQECHO.BIN` and `pack.fs` from the tree. Given only `--bin`, the script
+  once left the board on a weeks-old local `pack.fs` after a dist run. The
   upgrade test from the previous release went with the Boot Manager's slots.

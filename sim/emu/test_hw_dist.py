@@ -102,6 +102,19 @@ def test_demo_expectations_are_the_emulator_tests():
     assert all(ln in src for ln in (*test_hardware.ZEPHYR_LINES, test_hardware.ZEPHYR_END))
 
 
+def test_irq_echo_files_come_from_the_dist(tmp_path):
+    import hw_irq_echo
+
+    dist = make_dist(tmp_path, 1)
+    app, pack_fs = hw_irq_echo.resolve_files(hw_irq_echo.parse_args(["--dist", dist]))
+    assert app == os.path.join(dist, "sd", "VUX9K", "APPS", "IRQECHO.BIN")
+    assert pack_fs == os.path.join(dist, "bitstream", "pack.fs")  # not the working tree's
+    app, pack_fs = hw_irq_echo.resolve_files(hw_irq_echo.parse_args(["--bin", "X.BIN"]))
+    assert (app, pack_fs) == ("X.BIN", os.path.join(REPO_ROOT, "build", "synth", "pack.fs"))
+    with pytest.raises(SystemExit):
+        hw_irq_echo.resolve_files(hw_irq_echo.parse_args([]))
+
+
 def test_bitstream_load_errors(tmp_path):
     assert test_hardware.load_bitstream(None, str(tmp_path / "pack.fs")) == "no openFPGALoader (--loader)"
     assert "missing" in test_hardware.load_bitstream("openFPGALoader", str(tmp_path / "pack.fs"))

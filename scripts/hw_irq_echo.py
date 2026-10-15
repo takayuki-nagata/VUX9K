@@ -9,8 +9,10 @@ started with its `run`, then sent bursts longer than both 32-byte UART FIFOs; ea
 back upper-cased with "rx=<n> drop=0 err=0" (no byte lost in the app or by the UART). The
 application runs in I-RAM in place of the first stage and never returns, so the bitstream
 is loaded into the FPGA's SRAM from --pack-fs at the end (not openFPGALoader --reset, which
-loads the flash's bitstream). Needs the board at a prompt of either stage with a second stage
-on the card (as make test-hw leaves it); the card stays in the board.
+loads the flash's bitstream). With --dist both come from a `make dist` tree, so the board is
+left on that tree's bitstream rather than the working tree's. Needs the board at a prompt of
+either stage with a second stage on the card (as make test-hw leaves it); the card stays in
+the board.
 """
 
 import argparse
@@ -22,7 +24,15 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
 
-from test_hardware import CARD_APPS, find_loader, load_bitstream, mkdir_p, usb_hub_neighbours  # noqa: E402
+from test_hardware import (  # noqa: E402
+    CARD_APPS,
+    DIST_APPS_DIR,
+    DIST_FILES,
+    find_loader,
+    load_bitstream,
+    mkdir_p,
+    usb_hub_neighbours,
+)
 
 import tools.vux_tool as vux_tool  # noqa: E402 (needs REPO_ROOT on sys.path)
 
@@ -81,21 +91,35 @@ def run(ser, image: bytes, size: int, count: int) -> bool:
     return passed
 
 
-def main():
+def resolve_files(args):
+    """(app, pack.fs): --bin and --pack-fs, else from --dist, else the working tree's build."""
+    if args.dist:
+        app = args.bin or os.path.join(args.dist, DIST_APPS_DIR, "IRQECHO.BIN")
+        return app, args.pack_fs or os.path.join(args.dist, DIST_FILES["pack_fs"])
+    if not args.bin:
+        sys.exit("hw_irq_echo: --bin or --dist is needed")
+    return args.bin, args.pack_fs or os.path.join(REPO_ROOT, "build", "synth", "pack.fs")
+
+
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
-    parser.add_argument("--bin", required=True, help="the echo app: IRQECHO.BIN (make apps) or its zephyr.bin")
+    parser.add_argument("--bin", help="the echo app: IRQECHO.BIN (make apps) or its zephyr.bin")
+    parser.add_argument("--dist", metavar="DIR", help="a `make dist` tree: its IRQECHO.BIN and pack.fs")
     parser.add_argument(
         "--pack-fs",
-        default=os.path.join(REPO_ROOT, "build", "synth", "pack.fs"),
-        help="bitstream to load into SRAM afterwards (back to the first stage)",
+        help="bitstream to load into SRAM afterwards, back to the first stage (default: build/synth/pack.fs)",
     )
     parser.add_argument("--loader", default="openFPGALoader", help="openFPGALoader to load it with")
     parser.add_argument("--port", default="auto", help="serial port (default: auto)")
     parser.add_argument("--size", type=int, default=256, help="bytes per burst (default: 256)")
     parser.add_argument("--count", type=int, default=5, help="bursts (default: 5)")
-    args = parser.parse_args()
+    return parser.parse_args(argv)
 
-    with open(args.bin, "rb") as f:
+
+def main():
+    args = parse_args()
+    app, pack_fs = resolve_files(args)
+    with open(app, "rb") as f:
         image = v4_file(f.read())
     ser = vux_tool.open_port(args.port, baudrate=115200, timeout=0.1)
     neighbours = usb_hub_neighbours(ser.port)
@@ -116,7 +140,7 @@ def main():
         if str(args.port).startswith("socket://"):
             print("[INFO] the emulator: no bitstream to load")
         else:
-            err = load_bitstream(find_loader(args.loader), args.pack_fs)
+            err = load_bitstream(find_loader(args.loader), pack_fs)
             if err:
                 print(f"[WARN] {err}: the board stays in the echo app until the bitstream is loaded")
     print("IRQ echo on the board: " + ("PASSED" if passed else "FAILED"))

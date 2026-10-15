@@ -29,13 +29,15 @@ tar -xzf build/candidate/vux9k-dist.tar.gz -C build/candidate    # -> build/cand
 
 ```sh
 make test-hw-dist DIST=build/candidate/dist
+make test-hw-irq-echo-dist DIST=build/candidate/dist
 git switch --detach $SHA && make timing hw-smoke
 ```
 
 `test-hw-dist` loads the candidate's `pack.fs` and runs the hardware suite with its
 second stage and demos (14 tests; it loads `pack.fs` again after each I-RAM demo); nothing
-is rebuilt (the card stays in the board and must be FAT32). `make test-hw-irq-echo` runs
-the interrupt-driven UART echo through the second stage (it builds the demos locally). `hw-smoke` runs `hw_test` on every seed of a
+is rebuilt (the card stays in the board and must be FAT32). `make test-hw-irq-echo-dist
+DIST=build/candidate/dist` runs the interrupt-driven UART echo through the second stage with
+the candidate's `IRQECHO.BIN`, then loads its `pack.fs` again. `hw-smoke` runs `hw_test` on every seed of a
 local place and route of the same commit, which covers the CPU more thoroughly than the
 suite. The candidate's seed is one of them (`MANIFEST.json`); if the local `pack.fs` has
 the same SHA-256 as the candidate's, hw-smoke tested exactly its placement (note it in
