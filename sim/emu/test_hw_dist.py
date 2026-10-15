@@ -16,6 +16,7 @@ import os
 import socket
 import subprocess
 import sys
+import threading
 
 import pytest
 
@@ -135,10 +136,22 @@ def test_suite_on_the_emulator(tmp_path):
     emu = subprocess.Popen(
         [EMU, "--tcp", str(port), "--sd", str(img)], cwd=REPO_ROOT, stderr=subprocess.PIPE, text=True
     )
-    try:
+    # The emulator's stderr is read to its end in a thread (a full pipe would stop it);
+    # the test waits for the listening line at most 30 s
+    listening = threading.Event()
+    log: list = []
+
+    def drain():
         assert emu.stderr
-        while "waiting for a UART client" not in (line := emu.stderr.readline()):
-            assert line, "the emulator stopped before listening"
+        for line in emu.stderr:
+            log.append(line)
+            if "waiting for a UART client" in line:
+                listening.set()
+
+    reader = threading.Thread(target=drain, daemon=True)
+    reader.start()
+    try:
+        assert listening.wait(30), f"the emulator did not listen: {''.join(log)[-2000:]}"
         r = subprocess.run(
             [
                 sys.executable,

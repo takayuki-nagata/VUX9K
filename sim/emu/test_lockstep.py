@@ -81,6 +81,8 @@ def _rtl_instrs(path, span, uart):
             c = int(v[0], 16)
             if kind == b"F":
                 if cur is not None:
+                    # What done() relies on: every instruction takes 2 cycles or more
+                    assert c > cur.cycle + 1, f"F at {c:#x} right after the one at {cur.cycle:#x}"
                     yield done(cur)
                 cur = Instr(c, None, int(v[1], 16), [], [], [])
             elif kind == b"M":
