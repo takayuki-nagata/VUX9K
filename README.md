@@ -269,7 +269,7 @@ and `..`, and 8.3 or long names, relative to the current directory:
 | `rm FILE` | Remove a file |
 | `mkdir DIR`, `rmdir DIR` | Make a directory (8.3 name), remove an empty one |
 | `mv SRC DST` | Move or rename a file (`DST` may be a directory) |
-| `put NAME` | Receive a file over the UART (transfer v2: `vux_tool.py put`) as `NAME` (8.3 names; an existing file is replaced) |
+| `put NAME` | Receive a file over the UART (transfer v2: `vux_tool.py put`) as `NAME` (8.3 names; an existing file is replaced once the new one is on the card, written as `~PUT.TMP` until then) |
 | `run FILE` | Start a VUX9 v4 application (below) |
 | `info` | The card, free space, versions |
 | `install [-u]` | Receive a second stage and install it as `\VUX9K\STAGE2.BIN` (`-u`: unchecked, for tests) |
@@ -282,7 +282,7 @@ says (`fw_common::launch`):
 | Header | Where it runs | How it starts |
 |:---|:---|:---|
 | RV32, load address in `0x8000_0000`-`0x806F_FFFF` | The PSRAM below the second stage | In place: D-RAM zeroed, a jump to the entry point with `a0`-`a2` as the first stage handed them over. The first stage stays in I-RAM: a soft reset goes back to it |
-| RV32, load address `0` (at most 14 KB, `0x0000`-`0x37FF`) | I-RAM | Copied into I-RAM over the first stage, D-RAM zeroed, soft reset in RV32 mode |
+| RV32, load address and entry point `0` (at most 14 KB, `0x0000`-`0x37FF`) | I-RAM | Copied into I-RAM over the first stage, D-RAM zeroed, soft reset in RV32 mode (it starts at `0`) |
 | Hack, a word-aligned load address in I-RAM (at most 16 KB) | I-RAM | As above, in Hack mode |
 
 An I-RAM application replaces the first stage until the FPGA is configured again (power

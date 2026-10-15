@@ -294,6 +294,10 @@ impl<D: BlockDevice> Volume<D> {
     }
 }
 
+/// The name `Volume::replace` writes a new file under before it takes the old one's place.
+#[cfg(feature = "fat-full")]
+pub const REPLACE_TMP: [u8; 11] = *b"~PUT    TMP";
+
 #[cfg(feature = "fat-full")]
 impl<D: BlockDevice> Volume<D> {
     /// Make the directory `name` (8.3) in directory `parent`: one cluster, zeroed, with
@@ -365,6 +369,34 @@ impl<D: BlockDevice> Volume<D> {
         self.begin_change()?;
         self.delete_slots(entry, false)?;
         self.free_chain(entry.cluster)
+    }
+
+    /// Write `data` as the file `name` (8.3) in `dir`, replacing a file of that name.
+    /// The old file stays until the new one is on the card: the data is written as
+    /// `REPLACE_TMP` (one left by a cut replace is removed first), then the old file is
+    /// removed and the new one renamed. A full card fails with the old file intact; a cut
+    /// leaves the old file, or the new data as `~PUT.TMP`.
+    pub fn replace(
+        &mut self,
+        dir: &DirEntry,
+        name: &[u8; 11],
+        data: &[u8],
+    ) -> Result<DirEntry, FatError> {
+        if self.find(dir, name)?.is_some_and(|e| e.is_dir()) {
+            return Err(FatError::WrongType);
+        }
+        if let Some(stale) = self.find(dir, &REPLACE_TMP)? {
+            self.remove(&stale)?;
+        }
+        if *name == REPLACE_TMP {
+            return self.create(dir, name, data);
+        }
+        let new = self.create(dir, &REPLACE_TMP, data)?;
+        if let Some(old) = self.find(dir, name)? {
+            self.remove(&old)?;
+        }
+        self.rename(dir, &new, name)?;
+        Ok(DirEntry { name: *name, ..new })
     }
 
     /// Move the file `entry` from directory `src_dir` (where it was found) to `dst_dir`

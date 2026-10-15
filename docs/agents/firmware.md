@@ -125,8 +125,8 @@ release/`.
   `stage2::install`); `fat-full` (with `fat-write`; the second stage's file manager):
   `fat/names.rs` (`list` with long names, read only and ASCII with `?`; `resolve`,
   `resolve_parent`, `locate` for paths with `.` and `..`, 8.3 name first, then long name)
-  and `mkdir`, `rmdir`, `move_to`, `free_clusters`, and `install` making a missing
-  `\VUX9K\`. New entries get 8.3 names only. What the first stage prints for an error
+  and `mkdir`, `rmdir`, `move_to`, `replace` (the second stage's `put`), `free_clusters`,
+  and `install` making a missing `\VUX9K\`. New entries get 8.3 names only. What the first stage prints for an error
   (`boot::put_boot_error`) is in its binary, so `FatError::NotEmpty` exists only with
   `fat-full`.
 - **Writes are ordered for power loss** (feature `fat-write`, `fat/write.rs`): a new file's
@@ -136,14 +136,16 @@ release/`.
   entry; a removed one's entry goes before its chain; a moved file's new entry is written
   before the old one is removed (a cut can leave it under both names, never under none;
   the two then share one chain, and removing either frees the other's clusters — nothing
-  detects that yet, `fsck.fat` on a PC does).
+  detects that yet, `fsck.fat` on a PC does). `replace` writes the new file as
+  `~PUT.TMP` before it removes the old one and renames it (a full card or a cut never
+  leaves the name with nothing: the old bytes, or the new ones as `~PUT.TMP`).
   `fat::stage2::install` replaces `\VUX9K\STAGE2.BIN` through `.NEW` and `.OLD` so that
   one of them is always bootable for `select_boot` (a `.BIN` that doesn't load is replaced
   without touching `.OLD`); `tests/fat.rs` cuts the card off after every possible write of
   an install, and of the install after a cut one, and checks exactly that, that every
   chain a directory points to stays valid, and that the next install recovers. Its
   free clusters hold old bytes where order matters (a directory cluster must be zeroed
-  before it is linked). Keep a new write step inside those tests (mkdir, rmdir and move_to have theirs in
+  before it is linked). Keep a new write step inside those tests (mkdir, rmdir, move_to and replace have theirs in
   `tests/fat.rs`'s `full` module, which also checks every directory's `.` and `..`).
 - **The SD SCLK divider survives a soft reset** (`0x4000_200C`; only power-on resets it).
   `SdCard::init` sets `SD_DIV_INIT` before every card init (a strict card reports a

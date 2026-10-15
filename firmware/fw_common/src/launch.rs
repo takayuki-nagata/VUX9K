@@ -8,7 +8,7 @@
 //! | Target | Header | Start |
 //! |---|---|---|
 //! | `Psram` | `MODE_RISCV`, inside `XMEM_BASE..STAGE2_BASE` | loaded in place; D-RAM zeroed, `fence.i`, a jump to the entry with a0-a2 as the first stage hands them over |
-//! | `IramRv` | `MODE_RISCV`, `load_addr` 0, inside the 14 KB of `IRAM_APP_BYTES` | copied into I-RAM, D-RAM zeroed, `BOOT_MODE_RV32`, soft reset |
+//! | `IramRv` | `MODE_RISCV`, `load_addr` and entry 0, inside the 14 KB of `IRAM_APP_BYTES` | copied into I-RAM, D-RAM zeroed, `BOOT_MODE_RV32`, soft reset |
 //! | `IramHack` | `MODE_HACK`, a word-aligned `load_addr` inside I-RAM | as `IramRv`, with the Hack boot mode |
 //!
 //! An I-RAM payload replaces the first stage, so it is written there only after its CRC
@@ -78,7 +78,8 @@ impl Target {
 
 /// The target a checked header runs on (the module comment's table): RV32 loading at 0
 /// runs from I-RAM, elsewhere from the PSRAM; Hack from I-RAM. `OutOfWindow` when the
-/// payload leaves the target's window, or a Hack payload doesn't start on an I-RAM word.
+/// payload leaves the target's window, or a Hack payload doesn't start on an I-RAM word;
+/// `BadEntry` for RV32 in I-RAM with an entry other than 0 (the soft reset starts there).
 pub fn plan(h: &ImageHeader) -> Result<Target, ImageError> {
     let target = match h.mode {
         MODE_RISCV if h.load_addr == map::IRAM_BASE as u32 => Target::IramRv,
@@ -91,6 +92,10 @@ pub fn plan(h: &ImageHeader) -> Result<Target, ImageError> {
     // The copy into I-RAM writes whole words (I-RAM has no byte enables)
     if target != Target::Psram && h.load_addr & 3 != 0 {
         return Err(ImageError::OutOfWindow);
+    }
+    // The soft reset starts RV32 at 0, whatever the header's entry says
+    if target == Target::IramRv && h.entry_point != 0 {
+        return Err(ImageError::BadEntry(h.entry_point));
     }
     Ok(target)
 }

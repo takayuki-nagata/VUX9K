@@ -90,6 +90,10 @@ fn plan_picks_the_target_from_mode_and_load_address() {
     h.load_addr = 0;
     h.entry_point = 16;
     assert_eq!(plan(&h), Err(BadEntry(16)));
+    // Inside the payload, but the soft reset would start at 0 anyway
+    h.size = 0x100;
+    h.entry_point = 0x40;
+    assert_eq!(plan(&h), Err(BadEntry(0x40)));
 }
 
 #[test]

@@ -110,7 +110,7 @@ def test_starts_rv32_only():
     hack = stage2(mode="hack", load_addr=STAGE2_BASE)
     soc = start(files={BIN: hack})
     out = wait_for(soc, S1_PROMPT, BOOT_CYCLES)
-    assert "[BOOT] STAGE2.BIN v1 " in out
+    assert f"[BOOT] STAGE2.BIN v{STAGE2_VERSION} " in out
     assert "[BOOT] not RV32, mode 0\n" in out, out
 
 

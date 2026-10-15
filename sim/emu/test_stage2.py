@@ -342,6 +342,14 @@ def test_put_and_cat_round_trip(tool):
     assert vux_tool.put(ser, "README.TXT", b"new\n") == "[PUT] OK 4 bytes"
     assert vux_tool.s2_cmd(ser, "cat README.TXT") == "new\n"
     assert vux_tool.s2_cmd(ser, "ls").count("README.TXT") == 1
+    # A ~PUT.TMP a cut put left behind goes; ~PUT.TMP itself can be put
+    assert vux_tool.put(ser, "~PUT.TMP", b"stale\n") == "[PUT] OK 6 bytes"
+    assert vux_tool.put(ser, "~PUT.TMP", b"again\n") == "[PUT] OK 6 bytes"
+    assert vux_tool.s2_cmd(ser, "cat ~PUT.TMP") == "again\n"
+    vux_tool.put(ser, "README.TXT", b"newer\n")
+    listing = vux_tool.s2_cmd(ser, "ls")
+    assert "~PUT.TMP" not in listing and listing.count("README.TXT") == 1
+    assert vux_tool.s2_cmd(ser, "cat README.TXT") == "newer\n"
     # Refused before the transfer: a directory, a bad name, a missing directory
     for path, why in [("TEST", "is a directory"), ("TOOLONGNAME.TXT", "bad name"), ("NOPE/X.TXT", "not found")]:
         with pytest.raises(vux_tool.UploadError, match=f"\\[ERR\\] {why}"):
@@ -368,6 +376,10 @@ def test_disk_full(tool):
         vux_tool.put(ser, "BIG.BIN", bytes(3 * 512))
     assert "BIG.BIN" not in vux_tool.s2_cmd(ser, "ls")
     assert vux_tool.put(ser, "SMALL.BIN", bytes(2 * 512)) == "[PUT] OK 1024 bytes"
+    # Replacing it needs room for both: the old one stays
+    with pytest.raises(vux_tool.S2Error, match="card full"):
+        vux_tool.put(ser, "SMALL.BIN", bytes([1]) * 512)
+    assert vux_tool.s2_cmd(ser, "cat SMALL.BIN") == "\0" * 1024 + "\n"  # cat ends the line
     with pytest.raises(vux_tool.S2Error, match="card full"):
         vux_tool.s2_cmd(ser, "mkdir NEWDIR")
     vux_tool.s2_cmd(ser, "rm SMALL.BIN")
@@ -504,6 +516,8 @@ REFUSED = {
     "HACKODD.BIN": (v4(b"\x12\x34" * 8, mode="hack", load_addr=2), "loads outside"),
     "MODE.BIN": (bad_mode(v4(IRAM_APP, load_addr=0)), "not RV32 or Hack, mode 2"),
     "ENTRY.BIN": (v4(IRAM_APP, load_addr=0, entry_point=2), "bad entry point 00000002"),
+    # Inside the payload, but the soft reset starts I-RAM at 0
+    "ENTRYIN.BIN": (v4(IRAM_APP, load_addr=0, entry_point=4), "bad entry point 00000004"),
     "EMPTY.BIN": (v4(b"", load_addr=0), "empty"),
     "SHORT.BIN": (b"VUX9", "not a VUX9 v4 file"),
 }

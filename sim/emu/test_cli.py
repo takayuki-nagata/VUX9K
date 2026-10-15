@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 
+from s1_env import STAGE2_VERSION
 from vux9k import REPO_ROOT, sd_image
 
 # VUX9K_EMU_BIN: an instrumented build (`make coverage-rust`)
@@ -121,7 +122,9 @@ def test_mkfat_card_boots_the_second_stage(tmp_path):
 
     def dialog(recv_until, send):
         out = recv_until(b"s2> ")
-        assert b"[BOOT] STAGE2.BIN v1" in out and b"[S2] a0=0x00000001 a1=0x00000800" in out, out
+        assert f"[BOOT] STAGE2.BIN v{STAGE2_VERSION} ".encode() in out and b"[S2] a0=0x00000001 a1=0x00000800" in out, (
+            out
+        )
 
     tcp_session(["--sd", str(img)], dialog)
 

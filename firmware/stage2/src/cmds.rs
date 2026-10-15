@@ -4,7 +4,10 @@
 //! The file commands: paths resolved from the working directory (fw_common::fat's
 //! `resolve`, `resolve_parent`, `locate`: `.`, `..`, 8.3 or long names), new names 8.3.
 //! The card is mounted again for every command (the first stage's card, or one inserted
-//! since). Errors are one `[ERR] ` line.
+//! after a RAM boot without one). A card swapped for another while the stage runs is not
+//! initialized again (fw_drivers' `ensure_init`), so the commands fail on it until `reset`;
+//! the working directory is kept as a cluster of the card it was set on. Errors are one
+//! `[ERR] ` line.
 
 use fw_common::boot::put_boot_error;
 use fw_common::fat::stage2::BootError;
@@ -255,7 +258,8 @@ pub fn receive(max: u32) -> Option<&'static [u8]> {
 }
 
 /// `put NAME`: the file over transfer v2, then written as NAME (8.3), replacing a file
-/// of that name. The name is checked before the transfer.
+/// of that name (`Volume::replace`: the old file stays until the new one is written).
+/// The name is checked before the transfer.
 pub fn put(c: &mut Card, path: &[u8]) -> Result {
     let (vol, cwd) = (&mut c.vol, &c.cwd);
     let (dir, name) = vol.resolve_parent(cwd, path)?;
@@ -265,10 +269,7 @@ pub fn put(c: &mut Card, path: &[u8]) -> Result {
     let Some(data) = receive(SCRATCH_BYTES) else {
         return Ok(());
     };
-    if let Some(old) = vol.find(&dir, &name)? {
-        vol.remove(&old)?;
-    }
-    vol.create(&dir, &name, data)?;
+    vol.replace(&dir, &name, data)?;
     Uart::print_str("[PUT] OK ");
     Uart::print_dec(data.len() as u32);
     Uart::print_str(" bytes\n");

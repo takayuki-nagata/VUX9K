@@ -2014,6 +2014,74 @@ mod write {
             }
         }
 
+        #[test]
+        fn replace_keeps_the_old_file_until_the_new_one_is_written() {
+            use fw_common::fat::REPLACE_TMP;
+            let mut vol = mount(stale(image("mkfs_lfn"))).unwrap();
+            let root = vol.root();
+            let free = vol.free_clusters().unwrap();
+            // A new name, then the same name again: one file, the old clusters given back
+            let e = vol.replace(&root, b"NEW     TXT", b"first").unwrap();
+            assert_eq!(vol.find(&root, b"NEW     TXT").unwrap(), Some(e));
+            let e = vol.replace(&root, b"NEW     TXT", b"second").unwrap();
+            assert_eq!(vol.find(&root, b"NEW     TXT").unwrap(), Some(e));
+            assert_eq!(read_file(&mut vol, "NEW.TXT").unwrap(), b"second");
+            assert_eq!(vol.find(&root, &REPLACE_TMP).unwrap(), None);
+            assert_eq!(vol.free_clusters().unwrap(), free - 1);
+            consistent(&vol.device().img, true);
+            // A stale ~PUT.TMP goes; replacing ~PUT.TMP itself writes it once
+            vol.create(&root, &REPLACE_TMP, b"stale").unwrap();
+            vol.replace(&root, b"NEW     TXT", b"third").unwrap();
+            assert_eq!(vol.find(&root, &REPLACE_TMP).unwrap(), None);
+            vol.replace(&root, &REPLACE_TMP, b"tmp").unwrap();
+            vol.replace(&root, &REPLACE_TMP, b"tmp2").unwrap();
+            assert_eq!(read_file(&mut vol, "~PUT.TMP").unwrap(), b"tmp2");
+            consistent(&vol.device().img, true);
+            // Not over a directory
+            assert_eq!(
+                vol.replace(&root, b"PROJEC~1   ", b"x"),
+                Err(FatError::WrongType)
+            );
+            // A full card: the old file stays
+            let mut vol = mount(hogged(image("mkfs_s1"), 0)).unwrap();
+            let root = vol.root();
+            assert_eq!(
+                vol.replace(&root, b"README  TXT", b"new"),
+                Err(FatError::DiskFull)
+            );
+            assert_eq!(read_file(&mut vol, "README.TXT").unwrap(), b"hello\n");
+            assert_eq!(vol.find(&root, &REPLACE_TMP).unwrap(), None);
+            consistent(&vol.device().img, true);
+        }
+
+        #[test]
+        fn power_loss_during_replace() {
+            fn op(vol: &mut Volume<MemDisk>) -> Result<(), FatError> {
+                let root = vol.root();
+                vol.replace(&root, b"README  TXT", b"replaced").map(|_| ())
+            }
+            // The old bytes under the name, or the new ones under it or as ~PUT.TMP; a
+            // replace after the cut finishes the job
+            cut_everywhere(&stale(image("mkfs_lfn")), op, &|img, done| {
+                others_intact(img);
+                let mut vol = mount(img.to_vec()).unwrap();
+                let file = read_file(&mut vol, "README.TXT").ok();
+                let tmp = read_file(&mut vol, "~PUT.TMP").ok();
+                match &file {
+                    Some(d) => assert!(d == b"hello\n" || d == b"replaced"),
+                    None => assert_eq!(tmp.as_deref(), Some(&b"replaced"[..])),
+                }
+                if done {
+                    assert_eq!((file.as_deref(), tmp), (Some(&b"replaced"[..]), None));
+                    consistent(img, true);
+                }
+                op(&mut vol).unwrap();
+                assert_eq!(read_file(&mut vol, "README.TXT").unwrap(), b"replaced");
+                assert!(read_file(&mut vol, "~PUT.TMP").is_err());
+                reachable_ok(&vol.device().img);
+            });
+        }
+
         /// The listing of `path` on `img`, or None if it doesn't resolve.
         fn dir_listing(img: &[u8], path: &str) -> Option<Vec<(String, Option<String>)>> {
             let mut vol = mount(img.to_vec()).unwrap();

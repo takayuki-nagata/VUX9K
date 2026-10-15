@@ -24,6 +24,8 @@ pub mod stage2;
 #[cfg(feature = "fat-write")]
 mod write;
 pub use dir::{to_short_name, DirEntry, ATTR_DIR, ATTR_LFN, ATTR_VOLUME};
+#[cfg(feature = "fat-full")]
+pub use write::REPLACE_TMP;
 
 pub const SECTOR: usize = 512;
 

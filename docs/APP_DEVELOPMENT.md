@@ -170,7 +170,7 @@ where it runs:
 
 | Application | `mkv4` | Where it runs |
 |---|---|---|
-| Zephyr on the board `vux9k` | `--load-addr 0` (RV32) | I-RAM, at most 14 KB (`0x0000`-`0x37FF`), started by a soft reset |
+| Zephyr on the board `vux9k` | `--load-addr 0` (RV32; the entry point must stay 0) | I-RAM, at most 14 KB (`0x0000`-`0x37FF`), started by a soft reset at `0` |
 | Hack | `--mode hack` (load address 0) | I-RAM, at most 16 KB, in Hack mode |
 | RV32 linked into the PSRAM | the default (`0x8000_0000`) or `--load-addr` inside `0x8000_0000`-`0x806F_FFFF` | the PSRAM, in place |
 
