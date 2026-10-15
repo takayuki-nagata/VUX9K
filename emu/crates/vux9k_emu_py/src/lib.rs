@@ -48,12 +48,15 @@ impl Soc {
         self.inner.load_iram(addr, data);
     }
 
-    /// Start an application image from I-RAM address 0, as a loader that soft-resets
-    /// into it does: `mode` "riscv" or "hack" (a Hack image is big-endian 16-bit
-    /// instructions, as `hcc -r` writes them). The CPU runs it in that ISA from
-    /// the first fetch; call this after `reset()`, which drops the ISA again.
-    #[pyo3(signature = (data, mode = "riscv"))]
-    fn load_app(&mut self, data: &[u8], mode: &str) -> PyResult<()> {
+    /// Start an application image at `addr`, as the second stage's `run` does: `mode`
+    /// "riscv" or "hack" (a Hack image is big-endian 16-bit instructions, as `hcc -r`
+    /// writes them). At 0 the image goes into I-RAM, as a loader that soft-resets into
+    /// it puts it; an RV32 image at a PSRAM address (0x8000_0000, where the board's RV32
+    /// applications are linked) goes there and the CPU starts at `addr`. The CPU runs it
+    /// in that ISA from the first fetch; call this after `reset()`, which drops the ISA
+    /// again.
+    #[pyo3(signature = (data, mode = "riscv", addr = 0))]
+    fn load_app(&mut self, data: &[u8], mode: &str, addr: u32) -> PyResult<()> {
         let isa = match mode {
             "riscv" => Isa::Rv32,
             "hack" => Isa::Hack,
@@ -64,7 +67,14 @@ impl Soc {
             }
         };
         self.inner
-            .load_app(data, isa)
+            .load_app_at(data, isa, addr)
+            .map_err(PyValueError::new_err)
+    }
+
+    /// Load bytes into the PSRAM (the wait-state window) at RV32 address `addr`.
+    fn load_xmem(&mut self, addr: u32, data: &[u8]) -> PyResult<()> {
+        self.inner
+            .load_xmem(addr, data)
             .map_err(PyValueError::new_err)
     }
 
@@ -99,6 +109,14 @@ impl Soc {
 
     fn dram_word(&self, index: u32) -> u32 {
         self.inner.dram_word_index(index)
+    }
+
+    /// The PSRAM word at RV32 address `addr` (0 without a window, as in "isa-test").
+    fn xmem_word(&self, addr: u32) -> u32 {
+        if self.inner.profile.xmem_bytes() == 0 {
+            return 0;
+        }
+        self.inner.xmem_word(addr)
     }
 
     /// Reset the CPU (memories keep their contents).

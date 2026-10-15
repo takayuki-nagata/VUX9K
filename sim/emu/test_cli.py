@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 
+import pytest
 from s1_env import STAGE2_VERSION
 from vux9k import REPO_ROOT, sd_image
 
@@ -57,12 +58,63 @@ def test_load_without_mode_is_raw_words():
     assert b"ALL HACK C FIRMWARE TESTS PASSED" not in r.stdout
 
 
+def where_am_i() -> bytes:
+    """An RV32 image that prints P when it runs from the PSRAM, I from I-RAM."""
+    from rv32_asm import Asm  # on sys.path once vux9k is imported
+
+    a = Asm()
+    a.li("s0", 0x4000_0000)  # UART data
+    a.auipc("t0", 0)
+    a.lui("t1", 0x80000)
+    a.li("a1", ord("I"))
+    a.bltu("t0", "t1", "out")
+    a.li("a1", ord("P"))
+    a.label("out")
+    a.sb("a1", 0, "s0")
+    a.label("halt")
+    a.j("halt")
+    return b"".join(w.to_bytes(4, "little") for w in a.assemble())
+
+
+@pytest.mark.parametrize(
+    "args,where",
+    [([], b"P"), (["--load-addr", "0x8000_0100"], b"P"), (["--load-addr", "0"], b"I")],
+    ids=["default", "psram", "i-ram"],
+)
+def test_mode_riscv_loads_at_the_load_address(tmp_path, args, where):
+    # RV32 applications start where the second stage's `run` starts them: the PSRAM
+    image = tmp_path / "app.bin"
+    image.write_bytes(where_am_i())
+    app = ("--no-firmware", "--no-card", "--load", str(image), "--mode", "riscv")
+    r = run(*app, *args, "--until", "P", "--cycles", "10000")
+    assert r.stdout == where, (r.stdout, r.stderr)
+
+
 def test_mode_rejects_an_image_too_big_for_the_board(tmp_path):
     big = tmp_path / "big.bin"
     big.write_bytes(b"\x13\x00\x00\x00" * (14 * 1024 // 4 + 1))
-    r = run("--no-firmware", "--load", str(big), "--mode", "riscv")
+    r = run("--no-firmware", "--load", str(big), "--mode", "riscv", "--load-addr", "0")
     assert r.returncode != 0
     assert b"fits on the board" in r.stderr
+    # The PSRAM takes it
+    r = run("--no-firmware", "--load", str(big), "--mode", "riscv", "--cycles", "1000")
+    assert r.returncode == 0, r.stderr
+
+
+@pytest.mark.parametrize(
+    "args,error",
+    [
+        (["--load-addr", "0x80000000"], b"--load-addr needs --mode"),
+        (["--load", "build/hack/firmware.bin", "--mode", "hack", "--load-addr", "0x80000000"], b"into the PSRAM"),
+        (["--load", "build/hack/firmware.bin", "--mode", "riscv", "--load-addr", "0x8000"], b"into the PSRAM"),
+        (["--load", "build/hack/firmware.bin", "--mode", "riscv", "--load-addr", "nowhere"], b"--load-addr"),
+    ],
+    ids=["no-mode", "hack", "outside", "not-a-number"],
+)
+def test_load_addr_errors(args, error):
+    r = run("--no-firmware", *args)
+    assert r.returncode != 0
+    assert error in r.stderr, r.stderr
 
 
 def free_port():

@@ -8,7 +8,8 @@
 //! first stage starts and boots the SD card from `--sd` (a FAT32 image, e.g. from
 //! `vux_tool.py mkfat`). `--load`/`--hex` put a program at address 0 instead (over the
 //! preload, or alone with `--no-firmware`); `--load FILE --mode riscv|hack` starts an
-//! application image in its ISA from the first fetch.
+//! application image in its ISA from the first fetch, where the second stage's `run`
+//! starts it (`--load-addr`: RV32 in the PSRAM at 0x8000_0000, Hack in I-RAM at 0).
 //!
 //! The UART is connected to stdout (batch), the terminal (`--stdio`), or a TCP
 //! client (`--tcp PORT`, e.g. `vux_tool.py --port socket://localhost:PORT`).
@@ -22,6 +23,7 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 
 use vux9k_emu::sdcard::SdCard;
+use vux9k_emu::soc::XMEM_BASE;
 use vux9k_emu::{hexfile, Isa, Profile, Soc, Stop};
 
 const USAGE: &str = "\
@@ -33,7 +35,11 @@ usage: vux9k-emu [options]
   --load FILE         raw binary into I-RAM at address 0
   --mode riscv|hack   with --load: FILE is an application image (hack: big-endian
                       16-bit instructions, as hcc -r writes them), started in that ISA
-                      from address 0 (max 14 KB on real, the vux9k Zephyr board's limit)
+                      at its load address
+  --load-addr ADDR    with --mode: the image's load address and entry, as in its v4
+                      header: 0 (I-RAM; max 14 KB for riscv on real) or, riscv only, the
+                      PSRAM (0x80000000..); default 0x80000000 for riscv on real (where
+                      the vux9k Zephyr board links), else 0
   --hex FILE          $readmemh words into I-RAM from word 0 (e.g. build/hack/firmware.hex)
   --sd IMAGE          raw SD image (sector n at byte 512 n; vux_tool.py mkfat makes FAT32
                       ones); changes are kept in memory
@@ -53,6 +59,7 @@ struct Opts {
     firmware: Option<String>,
     load: Option<String>,
     mode: Option<Isa>,
+    load_addr: Option<u32>,
     hex: Option<String>,
     sd: Option<String>,
     sd_write_back: bool,
@@ -72,6 +79,7 @@ fn parse_args() -> Result<Opts, String> {
         firmware: Some("build/firmware".into()),
         load: None,
         mode: None,
+        load_addr: None,
         hex: None,
         sd: None,
         sd_write_back: false,
@@ -106,6 +114,7 @@ fn parse_args() -> Result<Opts, String> {
                     m => return Err(format!("unknown mode {m:?} (riscv or hack)")),
                 })
             }
+            "--load-addr" => o.load_addr = Some(parse_addr(&val("--load-addr")?)?),
             "--hex" => o.hex = Some(val("--hex")?),
             "--sd" => o.sd = Some(val("--sd")?),
             "--sd-write-back" => o.sd_write_back = true,
@@ -143,10 +152,34 @@ fn parse_args() -> Result<Opts, String> {
     if o.mode.is_some() && o.load.is_none() {
         return Err("--mode needs --load".into());
     }
+    if o.load_addr.is_some() && o.mode.is_none() {
+        return Err("--load-addr needs --mode".into());
+    }
     if o.sd_write_back && o.sd.is_none() {
         return Err("--sd-write-back needs --sd".into());
     }
     Ok(o)
+}
+
+/// A decimal or 0x-prefixed hexadecimal address.
+fn parse_addr(text: &str) -> Result<u32, String> {
+    let t = text.replace('_', "");
+    match t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
+        Some(hex) => u32::from_str_radix(hex, 16),
+        None => t.parse(),
+    }
+    .map_err(|e| format!("--load-addr {text:?}: {e}"))
+}
+
+/// `--load-addr`'s default: where the board starts such an image (RV32 applications are
+/// linked at the PSRAM's start; Hack runs from I-RAM). Profiles that aren't the board
+/// keep 0.
+fn default_load_addr(profile: Profile, isa: Isa) -> u32 {
+    if profile.is_real() && isa == Isa::Rv32 {
+        XMEM_BASE
+    } else {
+        0
+    }
 }
 
 fn read_text(path: &str) -> Result<String, String> {
@@ -165,9 +198,13 @@ fn setup(o: &Opts) -> Result<Soc, String> {
     if let Some(path) = &o.load {
         let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
         match o.mode {
-            Some(isa) => soc
-                .load_app(&bytes, isa)
-                .map_err(|e| format!("{path}: {e}"))?,
+            Some(isa) => {
+                let addr = o
+                    .load_addr
+                    .unwrap_or_else(|| default_load_addr(o.profile, isa));
+                soc.load_app_at(&bytes, isa, addr)
+                    .map_err(|e| format!("{path}: {e}"))?
+            }
             None => soc.load_iram(0, &bytes),
         }
     }

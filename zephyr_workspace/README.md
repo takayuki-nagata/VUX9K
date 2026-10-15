@@ -14,24 +14,27 @@ west build -b vux9k <app dir> -- -DEXTRA_ZEPHYR_MODULES=<path to this directory>
 `zephyr/module.yml` registers the board, SoC and devicetree roots, so no other option
 is needed; for example `$ZEPHYR_BASE/samples/hello_world` builds as is. The image is
 `build/zephyr/zephyr.bin`, which includes the initial `.data` (an XIP image copies it
-from I-RAM to D-RAM at startup). Run it on the emulator with
-`vux9k-emu --no-firmware --load build/zephyr/zephyr.bin --mode riscv --stdio`. On the
-board, the second stage starts it from the microSD card: wrap it as a VUX9 v4 file for
-I-RAM (`vux_tool.py mkv4 --load-addr 0 build/zephyr/zephyr.bin APP.BIN`), put it in the
-card's `\VUX9K\APPS\` (`vux_tool.py put APP.BIN VUX9K/APPS/APP.BIN`, or with a PC), and
-`run` it at the `s2>` prompt (`vux_tool.py run-app VUX9K/APPS/APP.BIN`). It runs in I-RAM in
-place of the first stage until the FPGA is configured again.
+from the image to its RAM at startup). Run it on the emulator with
+`vux9k-emu --no-firmware --load build/zephyr/zephyr.bin --mode riscv --stdio` (it loads into
+the PSRAM at 0x8000_0000). On the board, the second stage starts it from the microSD card:
+wrap it as a VUX9 v4 file (`vux_tool.py mkv4 build/zephyr/zephyr.bin APP.BIN`: an RV32 image
+at 0x8000_0000 by default), put it in the card's `\VUX9K\APPS\` (`vux_tool.py put APP.BIN
+VUX9K/APPS/APP.BIN`, or with a PC), and `run` it at the `s2>` prompt (`vux_tool.py run-app
+VUX9K/APPS/APP.BIN`). It runs in place in the PSRAM; the first stage stays in I-RAM, and
+button S1 (the board's reset) goes back to it and the boot.
 
 ## Boards
 
 | Board | Memory | Runs on |
 |---|---|---|
-| `vux9k` | 14 KB ROM (I-RAM 0x0000-0x37FF, the second stage's window for RV32 applications in I-RAM), 8 KB RAM less 8 bytes (the limit of the boot chain before the two-stage boot, kept until the board moves to the PSRAM) | the board (started by the second stage's `run`) and the emulator |
+| `vux9k` | the PSRAM: 4 MB ROM from 0x8000_0000 (run in place, XIP; the second stage's `run` loads the image there), 3 MB RAM from 0x8040_0000 | the board (started by the second stage's `run`) and the emulator |
 | `vux9k/vux9k/ext` | 512 KB ROM, 256 KB RAM | **the emulator only** (`vux9k-emu --profile extended`); not real hardware |
 
-The linker enforces the `vux9k` limits: an application that outgrows the board fails to
-link. The CPU is RV32I + Zicsr + Zifencei, machine mode only, running at 18 MHz. Both
-boards run the kernel tickless at 1000 ticks/s, so timeouts have 1 ms resolution.
+The CPU is RV32I + Zicsr + Zifencei, machine mode only, running at 18 MHz. On `vux9k`
+every fetch and data access waits ~35 cycles (the PSRAM has no cache in front of it), so
+code runs 15-20 times slower than from the SoC's block RAMs, which `vux9k` leaves to the
+first stage. Both boards run the kernel tickless at 1000 ticks/s, so timeouts have 1 ms
+resolution.
 
 ## UART
 
@@ -50,7 +53,8 @@ interrupts. `irq_echo/` is an example.
 
 A Zephyr application whose logic is a Rust `no_std` staticlib (`app/rust_demo`), called
 from `app/src/main.c`. It needs Rust 1.95.0 with the `riscv32i-unknown-none-elf` target.
-Its `prj.conf` shows the size settings that fit an application into 14 KB.
+Its `prj.conf` shows size settings that keep an application small (13 KB), and so quick
+to load from the card.
 
 ## Interrupt-driven UART echo (`irq_echo/`)
 

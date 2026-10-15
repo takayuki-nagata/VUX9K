@@ -6,7 +6,7 @@
 import pytest
 from lockstep_programs import boot_mode_hack, hack_soft_reset
 from rv32_asm import Asm
-from vux9k import Soc
+from vux9k import XMEM_BASE, Soc
 
 
 def org(a, addr):
@@ -139,3 +139,26 @@ def test_boot_mode_starts_hack_at_0():
     soc.run(5_000)
     assert not soc.riscv_mode
     assert soc.uart_received() == b"H"
+
+
+def test_load_app_into_the_psram():
+    a = Asm(XMEM_BASE)
+    a.auipc("a0", 0)
+    a.lw("a1", 0, "a0")
+    words = a.assemble()
+    image = b"".join(w.to_bytes(4, "little") for w in words)
+    soc = Soc("real")
+    soc.load_app(image, "riscv", XMEM_BASE)
+    assert (soc.pc, soc.iram_word(0)) == (XMEM_BASE, 0)
+    assert [soc.xmem_word(XMEM_BASE + 4 * i) for i in range(2)] == words
+    soc.step()
+    soc.step()
+    assert soc.regs[10:12] == [XMEM_BASE, words[0]]
+    soc.load_xmem(XMEM_BASE + 8, b"\x01\x02\x03")
+    assert soc.xmem_word(XMEM_BASE + 8) == 0x030201
+    with pytest.raises(ValueError, match="into the PSRAM"):
+        soc.load_app(image, "hack", XMEM_BASE)
+    with pytest.raises(ValueError, match="word-aligned"):
+        soc.load_xmem(0x2000_0000, image)
+    # No window in the riscv-tests profile
+    assert Soc("isa-test").xmem_word(XMEM_BASE) == 0

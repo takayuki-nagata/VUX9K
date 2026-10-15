@@ -13,32 +13,41 @@ Read before changing `zephyr_workspace/`. Index and the rules that apply everywh
 (18 MHz, `vux9k,uart`, and the SoC timer as `andestech,machine-timer`, whose
 mtime +0x0 / mtimecmp +0x8 layout is `timer_core`'s, so Zephyr's in-tree
 `riscv_machine_timer` driver serves it):
-- `vux9k`: the real board. flash = I-RAM 0x0000-0x37FF, sram = D-RAM up to 0x1FF8: limits
-  the old boot manager's resident loader and mailbox set, kept until the board target moves
-  to the PSRAM. Until then the second stage's `run` starts such an image (a v4 file loading
-  at 0, `make apps`' `ZEPHYR.BIN`/`IRQECHO.BIN`) by copying it into I-RAM over the first
-  stage and soft-resetting into it (fw_common::launch's I-RAM RV32 target, the same 14 KB
-  window). The linker enforces both limits, so an app that outgrows the board fails to link.
-- `vux9k/vux9k/ext`: 512 KB/256 KB, **emulator only** (`vux9k-emu --profile extended`).
-  bc_clone_rs (`make build-zephyr`, ~260 KB) runs only here; never present it as
-  running on hardware.
+- `vux9k`: the real board, linked into the PSRAM: flash = `0x8000_0000`, 4 MB (the image,
+  run in place, XIP), sram = `0x8040_0000`, 3 MB (to `0x806F_FFFF`; its top 64 KB is the
+  first stage's data, which the first stage sets up again at every start). The nodes are in
+  each board's dts with their unit addresses (`flash@80000000`, `memory@80400000`), not in
+  the dtsi. The second stage's `run` loads such an image (a v4 file at `0x8000_0000`, `make
+  apps`' `ZEPHYR.BIN`/`IRQECHO.BIN`) in place and jumps to it (fw_common::launch's PSRAM
+  target), leaving the first stage in I-RAM: a Zephyr app never returns, but Button S1 (the
+  board's reset) starts the first stage and the boot again. The tests can't press it, so
+  the board tests (`test_hardware.py` 13, `hw_irq_echo.py`) load the bitstream afterwards.
+  Every fetch and data access there waits ~35 cycles (no cache in front of the PSRAM), so
+  cycle budgets measured from the I-RAM build don't carry over.
+- `vux9k/vux9k/ext`: 512 KB/256 KB at 0 and `0x2000_0000`, **emulator only** (`vux9k-emu
+  --profile extended`). bc_clone_rs (`make build-zephyr`, ~260 KB) runs only here; never
+  present it as running on hardware.
 
 `zephyr_workspace/app/` is the Rust demo: Zephyr (`src/main.c`, FFI wrappers for
 `printk`/`k_msleep`/`k_uptime_get_32`) calls `rust_main()` from the `rust_demo`
 staticlib. `make build-zephyr-demo` builds it for `vux9k` into `build/zephyr-demo/`
-(cargo output included). It is tested loaded straight into I-RAM, on the emulator
-(`sim/emu/test_zephyr_demo.py`) and the RTL (`sim-zephyr-demo-rtl`), and as the board
-starts it, the second stage's `run VUX9K/APPS/ZEPHYR.BIN` from the card: on the emulator
-(the same test, same expectations) and on the netlist (`sim-zephyr-demo-gls`, test-slow:
-~47M cycles, most of them the second stage loading 13 KB from the PSRAM). Its `prj.conf`
-size settings are what make it fit in 14 KB.
+(cargo output included). It is tested loaded straight into the PSRAM, on the emulator
+(`sim/emu/test_zephyr_demo.py`: `Soc.load_app(image, "riscv", 0x8000_0000)`, the CLI's
+default `--load-addr` for riscv) and the RTL (`sim-zephyr-demo-rtl`: `soc_env.preload_psram_app`
+writes the PSRAM word model and puts a jump to `0x8000_0000` at I-RAM 0, so Verilator RTL
+only), and as the board starts it, the second stage's `run VUX9K/APPS/ZEPHYR.BIN` from the
+card: on the emulator (the same test, same expectations) and on the netlist
+(`sim-zephyr-demo-gls`, test-slow: ~47M cycles, most of them the second stage loading 13 KB
+from the PSRAM). Its `prj.conf` size settings, from the 14 KB I-RAM board it was first
+linked for, keep it small and so quick to load.
 
 Two traps found while bringing Zephyr up on the RTL (the old Python emulator hid both):
 - **The SoC must select Zifencei.** The Zephyr SDK has no libgcc multilib for
   `rv32i_zicsr`; GCC silently links a default one built with RV32M, and the first
   64-bit division (`__udivdi3` -> `divu`) is an illegal instruction.
-- **XIP `.data` must be in the image.** An XIP image's `.data` runs in D-RAM but loads
-  from I-RAM; the image must carry it at its load address, or Zephyr's startup
+- **XIP `.data` must be in the image.** An XIP image's `.data` runs in its RAM but loads
+  from the image (both in the PSRAM now; D-RAM and I-RAM on the first board); the image
+  must carry it at its load address, or Zephyr's startup
   copies zeros into `.data` (e.g. an empty-but-not-self-linked `timeout_list`, so
   `k_msleep` never woke up). Zephyr's own `zephyr.bin` (objcopy by LMA) always did;
   the bug was the Makefile overwriting it with an older `scripts/elf2bin.py` that
@@ -74,8 +83,9 @@ revisions and compatibility"); this revision doesn't add them.
 `zephyr_workspace/irq_echo/` exercises all of it: main sleeps on a semaphore the RX
 callback gives, and each line comes back upper-cased in one piece (longer than the TX
 FIFO, so the timer path runs) with `rx=<n> drop=<n> err=<n>`. It fits the board without
-printk (cbprintf alone is 1.5 KB; with it the app overflowed 14 KB by 1.8 KB). Tests:
-`sim/emu/test_zephyr_irq_echo.py` (loaded into I-RAM, and through the second stage's `run
-VUX9K/APPS/IRQECHO.BIN`) and `sim-zephyr-irq-echo-rtl` (loaded into I-RAM); on the board,
-`make test-hw-irq-echo` (`scripts/hw_irq_echo.py`: `put` and `run` through the second stage,
-then the bitstream loaded into SRAM again).
+printk (cbprintf alone is 1.5 KB; with it the app overflowed the first board's 14 KB by
+1.8 KB). Its handlers run from the PSRAM like the rest. Tests:
+`sim/emu/test_zephyr_irq_echo.py` (loaded into the PSRAM, and through the second stage's
+`run VUX9K/APPS/IRQECHO.BIN`) and `sim-zephyr-irq-echo-rtl` (preloaded into the PSRAM); on
+the board, `make test-hw-irq-echo` (`scripts/hw_irq_echo.py`: `put` and `run` through the
+second stage, then the bitstream loaded into SRAM again).

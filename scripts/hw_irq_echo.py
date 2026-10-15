@@ -7,9 +7,10 @@ The Zephyr interrupt-driven UART echo (make build-zephyr-irq-echo) on the board:
 card as \\VUX9K\\APPS\\IRQECHO.BIN through the second stage (`put`, the file left there) and
 started with its `run`, then sent bursts longer than both 32-byte UART FIFOs; each must come
 back upper-cased with "rx=<n> drop=0 err=0" (no byte lost in the app or by the UART). The
-application runs in I-RAM in place of the first stage and never returns, so the bitstream
-is loaded into the FPGA's SRAM from --pack-fs at the end (not openFPGALoader --reset, which
-loads the flash's bitstream). With --dist both come from a `make dist` tree, so the board is
+application runs in the PSRAM, its handlers too, and never returns: the first stage stays in
+I-RAM, but only the reset button would start it again, so the bitstream is loaded into the
+FPGA's SRAM from --pack-fs at the end (not openFPGALoader --reset, which loads the flash's
+bitstream). With --dist both come from a `make dist` tree, so the board is
 left on that tree's bitstream rather than the working tree's. Needs the board at a prompt of
 either stage with a second stage on the card (as make test-hw leaves it); the card stays in
 the board.
@@ -56,10 +57,11 @@ def burst(n: int, k: int) -> bytes:
 
 
 def v4_file(data: bytes) -> bytes:
-    """data as the card's v4 file: IRQECHO.BIN as it is, a raw zephyr.bin wrapped (RV32 at 0)."""
+    """data as the card's v4 file: IRQECHO.BIN as it is, a raw zephyr.bin wrapped (RV32 at
+    the PSRAM's start, where the board vux9k links it)."""
     if vux_tool.ImageHeader.parse(data):
         return data
-    return vux_tool.build_vux9_v4_image(data, name="Zephyr irq_echo", mode="riscv", load_addr=0)[0]
+    return vux_tool.build_vux9_v4_image(data, name="Zephyr irq_echo", mode="riscv", load_addr=vux_tool.XMEM_BASE)[0]
 
 
 def run(ser, image: bytes, size: int, count: int) -> bool:

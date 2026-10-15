@@ -149,17 +149,19 @@ firmware: $(FIRMWARE_BUILD_DIR)/firmware.hex $(STAGE2_DIR)/STAGE2.BIN
 # The demos as v4 files for the card's \VUX9K\APPS\, started by the second stage's `run`
 # (fw_common::launch picks the target from the header): build/firmware/apps/
 #   HELLO.BIN    firmware/hello, RV32 linked at the PSRAM's start (0x80000000): runs in place
-#   ZEPHYR.BIN   the Zephyr Rust demo, RV32 at 0: I-RAM (replaces the first stage)
-#   IRQECHO.BIN  the Zephyr interrupt-driven UART echo, RV32 at 0: I-RAM
-#   HACK.BIN     the Hack demo, Hack at 0: I-RAM
+#   ZEPHYR.BIN   the Zephyr Rust demo, RV32 linked at the PSRAM's start (board vux9k): in place
+#   IRQECHO.BIN  the Zephyr interrupt-driven UART echo, RV32 at the PSRAM's start: in place
+#   HACK.BIN     the Hack demo, Hack at 0: I-RAM (replaces the first stage)
 # Without Zephyr (its builds skip) ZEPHYR.BIN and IRQECHO.BIN are left out, saying so.
 APPS_DIR = $(FIRMWARE_BUILD_DIR)/apps
+# The PSRAM's start, where RV32 applications are linked (the Zephyr board vux9k's flash)
 HELLO_BASE = 0x80000000
 HELLO_SRCS = $(wildcard firmware/hello/src/*.rs firmware/hello/bootstrap/*) firmware/hello/Cargo.toml $(FW_LIB_SRCS)
-# mkv4 of $(1) (if it exists; else fail if $(5) is "required") as $(APPS_DIR)/$(2), mode $(3), name $(4)
+# mkv4 of $(1) (if it exists; else fail if $(5) is "required") as $(APPS_DIR)/$(2), mode $(3), name $(4),
+# loading at $(6)
 define app_v4
 	@if [ -f $(1) ]; then \
-		$(PYTHON) tools/vux_tool.py mkv4 --mode $(3) --load-addr 0 --name "$(4)" $(1) $(APPS_DIR)/$(2); \
+		$(PYTHON) tools/vux_tool.py mkv4 --mode $(3) --load-addr $(6) --name "$(4)" $(1) $(APPS_DIR)/$(2); \
 	elif [ "$(5)" = required ]; then echo "$(1) missing"; exit 1; \
 	else rm -f $(APPS_DIR)/$(2); echo "$(1) missing (no Zephyr): $(APPS_DIR)/$(2) left out"; fi
 endef
@@ -173,9 +175,9 @@ $(APPS_DIR)/HELLO.BIN: $(HELLO_SRCS) tools/vux_tool.py
 hello: $(APPS_DIR)/HELLO.BIN
 
 apps: $(APPS_DIR)/HELLO.BIN build-hack build-zephyr-demo build-zephyr-irq-echo
-	$(call app_v4,$(HACK_BUILD_DIR)/firmware.bin,HACK.BIN,hack,Hack demo,required)
-	$(call app_v4,$(ZEPHYR_DEMO_BUILD_DIR)/zephyr/zephyr.bin,ZEPHYR.BIN,riscv,Zephyr Rust demo,)
-	$(call app_v4,$(ZEPHYR_IRQ_ECHO_BUILD_DIR)/zephyr/zephyr.bin,IRQECHO.BIN,riscv,Zephyr irq_echo,)
+	$(call app_v4,$(HACK_BUILD_DIR)/firmware.bin,HACK.BIN,hack,Hack demo,required,0)
+	$(call app_v4,$(ZEPHYR_DEMO_BUILD_DIR)/zephyr/zephyr.bin,ZEPHYR.BIN,riscv,Zephyr Rust demo,,$(HELLO_BASE))
+	$(call app_v4,$(ZEPHYR_IRQ_ECHO_BUILD_DIR)/zephyr/zephyr.bin,IRQECHO.BIN,riscv,Zephyr irq_echo,,$(HELLO_BASE))
 
 # Board self-test (firmware/hw_test), an I-RAM image in place of the first stage for
 # `make hw-smoke`; its D-RAM preload (elf2bin's firmware_d*.hex) goes to its own
@@ -341,7 +343,7 @@ build-zephyr:
 	@echo "=== Building Zephyr bc_clone_rs Application (vux9k/vux9k/ext, emulator only) ==="
 	$(call west_build,vux9k/vux9k/ext,$(BC_APP_DIR),$(ZEPHYR_BUILD_DIR),-DRUST_TARGET=riscv32i-unknown-none-elf)
 
-# The Rust demo on Zephyr for the real board; the link fails if it outgrows 14 KB / 8 KB
+# The Rust demo on Zephyr for the real board, linked into the PSRAM (zephyr_workspace/boards)
 ZEPHYR_DEMO_BUILD_DIR ?= $(BUILD_DIR)/zephyr-demo
 build-zephyr-demo:
 	@echo "=== Building the Zephyr Rust demo (vux9k) ==="
@@ -487,15 +489,16 @@ sim-zephyr-repl: build-zephyr emu-py
 	$(PYTHON) -m pytest sim/emu/test_zephyr_bc.py
 
 sim-zephyr-demo-rtl: veryl firmware build-zephyr-demo
-	@echo "=== Running the Zephyr Rust demo from I-RAM on the RTL ==="
+	@echo "=== Running the Zephyr Rust demo from the PSRAM on the RTL ==="
 	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_zephyr_demo]"
 
 sim-zephyr-irq-echo-rtl: veryl firmware build-zephyr-irq-echo
-	@echo "=== Running the Zephyr interrupt-driven UART echo from I-RAM on the RTL ==="
+	@echo "=== Running the Zephyr interrupt-driven UART echo from the PSRAM on the RTL ==="
 	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_zephyr_irq_echo]"
 
 # The Zephyr Rust demo as the board starts it, on the netlist (test-slow): the first stage
-# boots the second from the card, whose `run VUX9K/APPS/ZEPHYR.BIN` puts it in I-RAM (~47M cycles)
+# boots the second from the card, whose `run VUX9K/APPS/ZEPHYR.BIN` loads it into the PSRAM and
+# jumps to it (~47M cycles)
 sim-zephyr-demo-gls: synth-top firmware apps
 	@echo "=== Running the Zephyr Rust demo through the second stage's run on the GLS netlist ==="
 	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc_gls[test_soc_zephyr_s2]"

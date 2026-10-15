@@ -8,7 +8,7 @@ arch: riscv
 toolchain:
   - zephyr
   - cross-compile
-ram: 8
-flash: 14
+ram: 3072
+flash: 4096
 supported:
   - uart

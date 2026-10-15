@@ -55,8 +55,8 @@ REQUIRED = [
 # The card's v4 files and the mode (vux_tool.MODE_*: 1 RV32, 0 Hack) and load address each carries
 CARD_FILES = {
     "sd/VUX9K/APPS/HELLO.BIN": (1, 0x8000_0000),
-    "sd/VUX9K/APPS/ZEPHYR.BIN": (1, 0),
-    "sd/VUX9K/APPS/IRQECHO.BIN": (1, 0),
+    "sd/VUX9K/APPS/ZEPHYR.BIN": (1, 0x8000_0000),
+    "sd/VUX9K/APPS/IRQECHO.BIN": (1, 0x8000_0000),
     "sd/VUX9K/APPS/HACK.BIN": (0, 0),
 }
 
@@ -104,7 +104,7 @@ import vux9k_emu
 
 soc = vux9k_emu.Soc("real")
 with open("demos/zephyr-demo.bin", "rb") as f:
-    soc.load_app(f.read(), "riscv")
+    soc.load_app(f.read(), "riscv", 0x8000_0000)
 end = soc.run_until_tx(b"All Rust application tasks finished successfully!", 40_000_000)
 assert end is not None, soc.uart_received()
 print(f"demo finished after {soc.cycle} cycles ({soc.cycle / 18e6:.2f} s at 18 MHz)")

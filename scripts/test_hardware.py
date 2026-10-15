@@ -10,8 +10,10 @@ report, a RAM boot of the second stage and its refusals, installing second stage
 card (\\VUX9K\\STAGE2.BIN, the previous one kept as STAGE2.OLD; install makes \\VUX9K\\
 if it is missing), the fall back to STAGE2.OLD, the soft reset back to the first stage, the
 second stage's file commands, and the demos started by its `run`: HELLO.BIN in the PSRAM,
-then HACK.BIN and ZEPHYR.BIN in I-RAM, which replace the first stage until the bitstream is
-loaded into the FPGA's SRAM again (openFPGALoader, never --reset: that loads the flash's
+then the two that never return to the first stage, HACK.BIN in I-RAM (it replaces the first
+stage) and ZEPHYR.BIN in the PSRAM (it leaves the first stage in I-RAM, but only the reset
+button would start it, and the suite can't press it), each followed by a load of the
+bitstream into the FPGA's SRAM (openFPGALoader, never --reset: that loads the flash's
 bitstream). The card stays in the board. The suite writes only in \\VUX9K\\: test versions
 9001-9003, \\VUX9K\\TEST\\ (removed again), the demos in \\VUX9K\\APPS\\ (left there, the
 card's documented layout), and last the second stage under test as STAGE2.BIN and STAGE2.OLD.
@@ -84,6 +86,8 @@ ZEPHYR_LINES = (
     "All Rust application tasks finished successfully!",
 )
 ZEPHYR_END = "Entering sleep loop."
+# The second stage's [RUN] line for it: the Zephyr board vux9k links into the PSRAM
+ZEPHYR_RUN = "PSRAM, starting at 0x80000000"
 # Versions the suite installs, apart from what a release ships
 TEST_VERSIONS = (9001, 9002, 9003)
 
@@ -287,7 +291,7 @@ def run_hardware_test_suite(port="auto", baud=115200, loader=None, reload=True):
     v_a, v_b, v_c = TEST_VERSIONS
     emulator = str(port).startswith("socket://")
     no_reload = "the emulator has no bitstream to load" if emulator else None if reload else "--no-reload"
-    # Why a bitstream load can't happen on this board (then the I-RAM demos aren't started)
+    # Why a bitstream load can't happen on this board (then the demos that need one aren't started)
     no_loader = "no openFPGALoader (--loader)" if not loader else None
     if not os.path.isfile(FILES["pack_fs"]):
         no_loader = f"{FILES['pack_fs']} missing"
@@ -331,15 +335,16 @@ def run_hardware_test_suite(port="auto", baud=115200, loader=None, reload=True):
         vux_tool.put(ser, f"{CARD_APPS}/{app}", apps[app], timeout=20.0)
         return vux_tool.run_app(ser, f"{CARD_APPS}/{app}")
 
-    def run_iram_demo(name, app, check):
-        """Tests 12 and 13: an I-RAM demo (check(run_text) -> (ok, msg) reads its output),
-        then the bitstream loaded again; skipped or not run where that load can't happen."""
+    def run_demo_then_reload(name, app, check):
+        """Tests 12 and 13: a demo that never returns to the first stage (check(run_text) ->
+        (ok, msg) reads its output), then the bitstream loaded again; skipped or not run
+        where that load can't happen."""
         if no_reload:
-            return record(name, None, f"skipped: {no_reload} (the demo replaces the first stage until one)")
+            return record(name, None, f"skipped: {no_reload} (the demo never returns to the first stage)")
         if lost:
             return record(name, False, f"not run: {lost}")
         if no_loader:
-            return record(name, False, f"not run: {no_loader}; the demo would replace the first stage until a load")
+            return record(name, False, f"not run: {no_loader}; the demo would keep the board until a load")
         try:
             ok, msg = check(put_and_run(app))
         except (vux_tool.UploadError, vux_tool.S2Error, TimeoutError) as e:
@@ -531,8 +536,10 @@ def run_hardware_test_suite(port="auto", baud=115200, loader=None, reload=True):
                 ok, msg = False, str(e)
             record(name, ok, msg)
 
-        # 12, 13. I-RAM applications replace the first stage: last, each followed by a load of
-        # the bitstream into SRAM (not --reset: that loads the flash's)
+        # 12, 13. Applications that never return to the first stage (HACK.BIN replaces it in
+        # I-RAM; ZEPHYR.BIN runs in the PSRAM and leaves it, but only the reset button would
+        # start it): last, each followed by a load of the bitstream into SRAM (not --reset:
+        # that loads the flash's)
         def hack_check(out):
             if "I-RAM (Hack)" not in out:
                 return False, fail_msg("Not started in I-RAM (Hack).", out)
@@ -544,11 +551,11 @@ def run_hardware_test_suite(port="auto", baud=115200, loader=None, reload=True):
                 return False, fail_msg(f"Missing {missing} or a [FAIL].", rest)
             return True, "the Hack demo's report, all [PASS]"
 
-        run_iram_demo("12. HACK.BIN in I-RAM (Hack), then the bitstream loaded again", "HACK.BIN", hack_check)
+        run_demo_then_reload("12. HACK.BIN in I-RAM (Hack), then the bitstream loaded again", "HACK.BIN", hack_check)
 
         def zephyr_check(out):
-            if "I-RAM (RV32)" not in out:
-                return False, fail_msg("Not started in I-RAM (RV32).", out)
+            if ZEPHYR_RUN not in out:
+                return False, fail_msg("Not started in the PSRAM.", out)
             _, rest = vux_tool.read_until(ser, (ZEPHYR_END,), 30.0)
             missing = [ln for ln in (*ZEPHYR_LINES, ZEPHYR_END) if ln not in rest]
             m = re.search(r"k_msleep\(100\) took (\d+) ms", rest)
@@ -556,11 +563,11 @@ def run_hardware_test_suite(port="auto", baud=115200, loader=None, reload=True):
                 return False, fail_msg(f"Missing {missing}, or k_msleep(100) off.", rest)
             return True, f"the Zephyr demo's tasks finished, k_msleep(100) took {m.group(1)} ms"
 
-        name = "13. ZEPHYR.BIN in I-RAM (RV32), then the bitstream loaded again"
+        name = "13. ZEPHYR.BIN in the PSRAM, then the bitstream loaded again"
         if apps["ZEPHYR.BIN"] is None:
             record(name, None, f"skipped: no ZEPHYR.BIN in {FILES['apps']} (built without Zephyr)")
         else:
-            run_iram_demo(name, "ZEPHYR.BIN", zephyr_check)
+            run_demo_then_reload(name, "ZEPHYR.BIN", zephyr_check)
 
         # 14. Last, after the loads: the second stage under test installed (STAGE2.BIN, and
         # STAGE2.OLD the same) and booted by the bitstream's first stage
@@ -619,9 +626,7 @@ def main():
     parser.add_argument(
         "--loader", default="openFPGALoader", help="openFPGALoader for the bitstream loads (default: on PATH)"
     )
-    parser.add_argument(
-        "--no-reload", action="store_true", help="skip the I-RAM demos, which need a bitstream load afterwards"
-    )
+    parser.add_argument("--no-reload", action="store_true", help="skip the demos that need a bitstream load afterwards")
     args = parser.parse_args()
 
     if args.dist:

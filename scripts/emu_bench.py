@@ -38,7 +38,7 @@ sys.path.insert(0, os.path.join(REPO_ROOT, "sim", "emu"))
 sys.path.insert(0, os.path.join(REPO_ROOT, "sim", "integration"))
 
 from rv32_asm import Asm  # noqa: E402
-from vux9k import Soc, mbr_sector  # noqa: E402
+from vux9k import XMEM_BASE, Soc, mbr_sector  # noqa: E402
 
 # Memory sizes per profile (bytes), for the digest
 SIZES = {"real": (16 * 1024, 8 * 1024), "extended": (512 * 1024, 256 * 1024)}
@@ -138,7 +138,7 @@ def setup_demo(soc: Any, build: str) -> bool:
     data = _read(os.path.join(build, "zephyr-demo", "zephyr", "zephyr.bin"))
     if data is None:
         return False
-    soc.load_app(data, "riscv")
+    soc.load_app(data, "riscv", XMEM_BASE)  # the board vux9k links it into the PSRAM
     return True
 
 

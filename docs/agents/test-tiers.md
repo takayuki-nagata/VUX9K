@@ -55,7 +55,8 @@ HACK.BIN` (I-RAM in Hack mode; ~30M cycles). The prompt alone takes ~14.4M cycle
 file at ~250 cycles a byte), and `run` loads at ~2,000-2,400 cycles a byte (the second stage
 runs from the PSRAM): the 13 KB Zephyr demo through it is ~47M cycles, minutes on the
 netlist, so it runs there only in `sim-zephyr-demo-gls` (`test_soc_zephyr_s2.py`, test-slow);
-the RTL runs the Zephyr demos preloaded into I-RAM. Cycle counts are the emulator's, which the
+the RTL runs the Zephyr demos preloaded into the PSRAM (`soc_env.preload_psram_app`: the word
+model's words and a jump at I-RAM 0, so Verilator RTL only). Cycle counts are the emulator's, which the
 lockstep holds to the RTL's; measure a new test there first (`s1_env.run_from_card` in `sim/emu/s1_env.py`).
 
 The SD and RAM-boot RTL tests (`sim-boot`, `sim-hw-flow`, `sim-sd-quirks`, the lockstep's
@@ -90,9 +91,11 @@ clock-and-board.md, "Board UART output that is noise: ModemManager and the bridg
   FAT32; `install` makes `\VUX9K\`, and the suite writes only there (versions 9001-9003,
   `\VUX9K\TEST\` and removes it, the demos in `\VUX9K\APPS\`, last the second stage under
   test). Besides the boot chain it runs the second stage's file commands and the demos
-  through `put`/`run`: `HELLO.BIN` (PSRAM), then, last because they replace the first stage
-  in I-RAM, `HACK.BIN` and `ZEPHYR.BIN`, each followed by a load of `pack.fs` into SRAM with
-  openFPGALoader (never `--reset`: that loads the flash's bitstream); then it installs the
+  through `put`/`run`: `HELLO.BIN` (PSRAM), then, last because they never return to the
+  first stage, `HACK.BIN` (it replaces the first stage in I-RAM) and `ZEPHYR.BIN` (in the
+  PSRAM; it leaves the first stage, but only the reset button would start it), each followed
+  by a load of `pack.fs` into SRAM with openFPGALoader (never `--reset`: that loads the
+  flash's bitstream); then it installs the
   second stage under test again. Without `ZEPHYR.BIN` (no Zephyr) test 13 is skipped. It runs
   against the emulator too, where the two bitstream-load tests are skipped: `vux9k-emu --tcp
   PORT --sd <mkfat image>` and `--port socket://127.0.0.1:PORT` (~3 min at the board's speed;

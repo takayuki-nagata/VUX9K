@@ -120,7 +120,7 @@ def cover_elf(name, elf_path, prefixes, rv_hits):
         ranges = line_ranges(elf, prefixes)
     ranges = {k: v for k, v in ranges.items() if not excluded(*k)}
     # The emulator's key holds 31 bits of the PC (vux9k_emu::soc::cov_key shifts it by 33):
-    # code in the PSRAM (0x8xxx_xxxx, the second stage's) arrives without bit 31
+    # code in the PSRAM (0x8xxx_xxxx: the second stage's, the Zephyr demo's) arrives without bit 31
     ran = sorted({a for pc, w in rv_hits for a in (pc, pc | 0x8000_0000) if words.get(a) == w})
     lines: dict[tuple[str, int], bool] = {}
     for key, rs in ranges.items():

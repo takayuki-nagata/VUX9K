@@ -98,7 +98,7 @@ The RTL modules in this repository were originally authored in VHDL-2008 and hav
 | `0x4000_1000` - `0x4000_100F` | 16 B | **System Timer (CLINT)** | 64-bit `mtime` (`0x0`/`0x4`) and `mtimecmp` (`0x8`/`0xC`) registers |
 | `0x4000_2000` - `0x4000_200F` | 16 B | **MicroSD SPI Master** | SPI TX/RX data (`0x0`), CS (`0x4`), busy (`0x8`), SCLK divider (`0xC`): half period in clocks, bits 7:0, resets to 23 (391 kHz, for card init); writes below 3 (3 MHz, the fastest the MISO synchronizer can read) set 3. The first stage initializes the card at 23 and switches to 3 when the card is ready. Writes while busy are ignored (all registers): wait for busy to clear first. Only power-on resets the registers, not a CPU soft reset |
 | `0x4000_3000` - `0x4000_300F` | 16 B | **GPIO Controller** | 6 onboard active-low LEDs (`0x00`=ON, `0x3F`=OFF) & user buttons (Button S2 on pin 3); offset `0x8` is the ISA for the next soft reset (bit 8 valid, bit 0: 1 = RV32, 0 = Hack; valid clears once a soft reset has used it); offset `0xC` is a soft-reset trigger — writing `0x5A5A_A55A` (or its short form `0x0000_A55A`) pulses `cpu_soft_rst`, resetting the CPU FSM/PC/CSRs to `RESET_VECTOR` without a full FPGA reload |
-| `0x8000_0000` - `0x807F_FFFF` | 8 MB | **PSRAM** | The on-package PSRAM (W955D8MBYA, two 4 MB dies) through `psram_controller` ([`vendor/psram_controller`](vendor/psram_controller)): code and data (RV32 only). Every access waits: a fetch or load takes 35 cycles more than from I-RAM/D-RAM, a store 34 more. The 8 MB repeat every 8 MB through `0x8FFF_FFFF`; the PSRAM's own registers (ID/configuration) are not reachable. Contents are undefined at power-up: write before reading. Its power-up sequence ends inside the power-on reset, so it is ready from the first instruction |
+| `0x8000_0000` - `0x807F_FFFF` | 8 MB | **PSRAM** | The on-package PSRAM (W955D8MBYA, two 4 MB dies) through `psram_controller` ([`vendor/psram_controller`](vendor/psram_controller)): code and data (RV32 only). Every access waits: a fetch or load takes 35 cycles more than from I-RAM/D-RAM, a store 34 more. The 8 MB repeat every 8 MB through `0x8FFF_FFFF`; the PSRAM's own registers (ID/configuration) are not reachable. Contents are undefined at power-up: write before reading. Its power-up sequence ends inside the power-on reset, so it is ready from the first instruction. Applications the second stage's `run` starts load from `0x8000_0000` (the Zephyr board `vux9k`: its image from `0x8000_0000`, its RAM `0x8040_0000`-`0x806F_FFFF`); the first stage's data is at `0x806F_0000`, the second stage at `0x8070_0000` ([Two-stage boot](#two-stage-boot-the-first-stage-and-the-sd-card)) |
 
 **Address decoding and aliases.** This describes how the hardware behaves, not an interface: applications use only the documented addresses and registers (the tables in this README; [Hardware revisions and compatibility](docs/APP_DEVELOPMENT.md#6-hardware-revisions-and-compatibility)). Only the address bits needed to tell the regions apart are decoded, so every region repeats and nothing raises an access fault:
 - `0x2xxx_xxxx` is D-RAM repeating every 8 KB (`0x2000_2100` is the same word as `0x2000_0100`).
@@ -281,14 +281,15 @@ says (`fw_common::launch`):
 
 | Header | Where it runs | How it starts |
 |:---|:---|:---|
-| RV32, load address in `0x8000_0000`-`0x806F_FFFF` | The PSRAM below the second stage | In place: D-RAM zeroed, a jump to the entry point with `a0`-`a2` as the first stage handed them over. The first stage stays in I-RAM: a soft reset goes back to it |
+| RV32, load address in `0x8000_0000`-`0x806F_FFFF` (the Zephyr board `vux9k`, the hello demo) | The PSRAM below the second stage | In place: D-RAM zeroed, a jump to the entry point with `a0`-`a2` as the first stage handed them over. The first stage stays in I-RAM: a soft reset, or Button S1, goes back to it |
 | RV32, load address and entry point `0` (at most 14 KB, `0x0000`-`0x37FF`) | I-RAM | Copied into I-RAM over the first stage, D-RAM zeroed, soft reset in RV32 mode (it starts at `0`) |
 | Hack, a word-aligned load address in I-RAM (at most 16 KB) | I-RAM | As above, in Hack mode |
 
 An I-RAM application replaces the first stage until the FPGA is configured again (power
 cycle, or the bitstream loaded again): a soft reset then restarts the application, not the
-boot. A file `run` refuses (bad magic, CRC, a load address outside these windows, ...) leaves
-everything as it was. An exception in a PSRAM application that set no trap vector of its own
+boot. A PSRAM application that never returns (the Zephyr demos) leaves the first stage
+there, so Button S1 (the board's reset) starts the boot again. A file `run` refuses (bad
+magic, CRC, a load address outside these windows, ...) leaves everything as it was. An exception in a PSRAM application that set no trap vector of its own
 is reported by the second stage (`[TRAP] ...`).
 
 ---
@@ -309,7 +310,8 @@ python3 tools/vux_tool.py mkfat sd.img --file VUX9K/STAGE2.BIN=build/firmware/st
 build/emu/target/release/vux9k-emu --sd sd.img --stdio
 # ... or on TCP, for vux_tool.py (--port socket://localhost:4000) or a terminal program
 build/emu/target/release/vux9k-emu --sd sd.img --sd-write-back --tcp 4000
-# Start an application image in its ISA from I-RAM, without the first stage; stop when it
+# Start an application image in its ISA where the second stage's `run` would (Hack: I-RAM;
+# RV32: the PSRAM at 0x80000000, or --load-addr), without the first stage; stop when it
 # prints a text
 build/emu/target/release/vux9k-emu --no-firmware --load build/hack/firmware.bin --mode hack --until "(100%)!"
 build/emu/target/release/vux9k-emu --no-firmware --load build/zephyr-demo/zephyr/zephyr.bin --mode riscv --stdio
@@ -333,10 +335,10 @@ one machine.
 ### Zephyr boards
 
 `zephyr_workspace/boards/vux9k/` has two targets: `vux9k`, the real board (18 MHz, the
-SoC timer as `andestech,machine-timer`, tickless at 1000 ticks/s, 14 KB of I-RAM and 8 KB of
-D-RAM, which the link enforces: its applications are started by the second stage's `run` in
-I-RAM, in place of the first stage, until the board moves to the PSRAM), and `vux9k/vux9k/ext`,
-the extended profile for the emulator only. `make build-zephyr-demo` builds the Rust demo
+SoC timer as `andestech,machine-timer`, tickless at 1000 ticks/s, linked into the PSRAM: the
+image runs in place from `0x8000_0000`, 4 MB, and its RAM is the 3 MB from `0x8040_0000`; the
+second stage's `run` loads its applications there and jumps to them, the first stage staying
+in I-RAM), and `vux9k/vux9k/ext`, the extended profile for the emulator only. `make build-zephyr-demo` builds the Rust demo
 (`zephyr_workspace/app/`, Zephyr + a Rust staticlib) for the real board; `make
 build-zephyr` builds bc_clone_rs for `ext`. `make build-zephyr-irq-echo` builds
 `zephyr_workspace/irq_echo/`, an echo through the UART driver's interrupt-driven API
@@ -468,13 +470,13 @@ Short tests run on Icarus, long SoC/GLS runs on Verilator (`SIM_UNIT` / `SIM_SOC
 | *slow* **PSRAM on Icarus** | `make sim-psram-icarus` | a few min | The SoC MMIO program's PSRAM window checks with the real controller on the pin-level W955D8MBYA model (no protocol/timing error in it), and the PSRAM word model's contract test against the controller's Gowin netlist |
 | **Emulator** | `make emu-test` / `test-isa-emu` | ~10 sec | Rust unit tests of the emulator; riscv-tests on it (same results as `test-isa`) |
 | **Emulator Speed** | `make emu-bench` | ~10 sec | MIPS from Python and final-state digests (`--compare` with a saved run); prints only |
-| **Firmware on the Emulator** | `make test-emu` | ~30 sec | The first stage on FAT32 cards (boot, `.OLD`, what keeps a second stage from starting, card types, prompt, soft reset), RAM boot and install through `vux_tool.py`, Hack demo, Zephyr demo and interrupt-driven UART echo from I-RAM, bc (extended profile), SD transcripts, FAT32 images from mkfs.fat/mtools |
+| **Firmware on the Emulator** | `make test-emu` | ~30 sec | The first stage on FAT32 cards (boot, `.OLD`, what keeps a second stage from starting, card types, prompt, soft reset), RAM boot and install through `vux_tool.py`, Hack demo, Zephyr demo and interrupt-driven UART echo from the PSRAM (loaded directly and through the second stage's `run`), bc (extended profile), SD transcripts, FAT32 images from mkfs.fat/mtools |
 | **Firmware Host Tests** | `make test-fw-host` / `firmware-size` | ~5 sec | `firmware/fw_common` on the host (FAT32, v4 header, transfer v2, RAM boot); first stage ≤ 16 KB |
 | **Firmware Coverage** | `make coverage-fw` | ~40 sec | Source-line coverage of the firmware and demos from the emulator tests, against `coverage/thresholds.toml` (report in `build/coverage/fw/`) |
 | **Rust Coverage** | `make coverage-rust` | a few min | Line coverage of the emulator (its cargo tests and the Python-driven emulator runs) and `fw_common` (host tests) with cargo-llvm-cov, against `coverage/thresholds.toml` (report in `build/coverage/rust/`) |
 | **RTL ↔ Emulator Lockstep** | `make sim-lockstep` | ~40 sec | Random RV32I, traps/interrupts, the PSRAM window, Hack demo and the first stage booting a card on RTL and emulator, compared cycle by cycle (*slow*: `sim-lockstep-slow`, more programs) |
-| **Zephyr Demo** | `make sim-zephyr-demo-rtl` | ~45 sec | The Zephyr Rust demo preloaded into I-RAM on the RTL |
-| **Zephyr UART Interrupts** | `make sim-zephyr-irq-echo-rtl` | ~1 min | The interrupt-driven UART echo preloaded into I-RAM on the RTL: a 64-byte line, longer than both FIFOs, comes back with no overrun |
+| **Zephyr Demo** | `make sim-zephyr-demo-rtl` | a few min | The Zephyr Rust demo preloaded into the PSRAM on the RTL, started by a jump from I-RAM |
+| **Zephyr UART Interrupts** | `make sim-zephyr-irq-echo-rtl` | a few min | The interrupt-driven UART echo preloaded into the PSRAM on the RTL: a 64-byte line, longer than both FIFOs, comes back with no overrun |
 | **Static Timing (STA)**| `make sta` | ~15 sec | Exhaustive post-PnR timing analysis, Fmax verification, and critical path breakdown (`build/synth/soc_sta.json`) |
 | **Real Hardware** | `make test-hw` | ~4 min | The two-stage boot, the second stage's file commands and the demos it starts, on the Tang Nano 9K with a FAT32 card via `scripts/test_hardware.py` (14 tests) |
 | **Real Hardware, Release Tree** | `make test-hw-dist DIST=<dir>` | ~4 min | The same 14 tests with a `make dist` tree's bitstream, second stage and demos, nothing rebuilt: how a release candidate is tested ([`docs/RELEASING.md`](docs/RELEASING.md)) |
@@ -498,7 +500,7 @@ stage under test as `STAGE2.BIN` and `STAGE2.OLD`:
 10. **File commands** in `\VUX9K\TEST\`: `mkdir`, `put` of a two-sector file, `ls`, `cat` read back, `mv` into `TEST\SUB\` and back, `rm`, `rmdir` (a leftover `TEST` tree is removed first, and the tree also after a failure)
 11. **`HELLO.BIN` in the PSRAM** (`put` into `\VUX9K\APPS\`, `run`): `a0`-`a2` as in test 3, then `r` soft-resets to the first stage, which is still in I-RAM and boots the second stage again
 12. **`HACK.BIN` in I-RAM** (Hack mode): the Hack demo's report, all `[PASS]`; then the bitstream is loaded into SRAM again (openFPGALoader with the suite's `pack.fs`, as `make prog-sram`; not `--reset`, which loads the flash's bitstream) and the first stage's banner checked
-13. **`ZEPHYR.BIN` in I-RAM** (RV32): the Zephyr demo's tasks finish and `k_msleep(100)` takes 100-102 ms; then the bitstream again. Skipped, saying so, when the build has no `ZEPHYR.BIN` (no Zephyr)
+13. **`ZEPHYR.BIN` in the PSRAM**: the Zephyr demo's tasks finish and `k_msleep(100)` takes 100-102 ms; then the bitstream again (the demo never returns, and only Button S1 would start the first stage again). Skipped, saying so, when the build has no `ZEPHYR.BIN` (no Zephyr)
 14. **Install the second stage under test again**, after the loads, and boot it: what the suite leaves on the card and in the FPGA
 
 > [!NOTE]

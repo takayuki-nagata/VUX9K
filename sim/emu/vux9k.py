@@ -31,6 +31,9 @@ import tools.vux_tool as vux_tool  # noqa: E402, F401 (the tests take it from he
 Soc = vux9k_emu.Soc
 
 CLK_HZ = 18_000_000
+# The PSRAM's start (fw_common::map::XMEM_BASE): RV32 applications load and run there
+# (Soc.load_app(data, "riscv", XMEM_BASE)), as the second stage's `run` starts them
+XMEM_BASE = 0x8000_0000
 UART_BIT = 156  # clocks per bit at 115200 baud
 UART_FRAME = 10 * UART_BIT
 SECTOR = 512

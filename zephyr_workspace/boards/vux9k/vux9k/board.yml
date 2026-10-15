@@ -1,8 +1,9 @@
 # Copyright (c) 2026 Takayuki Nagata
 # SPDX-License-Identifier: Apache-2.0
 
-# vux9k            the real SoC: 14 KB of I-RAM for the program and 8 KB of D-RAM less
-#                  8 bytes (the old Resident Loader's limits, until PSRAM), 18 MHz
+# vux9k            the real SoC, 18 MHz: linked into the PSRAM, 4 MB for the image (run in
+#                  place from 0x8000_0000, where the second stage's `run` loads it) and
+#                  3 MB of RAM from 0x8040_0000
 # vux9k/vux9k/ext  emulator only (vux9k-emu --profile extended): the same SoC with
 #                  512 KB/256 KB of memory, for programs too big for the board (bc).
 #                  It is NOT real hardware.

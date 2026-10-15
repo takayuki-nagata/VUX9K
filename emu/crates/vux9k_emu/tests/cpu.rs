@@ -397,6 +397,61 @@ fn load_app_rejects_what_the_board_cannot_load() {
 }
 
 #[test]
+fn load_app_at_the_psram_runs_rv32_in_place() {
+    use vux9k_emu::soc::{XMEM_BASE, XMEM_READ_LATENCY};
+    // Bigger than the I-RAM window: the 14 KB limit is I-RAM's only
+    let mut prog: Vec<u8> = [addi(1, 0, 5), addi(1, 1, 1)]
+        .iter()
+        .flat_map(|w| w.to_le_bytes())
+        .collect();
+    prog.resize(16 * 1024, 0);
+    let at = XMEM_BASE + 0x100;
+    let mut soc = Soc::new(Profile::Real);
+    soc.load_app_at(&prog, Isa::Rv32, at).unwrap();
+    assert_eq!((soc.pc, soc.xmem_word(at + 4)), (at, addi(1, 1, 1)));
+    assert_eq!(soc.iram_word(0), 0, "I-RAM untouched");
+    run_n(&mut soc, 2);
+    assert!(soc.riscv_mode);
+    assert_eq!(soc.regs[1], 6);
+    assert_eq!(soc.cycle, 2 * (2 + XMEM_READ_LATENCY) as u64);
+    // At 0 it is load_app, with its limit
+    let mut soc = Soc::new(Profile::Real);
+    assert!(soc.load_app_at(&prog, Isa::Rv32, 0).is_err());
+    soc.load_app_at(&prog[..8], Isa::Rv32, 0).unwrap();
+    assert_eq!((soc.pc, soc.iram_word(0)), (0, addi(1, 0, 5)));
+}
+
+#[test]
+fn load_app_at_rejects_what_the_board_cannot_start() {
+    use vux9k_emu::soc::XMEM_BASE;
+    let mut soc = Soc::new(Profile::Real);
+    let nop = 0x13u32.to_le_bytes();
+    for (isa, addr) in [
+        (Isa::Hack, XMEM_BASE),
+        (Isa::Rv32, 0x100),
+        (Isa::Rv32, 0x2000_0000),
+        (Isa::Rv32, 0x9000_0000),
+    ] {
+        let e = soc.load_app_at(&nop, isa, addr).unwrap_err();
+        assert!(e.contains("into the PSRAM"), "{e}");
+    }
+    assert!(soc.load_app_at(&[], Isa::Rv32, XMEM_BASE).is_err());
+    let e = soc.load_app_at(&nop, Isa::Rv32, XMEM_BASE + 2).unwrap_err();
+    assert!(e.contains("word-aligned"), "{e}");
+    // Up to the window's last word, not past it, nor into its 8 MB repeat
+    let end = XMEM_BASE + 8 * 1024 * 1024;
+    assert!(soc.load_xmem(end - 4, &nop).is_ok());
+    assert!(soc.load_xmem(end - 4, &[0; 5]).is_err());
+    assert!(soc.load_xmem(end, &nop).is_err());
+    // A partial last word is padded with zeros
+    soc.load_xmem(XMEM_BASE, &[1, 2, 3, 4, 5]).unwrap();
+    assert_eq!(soc.xmem_word(XMEM_BASE + 4), 5);
+    // The riscv-tests profile has no window
+    let mut soc = Soc::new(Profile::IsaTest);
+    assert!(soc.load_xmem(XMEM_BASE, &nop).is_err());
+}
+
+#[test]
 fn hpm_csrs_exist_in_their_ranges() {
     use vux9k_emu::csr::exists;
     // mcountinhibit, mhpmevent3-31, mhpmcounter3-31 and their high halves read 0

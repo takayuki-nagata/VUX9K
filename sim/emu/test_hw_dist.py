@@ -114,6 +114,9 @@ def test_irq_echo_files_come_from_the_dist(tmp_path):
     assert (app, pack_fs) == ("X.BIN", os.path.join(REPO_ROOT, "build", "synth", "pack.fs"))
     with pytest.raises(SystemExit):
         hw_irq_echo.resolve_files(hw_irq_echo.parse_args([]))
+    # A raw zephyr.bin is wrapped to load where the board vux9k links it, the PSRAM's start
+    h = test_hardware.vux_tool.ImageHeader.parse(hw_irq_echo.v4_file(b"\x13\0\0\0"))
+    assert h is not None and (h.mode, h.load_addr) == (test_hardware.vux_tool.MODE_RISCV, 0x8000_0000)
 
 
 def test_bitstream_load_errors(tmp_path):

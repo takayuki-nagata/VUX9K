@@ -9,7 +9,7 @@ files' hashes. Source: https://github.com/takayuki-nagata/VUX9K
 |---|---|
 | `bitstream/pack.fs` | FPGA bitstream (the first stage of the two-stage boot is inside) |
 | `sd/VUX9K/STAGE2.BIN` | The second stage, file manager and application launcher: copy it to the microSD card's FAT32 partition as `VUX9K\STAGE2.BIN`, or install it over the serial port (`vux_tool.py install-stage2`) |
-| `sd/VUX9K/APPS/` | The demos as v4 files for the card's `VUX9K\APPS\`, started by the second stage's `run`: `HELLO.BIN` (PSRAM), `ZEPHYR.BIN`, `IRQECHO.BIN` (Zephyr), `HACK.BIN` (Hack) |
+| `sd/VUX9K/APPS/` | The demos as v4 files for the card's `VUX9K\APPS\`, started by the second stage's `run`: `HELLO.BIN`, `ZEPHYR.BIN`, `IRQECHO.BIN` (Zephyr) in the PSRAM, `HACK.BIN` (Hack) in the instruction RAM |
 | `demos/` | Zephyr demo (RV32) and Hack demo images, for the emulator's `--load` |
 | `tools/vux_tool.py` | Talks to the boot stages over the serial port: card report, RAM boot, installing the second stage, putting files on the card and starting applications; makes v4 files and FAT32 card images |
 | `tools/70-vux9k-board.rules` | udev rule that keeps ModemManager off the board (docs/APP_DEVELOPMENT.md, section 1) |
@@ -53,7 +53,9 @@ emu/vux9k-emu --no-firmware --load demos/zephyr-demo.bin --mode riscv --stdio
 emu/vux9k-emu --no-firmware --load demos/hack-demo.bin --mode hack --stdio
 ```
 
-(Ctrl-C stops the emulator.) Then read `docs/APP_DEVELOPMENT.md` to build your own
+(Ctrl-C stops the emulator. `--mode riscv` puts the image in the PSRAM at `0x8000_0000`,
+where the Zephyr board links and the second stage's `run` loads it; `--mode hack` in the
+instruction RAM.) Then read `docs/APP_DEVELOPMENT.md` to build your own
 applications.
 
 The SoC, firmware, tools and emulator are MIT-licensed (`LICENSE`); the Zephyr board

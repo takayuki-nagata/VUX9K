@@ -2,7 +2,8 @@
  * Copyright (c) 2026 Takayuki Nagata
  * SPDX-License-Identifier: Apache-2.0
  *
- * The VUX9K SoC as soc/soc_top.veryl builds it; the board files add the memory sizes.
+ * The VUX9K SoC as soc/soc_top.veryl builds it; the board files add the memories (the
+ * nodes flash0 and sram0 under soc, each at its own unit address).
  */
 
 #include <mem.h>
@@ -45,15 +46,6 @@
 		#size-cells = <1>;
 		compatible = "simple-bus";
 		ranges;
-
-		/* I-RAM: programs run from it in place (loaded there by a loader) */
-		flash0: flash@0 {
-			compatible = "soc-nv-flash";
-		};
-
-		sram0: memory@20000000 {
-			compatible = "mmio-sram";
-		};
 
 		/* Machine external interrupt (cause 11) while the RX FIFO holds data */
 		uart0: uart@40000000 {

@@ -87,9 +87,9 @@ python3 tools/vux_tool.py run-app VUX9K/APPS/HELLO.BIN
 | File | What | Where it runs |
 |---|---|---|
 | `HELLO.BIN` | prints the first stage's a0-a2; `r` goes back to the first stage | the PSRAM at `0x8000_0000` |
-| `ZEPHYR.BIN` | the Zephyr Rust demo | I-RAM (replaces the first stage until the FPGA is configured again) |
-| `IRQECHO.BIN` | Zephyr's interrupt-driven UART echo | I-RAM |
-| `HACK.BIN` | the Hack C demo | I-RAM, in Hack mode |
+| `ZEPHYR.BIN` | the Zephyr Rust demo | the PSRAM at `0x8000_0000` (it never returns: S1 goes back to the first stage) |
+| `IRQECHO.BIN` | Zephyr's interrupt-driven UART echo | the PSRAM at `0x8000_0000` |
+| `HACK.BIN` | the Hack C demo | I-RAM, in Hack mode (replaces the first stage until the FPGA is configured again) |
 
 `demos/` holds the Zephyr and Hack demos' raw images for the emulator (section 4).
 
@@ -102,9 +102,10 @@ and rebuild applications (section 3).
 
 The CPU is RV32I with Zicsr and Zifencei, machine mode only, at 18 MHz, with 16 KB of
 instruction RAM, 8 KB of data RAM and 8 MB of PSRAM. The Zephyr board `vux9k` links
-applications into 14 KB of the instruction RAM and the data RAM except its last 8 bytes,
-as on v0.2.x: the second stage's `run` starts them in I-RAM, in place of the first stage,
-until the board moves to the PSRAM.
+applications into the PSRAM: the image runs in place from `0x8000_0000` (4 MB, where the
+second stage's `run` loads it), its RAM is the 3 MB from `0x8040_0000`; the instruction RAM
+(the first stage) and the data RAM are left alone. Every fetch and data access in the PSRAM
+waits ~35 cycles: the CPU runs about 15-20 times slower there than in the block RAMs.
 Misaligned loads and stores trap, and so does any CSR that isn't implemented
 ([RV32 CSRs](../README.md#rv32-csrs) in the repository's README lists them).
 
@@ -122,20 +123,19 @@ west build -b vux9k $ZEPHYR_BASE/samples/hello_world -- \
 
 `build/zephyr/zephyr.bin` is the image for the emulator (`--mode riscv`).
 Use it as `west build` writes it: it carries the initial values of `.data`, which the
-image copies from instruction RAM to data RAM at startup.
+image copies to its RAM at startup.
 
-- **C:** any Zephyr application; start from `samples/hello_world`. `hello_world` with
-  default settings takes 13 KB of the 14 KB, so larger applications need Zephyr's size
-  options.
+- **C:** any Zephyr application; start from `samples/hello_world`. Size still costs time:
+  `run` loads a file at ~2,000-2,400 cycles a byte (~1.6 s for 13 KB), so Zephyr's
+  size options pay off.
 - **Rust:** `vux9k-zephyr-bsp/app/` is a template: a Zephyr application whose logic is a
   Rust `no_std` staticlib (`app/rust_demo`), called from `app/src/main.c` through small
   C wrappers for Zephyr's API. It needs Rust (`pins.rust`) with the target
   `riscv32i-unknown-none-elf` (`rustup target add riscv32i-unknown-none-elf`). Its
-  `prj.conf` has the settings that make it fit in 14 KB (minimal libc, `printk` without
-  `printf`, small stacks).
-- The board `vux9k` enforces the limits at link time: an image that outgrows 14 KB / 8 KB
-  fails to link. The board `vux9k/vux9k/ext` (512 KB / 256 KB) is for the emulator's
-  `extended` profile only; **it does not run on the board**.
+  `prj.conf` keeps it small (minimal libc, `printk` without `printf`, small stacks; 13 KB).
+- The board `vux9k` enforces its 4 MB / 3 MB at link time. The board `vux9k/vux9k/ext`
+  (512 KB / 256 KB) is for the emulator's `extended` profile only; **it does not run on
+  the board**.
 - The console is the SoC's UART. Its driver also has the interrupt-driven API
   (`CONFIG_UART_INTERRUPT_DRIVEN`): RX on the machine external interrupt, TX refilled
   from a kernel timer since the UART has no TX interrupt (`vux9k-zephyr-bsp/README.md`,
@@ -170,12 +170,12 @@ where it runs:
 
 | Application | `mkv4` | Where it runs |
 |---|---|---|
-| Zephyr on the board `vux9k` | `--load-addr 0` (RV32; the entry point must stay 0) | I-RAM, at most 14 KB (`0x0000`-`0x37FF`), started by a soft reset at `0` |
+| Zephyr on the board `vux9k`, or RV32 linked into the PSRAM | the default (`0x8000_0000`) or `--load-addr` inside `0x8000_0000`-`0x806F_FFFF` | the PSRAM, in place |
+| RV32 linked at 0 | `--load-addr 0` (the entry point must stay 0) | I-RAM, at most 14 KB (`0x0000`-`0x37FF`), started by a soft reset at `0` |
 | Hack | `--mode hack` (load address 0) | I-RAM, at most 16 KB, in Hack mode |
-| RV32 linked into the PSRAM | the default (`0x8000_0000`) or `--load-addr` inside `0x8000_0000`-`0x806F_FFFF` | the PSRAM, in place |
 
 ```sh
-python3 tools/vux_tool.py mkv4 --load-addr 0 --name "my app" build/zephyr/zephyr.bin APP.BIN
+python3 tools/vux_tool.py mkv4 --name "my app" build/zephyr/zephyr.bin APP.BIN
 python3 tools/vux_tool.py mkv4 --mode hack --name "my hack app" app.bin HACKAPP.BIN
 ```
 
@@ -183,9 +183,9 @@ The PSRAM window is `XMEM_BASE` (`0x8000_0000`) up to the second stage at `STAGE
 (`0x8070_0000`); the entry point defaults to the load address. Code there runs slower: every
 fetch waits ~35 cycles. A PSRAM application starts with `a0` = 1 on an SDHC card (else 0),
 `a1` = the FAT32 partition's first LBA, `a2` = the first stage's version, and the first stage
-still in I-RAM (a soft reset goes back to it); `sd/VUX9K/APPS/HELLO.BIN` is one. The Zephyr
-board `vux9k` doesn't link into the PSRAM. `run` checks the file's header and CRC before
-it writes anything, and refuses a file outside these windows with the first stage untouched.
+still in I-RAM (a soft reset goes back to it); `sd/VUX9K/APPS/HELLO.BIN` and the Zephyr
+demos are. `run` checks the file's header and CRC before it writes anything, and refuses a
+file outside these windows with the first stage untouched.
 
 ## 4. Testing on the emulator
 
@@ -198,8 +198,11 @@ emu/vux9k-emu --no-firmware --load build/zephyr/zephyr.bin --mode riscv --stdio
 emu/vux9k-emu --no-firmware --load app.bin --mode hack --stdio
 ```
 
-`--mode` starts the CPU in that ISA with the image at address 0 of the instruction RAM, and
-refuses an image larger than the 14 KB the board `vux9k` links into.
+`--mode` starts the CPU in that ISA with the image where the second stage's `run` would put
+it: an RV32 image in the PSRAM at `0x8000_0000` (where the board `vux9k` links), a Hack image
+at address 0 of the instruction RAM. `--load-addr ADDR` gives the load address of an image
+linked elsewhere (as `mkv4 --load-addr`): an RV32 image at 0 goes into the instruction RAM,
+at most 14 KB.
 
 - `--stdio` connects the UART to the terminal (input goes line by line); `--tcp PORT`
   serves it on `localhost:PORT` instead, for a terminal program.
@@ -210,8 +213,8 @@ refuses an image larger than the 14 KB the board `vux9k` links into.
 - `--profile extended` gives 512 KB / 256 KB for the `vux9k/vux9k/ext` Zephyr board.
   **Nothing that needs it runs on the board.**
 
-Started this way, an application finds its image at address 0, the CPU in the ISA of
-`--mode`, the data RAM zeroed, and an empty SD card (a card image can be given with `--sd
+Started this way, an application finds its image at its load address, the CPU in the ISA
+of `--mode` starting there, the other memories zeroed, and an empty SD card (a card image can be given with `--sd
 IMAGE`; `vux_tool.py mkfat` makes one).
 
 **From Python.** `emu/vux9k_emu.abi3.so` is the emulator as a Python module (CPython 3.10
@@ -224,7 +227,7 @@ import vux9k_emu
 
 soc = vux9k_emu.Soc("real")
 with open("demos/zephyr-demo.bin", "rb") as f:
-    soc.load_app(f.read(), "riscv")
+    soc.load_app(f.read(), "riscv", 0x8000_0000)
 end = soc.run_until_tx(b"All Rust application tasks finished successfully!", 40_000_000)
 assert end is not None, soc.uart_received()
 print(f"demo finished after {soc.cycle} cycles ({soc.cycle / 18e6:.2f} s at 18 MHz)")
@@ -263,8 +266,8 @@ assert soc.run_until_tx(b"for the first stage.\n", 20_000_000) is not None, soc.
 print(soc.uart_received().decode().splitlines()[-2])
 ```
 
-Useful methods of `Soc`: `load_app(image, mode)` (`mode` `"riscv"` or `"hack"`, as
-`--load --mode`), `load_readmemh(iram, d0, d1, d2, d3)` (memory images, as `--firmware`),
+Useful methods of `Soc`: `load_app(image, mode, addr=0)` (`mode` `"riscv"` or `"hack"`,
+as `--load --mode`; `addr` as `--load-addr`, but 0 by default), `load_readmemh(iram, d0, d1, d2, d3)` (memory images, as `--firmware`),
 `sd_insert(image)` (a card, as `--sd`), `reset()` (power-on reset; load the image again after it),
 `run(max_cycles)`,
 `run_until_tx(needle, max_cycles)` (returns the output position after `needle`, or
@@ -283,11 +286,12 @@ python3 tools/vux_tool.py run-app VUX9K/APPS/APP.BIN        # run; then `monitor
 ```
 
 or copy it to `\VUX9K\APPS\` with a PC and type `run VUX9K/APPS/APP.BIN` at the `s2>`
-prompt in a terminal (`monitor`). An application in I-RAM (Zephyr, Hack) replaces the first
-stage: until the FPGA is configured again (power cycle, or `openFPGALoader -b tangnano9k
-bitstream/pack.fs`; `openFPGALoader --reset` loads the flash's bitstream), a soft reset or
-S1 restarts the application, not the boot. A PSRAM application leaves the first stage in
-I-RAM. What applies to anything that runs there:
+prompt in a terminal (`monitor`). A PSRAM application (Zephyr, `HELLO.BIN`) leaves the
+first stage in I-RAM: button S1 or a soft reset starts the boot again, as below. An
+application in I-RAM (Hack, RV32 at 0) replaces the first stage: until the FPGA is
+configured again (power cycle, or `openFPGALoader -b tangnano9k bitstream/pack.fs`;
+`openFPGALoader --reset` loads the flash's bitstream), a soft reset or S1 restarts the
+application, not the boot. What applies to anything that runs there:
 
 Writing `0x5A5A_A55A` to `0x4000_300C` resets the CPU only, like S1, and starts the first
 stage again, which boots the card. A Hack program writes `0x0000_A55A` to `0x600C` instead,

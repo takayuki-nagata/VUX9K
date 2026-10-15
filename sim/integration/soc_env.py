@@ -19,6 +19,7 @@ import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, Timer
 from lockstep_programs import hash_program
+from rv32_asm import Asm
 from sdcard_model import SpiSdCardModel
 from virtual_serial import VirtualSerialBridge
 
@@ -35,6 +36,10 @@ BANNER = f"VUX9K Stage 1 (v{STAGE1_VERSION})"
 S1_PROMPT = b"s1> "
 S2_PROMPT = b"s2> "
 STAGE2_BASE = 0x8070_0000
+# The PSRAM's start (fw_common::map::XMEM_BASE): where RV32 applications are linked (the
+# Zephyr board vux9k) and the second stage's `run` starts them
+XMEM_BASE = 0x8000_0000
+XMEM_HALF_WORDS = 1 << 20  # psram_word_model's mem is [2][XMEM_WORDS / 2] (soc_pkg::XMEM_WORDS = 2^21)
 
 
 HASH_PAYLOAD = hash_program(STAGE2_BASE)
@@ -196,6 +201,44 @@ def load_imem(soc, words):
     """Overwrite soc_ram's I-RAM from word 0 (call while the CPU is held in reset)."""
     for idx, word in enumerate(words):
         soc.ram_inst.i_mem[idx].value = word
+
+
+def load_xmem(soc, addr: int, image: bytes):
+    """Write image into the PSRAM at RV32 address addr (word-aligned; the last word's bytes
+    past the end 0): the word model's words, one VPI write each, so only Verilator RTL
+    builds, which have sim/psram_word_model in place of the controller. Call it while the
+    CPU is held in reset."""
+    assert addr % 4 == 0 and XMEM_BASE <= addr and addr + len(image) <= XMEM_BASE + 2 * XMEM_HALF_WORDS * 4
+    assert hasattr(soc.xmem_inst, "mem"), "no PSRAM word model in this build (Verilator RTL only)"
+    mem = soc.xmem_inst.mem
+    first = (addr - XMEM_BASE) // 4
+    for i in range(0, len(image), 4):
+        word = first + i // 4
+        mem[word // XMEM_HALF_WORDS][word % XMEM_HALF_WORDS].value = int.from_bytes(
+            image[i : i + 4].ljust(4, b"\0"), "little"
+        )
+
+
+def jump_words(target: int) -> list[int]:
+    """I-RAM words that jump to target (lui t0; jalr x0, 0(t0)): placed at 0 in place of
+    the first stage, they start an application the way the second stage's `run` does,
+    without the boot. target must be 4 KB-aligned (lui's reach)."""
+    assert target % 4096 == 0, hex(target)
+    a = Asm()
+    a.lui("t0", target >> 12)
+    a.jalr("zero", "t0", 0)
+    return a.assemble()
+
+
+def preload_psram_app(image: bytes, addr: int = XMEM_BASE):
+    """start_soc's during_reset for an RV32 application linked into the PSRAM at addr: the
+    image in the PSRAM (load_xmem) and a jump to it at I-RAM 0 (jump_words)."""
+
+    def preload(soc):
+        load_xmem(soc, addr, image)
+        load_imem(soc, jump_words(addr))
+
+    return preload
 
 
 def read_hex_words(path) -> list[int]:

@@ -50,6 +50,11 @@ pub const XMEM_WORDS: usize = 1 << 21;
 pub const XMEM_READ_LATENCY: u32 = 35;
 /// Extra cycles of a window store: soc_pkg::XMEM_WRITE_LATENCY.
 pub const XMEM_WRITE_LATENCY: u32 = 34;
+/// The window's first address, where the board's RV32 applications are linked
+/// (fw_common::map::XMEM_BASE; the `vux9k` Zephyr board's flash).
+pub const XMEM_BASE: u32 = XMEM_REGION << 28;
+/// Bytes in the window (8 MB).
+pub const XMEM_BYTES: usize = XMEM_WORDS * 4;
 
 /// The ISA of an application image (a VUX9 header's mode).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,7 +63,8 @@ pub enum Isa {
     Hack,
 }
 
-/// Largest application image in I-RAM: what the `vux9k` Zephyr board links into.
+/// Largest RV32 application image in I-RAM on the real board: the second stage's I-RAM
+/// RV32 window (fw_common::map::IRAM_APP_BYTES).
 pub const MAX_APP_BYTES: usize = 14 * 1024;
 
 /// Why `Soc::run` returned.
@@ -345,6 +351,47 @@ impl Soc {
         }
         self.riscv_mode = isa == Isa::Rv32;
         self.mode_latched = true;
+        Ok(())
+    }
+
+    /// `load_app` at `addr`: 0 is I-RAM (`load_app`); an address in the wait-state window
+    /// (RV32 only) puts the image there (`load_xmem`) and starts the CPU in RV32 at `addr`,
+    /// the way the second stage's `run` jumps to an application in the PSRAM.
+    pub fn load_app_at(&mut self, bytes: &[u8], isa: Isa, addr: u32) -> Result<(), String> {
+        if addr == 0 {
+            return self.load_app(bytes, isa);
+        }
+        if isa != Isa::Rv32 || !self.in_xmem(addr) {
+            return Err(format!(
+                "load address {addr:#010x}: an application loads at 0, or (RV32) into the PSRAM at {XMEM_BASE:#010x}"
+            ));
+        }
+        if bytes.is_empty() {
+            return Err("application image of 0 bytes".into());
+        }
+        self.load_xmem(addr, bytes)?;
+        self.pc = addr;
+        self.riscv_mode = true;
+        self.mode_latched = true;
+        Ok(())
+    }
+
+    /// Write `bytes` into the wait-state window at RV32 address `addr` (word-aligned; little-
+    /// endian words, the last one's bytes past the end 0), within its 8 MB.
+    pub fn load_xmem(&mut self, addr: u32, bytes: &[u8]) -> Result<(), String> {
+        let offset = addr.wrapping_sub(XMEM_BASE) as usize;
+        if !self.in_xmem(addr) || !addr.is_multiple_of(4) || offset + bytes.len() > XMEM_BYTES {
+            return Err(format!(
+                "{} bytes at {addr:#010x}: the PSRAM takes word-aligned data within {XMEM_BASE:#010x}..{:#010x}",
+                bytes.len(),
+                XMEM_BASE as usize + XMEM_BYTES
+            ));
+        }
+        for (n, chunk) in bytes.chunks(4).enumerate() {
+            let mut w = [0u8; 4];
+            w[..chunk.len()].copy_from_slice(chunk);
+            self.xmem[offset / 4 + n] = u32::from_le_bytes(w);
+        }
         Ok(())
     }
 

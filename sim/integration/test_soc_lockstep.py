@@ -15,10 +15,9 @@ import os
 import cocotb
 from cocotb.triggers import ReadOnly, RisingEdge, Timer
 from lockstep_programs import UART_BIT, XMEM_USED, programs
-from soc_env import CLK_PERIOD_PS, REPO_ROOT, load_imem, read_hex_words, soc_of, start_soc
+from soc_env import CLK_PERIOD_PS, REPO_ROOT, XMEM_HALF_WORDS, load_imem, read_hex_words, soc_of, start_soc
 
 SLOW = os.environ.get("LOCKSTEP_SLOW", "") not in ("", "0")
-XMEM_HALF_WORDS = 1 << 20  # psram_word_model's mem is [2][XMEM_WORDS / 2] (soc_pkg::XMEM_WORDS = 2^21)
 
 
 def _firmware():
