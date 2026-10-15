@@ -10,7 +10,7 @@ sim/integration/test_soc_hardware_flow.py.
 """
 
 import pytest
-from s1_env import BANNER, FAT_LBA, S2_NAME, STAGE1_VERSION, STAGE2_BASE, card, handoff, stage2, start
+from s1_env import BANNER, FAT_LBA, S2_NAME, STAGE1_VERSION, STAGE2_BASE, STAGE2_VERSION, card, handoff, stage2, start
 from vux9k import EmuClock, EmuSerial, vux_tool
 
 BIN = "VUX9K/STAGE2.BIN"
@@ -111,11 +111,11 @@ def test_broken_bin_boots_old(tool):
     soc, ser = tool()
     vux_tool.enter_s1(ser)
     vux_tool.ram_boot(ser, stage2())
-    vux_tool.install_stage2(ser, stage2(version=4))  # v1 becomes .OLD
+    vux_tool.install_stage2(ser, stage2(version=4))  # the RAM-booted one becomes .OLD
     assert vux_tool.install_stage2(ser, stage2(version=5, crc_override=0), unchecked=True) == "[UNCHECKED] OK"
     ser.write(b"reset\r")
     got, out = vux_tool.read_until(ser, ("s2> ",), 5.0)
-    assert got and "[BOOT] STAGE2.OLD (STAGE2.BIN missing or broken) v1 " in out, out
+    assert got and f"[BOOT] STAGE2.OLD (STAGE2.BIN missing or broken) v{STAGE2_VERSION} " in out, out
 
 
 def test_ram_boot_transfer_errors(tool):
