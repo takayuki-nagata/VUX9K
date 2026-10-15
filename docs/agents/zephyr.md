@@ -80,10 +80,27 @@ hardware gives and what the driver makes up for:
   The boards run 1000 ticks/s (`vux9k*_defconfig`) for this: at the earlier 100 it was
   one 32-byte refill per 10 ms (~3 KB/s). An app that lowers
   `CONFIG_SYS_CLOCK_TICKS_PER_SEC` slows its TX the same way. The kernel is tickless, so
-  the rate costs no periodic interrupts; the demo tests check `k_msleep(100)` to 102 ms,
-  which fails at 100 ticks/s.
+  the rate costs no periodic interrupts; the demo tests check `k_msleep(100)` to 105 ms,
+  which fails at 100 ticks/s (110 or more). From the uncached PSRAM it reads 103-104 ms;
+  102, a tick plus rounding as from I-RAM, is a strict expected failure (pytest
+  `xfail(strict=True)`, cocotb `expect_fail`, a check of its own) until the cache (B4a).
 - `irq_tx_complete` and error interrupts are left out on purpose: the status register
   has no "transmitter empty" bit, and errors are only sticky flags.
+- **Errors aren't lost to the driver's own status reads.** The overrun and frame-error
+  bits are sticky, but every read of the status register clears them, and the driver reads
+  it all the time (RX empty, TX full, in the ISR and in threads), so `err_check` used to
+  find them cleared (irq_echo printed `err=0` for a line that had lost bytes). Every status
+  read goes through `uart_vux9k_read_status()`, which ORs the error bits into the driver
+  data (under `irq_lock`, only when one is set), and `err_check` returns and clears them.
+  This is in the polling build too, so it changed the demo's `zephyr.bin`.
+- **RX at full speed needs the cache.** From the uncached PSRAM the RX handler takes about
+  three frame times a byte (estimated from a 64-byte line sent back to back, of which 52
+  bytes came through, every third lost once the 32-byte FIFO had filled), so input longer
+  than the FIFO overruns at 115200 baud. Until the cache (B4a), pace it: the tests send
+  16-byte chunks with gaps (`sim/integration/irq_echo_pace.py`, shared by the emulator,
+  RTL and board tests; the emulator test prints how long each chunk takes to read, the
+  number to tune the gap by), and the back-to-back line is a strict expected failure next
+  to a check that it reports `err=1` (`UART_ERROR_OVERRUN`).
 
 A TX interrupt and an interrupt-enable register would only come with a later hardware
 revision, whose register map isn't bound by this one's (docs/APP_DEVELOPMENT.md, "Hardware
@@ -97,4 +114,5 @@ printk (cbprintf alone is 1.5 KB; with it the app overflowed the first board's 1
 `sim/emu/test_zephyr_irq_echo.py` (loaded into the PSRAM, and through the second stage's
 `run VUX9K/APPS/IRQECHO.BIN`) and `sim-zephyr-irq-echo-rtl` (preloaded into the PSRAM); on
 the board, `make test-hw-irq-echo` (`scripts/hw_irq_echo.py`: `put` and `run` through the
-second stage, then the bitstream loaded into SRAM again).
+second stage, lines paced from the host as above, `--chunk 0` back to back, then the
+bitstream loaded into SRAM again).

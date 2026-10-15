@@ -5,8 +5,11 @@
 """
 The Zephyr interrupt-driven UART echo (make build-zephyr-irq-echo) on the board: put on the
 card as \\VUX9K\\APPS\\IRQECHO.BIN through the second stage (`put`, the file left there) and
-started with its `run`, then sent bursts longer than both 32-byte UART FIFOs; each must come
-back upper-cased with "rx=<n> drop=0 err=0" (no byte lost in the app or by the UART). The
+started with its `run`, then sent lines longer than both 32-byte UART FIFOs; each must come
+back upper-cased with "rx=<n> drop=0 err=0" (no byte lost in the app or by the UART). From
+the uncached PSRAM the app can't read a line sent back to back at 115200 baud, so each is
+sent in paced chunks (sim/integration/irq_echo_pace.py, measured on the emulator; --chunk 0
+sends it back to back, which should pass again with the cache, B4a). The
 application runs in the PSRAM, its handlers too, and never returns: the first stage stays in
 I-RAM, but only the reset button would start it again, so the bitstream is loaded into the
 FPGA's SRAM from --pack-fs at the end (not openFPGALoader --reset, which loads the flash's
@@ -24,7 +27,9 @@ import time
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
+sys.path.insert(0, os.path.join(REPO_ROOT, "sim", "integration"))
 
+import irq_echo_pace as pace  # noqa: E402
 from test_hardware import (  # noqa: E402
     CARD_APPS,
     DIST_APPS_DIR,
@@ -64,7 +69,22 @@ def v4_file(data: bytes) -> bytes:
     return vux_tool.build_vux9_v4_image(data, name="Zephyr irq_echo", mode="riscv", load_addr=vux_tool.XMEM_BASE)[0]
 
 
-def run(ser, image: bytes, size: int, count: int) -> bool:
+def send_chunked(ser, data: bytes, chunk: int) -> None:
+    """data in chunks of `chunk` bytes, each followed by pace.GAP_FRAMES frame times of
+    silence (0: all at once). The sleep counts from the write, so it covers the chunk's own
+    time on the line too; host and USB latency only add to the gaps."""
+    if chunk <= 0:
+        ser.write(data)
+        ser.flush()
+        return
+    frame_s = pace.FRAME_BITS / 115200
+    for piece in pace.chunks(data, chunk):
+        ser.write(piece)
+        ser.flush()
+        time.sleep((len(piece) + pace.GAP_FRAMES) * frame_s)
+
+
+def run(ser, image: bytes, size: int, count: int, chunk: int) -> bool:
     try:
         vux_tool.enter_s2(ser)
     except TimeoutError as e:
@@ -80,14 +100,14 @@ def run(ser, image: bytes, size: int, count: int) -> bool:
     passed = True
     for k in range(count):
         data = burst(size, k)
-        ser.write(data + b"\n")
-        ser.flush()
+        send_chunked(ser, data + b"\n", chunk)
         out = read_until(ser, b"err=", timeout=5.0)
         out += read_until(ser, b"\n", timeout=1.0) if not out.endswith(b"\n") else b""
         expected = data.upper() + f"\nrx={size} drop=0 err=0\n".encode()
         good = out == expected
         passed &= good
-        print(f"[{'PASS' if good else 'FAIL'}] burst {k + 1}/{count}: {size} bytes")
+        how = f"in {chunk}-byte chunks" if chunk > 0 else "back to back"
+        print(f"[{'PASS' if good else 'FAIL'}] line {k + 1}/{count}: {size} bytes {how}")
         if not good:
             print(f"       expected {expected!r}\n       got      {out!r}")
     return passed
@@ -113,8 +133,14 @@ def parse_args(argv=None):
     )
     parser.add_argument("--loader", default="openFPGALoader", help="openFPGALoader to load it with")
     parser.add_argument("--port", default="auto", help="serial port (default: auto)")
-    parser.add_argument("--size", type=int, default=256, help="bytes per burst (default: 256)")
-    parser.add_argument("--count", type=int, default=5, help="bursts (default: 5)")
+    parser.add_argument("--size", type=int, default=256, help="bytes per line (default: 256)")
+    parser.add_argument("--count", type=int, default=5, help="lines (default: 5)")
+    parser.add_argument(
+        "--chunk",
+        type=int,
+        default=pace.CHUNK,
+        help=f"send each line in chunks of this many bytes with gaps, 0: back to back (default: {pace.CHUNK})",
+    )
     return parser.parse_args(argv)
 
 
@@ -133,7 +159,7 @@ def main():
         print(f"[FAIL] {mm_hint}")
         sys.exit(1)
     try:
-        passed = run(ser, image, args.size, args.count)
+        passed = run(ser, image, args.size, args.count, args.chunk)
     except (TimeoutError, vux_tool.UploadError, vux_tool.S2Error) as e:
         print(f"[FAIL] {e}")
         passed = False

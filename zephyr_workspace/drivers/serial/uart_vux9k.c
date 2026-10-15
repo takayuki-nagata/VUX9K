@@ -17,6 +17,7 @@
 #define STATUS_TX_FULL   (1U << 1)
 #define STATUS_OVERRUN   (1U << 2) /* sticky; reading the status register clears it */
 #define STATUS_FRAME_ERR (1U << 3) /* sticky; reading the status register clears it */
+#define STATUS_ERRORS    (STATUS_OVERRUN | STATUS_FRAME_ERR)
 
 struct uart_vux9k_config {
 	mm_reg_t base;
@@ -26,6 +27,8 @@ struct uart_vux9k_config {
 };
 
 struct uart_vux9k_data {
+	/* The error bits of every status read since the last err_check (read_status) */
+	uint32_t errors;
 #ifdef CONFIG_UART_INTERRUPT_DRIVEN
 	const struct device *dev;
 	uart_irq_callback_user_data_t cb;
@@ -37,12 +40,32 @@ struct uart_vux9k_data {
 #endif
 };
 
+/*
+ * Every status read clears the hardware's error bits, and the driver reads the status
+ * for RX empty and TX full all the time: each read goes through here, which keeps the
+ * error bits for err_check. Threads and the ISR both read, so the update is under
+ * irq_lock (only when an error bit is set: rare).
+ */
+static uint32_t uart_vux9k_read_status(const struct device *dev)
+{
+	const struct uart_vux9k_config *config = dev->config;
+	struct uart_vux9k_data *data = dev->data;
+	uint32_t status = sys_read32(REG_STATUS(config->base));
+
+	if (status & STATUS_ERRORS) {
+		unsigned int key = irq_lock();
+
+		data->errors |= status & STATUS_ERRORS;
+		irq_unlock(key);
+	}
+	return status;
+}
+
 static int uart_vux9k_poll_in(const struct device *dev, unsigned char *p_char)
 {
 	const struct uart_vux9k_config *config = dev->config;
-	uint32_t status = sys_read32(REG_STATUS(config->base));
 
-	if (status & STATUS_RX_EMPTY) {
+	if (uart_vux9k_read_status(dev) & STATUS_RX_EMPTY) {
 		return -1;
 	}
 
@@ -54,23 +77,27 @@ static void uart_vux9k_poll_out(const struct device *dev, unsigned char out_char
 {
 	const struct uart_vux9k_config *config = dev->config;
 
-	while (sys_read32(REG_STATUS(config->base)) & STATUS_TX_FULL) {
+	while (uart_vux9k_read_status(dev) & STATUS_TX_FULL) {
 		/* Spin wait until TX FIFO is not full */
 	}
 
 	sys_write32((uint32_t)out_char, REG_DATA(config->base));
 }
 
+/* The errors since the last call, which it clears */
 static int uart_vux9k_err_check(const struct device *dev)
 {
-	const struct uart_vux9k_config *config = dev->config;
-	uint32_t status = sys_read32(REG_STATUS(config->base));
+	struct uart_vux9k_data *data = dev->data;
+	unsigned int key = irq_lock();
+	uint32_t errors = data->errors | (uart_vux9k_read_status(dev) & STATUS_ERRORS);
 	int err = 0;
 
-	if (status & STATUS_OVERRUN) {
+	data->errors = 0;
+	irq_unlock(key);
+	if (errors & STATUS_OVERRUN) {
 		err |= UART_ERROR_OVERRUN;
 	}
-	if (status & STATUS_FRAME_ERR) {
+	if (errors & STATUS_FRAME_ERR) {
 		err |= UART_ERROR_FRAMING;
 	}
 	return err;
@@ -91,7 +118,7 @@ static int uart_vux9k_fifo_fill(const struct device *dev, const uint8_t *tx_data
 	const struct uart_vux9k_config *config = dev->config;
 	int i;
 
-	for (i = 0; i < len && !(sys_read32(REG_STATUS(config->base)) & STATUS_TX_FULL); i++) {
+	for (i = 0; i < len && !(uart_vux9k_read_status(dev) & STATUS_TX_FULL); i++) {
 		sys_write32(tx_data[i], REG_DATA(config->base));
 	}
 	return i;
@@ -102,8 +129,7 @@ static int uart_vux9k_fifo_read(const struct device *dev, uint8_t *rx_data, cons
 	const struct uart_vux9k_config *config = dev->config;
 	int i;
 
-	for (i = 0; i < size && !(sys_read32(REG_STATUS(config->base)) & STATUS_RX_EMPTY);
-	     i++) {
+	for (i = 0; i < size && !(uart_vux9k_read_status(dev) & STATUS_RX_EMPTY); i++) {
 		rx_data[i] = (uint8_t)(sys_read32(REG_DATA(config->base)) & 0xFF);
 	}
 	return i;
@@ -156,10 +182,9 @@ static void uart_vux9k_irq_tx_disable(const struct device *dev)
 
 static int uart_vux9k_irq_tx_ready(const struct device *dev)
 {
-	const struct uart_vux9k_config *config = dev->config;
 	struct uart_vux9k_data *data = dev->data;
 
-	return data->tx_enabled && !(sys_read32(REG_STATUS(config->base)) & STATUS_TX_FULL);
+	return data->tx_enabled && !(uart_vux9k_read_status(dev) & STATUS_TX_FULL);
 }
 
 static void uart_vux9k_irq_rx_enable(const struct device *dev)
@@ -180,9 +205,7 @@ static void uart_vux9k_irq_rx_disable(const struct device *dev)
 
 static int uart_vux9k_irq_rx_ready(const struct device *dev)
 {
-	const struct uart_vux9k_config *config = dev->config;
-
-	return !(sys_read32(REG_STATUS(config->base)) & STATUS_RX_EMPTY);
+	return !(uart_vux9k_read_status(dev) & STATUS_RX_EMPTY);
 }
 
 static int uart_vux9k_irq_is_pending(const struct device *dev)
