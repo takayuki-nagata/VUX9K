@@ -14,6 +14,8 @@ garbled-output note, and hw_smoke ignoring output from before the load.
 
 import os
 import sys
+import threading
+import time
 
 import pytest
 import serial
@@ -126,8 +128,26 @@ def test_modemmanager_hint_port_ignore_and_unreadable_udev(tmp_path):
     (data / "c188:2").write_text("E:ID_MM_CANDIDATE=1\nE:ID_MM_PORT_IGNORE=1\n")
     assert vux_tool.modemmanager_hint("/dev/ttyUSB3", **paths) == ""
     (data / "c188:2").unlink()
-    hint = vux_tool.modemmanager_hint("/dev/ttyUSB3", **paths)
+    hint = vux_tool.modemmanager_hint("/dev/ttyUSB3", **paths, settle=0)
     assert "can't tell whether it ignores ttyUSB2" in hint and "may probe" not in hint
+
+
+def test_modemmanager_hint_waits_for_udev(tmp_path):
+    """After a bitstream load the JTAG tty is back before udev has written its data."""
+    paths = make_host(tmp_path, True, ("ttyUSB2", "ttyUSB3"))
+    late = tmp_path / "run" / "udev" / "data" / "c188:2"
+    props = late.read_text()
+    late.unlink()
+    writer = threading.Timer(0.05, late.write_text, (props,))
+    writer.start()
+    try:
+        assert vux_tool.modemmanager_hint("/dev/ttyUSB3", **paths) == ""
+    finally:
+        writer.join()
+    late.unlink()  # never written: the hint says so once the wait is over
+    t0 = time.monotonic()
+    assert "can't tell whether it ignores ttyUSB2" in vux_tool.modemmanager_hint("/dev/ttyUSB3", **paths, settle=0.1)
+    assert time.monotonic() - t0 >= 0.1
 
 
 def test_modemmanager_hint_ignores_non_usb_ports(tmp_path):

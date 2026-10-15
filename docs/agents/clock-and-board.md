@@ -88,7 +88,10 @@ load) ModemManager's reopens can switch the rate even in the middle of an open s
 - **`tools/70-vux9k-board.rules`** sets `ID_MM_DEVICE_IGNORE` on the board's ttys; the
   board-test scripts (`test_hardware.py`, `hw_smoke.py`) refuse to run while ModemManager
   could probe the board
-  (`vux_tool.modemmanager_hint`), and `vux_tool` warns.
+  (`vux_tool.modemmanager_hint`), and `vux_tool` warns. The JTAG tty openFPGALoader hands
+  back has no udev data for ~20 ms, so the check waits for udev (up to 2 s) before it calls a
+  tty unknown: `make test-hw-dist` starts the suite right after its load, and lost that race
+  once (2026-10-15).
 - `vux_tool.open_port` sets the line format twice after opening
   (`apply_line_settings`), so a stale stored rate never survives into a session; changing
   only the baud rate would not help (`SET_BAUD` alone isn't applied).

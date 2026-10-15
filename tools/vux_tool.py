@@ -143,7 +143,7 @@ def _read_text(path):
         return ""
 
 
-def modemmanager_hint(tty, sysfs="/sys", run="/run", proc="/proc"):
+def modemmanager_hint(tty, sysfs="/sys", run="/run", proc="/proc", settle=2.0):
     """Why ModemManager can garble the board's UART, or "" if it can't.
 
     ModemManager probes every new serial port. openFPGALoader hands the bridge's JTAG
@@ -151,7 +151,10 @@ def modemmanager_hint(tty, sysfs="/sys", run="/run", proc="/proc"):
     bridge applies that rate to the board's UART too, now or at the next open (see
     apply_line_settings). Harmless when ModemManager isn't running or every tty of the
     board carries ID_MM_DEVICE_IGNORE=1 or ID_MM_PORT_IGNORE=1 (tools/70-vux9k-board.rules).
-    Only usb-serial ttys (ttyUSBn, as the board's ftdi_sio ports) are looked at.
+    Only usb-serial ttys (ttyUSBn, as the board's ftdi_sio ports) are looked at. A tty
+    openFPGALoader has just handed back has no udev data for ~20 ms (measured 2026-10-15),
+    until udev has run its rules: while udev's database exists, a tty without data is
+    waited for up to settle seconds.
     """
     try:
         pids = [p for p in os.listdir(proc) if p.isdigit()]
@@ -167,14 +170,19 @@ def modemmanager_hint(tty, sysfs="/sys", run="/run", proc="/proc"):
         return ""  # not a USB tty (e.g. the emulator)
     # usb-serial: <device>/<interface>/ttyUSBn/tty/ttyUSBn (ftdi_sio, as on the board)
     ttys = sorted({os.path.basename(t) for t in glob.glob(os.path.join(dev, "*", "*", "tty", "*"))})
-    probed, unknown = [], []
-    for t in ttys:
-        devno = _read_text(os.path.join(sysfs, "class", "tty", t, "dev")).strip()
-        props = _read_text(os.path.join(run, "udev", "data", "c" + devno)).splitlines() if devno else []
-        if not props:
-            unknown.append(t)  # udev's database not visible here (e.g. a container)
-        elif not {"E:ID_MM_DEVICE_IGNORE=1", "E:ID_MM_PORT_IGNORE=1"} & set(props):
-            probed.append(t)
+    deadline = time.monotonic() + settle if os.path.isdir(os.path.join(run, "udev", "data")) else 0.0
+    while True:
+        probed, unknown = [], []
+        for t in ttys:
+            devno = _read_text(os.path.join(sysfs, "class", "tty", t, "dev")).strip()
+            props = _read_text(os.path.join(run, "udev", "data", "c" + devno)).splitlines() if devno else []
+            if not props:
+                unknown.append(t)  # udev not done with it yet, or its database not visible here
+            elif not {"E:ID_MM_DEVICE_IGNORE=1", "E:ID_MM_PORT_IGNORE=1"} & set(props):
+                probed.append(t)
+        if not unknown or time.monotonic() >= deadline:
+            break
+        time.sleep(0.01)
     if not probed and not unknown:
         return ""
     why = f"may probe the board's {', '.join(probed)}" if probed else ""
