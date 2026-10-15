@@ -18,15 +18,27 @@ mtime +0x0 / mtimecmp +0x8 layout is `timer_core`'s, so Zephyr's in-tree
   first stage's data, which the first stage sets up again at every start). The nodes are in
   each board's dts with their unit addresses (`flash@80000000`, `memory@80400000`), not in
   the dtsi. The second stage's `run` loads such an image (a v4 file at `0x8000_0000`, `make
-  apps`' `ZEPHYR.BIN`/`IRQECHO.BIN`) in place and jumps to it (fw_common::launch's PSRAM
+  apps`' `ZEPHYR.BIN`/`IRQECHO.BIN`/`BC.BIN`) in place and jumps to it (fw_common::launch's PSRAM
   target), leaving the first stage in I-RAM: a Zephyr app never returns, but Button S1 (the
   board's reset) starts the first stage and the boot again. The tests can't press it, so
-  the board tests (`test_hardware.py` 13, `hw_irq_echo.py`) load the bitstream afterwards.
+  the board tests (`test_hardware.py` 13 and 14, `hw_irq_echo.py`) load the bitstream afterwards.
   Every fetch and data access there waits ~35 cycles (no cache in front of the PSRAM), so
   cycle budgets measured from the I-RAM build don't carry over.
 - `vux9k/vux9k/ext`: 512 KB/256 KB at 0 and `0x2000_0000`, **emulator only** (`vux9k-emu
-  --profile extended`). bc_clone_rs (`make build-zephyr`, ~260 KB) runs only here; never
-  present it as running on hardware.
+  --profile extended`). Nothing builds for it any more; never present what only runs there
+  as running on hardware.
+
+bc_clone_rs (`make build-zephyr`: `vendor/bc_clone_rs/examples/zephyr_app`, its own
+`prj.conf` with a 32 KB main stack and a 64 KB static heap, ~260 KB) is built for `vux9k`
+like the demos; nothing of it is changed for this board (the submodule is upstream), and
+`make apps` makes it `BC.BIN`. It runs from the PSRAM with no cache, so it is slow: the
+second stage's load alone is ~600M cycles (~35 s). `sim/emu/test_zephyr_bc.py` loads it
+straight into the PSRAM for the self-tests and the REPL, starts it once through the second
+stage's `run` from a card (`s1_env.run_from_card(..., load_cycles=...)`), and prints the
+cycles and `minstret` (`Soc.instret`) to the first `bc> ` and per REPL line: the emulator is
+cycle-exact to the RTL (`sim-lockstep`), so these are the board's counts, the baseline for a
+cache. Its cycle caps are bounds, not measurements. On the board, `test_hardware.py` 14
+puts, runs and types at it, printing wall-clock `[TIME]` lines.
 
 `zephyr_workspace/app/` is the Rust demo: Zephyr (`src/main.c`, FFI wrappers for
 `printk`/`k_msleep`/`k_uptime_get_32`) calls `rust_main()` from the `rust_demo`

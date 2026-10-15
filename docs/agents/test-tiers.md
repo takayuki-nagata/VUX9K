@@ -85,19 +85,20 @@ None of these run in CI; they need the board. The host setup they check is in
 clock-and-board.md, "Board UART output that is noise: ModemManager and the bridge's shared baud rate".
 - `make hw-smoke` (after `make timing`): `hw_test` on every routed seed's placement. After
   RTL changes, before flashing.
-- `make test-hw`: the two-stage boot suite (`scripts/test_hardware.py`, 14 tests) on a local
+- `make test-hw`: the two-stage boot suite (`scripts/test_hardware.py`, 15 tests) on a local
   build; `make test-hw-dist DIST=<dir>` the same on a `make dist` tree, the first stage's
   version and the demos (`sd/VUX9K/APPS/`) from it. The card stays in the board and must be
   FAT32; `install` makes `\VUX9K\`, and the suite writes only there (versions 9001-9003,
   `\VUX9K\TEST\` and removes it, the demos in `\VUX9K\APPS\`, last the second stage under
   test). Besides the boot chain it runs the second stage's file commands and the demos
   through `put`/`run`: `HELLO.BIN` (PSRAM), then, last because they never return to the
-  first stage, `HACK.BIN` (it replaces the first stage in I-RAM) and `ZEPHYR.BIN` (in the
-  PSRAM; it leaves the first stage, but only the reset button would start it), each followed
+  first stage, `HACK.BIN` (it replaces the first stage in I-RAM), `ZEPHYR.BIN` and `BC.BIN`
+  (in the PSRAM; they leave the first stage, but only the reset button would start it; bc's
+  put, load and start take minutes and print their wall-clock times), each followed
   by a load of `pack.fs` into SRAM with openFPGALoader (never `--reset`: that loads the
-  flash's bitstream); then it installs the
-  second stage under test again. Without `ZEPHYR.BIN` (no Zephyr) test 13 is skipped. It runs
-  against the emulator too, where the two bitstream-load tests are skipped: `vux9k-emu --tcp
+  flash's bitstream); then it installs the second stage under test again. Without
+  `ZEPHYR.BIN`/`BC.BIN` (no Zephyr) tests 13 and 14 are skipped. It runs against the
+  emulator too, where the three bitstream-load tests are skipped: `vux9k-emu --tcp
   PORT --sd <mkfat image>` and `--port socket://127.0.0.1:PORT` (~3 min at the board's speed;
   `make sim-hw-suite-emu`, in test-slow, runs it: its timeouts are wall-clock, so a loaded
   host could fail it in `test-sim`; run it by hand after changing the second stage's commands

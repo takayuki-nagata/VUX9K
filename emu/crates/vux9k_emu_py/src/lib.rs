@@ -298,6 +298,12 @@ impl Soc {
         self.inner.steps
     }
 
+    /// minstret: the RV32 instructions retired (not those that trapped, nor Hack's)
+    #[getter]
+    fn instret(&self) -> u64 {
+        self.inner.csr.minstret
+    }
+
     #[getter]
     fn pc(&self) -> u32 {
         self.inner.pc

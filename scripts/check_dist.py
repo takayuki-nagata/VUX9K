@@ -34,6 +34,7 @@ REQUIRED = [
     "sd/VUX9K/APPS/HELLO.BIN",
     "sd/VUX9K/APPS/ZEPHYR.BIN",
     "sd/VUX9K/APPS/IRQECHO.BIN",
+    "sd/VUX9K/APPS/BC.BIN",
     "sd/VUX9K/APPS/HACK.BIN",
     "demos/zephyr-demo.bin",
     "demos/hack-demo.bin",
@@ -57,6 +58,7 @@ CARD_FILES = {
     "sd/VUX9K/APPS/HELLO.BIN": (1, 0x8000_0000),
     "sd/VUX9K/APPS/ZEPHYR.BIN": (1, 0x8000_0000),
     "sd/VUX9K/APPS/IRQECHO.BIN": (1, 0x8000_0000),
+    "sd/VUX9K/APPS/BC.BIN": (1, 0x8000_0000),
     "sd/VUX9K/APPS/HACK.BIN": (0, 0),
 }
 

@@ -151,8 +151,9 @@ firmware: $(FIRMWARE_BUILD_DIR)/firmware.hex $(STAGE2_DIR)/STAGE2.BIN
 #   HELLO.BIN    firmware/hello, RV32 linked at the PSRAM's start (0x80000000): runs in place
 #   ZEPHYR.BIN   the Zephyr Rust demo, RV32 linked at the PSRAM's start (board vux9k): in place
 #   IRQECHO.BIN  the Zephyr interrupt-driven UART echo, RV32 at the PSRAM's start: in place
+#   BC.BIN       bc_clone_rs on Zephyr (~260 KB), RV32 at the PSRAM's start: in place
 #   HACK.BIN     the Hack demo, Hack at 0: I-RAM (replaces the first stage)
-# Without Zephyr (its builds skip) ZEPHYR.BIN and IRQECHO.BIN are left out, saying so.
+# Without Zephyr (its builds skip) ZEPHYR.BIN, IRQECHO.BIN and BC.BIN are left out, saying so.
 APPS_DIR = $(FIRMWARE_BUILD_DIR)/apps
 # The PSRAM's start, where RV32 applications are linked (the Zephyr board vux9k's flash)
 HELLO_BASE = 0x80000000
@@ -174,10 +175,11 @@ $(APPS_DIR)/HELLO.BIN: $(HELLO_SRCS) tools/vux_tool.py
 
 hello: $(APPS_DIR)/HELLO.BIN
 
-apps: $(APPS_DIR)/HELLO.BIN build-hack build-zephyr-demo build-zephyr-irq-echo
+apps: $(APPS_DIR)/HELLO.BIN build-hack build-zephyr-demo build-zephyr-irq-echo build-zephyr
 	$(call app_v4,$(HACK_BUILD_DIR)/firmware.bin,HACK.BIN,hack,Hack demo,required,0)
 	$(call app_v4,$(ZEPHYR_DEMO_BUILD_DIR)/zephyr/zephyr.bin,ZEPHYR.BIN,riscv,Zephyr Rust demo,,$(HELLO_BASE))
 	$(call app_v4,$(ZEPHYR_IRQ_ECHO_BUILD_DIR)/zephyr/zephyr.bin,IRQECHO.BIN,riscv,Zephyr irq_echo,,$(HELLO_BASE))
+	$(call app_v4,$(ZEPHYR_BUILD_DIR)/zephyr/zephyr.bin,BC.BIN,riscv,bc_clone_rs,,$(HELLO_BASE))
 
 # Board self-test (firmware/hw_test), an I-RAM image in place of the first stage for
 # `make hw-smoke`; its D-RAM preload (elf2bin's firmware_d*.hex) goes to its own
@@ -338,10 +340,10 @@ define west_build
 	fi
 endef
 
-# bc needs ~260 KB: it runs only on the emulator's extended profile (NOT real hardware)
+# bc (~260 KB) for the real board, linked into the PSRAM like the demos (make apps' BC.BIN)
 build-zephyr:
-	@echo "=== Building Zephyr bc_clone_rs Application (vux9k/vux9k/ext, emulator only) ==="
-	$(call west_build,vux9k/vux9k/ext,$(BC_APP_DIR),$(ZEPHYR_BUILD_DIR),-DRUST_TARGET=riscv32i-unknown-none-elf)
+	@echo "=== Building Zephyr bc_clone_rs Application (vux9k) ==="
+	$(call west_build,vux9k,$(BC_APP_DIR),$(ZEPHYR_BUILD_DIR),-DRUST_TARGET=riscv32i-unknown-none-elf)
 
 # The Rust demo on Zephyr for the real board, linked into the PSRAM (zephyr_workspace/boards)
 ZEPHYR_DEMO_BUILD_DIR ?= $(BUILD_DIR)/zephyr-demo
@@ -484,8 +486,8 @@ sim-soc: veryl firmware sim-boot test-emu
 	@echo "=== Running SoC Top Hack Integration Tests ==="
 	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_hack]"
 
-sim-zephyr-repl: build-zephyr emu-py
-	@echo "=== Running Zephyr bc_clone_rs self-tests & REPL on the emulator (extended profile) ==="
+sim-zephyr-repl: emu-py firmware apps
+	@echo "=== Running Zephyr bc_clone_rs self-tests & REPL from the PSRAM on the emulator ==="
 	$(PYTHON) -m pytest sim/emu/test_zephyr_bc.py
 
 sim-zephyr-demo-rtl: veryl firmware build-zephyr-demo
@@ -758,7 +760,7 @@ test-hw: firmware apps build-hw prog-sram
 
 # The application-developer distribution (docs/APP_DEVELOPMENT.md) in build/dist/;
 # check-dist runs its demos on its own emulator, away from the repository
-dist: bitstream firmware emu-py build-hack build-zephyr-demo apps
+dist: bitstream firmware emu-py build-hack build-zephyr-demo build-zephyr apps
 	$(PYTHON) scripts/make_dist.py --out $(BUILD_DIR)/dist
 
 check-dist:

@@ -168,13 +168,14 @@ def app(name: str) -> bytes:
         return f.read()
 
 
-def run_from_card(name: str, data: bytes | None = None, **kw):
+def run_from_card(name: str, data: bytes | None = None, *, load_cycles: int = RUN_LOAD_CYCLES, **kw):
     """Power on with a card holding the second stage and \\VUX9K\\APPS\\<name> (`data`,
     else the demo's file from APPS_DIR), run to the second stage's prompt and type `run
     VUX9K/APPS/<name>`, as on the board; returns (soc, mark), mark being where what the
     application prints starts in soc.uart_received() (after the [RUN] line and the blank
-    line after it). kw goes to start()."""
+    line after it). load_cycles bounds the load (a bigger file than the demos needs more);
+    kw goes to start()."""
     soc, _ = boot_s2({f"VUX9K/APPS/{name}": app(name) if data is None else data}, **kw)
-    out = s2_cmd(soc, f"run VUX9K/APPS/{name}", until=b"\n\n", timeout_cycles=RUN_LOAD_CYCLES)
+    out = s2_cmd(soc, f"run VUX9K/APPS/{name}", until=b"\n\n", timeout_cycles=load_cycles)
     assert out.startswith("[RUN] "), out
     return soc, len(soc.uart_received())  # (wait_for stops at the end of what it waited for)

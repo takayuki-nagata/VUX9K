@@ -81,7 +81,7 @@ The RTL modules in this repository were originally authored in VHDL-2008 and hav
 - **UART Controller (`uart_controller`)**: Ported from [`takayuki-nagata/uart_controller`](https://github.com/takayuki-nagata/uart_controller)
   - Parameterized baud rate clock timer (18.0 MHz -> 115200 bps), 8N1 serial framing, and dual 32-entry synchronous TX/RX FIFOs.
 - **Arbitrary-Precision Math Engine & REPL (`vendor/bc_clone_rs`)**: Submodule from [`takayuki-nagata/bc_clone_rs`](https://github.com/takayuki-nagata/bc_clone_rs)
-  - Embedded `bc_core` arbitrary-precision arithmetic engine with 10/10 math test suite running atop Zephyr RTOS. At about 260 KB it runs only on the emulator's `extended` profile (`make build-zephyr`), **not on the board**.
+  - Embedded `bc_core` arbitrary-precision arithmetic engine with 10/10 math test suite running atop Zephyr RTOS. At about 260 KB it runs on the board from the PSRAM (`make build-zephyr`, `\VUX9K\APPS\BC.BIN` started by the second stage's `run`), slowly: there is no cache in front of the PSRAM yet.
 - **Hack Toolchain & C Firmware (`hack_demo`)**: Powered by [`takayuki-nagata/hack_tools`](https://github.com/takayuki-nagata/hack_tools) (`has` assembler & `m2h` transpiler)
   - 16-bit C and Hack assembly firmware testing recursive arithmetic, Fibonacci, array manipulations, and MMIO UART output.
 
@@ -323,7 +323,7 @@ hardware; `--trace FILE` logs every instruction. Profiles: `real` (default: 16 K
 I-RAM, 8 KB D-RAM and the 8 MB PSRAM, as the board) and `extended`
 (512 KB / 256 KB, same MMIO and PSRAM) —
 **the extended profile is not real hardware**; it exists for programs too big for the
-board, such as bc. Python tests drive the emulator through the `vux9k_emu` module
+board's memories (nothing in the repository needs it any more: bc runs from the PSRAM). Python tests drive the emulator through the `vux9k_emu` module
 (`make emu-py`; helpers in `sim/emu/vux9k.py`).
 
 `make emu-bench` (`scripts/emu_bench.py`) measures how fast that runs (millions of
@@ -341,7 +341,8 @@ image runs in place from `0x8000_0000`, 4 MB, and its RAM is the 3 MB from `0x80
 second stage's `run` loads its applications there and jumps to them, the first stage staying
 in I-RAM), and `vux9k/vux9k/ext`, the extended profile for the emulator only. `make build-zephyr-demo` builds the Rust demo
 (`zephyr_workspace/app/`, Zephyr + a Rust staticlib) for the real board; `make
-build-zephyr` builds bc_clone_rs for `ext`. `make build-zephyr-irq-echo` builds
+build-zephyr` builds bc_clone_rs for it too (`make apps`' `BC.BIN`, ~260 KB: the second
+stage's load takes about half a minute, and bc runs slowly from the uncached PSRAM). `make build-zephyr-irq-echo` builds
 `zephyr_workspace/irq_echo/`, an echo through the UART driver's interrupt-driven API
 (RX on the machine external interrupt; see `zephyr_workspace/README.md`, "UART").
 
@@ -471,7 +472,7 @@ Short tests run on Icarus, long SoC/GLS runs on Verilator (`SIM_UNIT` / `SIM_SOC
 | *slow* **PSRAM on Icarus** | `make sim-psram-icarus` | a few min | The SoC MMIO program's PSRAM window checks with the real controller on the pin-level W955D8MBYA model (no protocol/timing error in it), and the PSRAM word model's contract test against the controller's Gowin netlist |
 | **Emulator** | `make emu-test` / `test-isa-emu` | ~10 sec | Rust unit tests of the emulator; riscv-tests on it (same results as `test-isa`) |
 | **Emulator Speed** | `make emu-bench` | ~10 sec | MIPS from Python and final-state digests (`--compare` with a saved run); prints only |
-| **Firmware on the Emulator** | `make test-emu` | ~30 sec | The first stage on FAT32 cards (boot, `.OLD`, what keeps a second stage from starting, card types, prompt, soft reset), RAM boot and install through `vux_tool.py`, Hack demo, Zephyr demo and interrupt-driven UART echo from the PSRAM (loaded directly and through the second stage's `run`), bc (extended profile), SD transcripts, FAT32 images from mkfs.fat/mtools |
+| **Firmware on the Emulator** | `make test-emu` | ~30 sec | The first stage on FAT32 cards (boot, `.OLD`, what keeps a second stage from starting, card types, prompt, soft reset), RAM boot and install through `vux_tool.py`, Hack demo, Zephyr demo, interrupt-driven UART echo and bc from the PSRAM (loaded directly and through the second stage's `run`; bc's cycle counts are printed), SD transcripts, FAT32 images from mkfs.fat/mtools |
 | **Firmware Host Tests** | `make test-fw-host` / `firmware-size` | ~5 sec | `firmware/fw_common` on the host (FAT32, v4 header, transfer v2, RAM boot); first stage ≤ 16 KB |
 | **Firmware Coverage** | `make coverage-fw` | ~40 sec | Source-line coverage of the firmware and demos from the emulator tests, against `coverage/thresholds.toml` (report in `build/coverage/fw/`) |
 | **Rust Coverage** | `make coverage-rust` | a few min | Line coverage of the emulator (its cargo tests and the Python-driven emulator runs) and `fw_common` (host tests) with cargo-llvm-cov, against `coverage/thresholds.toml` (report in `build/coverage/rust/`) |
@@ -479,11 +480,11 @@ Short tests run on Icarus, long SoC/GLS runs on Verilator (`SIM_UNIT` / `SIM_SOC
 | **Zephyr Demo** | `make sim-zephyr-demo-rtl` | a few min | The Zephyr Rust demo preloaded into the PSRAM on the RTL, started by a jump from I-RAM |
 | **Zephyr UART Interrupts** | `make sim-zephyr-irq-echo-rtl` | a few min | The interrupt-driven UART echo preloaded into the PSRAM on the RTL: a 64-byte line, longer than both FIFOs, comes back with no overrun |
 | **Static Timing (STA)**| `make sta` | ~15 sec | Exhaustive post-PnR timing analysis, Fmax verification, and critical path breakdown (`build/synth/soc_sta.json`) |
-| **Real Hardware** | `make test-hw` | ~4 min | The two-stage boot, the second stage's file commands and the demos it starts, on the Tang Nano 9K with a FAT32 card via `scripts/test_hardware.py` (14 tests) |
-| **Real Hardware, Release Tree** | `make test-hw-dist DIST=<dir>` | ~4 min | The same 14 tests with a `make dist` tree's bitstream, second stage and demos, nothing rebuilt: how a release candidate is tested ([`docs/RELEASING.md`](docs/RELEASING.md)) |
+| **Real Hardware** | `make test-hw` | ~10 min | The two-stage boot, the second stage's file commands and the demos it starts, on the Tang Nano 9K with a FAT32 card via `scripts/test_hardware.py` (15 tests; bc's put, load and start take most of the time) |
+| **Real Hardware, Release Tree** | `make test-hw-dist DIST=<dir>` | ~10 min | The same 15 tests with a `make dist` tree's bitstream, second stage and demos, nothing rebuilt: how a release candidate is tested ([`docs/RELEASING.md`](docs/RELEASING.md)) |
 | **Board UART Interrupts** | `make test-hw-irq-echo` | ~20 sec | The interrupt-driven UART echo on the board (`scripts/hw_irq_echo.py`): put on the card as `\VUX9K\APPS\IRQECHO.BIN` and started by the running second stage's `run`, five 256-byte lines, then the bitstream loaded into SRAM again from `build/synth/pack.fs`; `make test-hw-irq-echo-dist DIST=<dir>` takes both from a `make dist` tree |
 
-### Real Hardware Test Suite (14 Automated Checks)
+### Real Hardware Test Suite (15 Automated Checks)
 `scripts/test_hardware.py` needs a FAT32 card in the board (it stays there: the suite sets
 it up itself). It writes only in `\VUX9K\`, which the second stage's `install` makes if it
 is missing: test versions of `STAGE2.BIN`, `\VUX9K\TEST\` (removed again), the demos in
@@ -502,10 +503,11 @@ stage under test as `STAGE2.BIN` and `STAGE2.OLD`:
 11. **`HELLO.BIN` in the PSRAM** (`put` into `\VUX9K\APPS\`, `run`): `a0`-`a2` as in test 3, then `r` soft-resets to the first stage, which is still in I-RAM and boots the second stage again
 12. **`HACK.BIN` in I-RAM** (Hack mode): the Hack demo's report, all `[PASS]`; then the bitstream is loaded into SRAM again (openFPGALoader with the suite's `pack.fs`, as `make prog-sram`; not `--reset`, which loads the flash's bitstream) and the first stage's banner checked
 13. **`ZEPHYR.BIN` in the PSRAM**: the Zephyr demo's tasks finish and `k_msleep(100)` takes 100-102 ms; then the bitstream again (the demo never returns, and only Button S1 would start the first stage again). Skipped, saying so, when the build has no `ZEPHYR.BIN` (no Zephyr)
-14. **Install the second stage under test again**, after the loads, and boot it: what the suite leaves on the card and in the FPGA
+14. **`BC.BIN` in the PSRAM**: bc_clone_rs on Zephyr (~260 KB; `put` and `run` with longer timeouts): its self-tests pass and it prompts `bc> `; then `2^32` and a `define` at that prompt, and the bitstream again. The wall-clock time of each step is printed (`[TIME]` lines). Skipped, saying so, when the build has no `BC.BIN` (no Zephyr)
+15. **Install the second stage under test again**, after the loads, and boot it: what the suite leaves on the card and in the FPGA
 
 > [!NOTE]
-> Before the tests, it warns when other full/low-speed USB devices share the board's USB hub, which makes the board's USB-UART bridge drop output, and it refuses to start while ModemManager could probe the board (see "Host setup" above and `docs/APP_DEVELOPMENT.md`). It runs against the emulator as well: `vux9k-emu --tcp PORT --sd <mkfat image>` and `--port socket://127.0.0.1:PORT` (~3 min; tests 12 and 13 are skipped there, since the emulator has no bitstream to load; `VUX9K_HW_SUITE_EMU=1 pytest sim/emu/test_hw_dist.py` does this run). `--no-reload` skips them on the board, `--loader` names the openFPGALoader (the Makefile passes `OPENFPGALOADER`).
+> Before the tests, it warns when other full/low-speed USB devices share the board's USB hub, which makes the board's USB-UART bridge drop output, and it refuses to start while ModemManager could probe the board (see "Host setup" above and `docs/APP_DEVELOPMENT.md`). It runs against the emulator as well: `vux9k-emu --tcp PORT --sd <mkfat image>` and `--port socket://127.0.0.1:PORT` (~3 min; tests 12 to 14 are skipped there, since the emulator has no bitstream to load; `VUX9K_HW_SUITE_EMU=1 pytest sim/emu/test_hw_dist.py` does this run). `--no-reload` skips them on the board, `--loader` names the openFPGALoader (the Makefile passes `OPENFPGALOADER`).
 
 ### Board Smoke Test of Routed Seeds (`make hw-smoke`)
 

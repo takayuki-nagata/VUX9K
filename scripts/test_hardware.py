@@ -10,9 +10,9 @@ report, a RAM boot of the second stage and its refusals, installing second stage
 card (\\VUX9K\\STAGE2.BIN, the previous one kept as STAGE2.OLD; install makes \\VUX9K\\
 if it is missing), the fall back to STAGE2.OLD, the soft reset back to the first stage, the
 second stage's file commands, and the demos started by its `run`: HELLO.BIN in the PSRAM,
-then the two that never return to the first stage, HACK.BIN in I-RAM (it replaces the first
-stage) and ZEPHYR.BIN in the PSRAM (it leaves the first stage in I-RAM, but only the reset
-button would start it, and the suite can't press it), each followed by a load of the
+then the three that never return to the first stage, HACK.BIN in I-RAM (it replaces the first
+stage), ZEPHYR.BIN and BC.BIN in the PSRAM (they leave the first stage in I-RAM, but only the
+reset button would start it, and the suite can't press it), each followed by a load of the
 bitstream into the FPGA's SRAM (openFPGALoader, never --reset: that loads the flash's
 bitstream). The card stays in the board. The suite writes only in \\VUX9K\\: test versions
 9001-9003, \\VUX9K\\TEST\\ (removed again), the demos in \\VUX9K\\APPS\\ (left there, the
@@ -63,8 +63,8 @@ DIST_FILES = {
     "stage2": "sd/VUX9K/STAGE2.BIN",
 }
 # The demos the second stage starts (make apps / the dist's sd/VUX9K/APPS/): name -> file.
-# ZEPHYR.BIN is missing from a build without Zephyr; its test is skipped then.
-APPS = ("HELLO.BIN", "HACK.BIN", "ZEPHYR.BIN")
+# ZEPHYR.BIN and BC.BIN are missing from a build without Zephyr; their tests are skipped then.
+APPS = ("HELLO.BIN", "HACK.BIN", "ZEPHYR.BIN", "BC.BIN")
 DIST_APPS_DIR = "sd/VUX9K/APPS"
 # Where on the card the suite puts its files
 CARD_APPS = "VUX9K/APPS"
@@ -86,8 +86,33 @@ ZEPHYR_LINES = (
     "All Rust application tasks finished successfully!",
 )
 ZEPHYR_END = "Entering sleep loop."
-# The second stage's [RUN] line for it: the Zephyr board vux9k links into the PSRAM
+# The second stage's [RUN] line for it (and BC.BIN): the Zephyr board vux9k links into the PSRAM
 ZEPHYR_RUN = "PSRAM, starting at 0x80000000"
+# bc_clone_rs on Zephyr (sim/emu/test_zephyr_bc.py): its self-tests, then the REPL's prompt
+# and lines typed there with what they print
+BC_LINES = (
+    "Basic Arithmetic & Precedence",
+    "Scale Division",
+    "BigInt Power (2^100)",
+    "Recursive Factorial f(20)",
+    "Transcendental Pi: 4 * a(1)",
+    "Transcendental Exp: e(1)",
+    "Transcendental Log: l(2.718281828459045)",
+    "Base Conversion (Hex to Binary)",
+    "Arrays and Dynamic Auto Scoping",
+    "Streaming Callback Test: 2^16 = 65536",
+    "ALL ZEPHYR BC_CORE TESTS PASSED (100%)!",
+)
+BC_PROMPT = "bc> "
+BC_REPL = (("2^32", "4294967296"), ("define cube(x) { return (x^3); }", ""), ("cube(5)", "125"))
+# bc is ~260 KB: `put` at 115200 baud takes ~23 s, the second stage's load from the card
+# ~35 s (~2,400 cycles a byte), and the self-tests run from the PSRAM without a cache.
+# Guesses with room, until the board's times (printed as [TIME]) are known. The put's
+# bounds each transfer line and the card write after it (vux_tool.put)
+BC_PUT_TIMEOUT = 90.0
+BC_RUN_TIMEOUT = 120.0
+BC_BOOT_TIMEOUT = 300.0
+BC_LINE_TIMEOUT = 120.0
 # Versions the suite installs, apart from what a release ships
 TEST_VERSIONS = (9001, 9002, 9003)
 
@@ -328,17 +353,23 @@ def run_hardware_test_suite(port="auto", baud=115200, loader=None, reload=True):
             return False, fail_msg(f"No {want!r} banner after the bitstream load.", out)
         return True, f"bitstream loaded, {want} back"
 
-    def put_and_run(app):
+    times: dict[str, float] = {}  # put_and_run's wall-clock seconds: "put", "run" (to the end of the [RUN] line)
+
+    def put_and_run(app, put_timeout=20.0, run_timeout=30.0):
         """put apps[app] into \\VUX9K\\APPS\\ and `run` it: the [RUN] text."""
         vux_tool.enter_s2(ser)
         mkdir_p(ser, CARD_APPS)
-        vux_tool.put(ser, f"{CARD_APPS}/{app}", apps[app], timeout=20.0)
-        return vux_tool.run_app(ser, f"{CARD_APPS}/{app}")
+        t0 = time.monotonic()
+        vux_tool.put(ser, f"{CARD_APPS}/{app}", apps[app], timeout=put_timeout)
+        t1 = time.monotonic()
+        out = vux_tool.run_app(ser, f"{CARD_APPS}/{app}", timeout=run_timeout)
+        times.update(put=t1 - t0, run=time.monotonic() - t1)
+        return out
 
-    def run_demo_then_reload(name, app, check):
-        """Tests 12 and 13: a demo that never returns to the first stage (check(run_text) ->
+    def run_demo_then_reload(name, app, check, **timeouts):
+        """Tests 12-14: a demo that never returns to the first stage (check(run_text) ->
         (ok, msg) reads its output), then the bitstream loaded again; skipped or not run
-        where that load can't happen."""
+        where that load can't happen. timeouts go to put_and_run."""
         if no_reload:
             return record(name, None, f"skipped: {no_reload} (the demo never returns to the first stage)")
         if lost:
@@ -346,7 +377,7 @@ def run_hardware_test_suite(port="auto", baud=115200, loader=None, reload=True):
         if no_loader:
             return record(name, False, f"not run: {no_loader}; the demo would keep the board until a load")
         try:
-            ok, msg = check(put_and_run(app))
+            ok, msg = check(put_and_run(app, **timeouts))
         except (vux_tool.UploadError, vux_tool.S2Error, TimeoutError) as e:
             ok, msg = False, str(e)
         back, back_msg = reload_board()
@@ -536,10 +567,10 @@ def run_hardware_test_suite(port="auto", baud=115200, loader=None, reload=True):
                 ok, msg = False, str(e)
             record(name, ok, msg)
 
-        # 12, 13. Applications that never return to the first stage (HACK.BIN replaces it in
-        # I-RAM; ZEPHYR.BIN runs in the PSRAM and leaves it, but only the reset button would
-        # start it): last, each followed by a load of the bitstream into SRAM (not --reset:
-        # that loads the flash's)
+        # 12-14. Applications that never return to the first stage (HACK.BIN replaces it in
+        # I-RAM; ZEPHYR.BIN and BC.BIN run in the PSRAM and leave it, but only the reset
+        # button would start it): last, each followed by a load of the bitstream into SRAM
+        # (not --reset: that loads the flash's)
         def hack_check(out):
             if "I-RAM (Hack)" not in out:
                 return False, fail_msg("Not started in I-RAM (Hack).", out)
@@ -569,9 +600,42 @@ def run_hardware_test_suite(port="auto", baud=115200, loader=None, reload=True):
         else:
             run_demo_then_reload(name, "ZEPHYR.BIN", zephyr_check)
 
-        # 14. Last, after the loads: the second stage under test installed (STAGE2.BIN, and
+        def bc_check(out):
+            """bc's self-tests and REPL, with the wall-clock time of each step ([TIME] lines:
+            the board's numbers next to the emulator's cycle counts in test_zephyr_bc.py)."""
+            if ZEPHYR_RUN not in out:
+                return False, fail_msg("Not started in the PSRAM.", out)
+            print(f"  [TIME] BC.BIN put {times['put']:.1f} s, run to the [RUN] line {times['run']:.1f} s")
+            t0 = time.monotonic()
+            got, rest = vux_tool.read_until(ser, (BC_PROMPT,), BC_BOOT_TIMEOUT)
+            print(f"  [TIME] [RUN] line to the first {BC_PROMPT!r} {time.monotonic() - t0:.1f} s")
+            missing = [ln for ln in BC_LINES if ln not in rest]
+            if not got or missing or "VUX9K Stage" in rest:
+                return False, fail_msg(f"No prompt, or missing {missing}.", rest)
+            for line, want in BC_REPL:
+                # Paced like a person typing: the RX FIFO holds 32 bytes, the define line is longer
+                t0 = time.monotonic()
+                for i in range(0, len(line), 8):
+                    ser.write(line[i : i + 8].encode())
+                    ser.flush()
+                    time.sleep(0.05)
+                ser.write(b"\r")
+                ser.flush()
+                got, reply = vux_tool.read_until(ser, (BC_PROMPT,), BC_LINE_TIMEOUT)
+                print(f"  [TIME] {line!r} to the next {BC_PROMPT!r} {time.monotonic() - t0:.1f} s")
+                if not got or want not in reply:
+                    return False, fail_msg(f"{line!r}: no {want!r} and prompt.", reply)
+            return True, "bc's self-tests passed, 2^32 and a define at its prompt"
+
+        name = "14. BC.BIN in the PSRAM, then the bitstream loaded again"
+        if apps["BC.BIN"] is None:
+            record(name, None, f"skipped: no BC.BIN in {FILES['apps']} (built without Zephyr)")
+        else:
+            run_demo_then_reload(name, "BC.BIN", bc_check, put_timeout=BC_PUT_TIMEOUT, run_timeout=BC_RUN_TIMEOUT)
+
+        # 15. Last, after the loads: the second stage under test installed (STAGE2.BIN, and
         # STAGE2.OLD the same) and booted by the bitstream's first stage
-        name = "14. Install the second stage under test again and boot it (the state left behind)"
+        name = "15. Install the second stage under test again and boot it (the state left behind)"
         if lost:
             record(name, False, f"not run: {lost}")
         else:

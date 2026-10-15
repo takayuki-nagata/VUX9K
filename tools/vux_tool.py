@@ -901,7 +901,7 @@ def cmd_run_app(args):
     ser = open_port(args.port, baudrate=args.baud)
     try:
         enter_s2(ser)
-        print(run_app(ser, args.path), end="")
+        print(run_app(ser, args.path, timeout=args.timeout), end="")
     finally:
         ser.close()
 
@@ -957,6 +957,12 @@ def main():
     sub_put.add_argument("path", help="Where on the card (8.3 names, e.g. VUX9K/APPS/HELLO.BIN)")
     sub_runapp = subparsers.add_parser("run-app", help="Start a v4 file on the card (second stage's run)")
     sub_runapp.add_argument("path", help="v4 file on the card (e.g. VUX9K/APPS/HELLO.BIN)")
+    sub_runapp.add_argument(
+        "--timeout",
+        type=float,
+        default=120.0,
+        help="seconds for the load, to the [RUN] line (default: 120; ~2,400 cycles a byte: BC.BIN takes ~35 s)",
+    )
 
     args = parser.parse_args()
 

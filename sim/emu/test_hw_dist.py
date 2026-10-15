@@ -101,6 +101,11 @@ def test_demo_expectations_are_the_emulator_tests():
     assert all(f'"{ln}"' in src for ln in test_hardware.HACK_LINES)
     src = open(os.path.join(REPO_ROOT, "sim", "emu", "test_zephyr_demo.py")).read()
     assert all(ln in src for ln in (*test_hardware.ZEPHYR_LINES, test_hardware.ZEPHYR_END))
+    import test_zephyr_bc
+
+    assert test_hardware.BC_LINES == tuple(test_zephyr_bc.SELF_TESTS)
+    src = open(os.path.join(REPO_ROOT, "sim", "emu", "test_zephyr_bc.py")).read()
+    assert all(f'"{line}"' in src and (not want or f'"{want}"' in src) for line, want in test_hardware.BC_REPL)
 
 
 def test_irq_echo_files_come_from_the_dist(tmp_path):
@@ -170,4 +175,4 @@ def test_suite_on_the_emulator(tmp_path):
         emu.kill()
         emu.wait()
     assert r.returncode == 0, r.stdout[-3000:]
-    assert "Score       : 12/12" in r.stdout and "(and 2 skipped)" in r.stdout, r.stdout[-2000:]
+    assert "Score       : 12/12" in r.stdout and "(and 3 skipped)" in r.stdout, r.stdout[-2000:]

@@ -41,7 +41,7 @@ from rv32_asm import Asm  # noqa: E402
 from vux9k import XMEM_BASE, Soc, mbr_sector  # noqa: E402
 
 # Memory sizes per profile (bytes), for the digest
-SIZES = {"real": (16 * 1024, 8 * 1024), "extended": (512 * 1024, 256 * 1024)}
+SIZES = {"real": (16 * 1024, 8 * 1024)}
 
 
 @dataclass
@@ -130,7 +130,7 @@ def setup_bc(soc: Any, build: str) -> bool:
     data = _read(os.path.join(build, "zephyr", "zephyr", "zephyr.bin"))
     if data is None:
         return False
-    soc.load_iram(0, data)
+    soc.load_app(data, "riscv", XMEM_BASE)  # the board vux9k links it into the PSRAM
     return True
 
 
@@ -161,7 +161,7 @@ def setup_s1(soc: Any, build: str) -> bool:
 WORKLOADS = [
     Workload("synthetic", "real", setup_synthetic(2_000_000), b"DONE\n", 400_000_000, False),
     Workload("synthetic-small", "real", setup_synthetic(20_000), b"DONE\n", 10_000_000, True),
-    Workload("bc", "extended", setup_bc, b"bc> ", 2_000_000_000, False),
+    Workload("bc", "real", setup_bc, b"bc> ", 20_000_000_000, False),
     Workload("demo", "real", setup_demo, b"All Rust application tasks finished successfully!", 40_000_000, True),
     Workload("hack", "real", setup_hack, b"ALL HACK C FIRMWARE TESTS PASSED (100%)!", 20_000_000, True),
     Workload("s1", "real", setup_s1, b"s1> ", 6_000_000, True),
