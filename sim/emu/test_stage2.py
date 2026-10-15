@@ -4,9 +4,9 @@
 """
 The second stage (firmware/stage2) on the emulator: its line prompt (echo, backspace,
 usage), the file commands on FAT32 cards (long names read, 8.3 names written, every error
-they report), put/install over transfer v2 through tools/vux_tool.py, `run` of the three
-targets of fw_common::launch (PSRAM, I-RAM RV32, I-RAM Hack) and what it refuses (with the
-first stage left intact in I-RAM), `info`, `reset` and the trap report.
+they report), put/install over transfer v2 through tools/vux_tool.py, `run` of the two
+targets of fw_common::launch (PSRAM, I-RAM Hack) and what it refuses (an RV32 file at 0
+among them, with the first stage left intact in I-RAM), `info`, `reset` and the trap report.
 """
 
 import os
@@ -471,20 +471,16 @@ def test_run_from_the_psram():
     assert s1_intact(soc)
 
 
-def test_run_from_i_ram():
-    payload = app(0, "Iram\n") + b"\xaa\xbb"  # the last word only half the payload's
-    soc, _ = boot_s2({"APP.BIN": v4(payload, load_addr=0, name="iram")})
-    soc.load_dram_words([0x12345678] * 2048)
-    out = s2_cmd(soc, "cd /", until=S2_PROMPT)
-    out = s2_cmd(soc, "run app.bin", until=b"Iram\n", timeout_cycles=RUN_CYCLES)
-    assert f'[RUN] v1 "iram" {len(payload)} B, I-RAM (RV32), starting at 0x00000000\n\n' in out, out
-    assert BANNER not in out  # the first stage is gone
-    soc.run(ms(1))
-    assert soc.riscv_mode and soc.pc < len(payload)
-    words = struct.unpack(f"<{len(payload) // 4}I", payload[: len(payload) // 4 * 4])
-    assert [soc.iram_word(4 * i) for i in range(len(words))] == list(words)
-    assert soc.iram_word(4 * len(words)) == 0x0000BBAA
-    assert all(soc.dram_word(i) == 0 for i in range(2048))
+def test_run_refuses_rv32_in_i_ram():
+    """RV32 runs from the PSRAM only (second stage v3): a file linked at 0, as the Zephyr
+    board's I-RAM build made them, is refused after it loaded, the first stage stays in
+    I-RAM and the prompt comes back."""
+    soc, _ = boot_s2({"APP.BIN": v4(app(0, "Iram\n"), load_addr=0, name="iram")})
+    out = s2_cmd(soc, "run APP.BIN", timeout_cycles=RUN_CYCLES)
+    assert out == "[ERR] loads outside 80000000-806FFFFF (RV32), 0-3FFF (Hack, at a word)\n", out
+    assert "Iram" not in out and "[RUN]" not in out
+    assert s1_intact(soc)
+    assert "VUX9K" in s2_cmd(soc, "ls")
 
 
 def test_run_hack_from_i_ram():
@@ -504,21 +500,26 @@ def bad_mode(file: bytes) -> bytes:
     return bytes(b)
 
 
-IRAM_APP = app(0, "x")
+PS_APP = app(PSRAM_APP, "x")
 REFUSED = {
-    "MAGIC.BIN": (v4(IRAM_APP, load_addr=0, magic_override=0x12345678), "not a VUX9 v4 file"),
-    "CRC.BIN": (v4(IRAM_APP, load_addr=0, crc_override=0), "CRC mismatch"),
+    "MAGIC.BIN": (v4(PS_APP, load_addr=PSRAM_APP, magic_override=0x12345678), "not a VUX9 v4 file"),
+    "CRC.BIN": (v4(PS_APP, load_addr=PSRAM_APP, crc_override=0), "CRC mismatch"),
     "HACKCRC.BIN": (v4(b"\x12\x34" * 8, mode="hack", crc_override=1), "CRC mismatch"),
-    "SIZE.BIN": (v4(IRAM_APP, load_addr=0)[:-4], "file size is not the header's"),
-    "DRAM.BIN": (v4(IRAM_APP, load_addr=0x2000_0000), "loads outside"),
-    "S2WIN.BIN": (v4(IRAM_APP, load_addr=0x8070_0000), "loads outside"),
-    "BIGIRAM.BIN": (v4(bytes(0x3804), load_addr=0), "loads outside"),
+    "SIZE.BIN": (v4(PS_APP, load_addr=PSRAM_APP)[:-4], "file size is not the header's"),
+    "DRAM.BIN": (v4(PS_APP, load_addr=0x2000_0000), "loads outside"),
+    "S2WIN.BIN": (v4(PS_APP, load_addr=0x8070_0000), "loads outside"),
+    # RV32 in I-RAM (second stage v3: the PSRAM only), and Hack past I-RAM's end
+    "RVIRAM.BIN": (v4(app(0, "x"), load_addr=0), "loads outside"),
+    "BIGHACK.BIN": (v4(bytes(0x4002), mode="hack"), "loads outside"),
     "HACKODD.BIN": (v4(b"\x12\x34" * 8, mode="hack", load_addr=2), "loads outside"),
-    "MODE.BIN": (bad_mode(v4(IRAM_APP, load_addr=0)), "not RV32 or Hack, mode 2"),
-    "ENTRY.BIN": (v4(IRAM_APP, load_addr=0, entry_point=2), "bad entry point 00000002"),
-    # Inside the payload, but the soft reset starts I-RAM at 0
-    "ENTRYIN.BIN": (v4(IRAM_APP, load_addr=0, entry_point=4), "bad entry point 00000004"),
-    "EMPTY.BIN": (v4(b"", load_addr=0), "empty"),
+    "MODE.BIN": (bad_mode(v4(PS_APP, load_addr=PSRAM_APP)), "not RV32 or Hack, mode 2"),
+    "ENTRY.BIN": (v4(PS_APP, load_addr=PSRAM_APP, entry_point=PSRAM_APP + 2), "bad entry point 80000002"),
+    # Word-aligned, but past the payload
+    "ENTRYOUT.BIN": (
+        v4(PS_APP, load_addr=PSRAM_APP, entry_point=PSRAM_APP + len(PS_APP)),
+        f"bad entry point {PSRAM_APP + len(PS_APP):08X}",
+    ),
+    "EMPTY.BIN": (v4(b"", load_addr=PSRAM_APP), "empty"),
     "SHORT.BIN": (b"VUX9", "not a VUX9 v4 file"),
 }
 
@@ -532,10 +533,7 @@ def test_run_refusals_leave_the_first_stage():
         assert s1_intact(soc), name
     assert err(s2_cmd(soc, "run BAD")) == "is a directory"
     assert err(s2_cmd(soc, "run NOPE.BIN")) == "not found"
-    assert (
-        err(s2_cmd(soc, "run BAD/DRAM.BIN"))
-        == "loads outside 80000000-806FFFFF and 0-37FF (RV32 at 0), 0-3FFF (Hack, at a word)"
-    )
+    assert err(s2_cmd(soc, "run BAD/DRAM.BIN")) == "loads outside 80000000-806FFFFF (RV32), 0-3FFF (Hack, at a word)"
     # Still at the prompt, and `reset` finds the first stage as it was
     out = s2_cmd(soc, "reset", until=S2_PROMPT)
     assert out.startswith("[RESET] Soft reset\n") and BANNER in out, out

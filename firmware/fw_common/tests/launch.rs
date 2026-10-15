@@ -38,13 +38,9 @@ fn window(w: Window) -> (u32, u32) {
 #[test]
 fn targets_and_their_windows() {
     assert_eq!(window(Target::Psram.window()), (0x8000_0000, 0x70_0000));
-    assert_eq!(window(Target::IramRv.window()), (0, 0x3800));
     assert_eq!(window(Target::IramHack.window()), (0, 0x4000));
-    assert_eq!(Target::Psram.boot_mode(), None);
-    assert_eq!(Target::IramRv.boot_mode(), Some(0x101));
-    assert_eq!(Target::IramHack.boot_mode(), Some(0x100));
     // Every target's window is inside the one files load with
-    for t in [Target::Psram, Target::IramRv, Target::IramHack] {
+    for t in [Target::Psram, Target::IramHack] {
         let w = t.window();
         assert!(w.base >= LOAD_WINDOW.base && w.base + w.len <= LOAD_WINDOW.base + LOAD_WINDOW.len);
     }
@@ -66,10 +62,9 @@ fn plan_picks_the_target_from_mode_and_load_address() {
         (header(MODE_RISCV, 16, S2), Err(OutOfWindow)),
         (header(MODE_RISCV, 16, PS - 16), Err(OutOfWindow)),
         (header(MODE_RISCV, 16, 0x2000_0000), Err(OutOfWindow)),
-        (header(MODE_RISCV, 16, 0), Ok(Target::IramRv)),
-        (header(MODE_RISCV, 0x3800, 0), Ok(Target::IramRv)),
-        (header(MODE_RISCV, 0x3804, 0), Err(OutOfWindow)),
-        // RV32 elsewhere in I-RAM is not an I-RAM target: it is outside the PSRAM's
+        // RV32 runs from the PSRAM only: in I-RAM, at 0 or elsewhere, it is outside
+        (header(MODE_RISCV, 16, 0), Err(OutOfWindow)),
+        (header(MODE_RISCV, 0x3800, 0), Err(OutOfWindow)),
         (header(MODE_RISCV, 16, 0x100), Err(OutOfWindow)),
         (header(MODE_HACK, 16, 0), Ok(Target::IramHack)),
         (header(MODE_HACK, 0x4000, 0), Ok(Target::IramHack)),
@@ -87,13 +82,10 @@ fn plan_picks_the_target_from_mode_and_load_address() {
     let mut h = header(MODE_RISCV, 16, PS);
     h.entry_point = PS + 2;
     assert_eq!(plan(&h), Err(BadEntry(PS + 2)));
+    // RV32 at 0 with the entry 0 the old I-RAM target wanted: out of the window
     h.load_addr = 0;
-    h.entry_point = 16;
-    assert_eq!(plan(&h), Err(BadEntry(16)));
-    // Inside the payload, but the soft reset would start at 0 anyway
-    h.size = 0x100;
-    h.entry_point = 0x40;
-    assert_eq!(plan(&h), Err(BadEntry(0x40)));
+    h.entry_point = 0;
+    assert_eq!(plan(&h), Err(OutOfWindow));
 }
 
 #[test]
@@ -129,7 +121,7 @@ fn run_errors() {
     );
     assert_eq!(
         text(BootError::Image(ImageError::OutOfWindow)),
-        "loads outside 80000000-806FFFFF and 0-37FF (RV32 at 0), 0-3FFF (Hack, at a word)"
+        "loads outside 80000000-806FFFFF (RV32), 0-3FFF (Hack, at a word)"
     );
     // The rest as the first stage words it
     assert_eq!(text(BootError::Crc), "CRC mismatch");
@@ -220,13 +212,18 @@ mod run {
         assert_eq!(r, Ok(Target::Psram));
         assert_eq!(mem.keys().next(), Some(&0x8001_0000));
         assert_eq!(mem.len(), payload.len());
-        let (r, mem) = run(&v4(MODE_RISCV, 0, &payload));
-        assert_eq!(r, Ok(Target::IramRv));
+        let (r, mem) = run(&v4(MODE_HACK, 0, &payload));
+        assert_eq!(r, Ok(Target::IramHack));
         assert_eq!(mem.keys().next(), Some(&SCRATCH));
         assert_eq!(mem.values().copied().collect::<Vec<u8>>(), payload);
         let (r, mem) = run(&v4(MODE_HACK, 0x100, &payload));
         assert_eq!(r, Ok(Target::IramHack));
         assert_eq!(mem.keys().next(), Some(&(SCRATCH + 0x100)));
+        // RV32 at 0 stages like a Hack file, in the PSRAM only, then is refused: the first
+        // stage in I-RAM stays
+        let (r, mem) = run(&v4(MODE_RISCV, 0, &payload));
+        assert_eq!(r, Err(BootError::Image(ImageError::OutOfWindow)));
+        assert!(mem.keys().all(|&a| a >= SCRATCH && a < SCRATCH + 0x4000));
         // Refused after loading, with nothing outside the PSRAM touched
         let (r, mem) = run(&v4(MODE_RISCV, 0x2000_0000, &payload));
         assert_eq!(r, Err(BootError::Image(ImageError::OutOfWindow)));

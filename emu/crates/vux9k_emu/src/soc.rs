@@ -63,8 +63,9 @@ pub enum Isa {
     Hack,
 }
 
-/// Largest RV32 application image in I-RAM on the real board: the second stage's I-RAM
-/// RV32 window (fw_common::map::IRAM_APP_BYTES).
+/// Largest application image loaded into I-RAM on the real profile (`load_app`; the
+/// 14 KB of the second stage's I-RAM RV32 target up to v2; RV32 applications on the board
+/// now run from the PSRAM).
 pub const MAX_APP_BYTES: usize = 14 * 1024;
 
 /// Why `Soc::run` returned.

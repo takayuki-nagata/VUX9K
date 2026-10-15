@@ -147,8 +147,8 @@ XMEM_USED = [(0, 0x800), (0x7F_F840, 0x7F_F848)] + [(4 << b, (4 << b) + 4) for b
 # stage) and the start of the second stage's window (STAGE2_BASE), for the s1_* programs
 STAGE2_BASE = 0x8070_0000
 XMEM_USED += [(0x6F_0000, 0x6F_0100), (0x6F_E000, 0x70_0000), (0x70_0000, 0x70_0100)]
-# s2_launch's two parts (S2L_CODE, S2L_COPY, S2L_BYTES each)
-XMEM_USED += [(0x1000, 0x1200), (0x1800, 0x1A00)]
+# s2_launch's two parts and its RV32 program (S2L_CODE, S2L_COPY, S2L_APP, S2L_BYTES each)
+XMEM_USED += [(0x1000, 0x1200), (0x1800, 0x1A00), (0x2000, 0x2200)]
 
 
 def xmem() -> list:
@@ -423,8 +423,9 @@ def boot_mode_hack() -> list:
 # --- the second stage's launcher, by hand: code in the PSRAM starting code -----------------
 S2L_CODE = XMEM + 0x1000  # the launcher's first part, as the second stage's code would run
 S2L_COPY = XMEM + 0x1800  # where the first part copies the second (fence.i, then a jump)
-S2L_BYTES = 0x200  # room for each part (XMEM_USED)
-# 'P' starts at cycle ~11,200 (Hack: ~9,800), 'L' after the soft reset at ~13,400 ('K' ~11,400)
+S2L_APP = XMEM + 0x2000  # where the second part copies an RV32 program (the PSRAM target)
+S2L_BYTES = 0x200  # room for each part and the RV32 program (XMEM_USED)
+# 'P' starts at cycle ~11,200 (Hack: ~9,800), 'L' after the jump at ~13,900 ('K' after the soft reset ~11,400)
 S2_LAUNCH_CYCLES = 18_000
 
 
@@ -442,10 +443,12 @@ def s2_launch(hack: bool = False) -> list:
     """What the second stage's `run` does, hand-assembled: I-RAM code writes the launcher
     into the PSRAM (fence.i) and jumps there; the launcher copies its second part to
     another PSRAM address word by word (PSRAM loads and stores from PSRAM code), fence.i,
-    jumps there; that part prints 'P', copies a program from the PSRAM into I-RAM word
-    by word (start_iram), gives the boot mode in GPIO 0x8 (RV32 0x101, or Hack 0x100; read
-    back) and soft-resets: the CPU starts the program in that mode, which prints 'L' (RV32)
-    or 'K' (Hack)."""
+    jumps there; that part prints 'P', then starts one of fw_common::launch's targets.
+    RV32 (the PSRAM target): it copies the program to S2L_APP word by word (as `run` loads
+    it in place), sets a0-a2, fence.i and jumps there; the program prints 'L'. Hack: it
+    copies the program into I-RAM word by word (start_hack), gives Hack (0x100) in GPIO 0x8
+    (read back) and soft-resets: the CPU starts the program in Hack mode, which prints
+    'K'."""
     if hack:
         import hack_asm
 
@@ -459,18 +462,19 @@ def s2_launch(hack: bool = False) -> list:
         h.c("0;JMP")
         target = h.assemble()
     else:
-        t = Asm()
+        t = Asm(origin=S2L_APP)
         t.lui("s1", 0x40000)
         _put_char(t, ord("L"), "w")
         t.label("halt")
         t.j("halt")
         target = t.assemble()
 
-    # The second part, run at S2L_COPY, with the program it writes into I-RAM after it
+    # The second part, run at S2L_COPY, with the program it copies (into I-RAM, or to
+    # S2L_APP) after it
     s = Asm(origin=S2L_COPY)
     _put_char(s, ord("P"), "w")
     s.la("a0", "target")
-    s.li("a1", 0)  # I-RAM
+    s.li("a1", 0 if hack else S2L_APP)
     s.li("a2", len(target))
     s.label("copy")
     s.lw("t0", 0, "a0")
@@ -479,13 +483,22 @@ def s2_launch(hack: bool = False) -> list:
     s.addi("a1", "a1", 4)
     s.addi("a2", "a2", -1)
     s.bnez("a2", "copy")
-    s.lui("s2", 0x40003)  # GPIO
-    s.li("t0", 0x100 if hack else 0x101)
-    s.sw("t0", 8, "s2")
-    s.lw("s3", 8, "s2")
-    s.lui("t0", 0xA)
-    s.addi("t0", "t0", 0x55A)  # SOFT_RESET_KEY's low half (0x0000_A55A)
-    s.sw("t0", 0xC, "s2")
+    if hack:
+        s.lui("s2", 0x40003)  # GPIO
+        s.li("t0", 0x100)
+        s.sw("t0", 8, "s2")
+        s.lw("s3", 8, "s2")
+        s.lui("t0", 0xA)
+        s.addi("t0", "t0", 0x55A)  # SOFT_RESET_KEY's low half (0x0000_A55A)
+        s.sw("t0", 0xC, "s2")
+    else:
+        # a0-a2 as the first stage hands them over (SDHC, partition LBA, its version)
+        s.li("a0", 1)
+        s.li("a1", 0x800)
+        s.li("a2", 1)
+        s.word(0x0000_100F)  # fence.i
+        s.li("t0", S2L_APP)
+        s.jalr("zero", "t0", 0)
     s.label("spin")
     s.j("spin")
     s.label("target")
@@ -512,7 +525,7 @@ def s2_launch(hack: bool = False) -> list:
     for w in second:
         r.word(w)
     first = r.assemble()
-    assert 4 * len(first) <= S2L_BYTES and 4 * len(second) <= S2L_BYTES
+    assert 4 * len(first) <= S2L_BYTES and 4 * len(second) <= S2L_BYTES and 4 * len(target) <= S2L_BYTES
 
     # From I-RAM: the first part into the PSRAM, fence.i, a jump there
     a = Asm()

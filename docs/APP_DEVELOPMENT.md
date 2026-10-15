@@ -171,7 +171,6 @@ where it runs:
 | Application | `mkv4` | Where it runs |
 |---|---|---|
 | Zephyr on the board `vux9k`, or RV32 linked into the PSRAM | the default (`0x8000_0000`) or `--load-addr` inside `0x8000_0000`-`0x806F_FFFF` | the PSRAM, in place |
-| RV32 linked at 0 | `--load-addr 0` (the entry point must stay 0) | I-RAM, at most 14 KB (`0x0000`-`0x37FF`), started by a soft reset at `0` |
 | Hack | `--mode hack` (load address 0) | I-RAM, at most 16 KB, in Hack mode |
 
 ```sh
@@ -185,7 +184,9 @@ fetch waits ~35 cycles. A PSRAM application starts with `a0` = 1 on an SDHC card
 `a1` = the FAT32 partition's first LBA, `a2` = the first stage's version, and the first stage
 still in I-RAM (a soft reset goes back to it); `sd/VUX9K/APPS/HELLO.BIN` and the Zephyr
 demos are. `run` checks the file's header and CRC before it writes anything, and refuses a
-file outside these windows with the first stage untouched.
+file outside these windows with the first stage untouched. RV32 runs from the PSRAM only:
+the second stage v3 refuses an RV32 file at load address 0 (`mkv4 --load-addr 0`, the
+I-RAM target of earlier second stages); link it into the PSRAM and wrap it again.
 
 ## 4. Testing on the emulator
 
@@ -288,7 +289,7 @@ python3 tools/vux_tool.py run-app VUX9K/APPS/APP.BIN        # run; then `monitor
 or copy it to `\VUX9K\APPS\` with a PC and type `run VUX9K/APPS/APP.BIN` at the `s2>`
 prompt in a terminal (`monitor`). A PSRAM application (Zephyr, `HELLO.BIN`) leaves the
 first stage in I-RAM: button S1 or a soft reset starts the boot again, as below. An
-application in I-RAM (Hack, RV32 at 0) replaces the first stage: until the FPGA is
+application in I-RAM (Hack) replaces the first stage: until the FPGA is
 configured again (power cycle, or `openFPGALoader -b tangnano9k bitstream/pack.fs`;
 `openFPGALoader --reset` loads the flash's bitstream), a soft reset or S1 restarts the
 application, not the boot. What applies to anything that runs there:

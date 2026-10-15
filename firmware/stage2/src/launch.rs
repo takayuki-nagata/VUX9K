@@ -27,7 +27,7 @@ fn zero_dram() {
     }
 }
 
-/// `run FILE`: load and check it (an I-RAM target into the PSRAM first: the first stage
+/// `run FILE`: load and check it (a Hack program into the PSRAM first: the first stage
 /// in I-RAM stays until the file has proved good), then start it. Returns on an error.
 pub fn run(ctx: &Ctx, c: &mut Card, path: &[u8]) -> Result {
     let vol = &mut c.vol;
@@ -49,7 +49,6 @@ pub fn run(ctx: &Ctx, c: &mut Card, path: &[u8]) -> Result {
     Uart::print_dec(h.size);
     Uart::print_str(match target {
         Target::Psram => " B, PSRAM, starting at 0x",
-        Target::IramRv => " B, I-RAM (RV32), starting at 0x",
         Target::IramHack => " B, I-RAM (Hack), starting at 0x",
     });
     Uart::print_hex(match target {
@@ -57,9 +56,9 @@ pub fn run(ctx: &Ctx, c: &mut Card, path: &[u8]) -> Result {
         _ => 0,
     });
     Uart::print_str("\n\n");
-    match target.boot_mode() {
-        None => start_psram(&h, vol.partition_lba(), ctx.s1_version),
-        Some(mode) => start_iram(&h, mode),
+    match target {
+        Target::Psram => start_psram(&h, vol.partition_lba(), ctx.s1_version),
+        Target::IramHack => start_hack(&h),
     }
 }
 
@@ -85,9 +84,9 @@ fn start_psram(h: &ImageHeader, part_lba: u32, s1_version: u32) -> ! {
 }
 
 /// Copy the checked payload from SCRATCH into I-RAM (whole words: I-RAM has no byte
-/// enables; the last word's bytes past the payload are 0), then soft-reset into it in
-/// `mode`.
-fn start_iram(h: &ImageHeader, mode: u32) -> ! {
+/// enables; the last word's bytes past the payload are 0), then soft-reset into it in Hack
+/// mode.
+fn start_hack(h: &ImageHeader) -> ! {
     let from = (SCRATCH + h.load_addr) as usize;
     let words = (h.size as usize + 3) >> 2;
     for i in 0..words {
@@ -99,7 +98,7 @@ fn start_iram(h: &ImageHeader, mode: u32) -> ! {
         write_word(h.load_addr as usize + (i << 2), w);
     }
     zero_dram();
-    write_word(map::GPIO_BOOT_MODE, mode);
+    write_word(map::GPIO_BOOT_MODE, map::BOOT_MODE_VALID);
     reset_now()
 }
 

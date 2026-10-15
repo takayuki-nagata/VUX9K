@@ -282,10 +282,11 @@ says (`fw_common::launch`):
 | Header | Where it runs | How it starts |
 |:---|:---|:---|
 | RV32, load address in `0x8000_0000`-`0x806F_FFFF` (the Zephyr board `vux9k`, the hello demo) | The PSRAM below the second stage | In place: D-RAM zeroed, a jump to the entry point with `a0`-`a2` as the first stage handed them over. The first stage stays in I-RAM: a soft reset, or Button S1, goes back to it |
-| RV32, load address and entry point `0` (at most 14 KB, `0x0000`-`0x37FF`) | I-RAM | Copied into I-RAM over the first stage, D-RAM zeroed, soft reset in RV32 mode (it starts at `0`) |
-| Hack, a word-aligned load address in I-RAM (at most 16 KB) | I-RAM | As above, in Hack mode |
+| Hack, a word-aligned load address in I-RAM (at most 16 KB) | I-RAM | Copied into I-RAM over the first stage, D-RAM zeroed, soft reset in Hack mode |
 
-An I-RAM application replaces the first stage until the FPGA is configured again (power
+RV32 runs from the PSRAM only: since the second stage v3, an RV32 file that loads at `0`
+(I-RAM, as Zephyr applications for the board's first, 14 KB I-RAM layout were) is refused as
+outside the window. A Hack application replaces the first stage until the FPGA is configured again (power
 cycle, or the bitstream loaded again): a soft reset then restarts the application, not the
 boot. A PSRAM application that never returns (the Zephyr demos) leaves the first stage
 there, so Button S1 (the board's reset) starts the boot again. A file `run` refuses (bad

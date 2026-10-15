@@ -45,8 +45,6 @@ pub const SOFT_RESET_KEY: u32 = 0x5A5A_A55A;
 /// enables), and every soft reset starts what is there.
 pub const IRAM_BASE: usize = 0x0000_0000;
 pub const IRAM_BYTES: usize = 16 * 1024;
-/// The part of I-RAM an RV32 application loads into (the `vux9k` Zephyr board's 14 KB).
-pub const IRAM_APP_BYTES: usize = 0x3800;
 pub const DRAM_BASE: usize = 0x2000_0000;
 pub const DRAM_BYTES: usize = 8 * 1024;
 /// The wait-state window (soc_pkg::RV_REGION_XMEM, XMEM_WORDS): the 8 MB PSRAM, code and

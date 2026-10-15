@@ -71,11 +71,12 @@ release/`.
   emulator tests (`sim/emu/test_stage2.py`, `s1_env.s2_cmd`) depend on those strings.
 - **The launcher writes I-RAM only after the CRC checked** (`fw_common::launch`, `run`): a
   file loads within `LOAD_WINDOW` through `staging` (I-RAM addresses into the PSRAM at
-  `SCRATCH`), `plan` then picks the target from the checked header (RV32 at 0: I-RAM, 14 KB;
-  RV32 in `XMEM_BASE..STAGE2_BASE`: the PSRAM, a jump with a0-a2 as the first stage hands them
-  over; Hack: I-RAM, 16 KB, at a word), and only then does the second stage copy into I-RAM
-  (whole words, the last one's bytes past the payload 0), zero D-RAM, set `GPIO_BOOT_MODE` and
-  soft-reset. So a refused file leaves the first stage in I-RAM. The windows are spelled out in
+  `SCRATCH`), `plan` then picks the target from the checked header (RV32 in
+  `XMEM_BASE..STAGE2_BASE`: the PSRAM, a jump with a0-a2 as the first stage hands them over;
+  Hack: I-RAM, 16 KB, at a word; RV32 anywhere else, at 0 too, is out of the window: the I-RAM
+  RV32 target went with the second stage v3), and only then does the second stage copy a Hack
+  program into I-RAM (whole words, the last one's bytes past the payload 0), zero D-RAM, set
+  `GPIO_BOOT_MODE` and soft-reset. So a refused file leaves the first stage in I-RAM. The windows are spelled out in
   `put_run_error`'s text (a const assert).
 - **`fw_common` code that only the second stage needs stays out of the first stage's
   build**: merely adding `launch` to `lib.rs` changed the first stage's binary (36 bytes), so
