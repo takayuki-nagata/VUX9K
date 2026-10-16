@@ -10,10 +10,9 @@ first: the hello demo in place in the PSRAM (a jump with a0-a2), the Hack demo i
 refusals are sim/emu/test_stage2.py's; the Zephyr demo started this way runs on the
 netlist (test_soc_zephyr_s2.py, make sim-zephyr-demo-gls).
 
-Cycles (the emulator's, which the lockstep holds to the RTL's): the prompt at ~14.4M
-(the 35 KB STAGE2.BIN read at ~250 cycles a byte), `run HELLO.BIN` to its last line
-~5.8M, `run HACK.BIN` to the demo's first result ~15.1M (the second stage, running from
-the PSRAM, loads 5.5 KB at ~2,400 cycles a byte).
+Cycles (the emulator's, which the lockstep holds to the RTL's): the prompt at ~12.8M
+(the 35 KB STAGE2.BIN read at ~250 cycles a byte); the second stage, running from the
+PSRAM through its caches, loads a demo at ~200-260 cycles a byte.
 """
 
 import re

@@ -9,9 +9,8 @@ links it, and jumps to it (fw_common::launch's PSRAM target), the first stage st
 I-RAM. The same demo preloaded into the PSRAM is test_soc_zephyr_demo.py (RTL, test-sim); on
 the emulator both ways are sim/emu/test_zephyr_demo.py.
 
-Cycles (emulator, I-RAM build): the prompt at ~14.4M, the 13 KB load ~27.4M (the second
-stage runs from the PSRAM); the demo itself, now from the PSRAM too, an estimated ~5M more
-(to be measured): ~47M in all, minutes on the netlist.
+Cycles (emulator): the prompt at ~12.8M, the 13 KB load ~3.5M (the second stage runs from
+the PSRAM, through its caches), then the demo: minutes on the netlist.
 """
 
 import re
@@ -22,7 +21,7 @@ from soc_env import BANNER, boot_s2, s2_cmd
 DONE = b"All Rust application tasks finished successfully!"
 
 
-# ~47M cycles (2.6 s), the POR not shortened on the netlist; the waits allow 20M + 60M (4.4 s)
+# The POR not shortened on the netlist; the waits allow 20M + 60M cycles (4.4 s)
 @cocotb.test(timeout_time=5000, timeout_unit="ms")
 async def test_zephyr_demo_through_the_second_stage(dut):
     """S1 boots S2 from the card, run VUX9K/APPS/ZEPHYR.BIN: Zephyr from the PSRAM, k_msleep(100) takes 100 ms"""

@@ -22,20 +22,21 @@ mtime +0x0 / mtimecmp +0x8 layout is `timer_core`'s, so Zephyr's in-tree
   target), leaving the first stage in I-RAM: a Zephyr app never returns, but Button S1 (the
   board's reset) starts the first stage and the boot again. The tests can't press it, so
   the board tests (`test_hardware.py` 13 and 14, `hw_irq_echo.py`) load the bitstream afterwards.
-  Every fetch and data access there waits ~35 cycles (no cache in front of the PSRAM), so
-  cycle budgets measured from the I-RAM build don't carry over.
+  A fetch or load there that misses the caches in front of the PSRAM, and every store, waits
+  ~35 cycles, so cycle budgets measured from the I-RAM build don't carry over.
 
 bc_clone_rs (`make build-zephyr`: `vendor/bc_clone_rs/examples/zephyr_app`, its own
 `prj.conf` with a 32 KB main stack and a 64 KB static heap, ~260 KB) is built for `vux9k`
 like the demos; nothing of it is changed for this board (the submodule is upstream), and
-`make apps` makes it `BC.BIN`. It runs from the PSRAM with no cache, so it is slow: the
-second stage's `run` alone takes ~26 s on the board (~460M cycles). `sim/emu/test_zephyr_bc.py` loads it
+`make apps` makes it `BC.BIN`. It runs from the PSRAM through the caches: the second
+stage's `run` loads it in ~52M cycles (2.9 s), and its start to the first `bc> ` is ~74M
+(4.1 s; 314M, 17.4 s, without the caches). `sim/emu/test_zephyr_bc.py` loads it
 straight into the PSRAM for the self-tests and the REPL, starts it once through the second
 stage's `run` from a card (`s1_env.run_from_card(..., load_cycles=...)`), and prints the
 cycles and `minstret` (`Soc.instret`) to the first `bc> ` and per REPL line: the emulator is
 cycle-exact to the RTL (`sim-lockstep`), so these are the RTL's counts (the board's `[TIME]` lines
-match them: 17.4 s to the first `bc> `, 314M cycles at 18 MHz), the baseline for a
-cache. Its cycle caps are bounds, not measurements. On the board, `test_hardware.py` 14
+matched them without the caches: 17.4 s to the first `bc> `, 314M cycles at 18 MHz),
+with the caches' hit rates, to compare speed work against. Its cycle caps are bounds, not measurements. On the board, `test_hardware.py` 14
 puts, runs and types at it, printing wall-clock `[TIME]` lines.
 
 `zephyr_workspace/app/` is the Rust demo: Zephyr (`src/main.c`, FFI wrappers for
@@ -47,8 +48,8 @@ default `--load-addr` for riscv) and the RTL (`sim-zephyr-demo-rtl`: `soc_env.pr
 writes the PSRAM word model and puts a jump to `0x8000_0000` at I-RAM 0, so Verilator RTL
 only), and as the board starts it, the second stage's `run VUX9K/APPS/ZEPHYR.BIN` from the
 card: on the emulator (the same test, same expectations) and on the netlist
-(`sim-zephyr-demo-gls`, test-slow: ~47M cycles, most of them the second stage loading 13 KB
-from the PSRAM). Its `prj.conf` size settings, from the 14 KB I-RAM board it was first
+(`sim-zephyr-demo-gls`, test-slow: the prompt at ~12.8M cycles, the 13 KB load ~3.5M, then
+the demo). Its `prj.conf` size settings, from the 14 KB I-RAM board it was first
 linked for, keep it small and so quick to load.
 
 Two traps found while bringing Zephyr up on the RTL (the old Python emulator hid both):

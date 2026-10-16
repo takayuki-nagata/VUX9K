@@ -81,7 +81,7 @@ The RTL modules in this repository were originally authored in VHDL-2008 and hav
 - **UART Controller (`uart_controller`)**: Ported from [`takayuki-nagata/uart_controller`](https://github.com/takayuki-nagata/uart_controller)
   - Parameterized baud rate clock timer (18.0 MHz -> 115200 bps), 8N1 serial framing, and dual 32-entry synchronous TX/RX FIFOs.
 - **Arbitrary-Precision Math Engine & REPL (`vendor/bc_clone_rs`)**: Submodule from [`takayuki-nagata/bc_clone_rs`](https://github.com/takayuki-nagata/bc_clone_rs)
-  - Embedded `bc_core` arbitrary-precision arithmetic engine with 10/10 math test suite running atop Zephyr RTOS. At about 260 KB it runs on the board from the PSRAM (`make build-zephyr`, `\VUX9K\APPS\BC.BIN` started by the second stage's `run`), slowly: there is no cache in front of the PSRAM yet.
+  - Embedded `bc_core` arbitrary-precision arithmetic engine with 10/10 math test suite running atop Zephyr RTOS. At about 260 KB it runs on the board from the PSRAM (`make build-zephyr`, `\VUX9K\APPS\BC.BIN` started by the second stage's `run`), through the caches in front of it: about 4 s from its start to the first `bc> `.
 - **Hack Toolchain & C Firmware (`hack_demo`)**: Powered by [`takayuki-nagata/hack_tools`](https://github.com/takayuki-nagata/hack_tools) (`has` assembler & `m2h` transpiler)
   - 16-bit C and Hack assembly firmware testing recursive arithmetic, Fibonacci, array manipulations, and MMIO UART output.
 
@@ -340,7 +340,7 @@ second stage's `run` loads its applications there and jumps to them, the first s
 in I-RAM). `make build-zephyr-demo` builds the Rust demo
 (`zephyr_workspace/app/`, Zephyr + a Rust staticlib) for it; `make
 build-zephyr` builds bc_clone_rs for it too (`make apps`' `BC.BIN`, ~260 KB: the second
-stage's load takes about half a minute, and bc runs slowly from the uncached PSRAM). `make build-zephyr-irq-echo` builds
+stage's load takes about 3 s, and bc reaches its prompt about 4 s later). `make build-zephyr-irq-echo` builds
 `zephyr_workspace/irq_echo/`, an echo through the UART driver's interrupt-driven API
 (RX on the machine external interrupt; see `zephyr_workspace/README.md`, "UART").
 
@@ -480,7 +480,7 @@ Short tests run on Icarus, long SoC/GLS runs on Verilator (`SIM_UNIT` / `SIM_SOC
 | **Static Timing (STA)**| `make sta` | ~15 sec | Exhaustive post-PnR timing analysis, Fmax verification, and critical path breakdown (`build/synth/soc_sta.json`) |
 | **Real Hardware** | `make test-hw` | ~10 min | The two-stage boot, the second stage's file commands and the demos it starts, on the Tang Nano 9K with a FAT32 card via `scripts/test_hardware.py` (15 tests; bc's put, load and start take most of the time) |
 | **Real Hardware, Release Tree** | `make test-hw-dist DIST=<dir>` | ~10 min | The same 15 tests with a `make dist` tree's bitstream, second stage and demos, nothing rebuilt: how a release candidate is tested ([`docs/RELEASING.md`](docs/RELEASING.md)) |
-| **Board UART Interrupts** | `make test-hw-irq-echo` | ~20 sec | The interrupt-driven UART echo on the board (`scripts/hw_irq_echo.py`): put on the card as `\VUX9K\APPS\IRQECHO.BIN` and started by the running second stage's `run`, five 256-byte lines sent in paced 16-byte chunks (the app runs from the uncached PSRAM), then the bitstream loaded into SRAM again from `build/synth/pack.fs`; `make test-hw-irq-echo-dist DIST=<dir>` takes both from a `make dist` tree |
+| **Board UART Interrupts** | `make test-hw-irq-echo` | ~20 sec | The interrupt-driven UART echo on the board (`scripts/hw_irq_echo.py`): put on the card as `\VUX9K\APPS\IRQECHO.BIN` and started by the running second stage's `run`, five 256-byte lines sent in paced 16-byte chunks (`--chunk 0` sends them back to back), then the bitstream loaded into SRAM again from `build/synth/pack.fs`; `make test-hw-irq-echo-dist DIST=<dir>` takes both from a `make dist` tree |
 
 ### Real Hardware Test Suite (15 Automated Checks)
 `scripts/test_hardware.py` needs a FAT32 card in the board (it stays there: the suite sets

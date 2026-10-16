@@ -44,7 +44,7 @@ BANNER_END = b"3 MHz\n"
 # The demos as v4 files for \VUX9K\APPS\ (make apps)
 APPS_DIR = os.path.join(FIRMWARE_DIR, "apps")
 # `run` to the blank line after its [RUN] line: the second stage, running from the PSRAM,
-# loads ~2,000-2,400 cycles a byte (ZEPHYR.BIN, 13 KB: ~27M)
+# loads ~200-260 cycles a byte through its caches (ZEPHYR.BIN, 13 KB: ~3.5M)
 RUN_LOAD_CYCLES = 40_000_000
 
 

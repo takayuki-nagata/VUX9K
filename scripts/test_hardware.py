@@ -106,8 +106,9 @@ BC_LINES = (
 BC_PROMPT = "bc> "
 BC_REPL = (("2^32", "4294967296"), ("define cube(x) { return (x^3); }", ""), ("cube(5)", "125"))
 # bc is ~260 KB: `put` at 115200 baud takes ~23 s, the second stage's load from the card
-# ~35 s (~2,400 cycles a byte), and the self-tests run from the PSRAM without a cache.
-# Guesses with room, until the board's times (printed as [TIME]) are known. The put's
+# ~3 s (~200 cycles a byte), and the self-tests ~4 s to the prompt (the emulator's cycles;
+# without the caches the board took 25.6 s and 17.4 s). Bounds with room; the board's times
+# are printed as [TIME]. The put's
 # bounds each transfer line and the card write after it (vux_tool.put)
 BC_PUT_TIMEOUT = 90.0
 BC_RUN_TIMEOUT = 120.0

@@ -89,7 +89,7 @@ python3 tools/vux_tool.py run-app VUX9K/APPS/HELLO.BIN
 | `HELLO.BIN` | prints the first stage's a0-a2; `r` goes back to the first stage | the PSRAM at `0x8000_0000` |
 | `ZEPHYR.BIN` | the Zephyr Rust demo | the PSRAM at `0x8000_0000` (it never returns: S1 goes back to the first stage) |
 | `IRQECHO.BIN` | Zephyr's interrupt-driven UART echo | the PSRAM at `0x8000_0000` |
-| `BC.BIN` | [bc_clone_rs](https://github.com/takayuki-nagata/bc_clone_rs), an arbitrary-precision calculator (`bc`) on Zephyr: self-tests, then its `bc> ` prompt. ~260 KB: `put` takes ~25 s and `run`'s load ~35 s, and it runs slowly from the uncached PSRAM | the PSRAM at `0x8000_0000` (it never returns, like `ZEPHYR.BIN`) |
+| `BC.BIN` | [bc_clone_rs](https://github.com/takayuki-nagata/bc_clone_rs), an arbitrary-precision calculator (`bc`) on Zephyr: self-tests, then its `bc> ` prompt. ~260 KB: `put` takes ~25 s, `run`'s load ~3 s, and bc reaches its prompt ~4 s later | the PSRAM at `0x8000_0000` (it never returns, like `ZEPHYR.BIN`) |
 | `HACK.BIN` | the Hack C demo | I-RAM, in Hack mode (replaces the first stage until the FPGA is configured again) |
 
 `demos/` holds the Zephyr and Hack demos' raw images for the emulator (section 4).
@@ -129,8 +129,8 @@ Use it as `west build` writes it: it carries the initial values of `.data`, whic
 image copies to its RAM at startup.
 
 - **C:** any Zephyr application; start from `samples/hello_world`. Size still costs time:
-  `run` loads a file at ~2,000-2,400 cycles a byte (~1.6 s for 13 KB, ~35 s for
-  `BC.BIN`'s 260 KB), so Zephyr's size options pay off.
+  `run` loads a file at ~200-260 cycles a byte (~0.2 s for 13 KB, ~3 s for
+  `BC.BIN`'s 260 KB), so Zephyr's size options still pay off.
 - **Rust:** `vux9k-zephyr-bsp/app/` is a template: a Zephyr application whose logic is a
   Rust `no_std` staticlib (`app/rust_demo`), called from `app/src/main.c` through small
   C wrappers for Zephyr's API. It needs Rust (`pins.rust`) with the target

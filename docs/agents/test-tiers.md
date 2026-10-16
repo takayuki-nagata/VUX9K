@@ -50,11 +50,11 @@ at ~250 cycles a byte as the board does: the other SoC tests boot a 28-byte `STA
 
 `test_soc_stage2.py` (`sim-stage2`) is the RTL test of the real second stage booted from the
 card (`soc_env.s2_card`: `STAGE2.BIN` and the demos of `make apps` in `\VUX9K\APPS\`): `ls`,
-`run HELLO.BIN` (the PSRAM, a0-a2, `r` back to the first stage; ~21M cycles) and `run
-HACK.BIN` (I-RAM in Hack mode; ~30M cycles). The prompt alone takes ~14.4M cycles (the 35 KB
-file at ~250 cycles a byte), and `run` loads at ~2,000-2,400 cycles a byte (the second stage
-runs from the PSRAM): the 13 KB Zephyr demo through it is ~47M cycles, minutes on the
-netlist, so it runs there only in `sim-zephyr-demo-gls` (`test_soc_zephyr_s2.py`, test-slow);
+`run HELLO.BIN` (the PSRAM, a0-a2, `r` back to the first stage; ~14M cycles) and `run
+HACK.BIN` (I-RAM in Hack mode; ~15M cycles). The prompt alone takes ~12.8M cycles (the 35 KB
+file at ~250 cycles a byte), and `run` loads at ~200-260 cycles a byte (the second stage
+runs from the PSRAM, through its caches): the 13 KB Zephyr demo through it is ~19M cycles,
+minutes on the netlist, so it runs there only in `sim-zephyr-demo-gls` (`test_soc_zephyr_s2.py`, test-slow);
 the RTL runs the Zephyr demos preloaded into the PSRAM (`soc_env.preload_psram_app`: the word
 model's words and a jump at I-RAM 0, so Verilator RTL only). Cycle counts are the emulator's, which the
 lockstep holds to the RTL's; measure a new test there first (`s1_env.run_from_card` in `sim/emu/s1_env.py`).
