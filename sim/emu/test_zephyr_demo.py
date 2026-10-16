@@ -21,8 +21,8 @@ DEMO_BIN = os.path.join(REPO_ROOT, "build", "zephyr-demo", "zephyr", "zephyr.bin
 # The board's flash (vux9k.dts): 4 MB of the PSRAM from XMEM_BASE; the second stage's
 # `run` takes an image up to its own window
 FLASH_BYTES = 4 * 1024 * 1024
-# From the PSRAM (~35 cycles a fetch) the demo ends ~5M cycles after its start (an estimate
-# from the I-RAM build's instruction counts); room for several times that
+# From the PSRAM, through its caches, the demo ends ~3M cycles after its start; room for
+# several times that
 DONE_CYCLES = 40_000_000
 
 

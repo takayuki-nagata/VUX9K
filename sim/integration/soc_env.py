@@ -54,7 +54,7 @@ S2_BANNER = f"VUX9K Stage 2 (v{STAGE2_VERSION})"
 # The demos as v4 files for \VUX9K\APPS\ (make apps)
 APPS_DIR = os.path.join(REPO_ROOT, "build", "firmware", "apps")
 # Power-on to the real second stage's prompt: the first stage's key window (1.8M cycles) and
-# its read of the 35 KB STAGE2.BIN from the card (~14.4M cycles in all on the emulator)
+# its read of the 35 KB STAGE2.BIN from the card (~12.8M cycles in all on the emulator)
 S2_BOOT_CYCLES = 20_000_000
 
 CLK_PERIOD_PS = 55556  # 18.0 MHz SoC clock (tb_soc_top.sv: 2 x 27778 ps)

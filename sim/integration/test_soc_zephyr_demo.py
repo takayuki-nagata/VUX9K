@@ -18,8 +18,8 @@ from soc_env import REPO_ROOT, preload_psram_app, start_soc
 DEMO_BIN = os.path.join(REPO_ROOT, "build", "zephyr-demo", "zephyr", "zephyr.bin")
 
 
-# ~5M cycles from the PSRAM (estimated from the I-RAM build's instruction counts, to be
-# measured), waited for up to 40M (2.2 s simulated)
+# ~3M cycles from the PSRAM through its caches (the emulator's), waited for up to 40M
+# (2.2 s simulated)
 @cocotb.test(timeout_time=3000, timeout_unit="ms")
 async def test_zephyr_rust_demo_from_the_psram(dut):
     """Zephyr boots from the PSRAM, runs the Rust app, and k_msleep(100) takes 100 ms"""

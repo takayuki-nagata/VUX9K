@@ -27,7 +27,7 @@ def handoff(out: str, tag: str):
     return m.groups()
 
 
-# Boot ~14.4M, ls, the hello demo ~5.8M, the soft reset: ~21M cycles (1.2 s); room for 2x
+# Boot ~12.8M, ls, the hello demo ~1.1M, the soft reset: ~14M cycles (0.8 s); room for 3x
 @cocotb.test(timeout_time=2400, timeout_unit="ms")
 async def test_s2_ls_and_run_hello_from_the_psram(dut):
     """ls VUX9K/APPS, then run VUX9K/APPS/HELLO.BIN: a0-a2 as the second stage got them, and r back to S1"""
@@ -49,7 +49,7 @@ async def test_s2_ls_and_run_hello_from_the_psram(dut):
     dut._log.info("[PASS] r: soft reset back to the first stage")
 
 
-# Boot ~14.4M, the load ~13.4M, the demo's first result ~1.7M: ~30M cycles (1.7 s); room for 2x
+# Boot ~12.8M, the load and the demo's first result ~2.1M: ~15M cycles (0.8 s); room for 4x
 @cocotb.test(timeout_time=3400, timeout_unit="ms")
 async def test_s2_run_hack_from_i_ram(dut):
     """run VUX9K/APPS/HACK.BIN: copied into I-RAM over the first stage, started in Hack mode"""

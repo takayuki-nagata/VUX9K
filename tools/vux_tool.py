@@ -972,7 +972,7 @@ def main():
         "--timeout",
         type=float,
         default=120.0,
-        help="seconds for the load, to the [RUN] line (default: 120; ~2,400 cycles a byte: BC.BIN takes ~35 s)",
+        help="seconds for the load, to the [RUN] line (default: 120; ~200-260 cycles a byte: BC.BIN takes ~3 s)",
     )
 
     args = parser.parse_args()

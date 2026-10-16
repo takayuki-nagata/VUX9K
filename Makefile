@@ -500,7 +500,7 @@ sim-zephyr-irq-echo-rtl: veryl firmware build-zephyr-irq-echo
 
 # The Zephyr Rust demo as the board starts it, on the netlist (test-slow): the first stage
 # boots the second from the card, whose `run VUX9K/APPS/ZEPHYR.BIN` loads it into the PSRAM and
-# jumps to it (~47M cycles)
+# jumps to it (~19M cycles)
 sim-zephyr-demo-gls: synth-top firmware apps
 	@echo "=== Running the Zephyr Rust demo through the second stage's run on the GLS netlist ==="
 	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc_gls[test_soc_zephyr_s2]"

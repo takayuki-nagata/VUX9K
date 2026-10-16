@@ -17,7 +17,7 @@ back-to-back line comes back whole; the paced line is what the board test sends 
 """
 
 CHUNK = 16  # bytes sent back to back: half the RX FIFO
-HANDLER_FRAMES_PER_BYTE = 5  # the RX handler's time per byte from the PSRAM, in frame times (measured 4.3)
+HANDLER_FRAMES_PER_BYTE = 5  # the RX handler's frame times a byte: 4.3 uncached, ~1.1 with the caches
 GAP_FRAMES = 2 * HANDLER_FRAMES_PER_BYTE * CHUNK  # silence after each chunk, in frame times
 FRAME_BITS = 10  # start, 8 data, stop
 
