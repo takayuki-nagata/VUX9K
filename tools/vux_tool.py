@@ -556,8 +556,10 @@ def s2_cmd(ser, line, timeout=10.0, check=True):
     ser.flush()
     got, text = read_until(ser, (line + "\n",), timeout)
     if got:
-        got, rest = read_until(ser, (S2_PROMPT,), timeout)
-        text += rest
+        # The reply and the prompt can come in the same read as the echo
+        at = text.find(got) + len(got)
+        got, rest = read_until(ser, (S2_PROMPT,), timeout, text[at:])
+        text = text[:at] + rest
     if not got:
         raise TimeoutError(f"no prompt after {line!r}; got {text[-400:]!r}")
     out = _s2_reply(text, line)

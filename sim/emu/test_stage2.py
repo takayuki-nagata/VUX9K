@@ -324,6 +324,33 @@ def test_long_names_are_listed_and_found(tool):
     assert ls_line("MOVED.TXT", 700) in vux_tool.s2_cmd(ser, "ls /")
 
 
+class OneReadPort:
+    """A port that answers a command line with its echo, the reply and the prompt in a
+    single read, as the second stage from the PSRAM's caches can."""
+
+    def __init__(self, reply: str):
+        self.reply = reply
+        self.out = b""
+
+    def write(self, data: bytes):
+        line = data.decode().rstrip("\r")
+        self.out += f"{line}\n{self.reply}{S2_PROMPT.decode()}".encode()
+
+    def flush(self):
+        pass
+
+    def read(self, n: int) -> bytes:
+        data, self.out = self.out[:n], self.out[n:]
+        return data
+
+
+def test_s2_cmd_takes_a_reply_that_came_with_the_echo():
+    """Found by the board suite on the emulator once the second stage ran from the caches:
+    s2_cmd waited for a second prompt after the read that held the echo and the prompt."""
+    assert vux_tool.s2_cmd(OneReadPort("[ERR] not found\n"), "ls X", timeout=1.0, check=False) == ("[ERR] not found\n")
+    assert vux_tool.s2_cmd(OneReadPort(""), "mkdir A", timeout=1.0) == ""
+
+
 def test_put_and_cat_round_trip(tool):
     soc, ser = tool(card({S2: stage2(), "README.TXT": b"old\n"}))
     vux_tool.s2_cmd(ser, "mkdir TEST")
