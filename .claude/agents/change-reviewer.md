@@ -25,8 +25,8 @@ diff touches. Then check, citing file:line for each finding:
 5. **Weakened checks**: loosened expected-failure lists, lowered coverage thresholds,
    removed self-tests, new `cov:exclude` on merely untested code, broad lint waivers.
 6. **Content that must not be committed**: host names, device names, absolute paths,
-   local memos (ROADMAP.md, hw_debug/), private tooling, emulator-only claims presented as
-   running on the board.
+   local memos (ROADMAP.md, hw_debug/), private tooling, emulator or simulation results presented as
+   measured on the board.
 7. Plain bugs you notice in the diff.
 
 Output: findings ordered by severity (blocking / should fix / note), each with file:line,
