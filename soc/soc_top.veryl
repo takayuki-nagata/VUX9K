@@ -3,7 +3,8 @@
 
 // Tang Nano 9K Top-Level SoC Wrapper in Veryl
 // Integrates CPU, RAMs, UART, Machine Timer, SD Card SPI, GPIO, and Address Decoder,
-// and the wait-state window (soc_xmem_bridge + the PSRAM controller) at RV32 region 8
+// and the wait-state window (soc_icache/soc_dcache + soc_xmem_bridge + the PSRAM controller)
+// at RV32 region 8
 
 pub module soc_top (
     clk  : input clock,
@@ -91,6 +92,15 @@ pub module soc_top (
     var xmem_rsp_rdata: logic<32>;
     var xmem_fetch_sel: logic    ;
 
+    // The window's caches, between the CPU and the bridge: what they pass on (misses,
+    // stores), the bridge's readies they complete them with, the words they return
+    var icache_mem_sel    : logic    ;
+    var icache_rdata      : logic<32>;
+    var dcache_mem_sel    : logic    ;
+    var dcache_rdata      : logic<32>;
+    var bridge_instr_ready: logic    ;
+    var bridge_data_ready : logic    ;
+
     // Memory & MMIO Read Signals
     var ram_data_out  : logic<32>;
     var timer_data_out: logic<32>;
@@ -173,36 +183,81 @@ pub module soc_top (
         data_req       : data_req       ,
     );
 
-    // Wait-state window. A fetch from it (RV32, region 8 at pc_reg) takes the bridge's
-    // word; every other fetch reads I-RAM, which also answers for addresses outside
+    // Wait-state window. A fetch from it (RV32, region 8 at pc_reg) takes the instruction
+    // cache's word; every other fetch reads I-RAM, which also answers for addresses outside
     // I-RAM (README, "Address decoding and aliases"). Hack never selects the window.
     assign xmem_fetch_sel = active_mode && fetch_addr[31:28] == soc_pkg::RV_REGION_XMEM;
-    assign cpu_instr_in   = if xmem_fetch_sel ? xmem_rdata : instr_data;
+    assign cpu_instr_in   = if xmem_fetch_sel ? icache_rdata : instr_data;
+
+    // The caches key lines by the PSRAM word (addr[22:2]) and read them a cycle ahead, at
+    // the CPU's pc_out and data_addr. Their RAMs have no reset: they clear every line while
+    // the power-on reset counts (raw_rst low), so they are reset by rst_n, not by it. A
+    // store to the window completing invalidates its instruction-cache line.
+    inst icache: soc_icache #(
+        ENABLE: 1'b0,
+    ) (
+        clk                                                          ,
+        rst        : rst_n                                           ,
+        clear      : !raw_rst                                        ,
+        rd_idx     : instr_addr[11:2]                                ,
+        fetch_req  : fetch_req                                       ,
+        fetch_sel  : xmem_fetch_sel                                  ,
+        fetch_addr : fetch_addr[22:2]                                ,
+        instr_ready: instr_ready                                     ,
+        rdata      : icache_rdata                                    ,
+        hit        : _                                               ,
+        inv        : data_req && xmem_wsel && mem_write && data_ready,
+        inv_idx    : data_waddr[11:2]                                ,
+        mem_sel    : icache_mem_sel                                  ,
+        mem_ready  : bridge_instr_ready                              ,
+        mem_rdata  : xmem_rdata                                      ,
+    );
+
+    inst dcache: soc_dcache #(
+        ENABLE: 1'b0,
+    ) (
+        clk                          ,
+        rst       : rst_n            ,
+        clear     : !raw_rst         ,
+        rd_idx    : data_addr[10:2]  ,
+        data_req  : data_req         ,
+        data_sel  : xmem_wsel        , // data_waddr: the registered access address in MEM_WAIT
+        data_addr : data_waddr[22:2] ,
+        data_we   : mem_write        ,
+        data_wdata: cpu_data_out     ,
+        data_wstrb: cpu_byte_we      ,
+        data_ready: data_ready       ,
+        rdata     : dcache_rdata     ,
+        hit       : _                ,
+        mem_sel   : dcache_mem_sel   ,
+        mem_ready : bridge_data_ready,
+        mem_rdata : xmem_rdata       ,
+    );
 
     inst xmem_bridge: soc_xmem_bridge (
-        clk        : clk           ,
-        rst        : rst           ,
-        soft_rst   : cpu_soft_rst  ,
-        fetch_req  : fetch_req     ,
-        fetch_sel  : xmem_fetch_sel,
-        fetch_addr : fetch_addr    ,
-        data_req   : data_req      ,
-        data_sel   : xmem_wsel     , // data_waddr: the registered access address in MEM_WAIT
-        data_addr  : data_waddr    ,
-        data_we    : mem_write     ,
-        data_wdata : cpu_data_out  ,
-        data_wstrb : cpu_byte_we   ,
-        instr_ready: instr_ready   ,
-        data_ready : data_ready    ,
-        rdata      : xmem_rdata    ,
-        req_valid  : xmem_req_valid,
-        req_ready  : xmem_req_ready,
-        req_we     : xmem_req_we   ,
-        req_addr   : xmem_req_addr ,
-        req_wdata  : xmem_req_wdata,
-        req_wstrb  : xmem_req_wstrb,
-        rsp_valid  : xmem_rsp_valid,
-        rsp_rdata  : xmem_rsp_rdata,
+        clk        : clk               ,
+        rst        : rst               ,
+        soft_rst   : cpu_soft_rst      ,
+        fetch_req  : fetch_req         ,
+        fetch_sel  : icache_mem_sel    ,
+        fetch_addr : fetch_addr        ,
+        data_req   : data_req          ,
+        data_sel   : dcache_mem_sel    ,
+        data_addr  : data_waddr        ,
+        data_we    : mem_write         ,
+        data_wdata : cpu_data_out      ,
+        data_wstrb : cpu_byte_we       ,
+        instr_ready: bridge_instr_ready,
+        data_ready : bridge_data_ready ,
+        rdata      : xmem_rdata        ,
+        req_valid  : xmem_req_valid    ,
+        req_ready  : xmem_req_ready    ,
+        req_we     : xmem_req_we       ,
+        req_addr   : xmem_req_addr     ,
+        req_wdata  : xmem_req_wdata    ,
+        req_wstrb  : xmem_req_wstrb    ,
+        rsp_valid  : xmem_rsp_valid    ,
+        rsp_rdata  : xmem_rsp_rdata    ,
     );
 
     // The window's memory: 8 MB of PSRAM. req_addr[23] selects the controller's register
@@ -416,6 +471,6 @@ pub module soc_top (
     always_comb {
         cpu_data_in = (if last_ram_sel ? ram_data_out : 32'd0) | (if last_uart_sel ? uart_data_bus : 32'd0)
             | (if last_timer_sel ? timer_data_out : 32'd0) | (if last_sd_sel ? sd_data_out : 32'd0)
-            | (if last_gpio_sel ? gpio_data_out : 32'd0) | (if last_xmem_sel ? xmem_rdata : 32'd0);
+            | (if last_gpio_sel ? gpio_data_out : 32'd0) | (if last_xmem_sel ? dcache_rdata : 32'd0);
     }
 }

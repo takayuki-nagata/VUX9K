@@ -23,7 +23,11 @@
 //   completing cycle, after which the CPU fetches, so no access sees it.
 // - clear (high while soc_top's power-on reset counts) invalidates every line once, one a
 //   cycle, before the CPU runs: the RAMs have no reset. Until then window accesses wait.
-pub module soc_dcache (
+// - ENABLE = 0 passes every access to the bridge as if this module weren't there (its RAMs
+//   and registers then drive nothing): soc_top's wiring was proven with it (make eqy).
+pub module soc_dcache #(
+    param ENABLE: bit = 1'b1,
+) (
     clk  : input clock,
     rst  : input reset,
     clear: input logic,
@@ -61,9 +65,12 @@ pub module soc_dcache (
     let idx: logic<9> = data_addr[8:0];
     let win: logic    = data_req && data_sel;
 
-    assign hit        = swept && !missing && !conflict_q && rd_idx_q == idx && tag_q == {1'b1, data_addr[20:9]};
-    assign mem_sel    = win && swept && (data_we || !hit);
-    assign data_ready = !win || swept && (hit && !data_we || mem_ready);
+    let on: logic = !ENABLE || swept; // serving accesses
+
+    assign hit        = ENABLE && swept && !missing && !conflict_q && rd_idx_q == idx && tag_q
+        == {1'b1, data_addr[20:9]};
+    assign mem_sel    = win && on && (data_we || !hit);
+    assign data_ready = !win || on && (hit && !data_we || mem_ready);
     assign rdata      = if hit ? word_q : mem_rdata;
 
     let done : logic     = win && swept && (data_we || !hit) && mem_ready;

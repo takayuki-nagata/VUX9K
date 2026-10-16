@@ -24,7 +24,11 @@
 //   anyway (the line was just invalidated, or the next cycle is no FETCH).
 // - clear (high while soc_top's power-on reset counts) invalidates every line once, one a
 //   cycle, before the CPU runs: the RAMs have no reset. Until then window fetches wait.
-pub module soc_icache (
+// - ENABLE = 0 passes every access to the bridge as if this module weren't there (its RAMs
+//   and registers then drive nothing): soc_top's wiring was proven with it (make eqy).
+pub module soc_icache #(
+    param ENABLE: bit = 1'b1,
+) (
     clk  : input clock,
     rst  : input reset,
     clear: input logic,
@@ -63,9 +67,12 @@ pub module soc_icache (
     let idx: logic<10> = fetch_addr[9:0];
     let win: logic     = fetch_req && fetch_sel;
 
-    assign hit         = swept && !missing && !conflict_q && rd_idx_q == idx && tag_q == {1'b1, fetch_addr[20:10]};
-    assign mem_sel     = win && swept && !hit;
-    assign instr_ready = !win || swept && (hit || mem_ready);
+    let on: logic = !ENABLE || swept; // serving accesses
+
+    assign hit         = ENABLE && swept && !missing && !conflict_q && rd_idx_q == idx && tag_q
+        == {1'b1, fetch_addr[20:10]};
+    assign mem_sel     = win && on && !hit;
+    assign instr_ready = !win || on && (hit || mem_ready);
     assign rdata       = if hit ? word_q : mem_rdata;
 
     let fill: logic = win && swept && !hit && mem_ready;

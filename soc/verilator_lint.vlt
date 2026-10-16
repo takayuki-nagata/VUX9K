@@ -37,6 +37,8 @@ lint_off -rule UNUSEDSIGNAL -file "*/sdcard_spi.sv" -match "*'data_in'*"
 lint_off -rule PINCONNECTEMPTY -file "*/uart_tx.sv" -match "*'pout'*"
 lint_off -rule PINCONNECTEMPTY -file "*/uart_rx.sv" -match "*'sout'*"
 lint_off -rule PINCONNECTEMPTY -file "*/board_top.sv" -match "*'CLKOUT*'*"
+// The caches' hit outputs are for their unit tests; the SoC's hit counts are the emulator's
+lint_off -rule PINCONNECTEMPTY -file "*/soc_top.sv" -match "*'hit'*"
 // The PSRAM controller's init_done (its power-up ends inside the POR, soc_top) and its
 // debug tracer port
 lint_off -rule PINCONNECTEMPTY -file "*/soc_top.sv" -match "*'init_done'*"

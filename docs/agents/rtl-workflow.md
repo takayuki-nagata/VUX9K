@@ -65,6 +65,17 @@ sides flattened below `<top>` (~6 min per top on 4 cores). Notes:
   then failed. And `auto_mode_detector` got an enable input rather than a muxed
   `first_instr`: the mux split the `instr_in` alias gold keeps ("conflicting matches
   for gold bit \instr_in[0] … \mode_detect.first_instr[0]"), which no exclusion fixes.
+- Putting a new instance between two existing ones (the window's caches between the CPU and
+  `soc_xmem_bridge`, disabled) moves the old instance's flattened port names onto other
+  nets: gold's `xmem_bridge.data_ready` is the CPU's `data_ready`, the gate's the bridge's
+  own ready, so partitioning stops at "conflicting matches". Exclude those port names
+  (`EQY_NOMATCH="xmem_bridge.data_ready xmem_bridge.instr_ready ..."`), and also the old
+  instance's internal names derived from them (`xmem_bridge.data_win`): left as cut points,
+  they become free inputs the two sides combine differently, and the readies "fail" on a
+  counterexample no input can produce. Excluding the whole instance (`xmem_bridge.*`) loses
+  its registers as match points and fails too. Keep the variable's value quoted as one
+  shell word all the way down (`EQY_NOMATCH="a b"`): a wrapper that splits it breaks the
+  Makefile's command line.
 - Proofs are local to each partition, so a change that is only unreachable
   because of how *another* block drives it (e.g. `fifo_sync` accepting a write
   on an empty-and-read cycle, which `uart_controller` never produces) still
