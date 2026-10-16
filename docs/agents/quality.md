@@ -30,6 +30,13 @@ Things that went wrong while building it, and must stay fixed:
   under the same wrapper, must pass (`logs/selftest.out`).
 - **The equivalence check needs `memory_map` and `async2sync`**; without them every
   sequential mutant, even mcy's no-op mutation 1, counted as non-equivalent.
+- **The equivalence check is bounded by memory.** `memory_map` turns RAMs into flip-flops,
+  so a module with real memories makes it huge: `soc_icache`'s 1024 lines were ~45k
+  flip-flops a side, each check grew to 1.4 GB and two of them stalled the 3.5 GB CI host for
+  hours (2026-10-17). Each check gets `ulimit -v` (`EQ_MEM_SHARE` of the host's memory,
+  shared by the jobs); one that runs out counts as not equivalent, so its mutant goes to the
+  tests. Modules in `NO_EQUIV` (the window's caches) skip the check and the proof from reset:
+  every mutant is simulated, so a survivor may be equivalent, and `summary.md` says so.
 - `unified_cpu`'s mutants run one at a time (`run_riscv_tests.py` regenerates shared
   files); expect hours for `MCY_SIZE=100`.
 

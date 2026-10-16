@@ -60,6 +60,8 @@ TARGETS = (
     "sdcard_spi",
     "uart_rx",
     "fifo_sync",
+    "soc_icache",
+    "soc_dcache",
     "unified_cpu",
 )
 # Per mutant: far above a normal run, so a hang counts as detected rather than stalling mcy
@@ -68,6 +70,15 @@ SIM_TIMEOUT_S = 600
 EQ_TIMEOUT_S = 150
 # Mutants the self-test tries until the proof from reset finds a non-equivalent one
 EQ_SELFTEST_TRIES = 10
+# Share of the host's memory the equivalence checks running at once may use; a check that
+# needs more is stopped and counts as non-equivalent (its mutant goes to the tests)
+EQ_MEM_SHARE = 0.6
+# Modules whose mutants skip the equivalence check: all go to the tests, so a survivor may
+# be an equivalent mutant (read it before adding a test). {module: reason}
+NO_EQUIV = {
+    "soc_icache": "memory_map makes its 1024 lines 45k flip-flops a side: one check took hours and 1.4 GB",
+    "soc_dcache": "memory_map makes its 512 lines 22k flip-flops a side, as soc_icache's",
+}
 
 CONFIG = """\
 [options]
@@ -173,6 +184,7 @@ exec 2>&1
 set -e
 idx=$(awk '{{print $1; exit}}' input.txt)
 {mutate_il}
+ulimit -v {mem_kb}  # the checks only: past it Yosys fails, i.e. not shown equivalent
 reset_equiv() {{
     [ -f "$PRJDIR/eq_reset.ys" ] || return 1
     yosys -ql reset.log "$PRJDIR/eq_reset.ys" || return 1
@@ -281,7 +293,14 @@ def unit_tests(module):
     return [f"sim/runners/test_sim.py::test_unit[{m}]" for top, m in test_sim.UNIT if top == module]
 
 
-def setup(module, size, seed):
+def eq_mem_kb(jobs):
+    """Each equivalence check's memory limit: EQ_MEM_SHARE of the host's, shared by jobs."""
+    meminfo = Path("/proc/meminfo").read_text().splitlines()
+    total = next(int(ln.split()[1]) for ln in meminfo if ln.startswith("MemTotal:"))
+    return int(total * EQ_MEM_SHARE / max(jobs, 1))
+
+
+def setup(module, size, seed, jobs):
     prj = MCY_DIR / module
     shutil.rmtree(prj, ignore_errors=True)
     prj.mkdir(parents=True)
@@ -291,7 +310,14 @@ def setup(module, size, seed):
     (prj / "config.mcy").write_text(CONFIG.format(size=size, seed=seed, sources=" ".join(sources()), module=module))
     design = "../../database/design.il"
     mutate_il = MUTATE.format(design=design, out="mutated.il").replace("write_verilog -noattr", "write_rtlil")
-    (prj / "test_eq.sh").write_text(TEST_EQ.format(module=module, mutate_il=mutate_il, eq_timeout=EQ_TIMEOUT_S))
+    if module in NO_EQUIV:  # only mcy's no-op mutant (-mode none) is equivalent
+        test_eq = (
+            "#!/bin/bash\nidx=$(awk '{print $1; exit}' input.txt)\n"
+            'if grep -q -- "-mode none" input.txt; then r=PASS; else r=FAIL; fi\necho "$idx $r" > output.txt\n'
+        )
+    else:
+        test_eq = TEST_EQ.format(module=module, mutate_il=mutate_il, eq_timeout=EQ_TIMEOUT_S, mem_kb=eq_mem_kb(jobs))
+    (prj / "test_eq.sh").write_text(test_eq)
     fmt = {"timeout": SIM_TIMEOUT_S, "python": sys.executable}
     extra = RISCV_TESTS.format(**fmt) if module == "unified_cpu" else ""
     (prj / "test_sim.sh").write_text(
@@ -417,6 +443,8 @@ def summarize(module, prj):
         f"{equivalent} equivalent (left out). Survivors: {len(open_)} open, {len(explained)} accepted.",
         "",
     ]
+    if module in NO_EQUIV:
+        lines += [f"No equivalence check ({NO_EQUIV[module]}): a survivor may be an equivalent mutant.", ""]
     if open_:
         lines += ["## Open survivors (add a test, or an ACCEPTED entry with the reason)", ""]
         lines += ["| id | mutant | mutation |", "|---|---|---|"]
@@ -481,11 +509,11 @@ def main():
         if module not in TARGETS:
             sys.exit(f"{module}: not a mutation target ({', '.join(TARGETS)})")
     for module in modules:
-        prj = setup(module, args.size, args.seed)
         jobs = 1 if module == "unified_cpu" else args.jobs
+        prj = setup(module, args.size, args.seed, max(jobs, args.jobs))
         subprocess.run(["mcy", "init"], cwd=prj, check=True)
         selftest(prj)
-        if write_eq_reset(prj, module):
+        if module not in NO_EQUIV and write_eq_reset(prj, module):
             selftest_eq(prj, args.jobs)
         subprocess.run(["mcy", "run", "-j", str(jobs)], cwd=prj, check=True)
         summarize(module, prj)
