@@ -297,6 +297,17 @@ impl Soc {
         self.inner.steps
     }
 
+    /// What the window's caches did since the power-on reset: {"fetch_hits": n,
+    /// "fetch_misses": n}
+    #[getter]
+    fn cache_stats<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let s = self.inner.caches.stats;
+        let d = PyDict::new(py);
+        d.set_item("fetch_hits", s.fetch_hits)?;
+        d.set_item("fetch_misses", s.fetch_misses)?;
+        Ok(d)
+    }
+
     /// minstret: the RV32 instructions retired (not those that trapped, nor Hack's)
     #[getter]
     fn instret(&self) -> u64 {

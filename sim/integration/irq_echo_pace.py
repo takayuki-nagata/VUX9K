@@ -7,12 +7,13 @@ with: CHUNK bytes back to back, then GAP_FRAMES UART frame times of silence, and
 The emulator (sim/emu/test_zephyr_irq_echo.py), the RTL (test_soc_zephyr_irq_echo.py) and
 the board (scripts/hw_irq_echo.py) share these.
 
-Running from the uncached PSRAM, its RX handler can't keep up with 115200 baud back to back:
-a 64-byte line came back with 52 bytes once the 32-byte RX FIFO had filled. Measured on the
-emulator (its paced test prints it, the measurement to tune GAP_FRAMES by), the FIFO is empty
-69 frame times after a 16-byte chunk's first byte at worst, about 4.3 frame times a byte.
-With 5 a byte, a chunk every CHUNK + GAP_FRAMES = 176 frame times is 2.5x the measurement;
-the emulator test fails below 2x. A cache in front of the PSRAM should bring the back-to-back line back.
+Running from the uncached PSRAM (before the instruction cache), its RX handler couldn't keep
+up with 115200 baud back to back: a 64-byte line came back with 52 bytes once the 32-byte RX
+FIFO had filled. Measured on the emulator then (its paced test prints it, the measurement to
+tune GAP_FRAMES by), the FIFO was empty 69 frame times after a 16-byte chunk's first byte at
+worst, about 4.3 frame times a byte. With 5 a byte, a chunk every CHUNK + GAP_FRAMES = 176
+frame times was 2.5x the measurement; the emulator test fails below 2x. With the cache the
+back-to-back line comes back whole; the paced line is what the board test sends by default.
 """
 
 CHUNK = 16  # bytes sent back to back: half the RX FIFO

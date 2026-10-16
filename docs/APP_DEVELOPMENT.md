@@ -105,8 +105,9 @@ The CPU is RV32I with Zicsr and Zifencei, machine mode only, at 18 MHz, with 16 
 instruction RAM, 8 KB of data RAM and 8 MB of PSRAM. The Zephyr board `vux9k` links
 applications into the PSRAM: the image runs in place from `0x8000_0000` (4 MB, where the
 second stage's `run` loads it), its RAM is the 3 MB from `0x8040_0000`; the instruction RAM
-(the first stage) and the data RAM are left alone. Every fetch and data access in the PSRAM
-waits ~35 cycles: the CPU runs about 15-20 times slower there than in the block RAMs.
+(the first stage) and the data RAM are left alone. In the PSRAM, a fetch that misses the
+4 KB instruction cache (one word a line) and every load or store waits ~35 cycles; a fetch
+that hits takes no longer than from the instruction RAM.
 Misaligned loads and stores trap, and so does any CSR that isn't implemented
 ([RV32 CSRs](../README.md#rv32-csrs) in the repository's README lists them).
 

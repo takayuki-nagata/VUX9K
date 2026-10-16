@@ -94,16 +94,16 @@ hardware gives and what the driver makes up for:
   read goes through `uart_vux9k_read_status()`, which ORs the error bits into the driver
   data (under `irq_lock`, only when one is set), and `err_check` returns and clears them.
   This is in the polling build too, so it changed the demo's `zephyr.bin`.
-- **RX at full speed needs the cache.** From the uncached PSRAM the RX handler takes about
-  4.3 frame times a byte (measured on the emulator: the FIFO empty 69 frame times after a
-  16-byte chunk's first byte; a 64-byte line sent back to back came back with 52 bytes),
-  so input longer than the FIFO overruns at 115200 baud. Until a cache in front of the PSRAM, pace it:
-  the tests send 16-byte chunks with gaps sized for 5 frame times a byte, a chunk every 176
-  frame times (`sim/integration/irq_echo_pace.py`, shared by the emulator, RTL and board
-  tests; the emulator test prints the measurement and fails below a 2x margin), and the
-  back-to-back line is a strict expected failure next to a check that it reports `err=1`
-  (`UART_ERROR_OVERRUN`). That line's newline is sent alone once the FIFO is empty: the
-  overrun can drop it too, and irq_echo answers only at a newline.
+- **RX at full speed needs the instruction cache.** From the uncached PSRAM (before the
+  cache) the RX handler took about 4.3 frame times a byte, so input longer than the FIFO
+  overran at 115200 baud (a 64-byte line came back with 52 bytes). With the cache the
+  back-to-back line comes back whole. The paced line stays: the board test sends it by
+  default (16-byte chunks, a chunk every 176 frame times, `sim/integration/irq_echo_pace.py`,
+  shared by the emulator, RTL and board tests; the emulator test prints the measurement and
+  fails below a 2x margin). The overrun check (`err=1`, `UART_ERROR_OVERRUN`) now sends its
+  line from irq_echo's first cycle, while it starts and before it enables RX: the FIFO keeps
+  32 bytes, and the reply is exactly those. The emulator test checks that the app became
+  ready only after the FIFO had overflowed (its precondition).
 
 A TX interrupt and an interrupt-enable register would only come with a later hardware
 revision, whose register map isn't bound by this one's (docs/APP_DEVELOPMENT.md, "Hardware

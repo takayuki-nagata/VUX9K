@@ -60,6 +60,9 @@ S2_BOOT_CYCLES = 20_000_000
 CLK_PERIOD_PS = 55556  # 18.0 MHz SoC clock (tb_soc_top.sv: 2 x 27778 ps)
 UART_BAUD_CYCLES = 156  # 18.0 MHz / 115200 baud
 POR_DONE = 1 << 15  # soc_top.por_counter value that ends the ~1.2 ms power-on reset
+# Cycles the window's caches take to clear their lines (soc_icache's LINES, one a cycle) while
+# the power-on reset counts: accelerate_por lets them pass before it ends the POR
+CACHE_CLEAR_CYCLES = 1024
 
 
 def mbr_sector() -> bytes:
@@ -143,9 +146,10 @@ async def start_soc(dut, *, sd_sectors=None, mbr=True, btn=1, accelerate_por=Tru
     sd_sectors: {lba: bytes} preloaded into the SD model before reset (after the MBR if mbr=True).
     btn: level of the active-low S2 button during and after reset (0 = held, e.g. for Safe Mode).
     accelerate_por: jump soc_top's POR counter to its end if the signal is visible (RTL only),
-        and end the PSRAM word model's power-up with it (Verilator RTL builds), so the window
-        is ready from the CPU's first cycle as on the board, where the power-up ends inside
-        the POR. The real controller (Icarus) isn't accelerated: a window access waits for it.
+        once the window's caches have cleared their lines (CACHE_CLEAR_CYCLES), and end the
+        PSRAM word model's power-up with it (Verilator RTL builds), so the window is ready
+        from the CPU's first cycle as on the board, where both end inside the POR. The real
+        controller (Icarus) isn't accelerated: a window access waits for it.
     during_reset: optional callable(soc) run while rst_n is still low, e.g. to preload I-RAM.
     sd_card: optional kwargs for SpiSdCardModel (e.g. {"sdhc": False, "strict": True}).
 
@@ -175,6 +179,7 @@ async def start_soc(dut, *, sd_sectors=None, mbr=True, btn=1, accelerate_por=Tru
     dut.rst_n.value = 1
     await ClockCycles(soc.clk, 5)
     if accelerate_por and hasattr(soc, "por_counter"):
+        await wait_cycles(CACHE_CLEAR_CYCLES)
         soc.por_counter.value = POR_DONE
         if hasattr(soc.xmem_inst, "init_count"):  # sim/psram_word_model, not the controller
             soc.xmem_inst.init_count.value = 0

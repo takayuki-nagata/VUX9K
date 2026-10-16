@@ -599,3 +599,46 @@ fn xmem_fetch_samples_the_interrupt_in_its_last_cycle() {
         assert_eq!(soc.regs[11], if trap { 0 } else { 1 });
     }
 }
+
+#[test]
+fn xmem_fetch_hits_the_icache_and_stores_invalidate_it() {
+    // A two-instruction routine at 0x8000_0000 (addi x11 += 1; jalr x0, 0(x9)) called
+    // four times from I-RAM: cold, warm, after a store to 0x8000_1000 (another word on
+    // the routine's first line), and through the 8 MB alias
+    let mut w = vec![lui(1, 0x80000)];
+    for (k, word) in [addi(11, 11, 1), i(0x67, 0, 9, 0, 0)].iter().enumerate() {
+        w.extend(li(2, *word));
+        w.push(s(4 * k as i32, 2, 1, 2));
+    }
+    let call = |w: &mut Vec<u32>, base: u32| {
+        let ret = 4 * (w.len() as u32 + 2);
+        w.push(addi(9, 0, ret as i32));
+        w.push(i(0x67, 0, base, 0, 0));
+    };
+    call(&mut w, 1);
+    call(&mut w, 1);
+    w.push(lui(4, 0x80001));
+    w.push(s(0, 0, 4, 2)); // sw x0, 0(x4)
+    call(&mut w, 1);
+    w.push(lui(5, 0x80800));
+    call(&mut w, 5);
+    w.push(jal(0, 0));
+    let mut soc = load(Profile::Real, &w);
+    let mut waits = vec![];
+    while soc.pc != 4 * (w.len() as u32 - 1) {
+        let r = soc.step();
+        if r.pc >> 28 == 8 {
+            waits.push(r.cycles - 2);
+        }
+    }
+    let m = XMEM_READ_LATENCY;
+    assert_eq!(waits, [m, m, 0, 0, m, 0, 0, 0]);
+    assert_eq!(soc.regs[11], 4);
+    let st = soc.caches.stats;
+    assert_eq!((st.fetch_hits, st.fetch_misses), (5, 3));
+    // The power-on reset empties it
+    soc.reset();
+    soc.pc = 0x8000_0000;
+    soc.regs[9] = 0x8000_0004;
+    assert_eq!(soc.step().cycles, 2 + m);
+}

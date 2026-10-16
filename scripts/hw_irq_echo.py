@@ -6,10 +6,10 @@
 The Zephyr interrupt-driven UART echo (make build-zephyr-irq-echo) on the board: put on the
 card as \\VUX9K\\APPS\\IRQECHO.BIN through the second stage (`put`, the file left there) and
 started with its `run`, then sent lines longer than both 32-byte UART FIFOs; each must come
-back upper-cased with "rx=<n> drop=0 err=0" (no byte lost in the app or by the UART). From
-the uncached PSRAM the app can't read a line sent back to back at 115200 baud, so each is
-sent in paced chunks (sim/integration/irq_echo_pace.py, measured on the emulator; --chunk 0
-sends it back to back, which should pass again with a cache in front of the PSRAM). The
+back upper-cased with "rx=<n> drop=0 err=0" (no byte lost in the app or by the UART). Each
+is sent in paced chunks by default (sim/integration/irq_echo_pace.py, measured on the
+emulator when the PSRAM had no cache and the app couldn't read a line sent back to back at
+115200 baud); --chunk 0 sends it back to back, which the instruction cache makes pass. The
 application runs in the PSRAM, its handlers too, and never returns: the first stage stays in
 I-RAM, but only the reset button would start it again, so the bitstream is loaded into the
 FPGA's SRAM from --pack-fs at the end (not openFPGALoader --reset, which loads the flash's

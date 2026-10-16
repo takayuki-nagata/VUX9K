@@ -12,14 +12,16 @@
 //! - address decode and memories: soc/soc_addr_decoder.veryl, soc/soc_ram.veryl,
 //!   soc/soc_top.veryl; the IsaTest profile follows sim/tb_hex_runner.veryl.
 //! - the wait-state window: soc/soc_xmem_bridge.veryl, the PSRAM controller behind it in
-//!   soc/soc_top.veryl (vendor/psram_controller).
+//!   soc/soc_top.veryl (vendor/psram_controller), and the instruction cache in front of it
+//!   (soc/soc_icache.veryl, crate::cache).
 //!
 //! Timing: `cycle` counts SoC clocks (18 MHz) since reset release. An instruction starts
 //! with its FETCH cycle; `Soc::step` executes one instruction and advances `cycle` by
 //! its cost (RV: 2, +1 MEM_WAIT for loads/stores; Hack: 2, +2 when the comp reads M,
 //! +1 when it writes both A and D). A trap costs 2 (it is taken in EXECUTE).
-//! Window accesses (RV32 only) wait on top of that: a fetch from the window stays in
-//! FETCH `XMEM_READ_LATENCY` cycles more, a window load or store in MEM_WAIT
+//! Window accesses (RV32 only) wait on top of that: a fetch from the window that misses
+//! the instruction cache stays in FETCH `XMEM_READ_LATENCY` cycles more (a hit, none), a
+//! window load or store in MEM_WAIT
 //! `XMEM_READ_LATENCY` / `XMEM_WRITE_LATENCY` more. Nothing in the CPU moves while a
 //! fetch waits (it samples the interrupt in its last FETCH cycle), so an instruction
 //! fetched with a wait `w` runs exactly like one fetched `w` cycles later: its interrupt
@@ -28,6 +30,7 @@
 
 use std::collections::HashSet;
 
+use crate::cache::Caches;
 use crate::csr::{self, Csrs};
 use crate::periph::{self, Periph, SoftReset};
 use crate::profile::Profile;
@@ -119,6 +122,8 @@ pub struct Soc {
     /// The wait-state window (empty in the IsaTest profile). The RTL's has no initial
     /// contents; here it starts zeroed.
     xmem: Vec<u32>,
+    /// The window's caches (which words they hold; window accesses' waits).
+    pub caches: Caches,
     iram_mask: u32,
     dram_mask: u32,
     /// The IsaTest profile: one flat RAM, `TOHOST` (see `rv_read_word`/`rv_write`).
@@ -249,6 +254,7 @@ impl Soc {
             iram: vec![0; iram_words],
             dram: vec![0; dram_words],
             xmem: vec![0; profile.xmem_bytes() / 4],
+            caches: Caches::default(),
             iram_mask: (iram_words - 1) as u32,
             dram_mask: (dram_words - 1) as u32,
             isa_test: profile == Profile::IsaTest,
@@ -260,10 +266,11 @@ impl Soc {
         soc
     }
 
-    /// Power-on reset: CPU and peripherals (memories keep their contents, and an SD
-    /// card stays in its socket as it is).
+    /// Power-on reset: CPU, peripherals and the window's caches (memories keep their
+    /// contents, and an SD card stays in its socket as it is).
     pub fn reset(&mut self) {
         self.regs = [0; 32];
+        self.caches = Caches::default();
         self.pc = 0;
         self.csr = Csrs::default();
         let card = self.periph.sd.card.take();
@@ -434,12 +441,18 @@ impl Soc {
     // ----- fetch and data bus -------------------------------------------------------
 
     /// The instruction word at `pc` and the cycles its FETCH waits. soc_top fetches
-    /// from the window in RV32 mode (at region 8); every other fetch reads I-RAM, also
-    /// for addresses outside it.
+    /// from the window in RV32 mode (at region 8), through the instruction cache; every
+    /// other fetch reads I-RAM, also for addresses outside it.
     #[inline]
-    fn fetch(&self, pc: u32) -> (u32, u32) {
+    fn fetch(&mut self, pc: u32) -> (u32, u32) {
         if self.riscv_mode && self.in_xmem(pc) {
-            (self.xmem[Self::xmem_index(pc)], XMEM_READ_LATENCY)
+            let idx = Self::xmem_index(pc);
+            let wait = if self.caches.fetch(idx) {
+                0
+            } else {
+                XMEM_READ_LATENCY
+            };
+            (self.xmem[idx], wait)
         } else {
             (self.iram[((pc >> 2) & self.iram_mask) as usize], 0)
         }
@@ -503,6 +516,7 @@ impl Soc {
             _ if self.in_xmem(addr) => {
                 let idx = Self::xmem_index(addr);
                 self.xmem[idx] = merge_bytes(self.xmem[idx], data, be);
+                self.caches.store(idx);
             }
             _ => {}
         }

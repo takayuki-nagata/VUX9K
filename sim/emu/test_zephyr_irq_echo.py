@@ -9,13 +9,13 @@ main thread sleeps until the UART callback wakes it, so an echo at all means the
 interrupt (MEI) works; a line longer than both 32-byte FIFOs checks that RX keeps up and
 that TX refills from the driver's timer, with the handlers running from the PSRAM.
 
-From the uncached PSRAM the RX handler can't keep up with a line sent back to back at
-115200 baud: the line is sent in paced chunks (irq_echo_pace), and the back-to-back line
-is an expected failure until a cache in front of the PSRAM, which must still report the overrun.
+With the instruction cache in front of the PSRAM the RX handler keeps up with a line sent
+back to back at 115200 baud; the paced line (irq_echo_pace) is what the board test sends.
+An overrun still has to reach uart_err_check: a line sent while irq_echo starts, before it
+enables RX, overflows the 32-byte RX FIFO.
 """
 
 import os
-import re
 
 import pytest
 from s1_env import STAGE1_DIR, STAGE2_BASE, run_from_card
@@ -29,11 +29,7 @@ FLASH_BYTES = 4 * 1024 * 1024  # the board's flash (vux9k.dts), from XMEM_BASE
 BURST = bytes(b"abcdefghijklmnopqrstuvwxyz0123456789"[i % 36] for i in range(64))
 ECHO = BURST.upper().decode() + "\nrx=64 drop=0 err=0\n"
 UART_ERROR_OVERRUN = 1  # Zephyr's enum uart_rx_stop_reason
-UNCACHED_PSRAM = pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="code runs from the uncached PSRAM; a cache in front of the PSRAM should bring it back",
-)
+RX_FIFO = 32  # soc's UART RX FIFO
 
 
 @pytest.fixture(scope="module")
@@ -110,45 +106,26 @@ def test_echoes_a_paced_line_by_interrupt(echo_bin, how):
         assert period >= 2 * busy, f"a chunk every {period} cycles, read in {busy}"
 
 
-_back_to_back: dict[str, str] = {}
-
-
-def send_back_to_back(soc, line: bytes) -> None:
-    """line sent back to back, then its newline alone once the program has emptied the RX
-    FIFO: the overrun may drop any byte of the line, and irq_echo answers only at a newline."""
-    soc.uart_send(line)
-    soc.run(max(0, soc.uart_send_done - soc.cycle))
-    end = soc.cycle + 2 * pace.HANDLER_FRAMES_PER_BYTE * len(line) * UART_FRAME  # step cap
-    while soc.uart_rx_level and soc.cycle < end:
-        soc.run(500)
-    if soc.uart_rx_level:  # not an assertion: the xfail below would take it for the failure
-        raise RuntimeError("irq_echo stopped reading the RX FIFO")
-    soc.run(pace.CHUNK * UART_FRAME)  # margin: the handler done with the last byte
-    soc.uart_send(b"\n")
-
-
-def back_to_back_reply(echo_bin: bytes, how: str) -> str:
-    """irq_echo's reply to BURST sent back to back (run once per `how`, for both tests)."""
-    if how not in _back_to_back:
-        soc = start(echo_bin, how)
-        mark = len(soc.uart_received())
-        send_back_to_back(soc, BURST)
-        _back_to_back[how] = reply(soc, mark)
-    return _back_to_back[how]
-
-
-@pytest.mark.parametrize("how", ["load_app", "s2_run"])
-def test_a_back_to_back_line_reports_the_overrun(echo_bin, how):
-    """What the RX FIFO lost reaches uart_err_check: the driver keeps the sticky error bits
-    that its own status reads clear."""
-    out = back_to_back_reply(echo_bin, how)
-    m = re.fullmatch(r"([A-Z0-9]*)\nrx=(\d+) drop=0 err=(\d+)\n", out)
-    assert m, out
-    assert len(m.group(1)) == int(m.group(2)) < len(BURST), out
-    assert int(m.group(3)) == UART_ERROR_OVERRUN, out
-
-
-@UNCACHED_PSRAM
 @pytest.mark.parametrize("how", ["load_app", "s2_run"])
 def test_echoes_a_back_to_back_line_by_interrupt(echo_bin, how):
-    assert back_to_back_reply(echo_bin, how) == ECHO
+    soc = start(echo_bin, how)
+    mark = len(soc.uart_received())
+    soc.uart_send(BURST + b"\n")
+    assert reply(soc, mark) == ECHO
+
+
+def test_a_line_sent_while_it_starts_reports_the_overrun(echo_bin):
+    """irq_echo enables RX only once it has started: a line sent from its first cycle fills
+    the RX FIFO and loses the rest, and that overrun reaches uart_err_check (the driver keeps
+    the sticky error bits that its own status reads clear)."""
+    soc = new_soc()
+    soc.load_app(echo_bin, "riscv", XMEM_BASE)
+    soc.uart_send(BURST)
+    wait_for(soc, b"irq_echo ready\n", timeout_cycles=10_000_000)
+    # The precondition: RX enabled (as the ready message starts out) once the FIFO had overflowed
+    assert soc.cycle > (RX_FIFO + 1 + len(b"irq_echo ready\n")) * UART_FRAME, f"ready at cycle {soc.cycle}"
+    soc.run(1_000_000)  # past uart_irq_rx_enable and the handler emptying the FIFO
+    mark = len(soc.uart_received())
+    soc.uart_send(b"\n")
+    out = reply(soc, mark)
+    assert out == BURST[:RX_FIFO].upper().decode() + f"\nrx={RX_FIFO} drop=0 err={UART_ERROR_OVERRUN}\n", out

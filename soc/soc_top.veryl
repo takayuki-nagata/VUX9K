@@ -191,11 +191,10 @@ pub module soc_top (
 
     // The caches key lines by the PSRAM word (addr[22:2]) and read them a cycle ahead, at
     // the CPU's pc_out and data_addr. Their RAMs have no reset: they clear every line while
-    // the power-on reset counts (raw_rst low), so they are reset by rst_n, not by it. A
-    // store to the window completing invalidates its instruction-cache line.
-    inst icache: soc_icache #(
-        ENABLE: 1'b0,
-    ) (
+    // the power-on reset counts (raw_rst low; 1,024 cycles of its 32,768), so they are reset
+    // by rst_n, not by it. A store to the window completing invalidates its
+    // instruction-cache line. The data cache is disabled (ENABLE 0) for now.
+    inst icache: soc_icache (
         clk                                                          ,
         rst        : rst_n                                           ,
         clear      : !raw_rst                                        ,

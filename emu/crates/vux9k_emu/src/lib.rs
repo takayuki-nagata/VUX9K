@@ -5,6 +5,7 @@
 //! peripherals, modeled on the RTL under soc/ clock cycle by clock cycle.
 #![forbid(unsafe_code)]
 
+pub mod cache;
 pub mod csr;
 pub mod hexfile;
 pub mod periph;

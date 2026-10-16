@@ -49,10 +49,9 @@ slows it down: one 32-byte refill per tick. `uart_irq_tx_complete()`
 is not supported (the status register has no "transmitter empty" bit), nor are error
 interrupts. The status register's error bits clear when it is read; the driver keeps them
 from all its reads, so `uart_err_check()` reports every overrun and framing error since its
-last call. Running from the uncached PSRAM, the RX handler takes about three byte times
-per byte: input longer than the 32-byte RX FIFO, sent back to back at 115200 baud,
-overruns it. Pace such input (the tests send 16-byte chunks with gaps) until the PSRAM
-gets a cache. `irq_echo/` is an example.
+last call. Running from the PSRAM, the RX handler keeps up with input sent back to back
+at 115200 baud thanks to the instruction cache in front of it (without it, it took about
+four byte times per byte and overran the 32-byte RX FIFO). `irq_echo/` is an example.
 
 ## Demo application (`app/`)
 
