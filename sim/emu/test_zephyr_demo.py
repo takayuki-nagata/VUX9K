@@ -24,11 +24,6 @@ FLASH_BYTES = 4 * 1024 * 1024
 # From the PSRAM (~35 cycles a fetch) the demo ends ~5M cycles after its start (an estimate
 # from the I-RAM build's instruction counts); room for several times that
 DONE_CYCLES = 40_000_000
-UNCACHED_PSRAM = pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="code runs from the uncached PSRAM; a cache in front of the PSRAM should bring it back",
-)
 
 
 @pytest.fixture(scope="module")
@@ -89,14 +84,6 @@ def test_runs_from_the_psram(demo_bin, how):
     assert "[Rust Task] Task iteration 5 completed [OK]" in out
     assert "VUX9K Stage" not in out  # nothing of the first or second stage after the start
     # k_msleep runs on the machine timer at 18 MHz: 100 ms of mtime, plus a tick (1 ms at
-    # the boards' 1000 ticks/s) and the kernel's own time from the uncached PSRAM (it read
+    # the boards' 1000 ticks/s) and rounding, as from I-RAM (from the uncached PSRAM it read
     # 104); at 100 ticks/s it reads 110 or more
-    assert 100 <= k_msleep_100(out) <= 105, out
-
-
-@UNCACHED_PSRAM
-@pytest.mark.parametrize("how", ["load_app", "s2_run"])
-def test_k_msleep_within_a_tick(demo_bin, how):
-    """k_msleep(100) to 102 ms: a tick plus rounding, as from I-RAM"""
-    out, _, _ = run_demo(demo_bin, how)
-    assert k_msleep_100(out) <= 102, out
+    assert 100 <= k_msleep_100(out) <= 102, out

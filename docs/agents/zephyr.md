@@ -81,10 +81,9 @@ hardware gives and what the driver makes up for:
   The boards run 1000 ticks/s (`vux9k*_defconfig`) for this: at the earlier 100 it was
   one 32-byte refill per 10 ms (~3 KB/s). An app that lowers
   `CONFIG_SYS_CLOCK_TICKS_PER_SEC` slows its TX the same way. The kernel is tickless, so
-  the rate costs no periodic interrupts; the demo tests check `k_msleep(100)` to 105 ms,
-  which fails at 100 ticks/s (110 or more). From the uncached PSRAM it reads 103-104 ms;
-  102, a tick plus rounding as from I-RAM, is a strict expected failure (pytest
-  `xfail(strict=True)`, cocotb `expect_fail`, a check of its own) until a cache in front of the PSRAM.
+  the rate costs no periodic interrupts; the demo tests check `k_msleep(100)` to 102 ms,
+  a tick plus rounding as from I-RAM, which fails at 100 ticks/s (110 or more). From the
+  PSRAM without its caches it read 103-104 ms (the kernel's own time).
 - `irq_tx_complete` and error interrupts are left out on purpose: the status register
   has no "transmitter empty" bit, and errors are only sticky flags.
 - **Errors aren't lost to the driver's own status reads.** The overrun and frame-error

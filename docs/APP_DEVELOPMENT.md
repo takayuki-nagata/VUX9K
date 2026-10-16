@@ -106,8 +106,9 @@ instruction RAM, 8 KB of data RAM and 8 MB of PSRAM. The Zephyr board `vux9k` li
 applications into the PSRAM: the image runs in place from `0x8000_0000` (4 MB, where the
 second stage's `run` loads it), its RAM is the 3 MB from `0x8040_0000`; the instruction RAM
 (the first stage) and the data RAM are left alone. In the PSRAM, a fetch that misses the
-4 KB instruction cache (one word a line) and every load or store waits ~35 cycles; a fetch
-that hits takes no longer than from the instruction RAM.
+4 KB instruction cache, a load that misses the 2 KB data cache (both one word a line) and
+every store (written through) wait ~35 cycles; a hit takes no longer than from the block
+RAMs.
 Misaligned loads and stores trap, and so does any CSR that isn't implemented
 ([RV32 CSRs](../README.md#rv32-csrs) in the repository's README lists them).
 

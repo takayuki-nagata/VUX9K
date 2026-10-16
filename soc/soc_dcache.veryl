@@ -11,13 +11,13 @@
 //   tag is compared with data_addr (the registered access address); a load hit completes in
 //   the first MEM_WAIT cycle, so it costs what a D-RAM load costs.
 // - A load miss goes to the bridge (mem_sel) and completes with it (mem_ready); the word fills
-//   the line in that cycle. Once an access is at the bridge it stays a miss until then
-//   (missing), so mem_sel never drops under a request in flight.
+//   the line in that cycle. Once a load is at the bridge it stays a miss until then
+//   (missing), so mem_sel never drops under a request in flight. A store's mem_sel doesn't
+//   depend on hit, and its hit in the completing cycle decides what happens to the line.
 // - A store always goes to the bridge and completes with it (write-through: the memory is
 //   always current, nothing is ever written back). In its completing cycle a hit merges the
 //   stored bytes into the line; a miss of a full word (wstrb 1111) allocates the line; a
-//   partial store that misses invalidates the line, whatever it holds (it may be the stored
-//   word: the miss was decided when the access began, e.g. on a stale read-ahead).
+//   partial store that misses invalidates the line, whatever it holds.
 // - A write to the index being read in the same cycle leaves that read undefined on the board
 //   (-no-rw-check, as soc_icache): the next cycle then misses. Writes happen only in a
 //   completing cycle, after which the CPU fetches, so no access sees it.
@@ -143,7 +143,7 @@ pub module soc_dcache #(
                     swept = 1'b1;
                 }
             }
-            missing    = mem_sel && !mem_ready;
+            missing    = mem_sel && !mem_ready && !data_we;
             rd_idx_q   = rd_idx;
             conflict_q = (tag_we || word_we) && waddr == rd_idx;
         }

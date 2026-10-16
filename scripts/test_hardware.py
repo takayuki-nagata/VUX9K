@@ -590,11 +590,10 @@ def run_hardware_test_suite(port="auto", baud=115200, loader=None, reload=True):
             _, rest = vux_tool.read_until(ser, (ZEPHYR_END,), 30.0, vux_tool.after_run(out))
             missing = [ln for ln in (*ZEPHYR_LINES, ZEPHYR_END) if ln not in rest]
             m = re.search(r"k_msleep\(100\) took (\d+) ms", rest)
-            # A tick (1 ms at 1000 ticks/s) plus the kernel's own time from the uncached
-            # PSRAM: 103-104 ms in simulation (102 from I-RAM, again with a cache in front of the PSRAM);
-            # 100 ticks/s reads 110 or more. The board has no expected failures: the
-            # value is in the result line to compare.
-            if missing or "VUX9K Stage" in rest or not m or not 100 <= int(m.group(1)) <= 105:
+            # A tick (1 ms at 1000 ticks/s) plus rounding, as from I-RAM, with the caches in
+            # front of the PSRAM (without them it read 103-104 ms); 100 ticks/s reads 110 or
+            # more. The value is in the result line to compare.
+            if missing or "VUX9K Stage" in rest or not m or not 100 <= int(m.group(1)) <= 102:
                 return False, fail_msg(f"Missing {missing}, or k_msleep(100) off.", rest)
             return True, f"the Zephyr demo's tasks finished, k_msleep(100) took {m.group(1)} ms"
 

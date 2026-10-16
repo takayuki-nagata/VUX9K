@@ -149,9 +149,11 @@ STAGE2_BASE = 0x8070_0000
 XMEM_USED += [(0x6F_0000, 0x6F_0100), (0x6F_E000, 0x70_0000), (0x70_0000, 0x70_0100)]
 # s2_launch's two parts and its RV32 program (S2L_CODE, S2L_COPY, S2L_APP, S2L_BYTES each)
 XMEM_USED += [(0x1000, 0x1200), (0x1800, 0x1A00), (0x2000, 0x2200)]
-# xcache's routines: A, and B one instruction-cache size (4 KB) above it on the same lines
-XCACHE_A, XCACHE_B = 0x600, 0x1600
-XMEM_USED += [(XCACHE_B, XCACHE_B + 0x40)]
+# xcache's routines: A, and B one instruction-cache size (4 KB) above it on the same lines;
+# its data word D, and D2 4 KB above it on D's data-cache line
+XCACHE_A, XCACHE_B, XCACHE_D = 0x600, 0x1600, 0x700
+XCACHE_D2 = XCACHE_D + 0x1000
+XMEM_USED += [(XCACHE_B, XCACHE_B + 0x40), (XCACHE_D2, XCACHE_D2 + 4)]
 
 
 def xmem() -> list:
@@ -264,19 +266,23 @@ XCACHE_IRQ_LOOPS = 400  # the last pass, with a timer interrupt in it
 
 
 def xcache() -> list:
-    """The window's instruction cache (soc_icache): routine A, a counted loop that hits from
-    its second pass on, then a store to the next instruction's word (no fence.i: the store
-    invalidates the line, in the very cycle that line is read ahead, which the cache turns
-    into a miss) and a store to the next fetch's line under another tag (the data stays,
-    the line goes); routine B, 4 KB above A on the same lines, called alternately with A so
-    each evicts the other; A through the window's 8 MB alias (the same lines: a hit); and a
-    last long pass of A's loop, all hits, during which a timer interrupt is taken."""
+    """The window's caches (soc_icache, soc_dcache). Instruction cache: routine A, a counted loop
+    (with a window load) that hits from its second pass on, then a store to the next
+    instruction's word (no fence.i: the store invalidates the line, in the very cycle that
+    line is read ahead, which the cache turns into a miss) and a store to the next fetch's
+    line under another tag (the data stays, the line goes); routine B, 4 KB above A on the
+    same lines, called alternately with A so each evicts the other; A through the window's 8
+    MB alias (the same lines: a hit); and a last long pass of A's loop, all hits, during
+    which a timer interrupt is taken. Data cache, from I-RAM: loads of D cold and warm, a
+    byte store hit (merged, loaded back), D2 on D's line evicting it, a halfword store miss
+    (the line goes), a word store miss (allocates), and a load through the 8 MB alias."""
     a = Asm()
     a.li("s0", XMEM)
     a.li("s2", 0x4000_1000)  # timer
 
     r = Asm(origin=XMEM + XCACHE_A)
     r.label("loop")
+    r.lw("a5", XCACHE_D, "s0")  # a window load among the hits
     r.addi("s6", "s6", 1)
     r.bltu("s6", "s7", "loop")
     r.label("smc")
@@ -332,6 +338,26 @@ def xcache() -> list:
     a.mv("s6", "zero")
     a.li("s7", XCACHE_IRQ_LOOPS)
     a.jalr("ra", "s3", 0)
+
+    # The data cache
+    a.li("s1", XMEM + XCACHE_D)
+    a.li("s3", XMEM + XCACHE_D2)
+    a.li("t0", 0x1234_5678)
+    a.sw("t0", 0, "s1")  # a hit (the loop loaded D): the line takes the word
+    a.lw("a3", 0, "s1")
+    a.li("t0", 0xA5)
+    a.sb("t0", 1, "s1")  # a byte store hit: merged
+    a.lw("a3", 0, "s1")
+    a.lw("a4", 0, "s3")  # D2: a miss, evicts D
+    a.lw("a3", 0, "s1")  # a miss, evicts D2
+    a.li("t0", 0xBEEF)
+    a.sh("t0", 2, "s3")  # a halfword store miss: D's line goes
+    a.lw("a3", 0, "s1")  # a miss
+    a.li("t0", 0x0BAD_F00D)
+    a.sw("t0", 0, "s3")  # a word store miss: allocates D2
+    a.lw("a4", 0, "s3")  # a hit
+    a.li("t1", XMEM + XMEM_BYTES + XCACHE_D2)
+    a.lw("a4", 0, "t1")  # the alias: a hit
     a.label("done")
     a.j("done")
 
@@ -787,8 +813,8 @@ def programs() -> list:
     # then takes timer interrupts in I-RAM until the end
     progs.append(Program("xmem", cycles=6_500, imem_words=xmem()))
     progs.append(Program("random_rv_xmem_4", cycles=8_000, imem_words=random_rv(4, base=XMEM + 0x400)))
-    # The instruction cache: done by cycle ~3,800, then spins in I-RAM
-    progs.append(Program("xcache", cycles=5_000, imem_words=xcache()))
+    # The window's caches: done by cycle ~5,500, then spins in I-RAM
+    progs.append(Program("xcache", cycles=7_000, imem_words=xcache()))
     # The whole chain with the real second stage: the first stage boots it from the card,
     # its `run` starts the hello demo in the PSRAM, which prints a0-a2
     progs.append(

@@ -451,42 +451,58 @@ fn t_xmem_exec(seed: u32) -> u32 {
 
 static mut TIME_WORD: u32 = 0;
 
-/// Cycles a window access adds over the same access to D-RAM (a load or store) or
-/// I-RAM (the fetch of a `ret`), from `cycle` around each: fetch << 16 | load << 8 |
-/// store, i.e. soc_pkg's XMEM_READ_LATENCY and XMEM_WRITE_LATENCY.
+/// Cycles window accesses add over the same access to D-RAM (a load or store) or I-RAM
+/// (the fetch of a `ret`), from `cycle` around each, 6 bits each: fetch miss << 24 |
+/// fetch hit << 18 | load miss << 12 | load hit << 6 | store. A miss is soc_pkg's
+/// XMEM_READ_LATENCY, a hit of the window's caches nothing, a store XMEM_WRITE_LATENCY.
+/// The misses are made sure of: storing the `ret` invalidates its instruction-cache line,
+/// and a byte store to the loaded word's data-cache line under another tag leaves the line
+/// without that word (a hit keeps the other word, a partial miss invalidates).
 fn t_xmem_time(_: u32) -> u32 {
     let x = xmem_word(0x40 / 4);
     let xret = xmem_word(0x44 / 4);
-    let (c0, c1, c2, c3, c4, c5, c6): (u32, u32, u32, u32, u32, u32, u32);
+    let (c0, c1, c2, c3, c4, c5, c6, c7, c8): (u32, u32, u32, u32, u32, u32, u32, u32, u32);
     unsafe {
         write_volatile(xret, 0x0000_8067); // ret
         fence_i();
         asm!(
             ".option push",
             ".option arch, +zicsr",
+            // 4 KB above x, x's data-cache line: whatever it holds, the load of x misses
+            "sb zero, 0({xo})",
             "rdcycle {c0}",
             "lw {t}, 0({d})",
             "rdcycle {c1}",
             "lw {t}, 0({x})",
             "rdcycle {c2}",
-            "sw {t}, 0({d})",
+            "lw {t}, 0({x})",
             "rdcycle {c3}",
-            "sw {t}, 0({x})",
+            "sw {t}, 0({d})",
             "rdcycle {c4}",
-            "jalr ra, 0({ri})",
+            "sw {t}, 0({x})",
             "rdcycle {c5}",
-            "jalr ra, 0({rx})",
+            "jalr ra, 0({ri})",
             "rdcycle {c6}",
+            "jalr ra, 0({rx})",
+            "rdcycle {c7}",
+            "jalr ra, 0({rx})",
+            "rdcycle {c8}",
             ".option pop",
             d = in(reg) core::ptr::addr_of_mut!(TIME_WORD), x = in(reg) x,
+            xo = in(reg) x.wrapping_byte_add(0x1000),
             ri = in(reg) iram_ret as *const () as usize, rx = in(reg) xret, t = out(reg) _,
             c0 = out(reg) c0, c1 = out(reg) c1, c2 = out(reg) c2, c3 = out(reg) c3,
-            c4 = out(reg) c4, c5 = out(reg) c5, c6 = out(reg) c6, out("ra") _)
+            c4 = out(reg) c4, c5 = out(reg) c5, c6 = out(reg) c6, c7 = out(reg) c7,
+            c8 = out(reg) c8, out("ra") _)
     };
-    let load = (c2 - c1).wrapping_sub(c1 - c0);
-    let store = (c4 - c3).wrapping_sub(c3 - c2);
-    let fetch = (c6 - c5).wrapping_sub(c5 - c4);
-    fetch << 16 | (load & 0xFF) << 8 | store & 0xFF
+    let load = c1 - c0;
+    let fetch = c6 - c5;
+    let field = |v: u32| v & 0x3F;
+    field((c7 - c6).wrapping_sub(fetch)) << 24
+        | field((c8 - c7).wrapping_sub(fetch)) << 18
+        | field((c2 - c1).wrapping_sub(load)) << 12
+        | field((c3 - c2).wrapping_sub(load)) << 6
+        | field((c5 - c4).wrapping_sub(c4 - c3))
 }
 
 /// A test folds `f(a, b)` over xorshift pairs (`checksum`), or runs once (given its
@@ -515,7 +531,7 @@ const TESTS: [(&str, Test, u32); 15] = [
     ("xmem", Once(t_xmem), 0xDB16_358C),
     ("xmem_lanes", Pairs(t_xmem_lanes), 0x4490_6ED7),
     ("xmem_exec", Once(t_xmem_exec), 0x9273_B7CB),
-    ("xmem_time", Once(t_xmem_time), 0x0023_2322),
+    ("xmem_time", Once(t_xmem_time), 0x2302_3022),
 ];
 
 #[no_mangle]

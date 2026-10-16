@@ -18,10 +18,6 @@ from soc_env import REPO_ROOT, preload_psram_app, start_soc
 DEMO_BIN = os.path.join(REPO_ROOT, "build", "zephyr-demo", "zephyr", "zephyr.bin")
 
 
-# What the demo measured k_msleep(100) to take, for test_k_msleep_within_a_tick
-_k_msleep_ms: list[int] = []
-
-
 # ~5M cycles from the PSRAM (estimated from the I-RAM build's instruction counts, to be
 # measured), waited for up to 40M (2.2 s simulated)
 @cocotb.test(timeout_time=3000, timeout_unit="ms")
@@ -36,19 +32,7 @@ async def test_zephyr_rust_demo_from_the_psram(dut):
     assert "Zephyr RTOS Booting on VUX9K SoC!" in out, out
     m = re.search(r"k_msleep\(100\) took (\d+) ms", out)
     assert m, out
-    _k_msleep_ms.append(int(m.group(1)))
     dut._log.info(f"k_msleep(100) took {m.group(1)} ms")
-    # A tick (1 ms at the boards' 1000 ticks/s) plus rounding and the kernel's own time from
-    # the uncached PSRAM (the emulator read 104); 100 ticks/s reads 110 or more
-    assert 100 <= int(m.group(1)) <= 105, out
-
-
-# Strict: a pass fails the run. The measurement of the test above, no simulation of its own.
-@cocotb.test(expect_fail=True)
-async def test_k_msleep_within_a_tick(dut):
-    """k_msleep(100) to 102 ms, as from I-RAM
-
-    Code runs from the uncached PSRAM; a cache in front of the PSRAM should bring it back."""
-    if not _k_msleep_ms:  # not an assertion: expect_fail would take it for the failure
-        raise RuntimeError("test_zephyr_rust_demo_from_the_psram measured no k_msleep(100)")
-    assert _k_msleep_ms[0] <= 102, _k_msleep_ms[0]
+    # A tick (1 ms at the boards' 1000 ticks/s) plus rounding, as from I-RAM (from the
+    # uncached PSRAM it read 103-104); 100 ticks/s reads 110 or more
+    assert 100 <= int(m.group(1)) <= 102, out

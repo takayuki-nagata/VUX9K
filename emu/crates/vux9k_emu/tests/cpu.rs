@@ -500,7 +500,7 @@ fn xmem_loads_stores_aliases_and_wait_cycles() {
     );
     assert_eq!(soc.xmem_word(0x8000_0810), 0, "no 2 KB repeat any more");
     let stores = 2 * (3 + XMEM_WRITE_LATENCY) as u64;
-    let loads = 3 * (3 + XMEM_READ_LATENCY) as u64;
+    let loads = 3 * 3; // data-cache hits: the sw allocated the line, the sb merged into it
     assert_eq!(soc.cycle, 4 * 2 + stores + loads);
     // Region 9 is unmapped: reads 0, writes ignored, no wait
     let mut soc = load(
@@ -641,4 +641,41 @@ fn xmem_fetch_hits_the_icache_and_stores_invalidate_it() {
     soc.pc = 0x8000_0000;
     soc.regs[9] = 0x8000_0004;
     assert_eq!(soc.step().cycles, 2 + m);
+}
+
+#[test]
+fn xmem_loads_hit_the_dcache_by_its_rules() {
+    // lw: cold, warm; another tag on the line (4 KB up) evicts it; a partial store hit
+    // keeps it; a partial store miss invalidates the line whatever it holds; a full-word
+    // store miss allocates it; the alias 8 MB up is the same line
+    let mut soc = load(
+        Profile::Real,
+        &[
+            lui(1, 0x80000),
+            lui(2, 0x80001),
+            i(0x03, 0x40, 1, 2, 5), // lw x5, 0x8000_0040: miss
+            i(0x03, 0x40, 1, 2, 5), // hit
+            i(0x03, 0x40, 2, 2, 6), // lw x6, 0x8000_1040: miss, evicts 0x40
+            i(0x03, 0x40, 1, 2, 5), // miss
+            s(0x40, 0, 1, 0),       // sb x0, 0x8000_0040: hit, merged
+            i(0x03, 0x40, 1, 2, 5), // hit
+            s(0x40, 0, 2, 0),       // sb x0, 0x8000_1040: partial miss, the line goes
+            i(0x03, 0x40, 1, 2, 5), // miss
+            s(0x40, 0, 2, 2),       // sw x0, 0x8000_1040: full-word miss, allocates
+            i(0x03, 0x40, 2, 2, 6), // hit
+            lui(4, 0x80801),
+            i(0x03, 0x40, 4, 2, 6), // lw through the alias: hit
+        ],
+    );
+    let m = XMEM_READ_LATENCY;
+    let mut waits = vec![];
+    for _ in 0..14 {
+        let r = soc.step();
+        if r.instr & 0x7F == 0x03 {
+            waits.push(r.cycles - 3);
+        }
+    }
+    assert_eq!(waits, [m, 0, m, m, 0, m, 0, 0]);
+    let st = soc.caches.stats;
+    assert_eq!((st.load_hits, st.load_misses, st.stores), (4, 4, 3));
 }

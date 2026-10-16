@@ -193,7 +193,7 @@ pub module soc_top (
     // the CPU's pc_out and data_addr. Their RAMs have no reset: they clear every line while
     // the power-on reset counts (raw_rst low; 1,024 cycles of its 32,768), so they are reset
     // by rst_n, not by it. A store to the window completing invalidates its
-    // instruction-cache line. The data cache is disabled (ENABLE 0) for now.
+    // instruction-cache line.
     inst icache: soc_icache (
         clk                                                          ,
         rst        : rst_n                                           ,
@@ -212,9 +212,7 @@ pub module soc_top (
         mem_rdata  : xmem_rdata                                      ,
     );
 
-    inst dcache: soc_dcache #(
-        ENABLE: 1'b0,
-    ) (
+    inst dcache: soc_dcache (
         clk                          ,
         rst       : rst_n            ,
         clear     : !raw_rst         ,

@@ -12,8 +12,8 @@
 //! - address decode and memories: soc/soc_addr_decoder.veryl, soc/soc_ram.veryl,
 //!   soc/soc_top.veryl; the IsaTest profile follows sim/tb_hex_runner.veryl.
 //! - the wait-state window: soc/soc_xmem_bridge.veryl, the PSRAM controller behind it in
-//!   soc/soc_top.veryl (vendor/psram_controller), and the instruction cache in front of it
-//!   (soc/soc_icache.veryl, crate::cache).
+//!   soc/soc_top.veryl (vendor/psram_controller), and the caches in front of it
+//!   (soc/soc_icache.veryl, soc/soc_dcache.veryl; crate::cache).
 //!
 //! Timing: `cycle` counts SoC clocks (18 MHz) since reset release. An instruction starts
 //! with its FETCH cycle; `Soc::step` executes one instruction and advances `cycle` by
@@ -21,8 +21,8 @@
 //! +1 when it writes both A and D). A trap costs 2 (it is taken in EXECUTE).
 //! Window accesses (RV32 only) wait on top of that: a fetch from the window that misses
 //! the instruction cache stays in FETCH `XMEM_READ_LATENCY` cycles more (a hit, none), a
-//! window load or store in MEM_WAIT
-//! `XMEM_READ_LATENCY` / `XMEM_WRITE_LATENCY` more. Nothing in the CPU moves while a
+//! window load that misses the data cache in MEM_WAIT `XMEM_READ_LATENCY` more (a hit,
+//! none), a window store in MEM_WAIT `XMEM_WRITE_LATENCY` more. Nothing in the CPU moves while a
 //! fetch waits (it samples the interrupt in its last FETCH cycle), so an instruction
 //! fetched with a wait `w` runs exactly like one fetched `w` cycles later: its interrupt
 //! sampling, counter reads and MMIO access times all shift by `w`. Its `Retire::cycle`
@@ -516,7 +516,7 @@ impl Soc {
             _ if self.in_xmem(addr) => {
                 let idx = Self::xmem_index(addr);
                 self.xmem[idx] = merge_bytes(self.xmem[idx], data, be);
-                self.caches.store(idx);
+                self.caches.store(idx, be);
             }
             _ => {}
         }
@@ -787,7 +787,7 @@ impl Soc {
                 if misaligned(addr, f3) {
                     return self.take_trap(4, addr, r);
                 }
-                r.cycles = 3 + if self.in_xmem(addr) {
+                r.cycles = 3 + if self.in_xmem(addr) && !self.caches.load(Self::xmem_index(addr)) {
                     XMEM_READ_LATENCY
                 } else {
                     0

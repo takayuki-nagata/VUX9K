@@ -298,13 +298,16 @@ impl Soc {
     }
 
     /// What the window's caches did since the power-on reset: {"fetch_hits": n,
-    /// "fetch_misses": n}
+    /// "fetch_misses": n, "load_hits": n, "load_misses": n, "stores": n}
     #[getter]
     fn cache_stats<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let s = self.inner.caches.stats;
         let d = PyDict::new(py);
         d.set_item("fetch_hits", s.fetch_hits)?;
         d.set_item("fetch_misses", s.fetch_misses)?;
+        d.set_item("load_hits", s.load_hits)?;
+        d.set_item("load_misses", s.load_misses)?;
+        d.set_item("stores", s.stores)?;
         Ok(d)
     }
 

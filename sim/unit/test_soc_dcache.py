@@ -66,7 +66,7 @@ class Bench:
         self.sweep_idx = 0
         self.rd_idx_q = 0
         self.conflict_q = False
-        self.missing = False  # an access at the bridge stays a miss until it completes
+        self.missing = False  # a load at the bridge stays a miss until it completes
         self.due = None  # cycle the pending bridge access completes
         self.cycle = 0
 
@@ -155,7 +155,7 @@ class Bench:
                         self.tags[idx] = tag_of(wa)
                     else:
                         self.tags.pop(idx, None)
-        self.missing = want_sel and not mem_ready
+        self.missing = want_sel and not mem_ready and not store
         self.rd_idx_q = rd
         self.conflict_q = we and waddr == rd
 
@@ -165,7 +165,8 @@ class Bench:
 
     async def access(self, kind, word, sel=True, wstrb=0xF, ahead=True, clear=1):
         """EXECUTE (the line read ahead), then MEM_WAIT until ready. ahead=False reads
-        another line ahead, which must not hit."""
+        another line ahead: a load misses; a store, whose hit counts in its completing cycle
+        (by then the line is read at its own index), may still hit."""
         idx = idx_of(word)
         rd = idx if ahead else (idx + random.randrange(1, LINES)) % LINES
         wdata = random.getrandbits(32)
@@ -175,7 +176,7 @@ class Bench:
         hit = None
         for _ in range(LINES + 100):  # the sweep, or a bridge access
             ready, h = await self.tick(clear, idx, kind, sel, word, wdata, wstrb)
-            if hit is None:
+            if hit is None or kind == "store":  # a load's first cycle, a store's last
                 hit = h
             if ready:
                 if not sel:
@@ -207,8 +208,8 @@ def pool(n_lines=6, n_tags=3):
 @cocotb.test(timeout_time=1, timeout_unit="ms")
 async def test_directed(dut):
     """Accesses while the lines are swept wait; then load miss and hit, store hit (full and
-    partial: the bytes merge), partial store miss (invalidates the line, even one holding the
-    word), full store miss (allocates),
+    partial: the bytes merge, also after a stale read-ahead), partial store miss (invalidates
+    the line), full store miss (allocates),
     eviction by another tag, a stale read-ahead, and accesses outside the window"""
     b = Bench(dut, max_delay=3)
     await b.reset()
@@ -228,7 +229,7 @@ async def test_directed(dut):
     await b.access("store", v, wstrb=0b1100)  # partial miss: invalidates w's line
     await b.access("load", w)  # miss
     await b.access("load", w, ahead=False)  # a stale read-ahead: miss, refills w
-    await b.access("store", w, wstrb=0b0100, ahead=False)  # partial miss on a stale read-ahead: invalidated, not stale
+    await b.access("store", w, wstrb=0b0100, ahead=False)  # a stale read-ahead: hits when it completes, merged
     await b.access("load", w)  # miss
     await b.access("store", v, wstrb=0xF)  # full miss: allocates v over w
     await b.access("load", v)
