@@ -9,7 +9,7 @@ started with its `run`, then sent lines longer than both 32-byte UART FIFOs; eac
 back upper-cased with "rx=<n> drop=0 err=0" (no byte lost in the app or by the UART). From
 the uncached PSRAM the app can't read a line sent back to back at 115200 baud, so each is
 sent in paced chunks (sim/integration/irq_echo_pace.py, measured on the emulator; --chunk 0
-sends it back to back, which should pass again with the cache, B4a). The
+sends it back to back, which should pass again with a cache in front of the PSRAM). The
 application runs in the PSRAM, its handlers too, and never returns: the first stage stays in
 I-RAM, but only the reset button would start it again, so the bitstream is loaded into the
 FPGA's SRAM from --pack-fs at the end (not openFPGALoader --reset, which loads the flash's
@@ -100,8 +100,12 @@ def run(ser, image: bytes, size: int, count: int, chunk: int) -> bool:
         return False
     mkdir_p(ser, CARD_APPS)
     print(vux_tool.put(ser, f"{CARD_APPS}/IRQECHO.BIN", image, timeout=20.0))
-    print(vux_tool.run_app(ser, f"{CARD_APPS}/IRQECHO.BIN").strip().splitlines()[-1])
-    read_until(ser, b"irq_echo ready\n", timeout=10.0)
+    out = vux_tool.run_app(ser, f"{CARD_APPS}/IRQECHO.BIN")
+    print(out[out.find("[RUN] ") :].splitlines()[0])
+    # irq_echo prints at once from the PSRAM: its first output may have come with the [RUN] line
+    early = vux_tool.after_run(out).encode()
+    if b"irq_echo ready\n" not in early:
+        read_until(ser, b"irq_echo ready\n", timeout=10.0)
     time.sleep(0.2)
 
     passed = True

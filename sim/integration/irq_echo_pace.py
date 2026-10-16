@@ -12,7 +12,7 @@ a 64-byte line came back with 52 bytes once the 32-byte RX FIFO had filled. Meas
 emulator (its paced test prints it, the measurement to tune GAP_FRAMES by), the FIFO is empty
 69 frame times after a 16-byte chunk's first byte at worst, about 4.3 frame times a byte.
 With 5 a byte, a chunk every CHUNK + GAP_FRAMES = 176 frame times is 2.5x the measurement;
-the emulator test fails below 2x. The cache (B4a) should bring the back-to-back line back.
+the emulator test fails below 2x. A cache in front of the PSRAM should bring the back-to-back line back.
 """
 
 CHUNK = 16  # bytes sent back to back: half the RX FIFO

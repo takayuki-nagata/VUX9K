@@ -27,7 +27,7 @@ DONE_CYCLES = 40_000_000
 UNCACHED_PSRAM = pytest.mark.xfail(
     strict=True,
     raises=AssertionError,
-    reason="code runs from the uncached PSRAM; the cache (B4a) should bring it back",
+    reason="code runs from the uncached PSRAM; a cache in front of the PSRAM should bring it back",
 )
 
 

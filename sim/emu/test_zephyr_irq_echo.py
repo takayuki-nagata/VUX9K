@@ -11,7 +11,7 @@ that TX refills from the driver's timer, with the handlers running from the PSRA
 
 From the uncached PSRAM the RX handler can't keep up with a line sent back to back at
 115200 baud: the line is sent in paced chunks (irq_echo_pace), and the back-to-back line
-is an expected failure until the cache (B4a), which must still report the overrun.
+is an expected failure until a cache in front of the PSRAM, which must still report the overrun.
 """
 
 import os
@@ -32,7 +32,7 @@ UART_ERROR_OVERRUN = 1  # Zephyr's enum uart_rx_stop_reason
 UNCACHED_PSRAM = pytest.mark.xfail(
     strict=True,
     raises=AssertionError,
-    reason="code runs from the uncached PSRAM; the cache (B4a) should bring it back",
+    reason="code runs from the uncached PSRAM; a cache in front of the PSRAM should bring it back",
 )
 
 

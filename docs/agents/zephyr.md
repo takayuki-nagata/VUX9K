@@ -29,11 +29,12 @@ bc_clone_rs (`make build-zephyr`: `vendor/bc_clone_rs/examples/zephyr_app`, its 
 `prj.conf` with a 32 KB main stack and a 64 KB static heap, ~260 KB) is built for `vux9k`
 like the demos; nothing of it is changed for this board (the submodule is upstream), and
 `make apps` makes it `BC.BIN`. It runs from the PSRAM with no cache, so it is slow: the
-second stage's load alone is ~600M cycles (~35 s). `sim/emu/test_zephyr_bc.py` loads it
+second stage's `run` alone takes ~26 s on the board (~460M cycles). `sim/emu/test_zephyr_bc.py` loads it
 straight into the PSRAM for the self-tests and the REPL, starts it once through the second
 stage's `run` from a card (`s1_env.run_from_card(..., load_cycles=...)`), and prints the
 cycles and `minstret` (`Soc.instret`) to the first `bc> ` and per REPL line: the emulator is
-cycle-exact to the RTL (`sim-lockstep`), so these are the board's counts, the baseline for a
+cycle-exact to the RTL (`sim-lockstep`), so these are the RTL's counts (the board's `[TIME]` lines
+match them: 17.4 s to the first `bc> `, 314M cycles at 18 MHz), the baseline for a
 cache. Its cycle caps are bounds, not measurements. On the board, `test_hardware.py` 14
 puts, runs and types at it, printing wall-clock `[TIME]` lines.
 
@@ -83,7 +84,7 @@ hardware gives and what the driver makes up for:
   the rate costs no periodic interrupts; the demo tests check `k_msleep(100)` to 105 ms,
   which fails at 100 ticks/s (110 or more). From the uncached PSRAM it reads 103-104 ms;
   102, a tick plus rounding as from I-RAM, is a strict expected failure (pytest
-  `xfail(strict=True)`, cocotb `expect_fail`, a check of its own) until the cache (B4a).
+  `xfail(strict=True)`, cocotb `expect_fail`, a check of its own) until a cache in front of the PSRAM.
 - `irq_tx_complete` and error interrupts are left out on purpose: the status register
   has no "transmitter empty" bit, and errors are only sticky flags.
 - **Errors aren't lost to the driver's own status reads.** The overrun and frame-error
@@ -96,7 +97,7 @@ hardware gives and what the driver makes up for:
 - **RX at full speed needs the cache.** From the uncached PSRAM the RX handler takes about
   4.3 frame times a byte (measured on the emulator: the FIFO empty 69 frame times after a
   16-byte chunk's first byte; a 64-byte line sent back to back came back with 52 bytes),
-  so input longer than the FIFO overruns at 115200 baud. Until the cache (B4a), pace it:
+  so input longer than the FIFO overruns at 115200 baud. Until a cache in front of the PSRAM, pace it:
   the tests send 16-byte chunks with gaps sized for 5 frame times a byte, a chunk every 176
   frame times (`sim/integration/irq_echo_pace.py`, shared by the emulator, RTL and board
   tests; the emulator test prints the measurement and fails below a 2x margin), and the

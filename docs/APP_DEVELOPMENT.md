@@ -202,7 +202,8 @@ emu/vux9k-emu --no-firmware --load app.bin --mode hack --stdio
 it: an RV32 image in the PSRAM at `0x8000_0000` (where the board `vux9k` links), a Hack image
 at address 0 of the instruction RAM. `--load-addr ADDR` gives the load address of an image
 linked elsewhere (as `mkv4 --load-addr`): an RV32 image at 0 goes into the instruction RAM,
-at most 14 KB.
+at most 14 KB. That is the emulator's own direct load: on the board the second stage starts
+RV32 files only in the PSRAM.
 
 - `--stdio` connects the UART to the terminal (input goes line by line); `--tcp PORT`
   serves it on `localhost:PORT` instead, for a terminal program.

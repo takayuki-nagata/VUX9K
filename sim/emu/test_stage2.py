@@ -571,9 +571,47 @@ def test_run_app_through_vux_tool(tool):
     with pytest.raises(vux_tool.S2Error, match="not found"):
         vux_tool.run_app(ser, "NOPE.BIN")
     out = vux_tool.run_app(ser, "VUX9K/APPS/HELLO.BIN")
-    assert out.rstrip().endswith(f'[RUN] v1 "hello" {len(hello) - 64} B, PSRAM, starting at 0x80000000'), out
-    got, rest = vux_tool.read_until(ser, ("Hi from the PSRAM\n",), 5.0)
+    run_line = f'[RUN] v1 "hello" {len(hello) - 64} B, PSRAM, starting at 0x80000000\n'
+    assert run_line in out, out
+    # The application's output that arrived with the [RUN] line is kept, not dropped
+    assert vux_tool.after_run(out) == out[out.index(run_line) + len(run_line) :]
+    got, rest = vux_tool.read_until(ser, ("Hi from the PSRAM\n",), 5.0, vux_tool.after_run(out))
     assert got, rest
+
+
+def test_run_app_keeps_output_read_with_the_run_line():
+    """An application in the PSRAM prints at once, so its first bytes can come in the same
+    read as the [RUN] line; run_app once cut them off (the board lost the Zephyr demo's
+    banner that way)."""
+    run_line = '[RUN] v1 "zephyr" 13466 B, PSRAM, starting at 0x80000000\n'
+
+    class OneRead:
+        def __init__(self):
+            self.chunks = [b"run X\r\n" + run_line.encode() + b"*** Booting Zephyr\r\n", b"[late]\n"]
+
+        def read(self, n):
+            return self.chunks.pop(0) if self.chunks else b""
+
+        def reset_input_buffer(self):
+            pass
+
+        def write(self, data):
+            pass
+
+        def flush(self):
+            pass
+
+        @property
+        def in_waiting(self):
+            return 0
+
+    ser = OneRead()
+    out = vux_tool.run_app(ser, "X", timeout=1.0)
+    assert vux_tool.after_run(out) == "*** Booting Zephyr\r\n"
+    got, rest = vux_tool.read_until(ser, ("[late]\n",), 1.0, vux_tool.after_run(out))
+    assert got and rest == "*** Booting Zephyr\r\n[late]\n"
+    # read_until finds a token already in the text it is given without reading
+    assert vux_tool.read_until(ser, ("Zephyr",), 0.0, vux_tool.after_run(out))[0] == "Zephyr"
 
 
 def test_enter_s2_from_the_first_stage(tool):

@@ -48,7 +48,7 @@ async def test_zephyr_rust_demo_from_the_psram(dut):
 async def test_k_msleep_within_a_tick(dut):
     """k_msleep(100) to 102 ms, as from I-RAM
 
-    Code runs from the uncached PSRAM; the cache (B4a) should bring it back."""
+    Code runs from the uncached PSRAM; a cache in front of the PSRAM should bring it back."""
     if not _k_msleep_ms:  # not an assertion: expect_fail would take it for the failure
         raise RuntimeError("test_zephyr_rust_demo_from_the_psram measured no k_msleep(100)")
     assert _k_msleep_ms[0] <= 102, _k_msleep_ms[0]

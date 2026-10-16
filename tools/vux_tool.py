@@ -465,9 +465,12 @@ def send_upload_v2(ser, data, progress_cb=None, timeout=10.0, crc_override=None)
 # ----- The two-stage boot: the first stage's prompt, RAM boot, second-stage install -----
 
 
-def read_until(ser, tokens, timeout):
-    """Read until one of tokens arrives: (token or None on a timeout, text read)."""
-    text = ""
+def read_until(ser, tokens, timeout, text=""):
+    """Read until one of tokens arrives: (token or None on a timeout, text read). text is
+    output already read (e.g. `after_run`'s), searched first and returned in front."""
+    for t in tokens:
+        if t in text:
+            return t, text
     end = time.monotonic() + timeout
     while time.monotonic() < end:
         c = ser.read(256)
@@ -583,8 +586,10 @@ def put(ser, path, data, timeout=10.0):
 
 def run_app(ser, path, timeout=30.0):
     """At the second stage's prompt: start the v4 file path on the card with `run`.
-    Returns the text up to and including the [RUN] line (the application's output follows
-    on ser); raises S2Error when the second stage refuses it."""
+    Returns the text read: up to and including the [RUN] line, and whatever of the
+    application's output arrived in the same read (an application in the PSRAM prints at
+    once; `after_run` gives that part, the rest follows on ser). Raises S2Error when the
+    second stage refuses it."""
     drain_serial(ser, timeout=0.05)
     ser.write(f"run {path}\r".encode())
     ser.flush()
@@ -595,11 +600,17 @@ def run_app(ser, path, timeout=30.0):
         text += t
         at = text.find("[RUN] ")
         if at >= 0 and "\n" in text[at:]:
-            return text[: text.index("\n", at) + 1]
+            return text
         if S2_PROMPT in text[text.find("\n") + 1 :]:
             _s2_check(text)
             raise S2Error(text.strip())
     raise TimeoutError(f"no [RUN] line after run {path}; got {text[-400:]!r}")
+
+
+def after_run(text):
+    """The application's output in `run_app`'s text: what follows the [RUN] line."""
+    at = text.find("[RUN] ")
+    return text[text.index("\n", at) + 1 :] if at >= 0 and "\n" in text[at:] else ""
 
 
 def ram_boot(ser, data, timeout=10.0):

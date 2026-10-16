@@ -549,7 +549,7 @@ def run_hardware_test_suite(port="auto", baud=115200, loader=None, reload=True):
         else:
             try:
                 out = put_and_run("HELLO.BIN")
-                got, out2 = vux_tool.read_until(ser, (HELLO_LAST,), 10.0)
+                got, out2 = vux_tool.read_until(ser, (HELLO_LAST,), 10.0, vux_tool.after_run(out))
                 regs, expected = hello_regs(out2), (int(sdhc), part_lba, S1_VERSION)
                 ser.write(b"r")
                 ser.flush()
@@ -574,7 +574,7 @@ def run_hardware_test_suite(port="auto", baud=115200, loader=None, reload=True):
         def hack_check(out):
             if "I-RAM (Hack)" not in out:
                 return False, fail_msg("Not started in I-RAM (Hack).", out)
-            _, rest = vux_tool.read_until(ser, (HACK_DONE,), 20.0)
+            _, rest = vux_tool.read_until(ser, (HACK_DONE,), 20.0, vux_tool.after_run(out))
             _, tail = vux_tool.read_until(ser, (HACK_END,), 3.0)
             rest += tail
             missing = [ln for ln in (*HACK_LINES, HACK_DONE) if ln not in rest]
@@ -587,11 +587,11 @@ def run_hardware_test_suite(port="auto", baud=115200, loader=None, reload=True):
         def zephyr_check(out):
             if ZEPHYR_RUN not in out:
                 return False, fail_msg("Not started in the PSRAM.", out)
-            _, rest = vux_tool.read_until(ser, (ZEPHYR_END,), 30.0)
+            _, rest = vux_tool.read_until(ser, (ZEPHYR_END,), 30.0, vux_tool.after_run(out))
             missing = [ln for ln in (*ZEPHYR_LINES, ZEPHYR_END) if ln not in rest]
             m = re.search(r"k_msleep\(100\) took (\d+) ms", rest)
             # A tick (1 ms at 1000 ticks/s) plus the kernel's own time from the uncached
-            # PSRAM: 103-104 ms in simulation (102 from I-RAM, again with the cache, B4a);
+            # PSRAM: 103-104 ms in simulation (102 from I-RAM, again with a cache in front of the PSRAM);
             # 100 ticks/s reads 110 or more. The board has no expected failures: the
             # value is in the result line to compare.
             if missing or "VUX9K Stage" in rest or not m or not 100 <= int(m.group(1)) <= 105:
@@ -611,7 +611,7 @@ def run_hardware_test_suite(port="auto", baud=115200, loader=None, reload=True):
                 return False, fail_msg("Not started in the PSRAM.", out)
             print(f"  [TIME] BC.BIN put {times['put']:.1f} s, run to the [RUN] line {times['run']:.1f} s")
             t0 = time.monotonic()
-            got, rest = vux_tool.read_until(ser, (BC_PROMPT,), BC_BOOT_TIMEOUT)
+            got, rest = vux_tool.read_until(ser, (BC_PROMPT,), BC_BOOT_TIMEOUT, vux_tool.after_run(out))
             print(f"  [TIME] [RUN] line to the first {BC_PROMPT!r} {time.monotonic() - t0:.1f} s")
             missing = [ln for ln in BC_LINES if ln not in rest]
             if not got or missing or "VUX9K Stage" in rest:

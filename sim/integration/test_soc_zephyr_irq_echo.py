@@ -7,7 +7,7 @@ preloaded into the PSRAM and started by a jump from I-RAM like the Rust demo
 (sim/integration/test_soc_zephyr_demo.py; the emulator counterpart is
 sim/emu/test_zephyr_irq_echo.py). Its interrupt handlers run from the PSRAM as well, too slow
 for a line sent back to back at 115200 baud: the line is sent in paced chunks
-(irq_echo_pace), and the back-to-back line is an expected failure until the cache (B4a),
+(irq_echo_pace), and the back-to-back line is an expected failure until a cache in front of the PSRAM,
 which must still report the overrun.
 """
 
@@ -88,7 +88,7 @@ async def test_zephyr_irq_echo_back_to_back_reports_the_overrun(dut):
 async def test_zephyr_irq_echo_back_to_back(dut):
     """A 64-byte line sent back to back comes back whole
 
-    Code runs from the uncached PSRAM; the cache (B4a) should bring it back."""
+    Code runs from the uncached PSRAM; a cache in front of the PSRAM should bring it back."""
     if not _back_to_back:  # not an assertion: expect_fail would take it for the failure
         raise RuntimeError("test_zephyr_irq_echo_back_to_back_reports_the_overrun got no reply")
     assert _back_to_back[0] == ECHO, _back_to_back[0]

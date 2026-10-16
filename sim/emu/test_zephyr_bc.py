@@ -10,9 +10,10 @@ self-tests, then the interactive REPL. And once as the board starts it, from the
 second stage's `run VUX9K/APPS/BC.BIN` (make apps) loads it and jumps to it.
 
 The emulator follows the RTL cycle for cycle (make sim-lockstep), so its counts are the
-board's: the tests record the cycles and retired instructions to bc's first prompt, for the
-second stage's load and for each REPL line, and test_record_measurements prints them (pytest
-output and junit properties) as the baseline for later speed work.
+RTL's (the board's wall-clock times in test_hardware.py's test 14 agree): the tests record
+the cycles and retired instructions to bc's first prompt, for the second stage's load and for
+each REPL line, and test_record_measurements prints them (pytest output and junit
+properties) as the baseline for later speed work.
 (Ported from sim/emulator/test_soc_bc.py.)
 """
 
