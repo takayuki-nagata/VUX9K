@@ -340,7 +340,7 @@ second stage's `run` loads its applications there and jumps to them, the first s
 in I-RAM). `make build-zephyr-demo` builds the Rust demo
 (`zephyr_workspace/app/`, Zephyr + a Rust staticlib) for it; `make
 build-zephyr` builds bc_clone_rs for it too (`make apps`' `BC.BIN`, ~260 KB: the second
-stage's load takes about 3 s, and bc reaches its prompt about 4 s later: the emulator's cycles at 18 MHz). `make build-zephyr-irq-echo` builds
+stage's load takes about 3 s, and bc reaches its prompt about 4 s later on the board, as the emulator's cycles at 18 MHz say). `make build-zephyr-irq-echo` builds
 `zephyr_workspace/irq_echo/`, an echo through the UART driver's interrupt-driven API
 (RX on the machine external interrupt; see `zephyr_workspace/README.md`, "UART").
 

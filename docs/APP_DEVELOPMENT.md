@@ -89,7 +89,7 @@ python3 tools/vux_tool.py run-app VUX9K/APPS/HELLO.BIN
 | `HELLO.BIN` | prints the first stage's a0-a2; `r` goes back to the first stage | the PSRAM at `0x8000_0000` |
 | `ZEPHYR.BIN` | the Zephyr Rust demo | the PSRAM at `0x8000_0000` (it never returns: S1 goes back to the first stage) |
 | `IRQECHO.BIN` | Zephyr's interrupt-driven UART echo | the PSRAM at `0x8000_0000` |
-| `BC.BIN` | [bc_clone_rs](https://github.com/takayuki-nagata/bc_clone_rs), an arbitrary-precision calculator (`bc`) on Zephyr: self-tests, then its `bc> ` prompt. ~260 KB: `put` takes ~25 s, `run`'s load ~3 s, and bc reaches its prompt ~4 s later (the load and the start are the emulator's cycles at 18 MHz) | the PSRAM at `0x8000_0000` (it never returns, like `ZEPHYR.BIN`) |
+| `BC.BIN` | [bc_clone_rs](https://github.com/takayuki-nagata/bc_clone_rs), an arbitrary-precision calculator (`bc`) on Zephyr: self-tests, then its `bc> ` prompt. ~260 KB: on the board `put` takes ~29 s, `run`'s load ~3 s, and bc reaches its prompt ~4 s later | the PSRAM at `0x8000_0000` (it never returns, like `ZEPHYR.BIN`) |
 | `HACK.BIN` | the Hack C demo | I-RAM, in Hack mode (replaces the first stage until the FPGA is configured again) |
 
 `demos/` holds the Zephyr and Hack demos' raw images for the emulator (section 4).

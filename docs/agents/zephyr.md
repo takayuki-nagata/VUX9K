@@ -35,7 +35,7 @@ straight into the PSRAM for the self-tests and the REPL, starts it once through 
 stage's `run` from a card (`s1_env.run_from_card(..., load_cycles=...)`), and prints the
 cycles and `minstret` (`Soc.instret`) to the first `bc> ` and per REPL line: the emulator is
 cycle-exact to the RTL (`sim-lockstep`), so these are the RTL's counts (the board's `[TIME]` lines
-matched them without the caches: 17.4 s to the first `bc> `, 314M cycles at 18 MHz),
+match them: 4.1 s to the first `bc> `, and 17.4 s, 314M cycles at 18 MHz, without the caches),
 with the caches' hit rates, to compare speed work against. Its cycle caps are bounds, not measurements. On the board, `test_hardware.py` 14
 puts, runs and types at it, printing wall-clock `[TIME]` lines.
 
