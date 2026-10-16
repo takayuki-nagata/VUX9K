@@ -23,13 +23,14 @@
 // Simulation models of the Gowin GW1N primitives that synth_gowin's netlists
 // instantiate, for gate-level simulation (sim/runners/sim_runner.py): LUTs, wide-LUT
 // muxes, ALU, flip-flops, buffers, distributed RAM (RAM16SDP4), block RAMs (DPB,
-// SPX9, SP, SDPB) and the PLL (rPLL, board_top's clock). Module, port and parameter
+// SPX9, SP, SDPB, and the x9 DPX9B/SDPX9B that the caches' 18/36-bit arrays map to)
+// and the PLL (rPLL, board_top's clock). Module, port and parameter
 // names must match the cells synth_gowin emits, which is why they break Veryl's
 // usual naming. Flip-flops power up to their GSR value (initial blocks). Simulation
 // only: nothing here is synthesized.
 //
 // Why not Yosys' own models: in share/yosys/gowin/, cells_sim.v has the LUT/FF/ALU/
-// RAM16SDP4/SP/SPX9 cells, but cells_xtra_gw1n.v declares DPB and SDPB as port-only
+// RAM16SDP4/SP/SPX9 cells, but cells_xtra_gw1n.v declares DPB, SDPB, DPX9B and SDPX9B as port-only
 // stubs, so a GLS netlist using block RAM wouldn't simulate. These models add
 // behavior (INIT_RAM_* preload, per-width addressing, READ_MODE/WRITE_MODE,
 // BLK_SEL) that runs standalone on Icarus and Verilator.
@@ -41,6 +42,9 @@
 // sim/gowin_cells_sim.v to Veryl in 2026-09; every cell was proven equivalent to
 // that model with Yosys (equiv_* for the small cells, an everted-register miter
 // for the block RAMs) before it was removed.
+// DPX9B and SDPX9B (2026-10) are DPB and SDPB with 18-bit storage words and 288-bit
+// INIT_RAM_* blocks, as SPX9 is SP's; sim/unit/test_gowin_bram.py checks their INIT
+// placement and widths, the caches' gate-level unit tests their use.
 
 // LUTs: F = INIT[{I(n-1), ..., I0}]
 
@@ -1544,6 +1548,504 @@ module SDPB #(
         always_ff (CLKB) {
             if RESETB {
                 pipe_do = 32'h0;
+            } else if OCE {
+                pipe_do = raw_do;
+            }
+        }
+
+        assign DO = if READ_MODE == 1'b1 ? pipe_do : raw_do;
+    }
+}
+
+// Dual-port block RAM, 18 Kbit (x9/x18), per-port width BIT_WIDTH_0/1: DPB with the 9th bit
+module DPX9B #(
+    param READ_MODE0 : bit      = 1'b0            ,
+    param READ_MODE1 : bit      = 1'b0            ,
+    param WRITE_MODE0: bit<2>   = 2'b00           ,
+    param WRITE_MODE1: bit<2>   = 2'b00           ,
+    param BIT_WIDTH_0: i32      = 18              ,
+    param BIT_WIDTH_1: i32      = 18              ,
+    param BLK_SEL_0  : bit<3>   = 3'b000          ,
+    param BLK_SEL_1  : bit<3>   = 3'b000          ,
+    param RESET_MODE : bit<40>  = 40'h00_5359_4E43, // "SYNC" (or "ASYNC") as ASCII; unused. Not a string: Yosys cannot read string params
+    param INIT_RAM_00: bit<288> = 288'h0          ,
+    param INIT_RAM_01: bit<288> = 288'h0          ,
+    param INIT_RAM_02: bit<288> = 288'h0          ,
+    param INIT_RAM_03: bit<288> = 288'h0          ,
+    param INIT_RAM_04: bit<288> = 288'h0          ,
+    param INIT_RAM_05: bit<288> = 288'h0          ,
+    param INIT_RAM_06: bit<288> = 288'h0          ,
+    param INIT_RAM_07: bit<288> = 288'h0          ,
+    param INIT_RAM_08: bit<288> = 288'h0          ,
+    param INIT_RAM_09: bit<288> = 288'h0          ,
+    param INIT_RAM_0A: bit<288> = 288'h0          ,
+    param INIT_RAM_0B: bit<288> = 288'h0          ,
+    param INIT_RAM_0C: bit<288> = 288'h0          ,
+    param INIT_RAM_0D: bit<288> = 288'h0          ,
+    param INIT_RAM_0E: bit<288> = 288'h0          ,
+    param INIT_RAM_0F: bit<288> = 288'h0          ,
+    param INIT_RAM_10: bit<288> = 288'h0          ,
+    param INIT_RAM_11: bit<288> = 288'h0          ,
+    param INIT_RAM_12: bit<288> = 288'h0          ,
+    param INIT_RAM_13: bit<288> = 288'h0          ,
+    param INIT_RAM_14: bit<288> = 288'h0          ,
+    param INIT_RAM_15: bit<288> = 288'h0          ,
+    param INIT_RAM_16: bit<288> = 288'h0          ,
+    param INIT_RAM_17: bit<288> = 288'h0          ,
+    param INIT_RAM_18: bit<288> = 288'h0          ,
+    param INIT_RAM_19: bit<288> = 288'h0          ,
+    param INIT_RAM_1A: bit<288> = 288'h0          ,
+    param INIT_RAM_1B: bit<288> = 288'h0          ,
+    param INIT_RAM_1C: bit<288> = 288'h0          ,
+    param INIT_RAM_1D: bit<288> = 288'h0          ,
+    param INIT_RAM_1E: bit<288> = 288'h0          ,
+    param INIT_RAM_1F: bit<288> = 288'h0          ,
+    param INIT_RAM_20: bit<288> = 288'h0          ,
+    param INIT_RAM_21: bit<288> = 288'h0          ,
+    param INIT_RAM_22: bit<288> = 288'h0          ,
+    param INIT_RAM_23: bit<288> = 288'h0          ,
+    param INIT_RAM_24: bit<288> = 288'h0          ,
+    param INIT_RAM_25: bit<288> = 288'h0          ,
+    param INIT_RAM_26: bit<288> = 288'h0          ,
+    param INIT_RAM_27: bit<288> = 288'h0          ,
+    param INIT_RAM_28: bit<288> = 288'h0          ,
+    param INIT_RAM_29: bit<288> = 288'h0          ,
+    param INIT_RAM_2A: bit<288> = 288'h0          ,
+    param INIT_RAM_2B: bit<288> = 288'h0          ,
+    param INIT_RAM_2C: bit<288> = 288'h0          ,
+    param INIT_RAM_2D: bit<288> = 288'h0          ,
+    param INIT_RAM_2E: bit<288> = 288'h0          ,
+    param INIT_RAM_2F: bit<288> = 288'h0          ,
+    param INIT_RAM_30: bit<288> = 288'h0          ,
+    param INIT_RAM_31: bit<288> = 288'h0          ,
+    param INIT_RAM_32: bit<288> = 288'h0          ,
+    param INIT_RAM_33: bit<288> = 288'h0          ,
+    param INIT_RAM_34: bit<288> = 288'h0          ,
+    param INIT_RAM_35: bit<288> = 288'h0          ,
+    param INIT_RAM_36: bit<288> = 288'h0          ,
+    param INIT_RAM_37: bit<288> = 288'h0          ,
+    param INIT_RAM_38: bit<288> = 288'h0          ,
+    param INIT_RAM_39: bit<288> = 288'h0          ,
+    param INIT_RAM_3A: bit<288> = 288'h0          ,
+    param INIT_RAM_3B: bit<288> = 288'h0          ,
+    param INIT_RAM_3C: bit<288> = 288'h0          ,
+    param INIT_RAM_3D: bit<288> = 288'h0          ,
+    param INIT_RAM_3E: bit<288> = 288'h0          ,
+    param INIT_RAM_3F: bit<288> = 288'h0          ,
+) (
+    CLKA   : input  'a clock    ,
+    CEA    : input  'a logic    ,
+    CLKB   : input  'b clock    ,
+    CEB    : input  'b logic    ,
+    OCEA   : input  'a logic    ,
+    OCEB   : input  'b logic    ,
+    RESETA : input  'a logic    ,
+    RESETB : input  'b logic    ,
+    WREA   : input  'a logic    ,
+    WREB   : input  'b logic    ,
+    ADA    : input  'a logic<14>,
+    ADB    : input  'b logic<14>,
+    BLKSELA: input  'a logic<3> ,
+    BLKSELB: input  'b logic<3> ,
+    DIA    : input  'a logic<18>,
+    DIB    : input  'b logic<18>,
+    DOA    : output 'a logic<18>,
+    DOB    : output 'b logic<18>,
+) {
+    // Written by both ports (each from its own clock), like the hardware's two write ports
+    #[allow(initial_assign)]
+    #[allow(multiple_assign)]
+    var mem_bits: logic<18432>;
+    #[allow(initial_assign)]
+    var raw_doa: logic<18>;
+    #[allow(initial_assign)]
+    var raw_dob: logic<18>;
+    #[allow(initial_assign)]
+    var pipe_doa: logic<18>;
+    #[allow(initial_assign)]
+    var pipe_dob: logic<18>;
+
+    // The outputs read 0 until the first access (the SV model set DOA/DOB = 0)
+    initial {
+        mem_bits[0 * 288+:288]  = INIT_RAM_00;
+        mem_bits[1 * 288+:288]  = INIT_RAM_01;
+        mem_bits[2 * 288+:288]  = INIT_RAM_02;
+        mem_bits[3 * 288+:288]  = INIT_RAM_03;
+        mem_bits[4 * 288+:288]  = INIT_RAM_04;
+        mem_bits[5 * 288+:288]  = INIT_RAM_05;
+        mem_bits[6 * 288+:288]  = INIT_RAM_06;
+        mem_bits[7 * 288+:288]  = INIT_RAM_07;
+        mem_bits[8 * 288+:288]  = INIT_RAM_08;
+        mem_bits[9 * 288+:288]  = INIT_RAM_09;
+        mem_bits[10 * 288+:288] = INIT_RAM_0A;
+        mem_bits[11 * 288+:288] = INIT_RAM_0B;
+        mem_bits[12 * 288+:288] = INIT_RAM_0C;
+        mem_bits[13 * 288+:288] = INIT_RAM_0D;
+        mem_bits[14 * 288+:288] = INIT_RAM_0E;
+        mem_bits[15 * 288+:288] = INIT_RAM_0F;
+        mem_bits[16 * 288+:288] = INIT_RAM_10;
+        mem_bits[17 * 288+:288] = INIT_RAM_11;
+        mem_bits[18 * 288+:288] = INIT_RAM_12;
+        mem_bits[19 * 288+:288] = INIT_RAM_13;
+        mem_bits[20 * 288+:288] = INIT_RAM_14;
+        mem_bits[21 * 288+:288] = INIT_RAM_15;
+        mem_bits[22 * 288+:288] = INIT_RAM_16;
+        mem_bits[23 * 288+:288] = INIT_RAM_17;
+        mem_bits[24 * 288+:288] = INIT_RAM_18;
+        mem_bits[25 * 288+:288] = INIT_RAM_19;
+        mem_bits[26 * 288+:288] = INIT_RAM_1A;
+        mem_bits[27 * 288+:288] = INIT_RAM_1B;
+        mem_bits[28 * 288+:288] = INIT_RAM_1C;
+        mem_bits[29 * 288+:288] = INIT_RAM_1D;
+        mem_bits[30 * 288+:288] = INIT_RAM_1E;
+        mem_bits[31 * 288+:288] = INIT_RAM_1F;
+        mem_bits[32 * 288+:288] = INIT_RAM_20;
+        mem_bits[33 * 288+:288] = INIT_RAM_21;
+        mem_bits[34 * 288+:288] = INIT_RAM_22;
+        mem_bits[35 * 288+:288] = INIT_RAM_23;
+        mem_bits[36 * 288+:288] = INIT_RAM_24;
+        mem_bits[37 * 288+:288] = INIT_RAM_25;
+        mem_bits[38 * 288+:288] = INIT_RAM_26;
+        mem_bits[39 * 288+:288] = INIT_RAM_27;
+        mem_bits[40 * 288+:288] = INIT_RAM_28;
+        mem_bits[41 * 288+:288] = INIT_RAM_29;
+        mem_bits[42 * 288+:288] = INIT_RAM_2A;
+        mem_bits[43 * 288+:288] = INIT_RAM_2B;
+        mem_bits[44 * 288+:288] = INIT_RAM_2C;
+        mem_bits[45 * 288+:288] = INIT_RAM_2D;
+        mem_bits[46 * 288+:288] = INIT_RAM_2E;
+        mem_bits[47 * 288+:288] = INIT_RAM_2F;
+        mem_bits[48 * 288+:288] = INIT_RAM_30;
+        mem_bits[49 * 288+:288] = INIT_RAM_31;
+        mem_bits[50 * 288+:288] = INIT_RAM_32;
+        mem_bits[51 * 288+:288] = INIT_RAM_33;
+        mem_bits[52 * 288+:288] = INIT_RAM_34;
+        mem_bits[53 * 288+:288] = INIT_RAM_35;
+        mem_bits[54 * 288+:288] = INIT_RAM_36;
+        mem_bits[55 * 288+:288] = INIT_RAM_37;
+        mem_bits[56 * 288+:288] = INIT_RAM_38;
+        mem_bits[57 * 288+:288] = INIT_RAM_39;
+        mem_bits[58 * 288+:288] = INIT_RAM_3A;
+        mem_bits[59 * 288+:288] = INIT_RAM_3B;
+        mem_bits[60 * 288+:288] = INIT_RAM_3C;
+        mem_bits[61 * 288+:288] = INIT_RAM_3D;
+        mem_bits[62 * 288+:288] = INIT_RAM_3E;
+        mem_bits[63 * 288+:288] = INIT_RAM_3F;
+        raw_doa                 = 18'h0;
+        raw_dob                 = 18'h0;
+        pipe_doa                = 18'h0;
+        pipe_dob                = 18'h0;
+    }
+
+    // Both ports read and write the same storage from their own clocks: a true
+    // dual-port RAM crosses clock domains by construction.
+    unsafe (cdc) {
+        // BLK_SEL_x == 0 matches any BLKSELx: a simplification (Gowin selects on an exact
+        // match), invisible to synth_gowin's netlists, which tie both to 0
+        let blksel_a_match: logic = BLKSELA == BLK_SEL_0 || BLK_SEL_0 == 3'b000;
+        let blksel_b_match: logic = BLKSELB == BLK_SEL_1 || BLK_SEL_1 == 3'b000;
+
+        // Bit offset of the addressed word for the configured port width
+        var off_a: logic<32>;
+        var off_b: logic<32>;
+        always_comb {
+            case BIT_WIDTH_0 {
+                1      : off_a = ADA[13:0] * 1;
+                2      : off_a = ADA[13:1] * 2;
+                4      : off_a = ADA[13:2] * 4;
+                8      : off_a = ADA[13:3] * 8;
+                9      : off_a = ADA[13:3] * 9;
+                16     : off_a = ADA[13:4] * 16;
+                18     : off_a = ADA[13:4] * 18;
+                32     : off_a = ADA[13:5] * 32;
+                36     : off_a = ADA[13:5] * 36;
+                default: off_a = ADA[13:4] * 18;
+            }
+            case BIT_WIDTH_1 {
+                1      : off_b = ADB[13:0] * 1;
+                2      : off_b = ADB[13:1] * 2;
+                4      : off_b = ADB[13:2] * 4;
+                8      : off_b = ADB[13:3] * 8;
+                9      : off_b = ADB[13:3] * 9;
+                16     : off_b = ADB[13:4] * 16;
+                18     : off_b = ADB[13:4] * 18;
+                32     : off_b = ADB[13:5] * 32;
+                36     : off_b = ADB[13:5] * 36;
+                default: off_b = ADB[13:4] * 18;
+            }
+        }
+
+        // Port A
+        always_ff (CLKA) {
+            if CEA && blksel_a_match {
+                if WREA {
+                    for i in 0..BIT_WIDTH_0 {
+                        mem_bits[off_a + i] = DIA[i];
+                    }
+                    if WRITE_MODE0 == 2'b01 {
+                        raw_doa = DIA;
+                    } else if WRITE_MODE0 == 2'b10 {
+                        raw_doa = mem_bits[off_a+:18];
+                    }
+                } else {
+                    raw_doa = mem_bits[off_a+:18];
+                }
+            }
+        }
+
+        // Port B
+        always_ff (CLKB) {
+            if CEB && blksel_b_match {
+                if WREB {
+                    for i in 0..BIT_WIDTH_1 {
+                        mem_bits[off_b + i] = DIB[i];
+                    }
+                    if WRITE_MODE1 == 2'b01 {
+                        raw_dob = DIB;
+                    } else if WRITE_MODE1 == 2'b10 {
+                        raw_dob = mem_bits[off_b+:18];
+                    }
+                } else {
+                    raw_dob = mem_bits[off_b+:18];
+                }
+            }
+        }
+
+        // Optional output pipeline registers
+        always_ff (CLKA) {
+            if RESETA {
+                pipe_doa = 18'h0;
+            } else if OCEA {
+                pipe_doa = raw_doa;
+            }
+        }
+        always_ff (CLKB) {
+            if RESETB {
+                pipe_dob = 18'h0;
+            } else if OCEB {
+                pipe_dob = raw_dob;
+            }
+        }
+
+        assign DOA = if READ_MODE0 == 1'b1 ? pipe_doa : raw_doa;
+        assign DOB = if READ_MODE1 == 1'b1 ? pipe_dob : raw_dob;
+    }
+}
+
+// Semi-dual-port block RAM, 18 Kbit (x9/x18/x36): SDPB with the 9th bit; port A writes, port B reads
+module SDPX9B #(
+    param READ_MODE  : bit      = 1'b0            ,
+    param BIT_WIDTH_0: i32      = 36              ,
+    param BIT_WIDTH_1: i32      = 36              ,
+    param BLK_SEL_0  : bit<3>   = 3'b000          ,
+    param BLK_SEL_1  : bit<3>   = 3'b000          ,
+    param RESET_MODE : bit<40>  = 40'h00_5359_4E43, // "SYNC" (or "ASYNC") as ASCII; unused. Not a string: Yosys cannot read string params
+    param INIT_RAM_00: bit<288> = 288'h0          ,
+    param INIT_RAM_01: bit<288> = 288'h0          ,
+    param INIT_RAM_02: bit<288> = 288'h0          ,
+    param INIT_RAM_03: bit<288> = 288'h0          ,
+    param INIT_RAM_04: bit<288> = 288'h0          ,
+    param INIT_RAM_05: bit<288> = 288'h0          ,
+    param INIT_RAM_06: bit<288> = 288'h0          ,
+    param INIT_RAM_07: bit<288> = 288'h0          ,
+    param INIT_RAM_08: bit<288> = 288'h0          ,
+    param INIT_RAM_09: bit<288> = 288'h0          ,
+    param INIT_RAM_0A: bit<288> = 288'h0          ,
+    param INIT_RAM_0B: bit<288> = 288'h0          ,
+    param INIT_RAM_0C: bit<288> = 288'h0          ,
+    param INIT_RAM_0D: bit<288> = 288'h0          ,
+    param INIT_RAM_0E: bit<288> = 288'h0          ,
+    param INIT_RAM_0F: bit<288> = 288'h0          ,
+    param INIT_RAM_10: bit<288> = 288'h0          ,
+    param INIT_RAM_11: bit<288> = 288'h0          ,
+    param INIT_RAM_12: bit<288> = 288'h0          ,
+    param INIT_RAM_13: bit<288> = 288'h0          ,
+    param INIT_RAM_14: bit<288> = 288'h0          ,
+    param INIT_RAM_15: bit<288> = 288'h0          ,
+    param INIT_RAM_16: bit<288> = 288'h0          ,
+    param INIT_RAM_17: bit<288> = 288'h0          ,
+    param INIT_RAM_18: bit<288> = 288'h0          ,
+    param INIT_RAM_19: bit<288> = 288'h0          ,
+    param INIT_RAM_1A: bit<288> = 288'h0          ,
+    param INIT_RAM_1B: bit<288> = 288'h0          ,
+    param INIT_RAM_1C: bit<288> = 288'h0          ,
+    param INIT_RAM_1D: bit<288> = 288'h0          ,
+    param INIT_RAM_1E: bit<288> = 288'h0          ,
+    param INIT_RAM_1F: bit<288> = 288'h0          ,
+    param INIT_RAM_20: bit<288> = 288'h0          ,
+    param INIT_RAM_21: bit<288> = 288'h0          ,
+    param INIT_RAM_22: bit<288> = 288'h0          ,
+    param INIT_RAM_23: bit<288> = 288'h0          ,
+    param INIT_RAM_24: bit<288> = 288'h0          ,
+    param INIT_RAM_25: bit<288> = 288'h0          ,
+    param INIT_RAM_26: bit<288> = 288'h0          ,
+    param INIT_RAM_27: bit<288> = 288'h0          ,
+    param INIT_RAM_28: bit<288> = 288'h0          ,
+    param INIT_RAM_29: bit<288> = 288'h0          ,
+    param INIT_RAM_2A: bit<288> = 288'h0          ,
+    param INIT_RAM_2B: bit<288> = 288'h0          ,
+    param INIT_RAM_2C: bit<288> = 288'h0          ,
+    param INIT_RAM_2D: bit<288> = 288'h0          ,
+    param INIT_RAM_2E: bit<288> = 288'h0          ,
+    param INIT_RAM_2F: bit<288> = 288'h0          ,
+    param INIT_RAM_30: bit<288> = 288'h0          ,
+    param INIT_RAM_31: bit<288> = 288'h0          ,
+    param INIT_RAM_32: bit<288> = 288'h0          ,
+    param INIT_RAM_33: bit<288> = 288'h0          ,
+    param INIT_RAM_34: bit<288> = 288'h0          ,
+    param INIT_RAM_35: bit<288> = 288'h0          ,
+    param INIT_RAM_36: bit<288> = 288'h0          ,
+    param INIT_RAM_37: bit<288> = 288'h0          ,
+    param INIT_RAM_38: bit<288> = 288'h0          ,
+    param INIT_RAM_39: bit<288> = 288'h0          ,
+    param INIT_RAM_3A: bit<288> = 288'h0          ,
+    param INIT_RAM_3B: bit<288> = 288'h0          ,
+    param INIT_RAM_3C: bit<288> = 288'h0          ,
+    param INIT_RAM_3D: bit<288> = 288'h0          ,
+    param INIT_RAM_3E: bit<288> = 288'h0          ,
+    param INIT_RAM_3F: bit<288> = 288'h0          ,
+) (
+    CLKA   : input  'a clock    ,
+    CEA    : input  'a logic    ,
+    CLKB   : input  'b clock    ,
+    CEB    : input  'b logic    ,
+    OCE    : input  'b logic    ,
+    RESETA : input  'a logic    ,
+    RESETB : input  'b logic    ,
+    ADA    : input  'a logic<14>,
+    ADB    : input  'b logic<14>,
+    DI     : input  'a logic<36>,
+    BLKSELA: input  'a logic<3> ,
+    BLKSELB: input  'b logic<3> ,
+    DO     : output 'b logic<36>,
+) {
+    #[allow(initial_assign)]
+    var mem_bits: logic<18432>;
+    #[allow(initial_assign)]
+    var raw_do: logic<36>;
+    #[allow(initial_assign)]
+    var pipe_do: logic<36>;
+
+    // The output reads 0 until the first access
+    initial {
+        mem_bits[0 * 288+:288]  = INIT_RAM_00;
+        mem_bits[1 * 288+:288]  = INIT_RAM_01;
+        mem_bits[2 * 288+:288]  = INIT_RAM_02;
+        mem_bits[3 * 288+:288]  = INIT_RAM_03;
+        mem_bits[4 * 288+:288]  = INIT_RAM_04;
+        mem_bits[5 * 288+:288]  = INIT_RAM_05;
+        mem_bits[6 * 288+:288]  = INIT_RAM_06;
+        mem_bits[7 * 288+:288]  = INIT_RAM_07;
+        mem_bits[8 * 288+:288]  = INIT_RAM_08;
+        mem_bits[9 * 288+:288]  = INIT_RAM_09;
+        mem_bits[10 * 288+:288] = INIT_RAM_0A;
+        mem_bits[11 * 288+:288] = INIT_RAM_0B;
+        mem_bits[12 * 288+:288] = INIT_RAM_0C;
+        mem_bits[13 * 288+:288] = INIT_RAM_0D;
+        mem_bits[14 * 288+:288] = INIT_RAM_0E;
+        mem_bits[15 * 288+:288] = INIT_RAM_0F;
+        mem_bits[16 * 288+:288] = INIT_RAM_10;
+        mem_bits[17 * 288+:288] = INIT_RAM_11;
+        mem_bits[18 * 288+:288] = INIT_RAM_12;
+        mem_bits[19 * 288+:288] = INIT_RAM_13;
+        mem_bits[20 * 288+:288] = INIT_RAM_14;
+        mem_bits[21 * 288+:288] = INIT_RAM_15;
+        mem_bits[22 * 288+:288] = INIT_RAM_16;
+        mem_bits[23 * 288+:288] = INIT_RAM_17;
+        mem_bits[24 * 288+:288] = INIT_RAM_18;
+        mem_bits[25 * 288+:288] = INIT_RAM_19;
+        mem_bits[26 * 288+:288] = INIT_RAM_1A;
+        mem_bits[27 * 288+:288] = INIT_RAM_1B;
+        mem_bits[28 * 288+:288] = INIT_RAM_1C;
+        mem_bits[29 * 288+:288] = INIT_RAM_1D;
+        mem_bits[30 * 288+:288] = INIT_RAM_1E;
+        mem_bits[31 * 288+:288] = INIT_RAM_1F;
+        mem_bits[32 * 288+:288] = INIT_RAM_20;
+        mem_bits[33 * 288+:288] = INIT_RAM_21;
+        mem_bits[34 * 288+:288] = INIT_RAM_22;
+        mem_bits[35 * 288+:288] = INIT_RAM_23;
+        mem_bits[36 * 288+:288] = INIT_RAM_24;
+        mem_bits[37 * 288+:288] = INIT_RAM_25;
+        mem_bits[38 * 288+:288] = INIT_RAM_26;
+        mem_bits[39 * 288+:288] = INIT_RAM_27;
+        mem_bits[40 * 288+:288] = INIT_RAM_28;
+        mem_bits[41 * 288+:288] = INIT_RAM_29;
+        mem_bits[42 * 288+:288] = INIT_RAM_2A;
+        mem_bits[43 * 288+:288] = INIT_RAM_2B;
+        mem_bits[44 * 288+:288] = INIT_RAM_2C;
+        mem_bits[45 * 288+:288] = INIT_RAM_2D;
+        mem_bits[46 * 288+:288] = INIT_RAM_2E;
+        mem_bits[47 * 288+:288] = INIT_RAM_2F;
+        mem_bits[48 * 288+:288] = INIT_RAM_30;
+        mem_bits[49 * 288+:288] = INIT_RAM_31;
+        mem_bits[50 * 288+:288] = INIT_RAM_32;
+        mem_bits[51 * 288+:288] = INIT_RAM_33;
+        mem_bits[52 * 288+:288] = INIT_RAM_34;
+        mem_bits[53 * 288+:288] = INIT_RAM_35;
+        mem_bits[54 * 288+:288] = INIT_RAM_36;
+        mem_bits[55 * 288+:288] = INIT_RAM_37;
+        mem_bits[56 * 288+:288] = INIT_RAM_38;
+        mem_bits[57 * 288+:288] = INIT_RAM_39;
+        mem_bits[58 * 288+:288] = INIT_RAM_3A;
+        mem_bits[59 * 288+:288] = INIT_RAM_3B;
+        mem_bits[60 * 288+:288] = INIT_RAM_3C;
+        mem_bits[61 * 288+:288] = INIT_RAM_3D;
+        mem_bits[62 * 288+:288] = INIT_RAM_3E;
+        mem_bits[63 * 288+:288] = INIT_RAM_3F;
+        raw_do                  = 36'h0;
+        pipe_do                 = 36'h0;
+    }
+
+    // Written from port A's clock, read from port B's: crosses clock domains by construction
+    unsafe (cdc) {
+        // Bit offset of the addressed word for each port's width
+        var off_a: logic<32>;
+        var off_b: logic<32>;
+        always_comb {
+            case BIT_WIDTH_0 {
+                1      : off_a = ADA[13:0] * 1;
+                2      : off_a = ADA[13:1] * 2;
+                4      : off_a = ADA[13:2] * 4;
+                8      : off_a = ADA[13:3] * 8;
+                9      : off_a = ADA[13:3] * 9;
+                16     : off_a = ADA[13:4] * 16;
+                18     : off_a = ADA[13:4] * 18;
+                32     : off_a = ADA[13:5] * 32;
+                36     : off_a = ADA[13:5] * 36;
+                default: off_a = ADA[13:5] * 36;
+            }
+            case BIT_WIDTH_1 {
+                1      : off_b = ADB[13:0] * 1;
+                2      : off_b = ADB[13:1] * 2;
+                4      : off_b = ADB[13:2] * 4;
+                8      : off_b = ADB[13:3] * 8;
+                9      : off_b = ADB[13:3] * 9;
+                16     : off_b = ADB[13:4] * 16;
+                18     : off_b = ADB[13:4] * 18;
+                32     : off_b = ADB[13:5] * 32;
+                36     : off_b = ADB[13:5] * 36;
+                default: off_b = ADB[13:5] * 36;
+            }
+        }
+
+        always_ff (CLKA) {
+            if CEA && BLKSELA == BLK_SEL_0 {
+                for i in 0..BIT_WIDTH_0 {
+                    mem_bits[off_a + i] = DI[i];
+                }
+            }
+        }
+
+        always_ff (CLKB) {
+            if CEB && BLKSELB == BLK_SEL_1 {
+                raw_do = mem_bits[off_b+:36];
+            }
+        }
+
+        // Optional output pipeline register
+        always_ff (CLKB) {
+            if RESETB {
+                pipe_do = 36'h0;
             } else if OCE {
                 pipe_do = raw_do;
             }

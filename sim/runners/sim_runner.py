@@ -44,7 +44,7 @@ _CPU = ["rv32i_pkg", "rv32i_alu", "rv32i_decode", "rv32i_regfile", "rv32i_csrs",
         "next_pc_unit", "hack_translator", "auto_mode_detector", "unified_cpu"]  # fmt: skip
 _UART = ["clk_timer", "shift_registers", "fifo_sync", "uart_tx", "uart_rx", "uart_controller"]
 _SOC = ["timer_core", "sdcard_spi", "gpio_controller", "soc_ram", "soc_addr_decoder", "soc_xmem_bridge",
-        "soc_top"]  # fmt: skip
+        "soc_icache", "soc_dcache", "soc_top"]  # fmt: skip
 # The PSRAM controller (a Veryl dependency, vendor/psram_controller; package first) and the IP's
 # pin-level W955D8MBYA model, Icarus only: it is timed in real time (`realtime`, `#` delays)
 _PSRAM_IP = VERYL_OUT_DIR / "dependencies" / "psram" / "rtl"

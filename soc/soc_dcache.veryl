@@ -1,0 +1,144 @@
+// Copyright (c) 2026 Takayuki Nagata
+// SPDX-License-Identifier: MIT
+
+// The data cache in front of the wait-state window (RV32 region soc_pkg::RV_REGION_XMEM):
+// direct-mapped, write-through, one word a line, 512 lines (2 KB). It sits between the CPU's
+// RV32 MEM_WAIT and soc_xmem_bridge, which sees the load misses and every store.
+// - Lines are keyed by the PSRAM word (addr[22:2]: index [10:2], tag [22:11]), so every alias
+//   of a word in region 8 is the same line, as the memory behind the window repeats every 8 MB.
+// - The RAMs are read a cycle ahead at rd_idx (the CPU's data_addr: the access address,
+//   computed in EXECUTE and held through MEM_WAIT), as D-RAM is. In MEM_WAIT the registered
+//   tag is compared with data_addr (the registered access address); a load hit completes in
+//   the first MEM_WAIT cycle, so it costs what a D-RAM load costs.
+// - A load miss goes to the bridge (mem_sel) and completes with it (mem_ready); the word fills
+//   the line in that cycle. Once an access is at the bridge it stays a miss until then
+//   (missing), so mem_sel never drops under a request in flight.
+// - A store always goes to the bridge and completes with it (write-through: the memory is
+//   always current, nothing is ever written back). In its completing cycle a hit merges the
+//   stored bytes into the line; a miss of a full word (wstrb 1111) allocates the line; a
+//   partial store that misses invalidates the line, whatever it holds (it may be the stored
+//   word: the miss was decided when the access began, e.g. on a stale read-ahead).
+// - A write to the index being read in the same cycle leaves that read undefined on the board
+//   (-no-rw-check, as soc_icache): the next cycle then misses. Writes happen only in a
+//   completing cycle, after which the CPU fetches, so no access sees it.
+// - clear (high while soc_top's power-on reset counts) invalidates every line once, one a
+//   cycle, before the CPU runs: the RAMs have no reset. Until then window accesses wait.
+pub module soc_dcache (
+    clk  : input clock,
+    rst  : input reset,
+    clear: input logic,
+
+    // CPU side
+    rd_idx    : input  logic<9> , // data_addr[10:2]: the line of the access, from EXECUTE on
+    data_req  : input  logic    , // the CPU is in an RV32 MEM_WAIT
+    data_sel  : input  logic    , // data_addr is in the window
+    data_addr : input  logic<21>, // data_waddr[22:2]: the PSRAM word of the registered access address
+    data_we   : input  logic    , // 1: store, 0: load
+    data_wdata: input  logic<32>,
+    data_wstrb: input  logic<4> ,
+    data_ready: output logic    ,
+    rdata     : output logic<32>, // the loaded word, valid when a window load completes
+    hit       : output logic    ,
+
+    // soc_xmem_bridge's data side: load misses and stores
+    mem_sel  : output logic    ,
+    mem_ready: input  logic    ,
+    mem_rdata: input  logic<32>,
+) {
+    const LINES: u32 = 512;
+
+    var tags : logic<13> [LINES]; // {valid, addr[22:11]}
+    var words: logic<32> [LINES];
+
+    var tag_q     : logic<13>;
+    var word_q    : logic<32>;
+    var rd_idx_q  : logic<9> ;
+    var conflict_q: logic    ;
+    var swept     : logic    ;
+    var missing   : logic    ;
+    var sweep_idx : logic<9> ;
+
+    let idx: logic<9> = data_addr[8:0];
+    let win: logic    = data_req && data_sel;
+
+    assign hit        = swept && !missing && !conflict_q && rd_idx_q == idx && tag_q == {1'b1, data_addr[20:9]};
+    assign mem_sel    = win && swept && (data_we || !hit);
+    assign data_ready = !win || swept && (hit && !data_we || mem_ready);
+    assign rdata      = if hit ? word_q : mem_rdata;
+
+    let done : logic     = win && swept && (data_we || !hit) && mem_ready;
+    let merge: logic<32> = {
+        if data_wstrb[3] ? data_wdata[31:24] : word_q[31:24], if data_wstrb[2] ? data_wdata[23:16] : word_q[23:16],
+        if data_wstrb[1] ? data_wdata[15:8] : word_q[15:8], if data_wstrb[0] ? data_wdata[7:0] : word_q[7:0]
+    };
+
+    var tag_we    : logic    ;
+    var word_we   : logic    ;
+    var waddr     : logic<9> ;
+    var tag_wdata : logic<13>;
+    var word_wdata: logic<32>;
+
+    always_comb {
+        tag_we     = 1'b0;
+        word_we    = 1'b0;
+        waddr      = idx;
+        tag_wdata  = {1'b1, data_addr[20:9]};
+        word_wdata = mem_rdata;
+        if !swept {
+            tag_we    = clear;
+            waddr     = sweep_idx;
+            tag_wdata = 13'd0;
+        } else if done && !data_we {
+            // load miss: fill
+            tag_we  = 1'b1;
+            word_we = 1'b1;
+        } else if done && hit {
+            // store hit: merge the bytes, the tag stays
+            word_we    = 1'b1;
+            word_wdata = merge;
+        } else if done && data_wstrb == 4'b1111 {
+            // full-word store miss: allocate
+            tag_we     = 1'b1;
+            word_we    = 1'b1;
+            word_wdata = data_wdata;
+        } else if done {
+            // partial store miss: invalidate
+            tag_we    = 1'b1;
+            tag_wdata = 13'd0;
+        }
+    }
+
+    always_ff (clk) {
+        if tag_we {
+            tags[waddr] = tag_wdata;
+        }
+        tag_q = tags[rd_idx];
+    }
+
+    always_ff (clk) {
+        if word_we {
+            words[waddr] = word_wdata;
+        }
+        word_q = words[rd_idx];
+    }
+
+    always_ff (clk, rst) {
+        if_reset {
+            swept      = 1'b0;
+            missing    = 1'b0;
+            sweep_idx  = 9'd0;
+            rd_idx_q   = 9'd0;
+            conflict_q = 1'b0;
+        } else {
+            if !swept && clear {
+                sweep_idx = sweep_idx + 9'd1;
+                if sweep_idx == 9'd511 {
+                    swept = 1'b1;
+                }
+            }
+            missing    = mem_sel && !mem_ready;
+            rd_idx_q   = rd_idx;
+            conflict_q = (tag_we || word_we) && waddr == rd_idx;
+        }
+    }
+}

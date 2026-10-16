@@ -44,6 +44,8 @@ UNIT = [
     ("gpio_controller", "test_gpio_controller"),
     ("soc_addr_decoder", "test_soc_addr_decoder"),
     ("soc_xmem_bridge", "test_soc_xmem_bridge"),
+    ("soc_icache", "test_soc_icache"),
+    ("soc_dcache", "test_soc_dcache"),
     ("sdcard_spi", "test_sdcard_spi"),
     ("soc_ram", "test_soc_ram"),
     ("tb_gowin_bram", "test_gowin_bram"),  # SP/SDPB cell models (no netlist uses them)
@@ -61,6 +63,8 @@ UNIT_GLS = [
     ("uart_controller", "test_uart_controller"),
     ("auto_mode_detector", "test_auto_mode_detector"),
     ("soc_xmem_bridge", "test_soc_xmem_bridge"),
+    ("soc_icache", "test_soc_icache"),
+    ("soc_dcache", "test_soc_dcache"),
 ]
 
 # Full SoC, all on the tb_soc_top.sv clock wrapper (set up via sim/integration/soc_env.py)

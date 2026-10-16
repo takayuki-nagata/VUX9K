@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: MIT
 
 // Test wrapper for the block-RAM models in sim/gowin_cells_sim.veryl that no GLS
-// netlist instantiates today (SP, SDPB), so nothing else exercises them.
-// sim/unit/test_gowin_bram.py checks where INIT_RAM_* contents land and SDPB's
-// per-port widths. The INIT values only need to be distinct per block.
+// netlist instantiates today (SP, SDPB), so nothing else exercises them, and for the
+// x9 ones (DPX9B, SDPX9B), whose INIT_RAM_* nothing else exercises (the caches using
+// them have no initial contents). sim/unit/test_gowin_bram.py checks where INIT_RAM_*
+// contents land and the per-port widths. The INIT values only need to be distinct per
+// block.
 module tb_gowin_bram (
     clk: input clock,
 
@@ -18,6 +20,21 @@ module tb_gowin_bram (
     sdpb_di : input  logic<32>,
     sdpb_adb: input  logic<14>,
     sdpb_do : output logic<32>,
+
+    // DPX9B: x18 on both ports; port A writes, port B reads
+    dpx9b_we : input  logic    ,
+    dpx9b_ada: input  logic<14>,
+    dpx9b_di : input  logic<18>,
+    dpx9b_adb: input  logic<14>,
+    dpx9b_do : output logic<18>,
+    dpx9b_doa: output logic<18>, // port A's read of the word it addresses
+
+    // SDPX9B: port A writes x18, port B reads x36
+    sdpx9b_we : input  logic    ,
+    sdpx9b_ada: input  logic<14>,
+    sdpx9b_di : input  logic<36>,
+    sdpx9b_adb: input  logic<14>,
+    sdpx9b_do : output logic<36>,
 ) {
     inst sp: SP #(
         BIT_WIDTH  : 32                                                                          ,
@@ -56,6 +73,54 @@ module tb_gowin_bram (
             BLKSELA: 3'b000  ,
             BLKSELB: 3'b000  ,
             DO     : sdpb_do ,
+        );
+    }
+
+    // The x9 RAMs, one clock on both ports as above
+    unsafe (cdc) {
+        inst dpx9b: DPX9B #(
+            BIT_WIDTH_0: 18                                                                                   ,
+            BIT_WIDTH_1: 18                                                                                   ,
+            INIT_RAM_07: 288'h07070707_07070707_07070707_07070707_07070707_07070707_07070707_07070707_0706d007,
+        ) (
+            CLKA   : clk      ,
+            CEA    : 1'b1     ,
+            CLKB   : clk      ,
+            CEB    : 1'b1     ,
+            OCEA   : 1'b0     ,
+            OCEB   : 1'b0     ,
+            RESETA : 1'b0     ,
+            RESETB : 1'b0     ,
+            WREA   : dpx9b_we ,
+            WREB   : 1'b0     ,
+            ADA    : dpx9b_ada,
+            ADB    : dpx9b_adb,
+            BLKSELA: 3'b000   ,
+            BLKSELB: 3'b000   ,
+            DIA    : dpx9b_di ,
+            DIB    : 18'h0    ,
+            DOA    : dpx9b_doa,
+            DOB    : dpx9b_do ,
+        );
+
+        inst sdpx9b: SDPX9B #(
+            BIT_WIDTH_0: 18                                                                                   ,
+            BIT_WIDTH_1: 36                                                                                   ,
+            INIT_RAM_2A: 288'h2a2a2a2a_2a2a2a2a_2a2a2a2a_2a2a2a2a_2a2a2a2a_2a2a2a2a_2a2a2a2a_2a2a2a29_b00b002a,
+        ) (
+            CLKA   : clk       ,
+            CEA    : sdpx9b_we ,
+            CLKB   : clk       ,
+            CEB    : 1'b1      ,
+            OCE    : 1'b0      ,
+            RESETA : 1'b0      ,
+            RESETB : 1'b0      ,
+            ADA    : sdpx9b_ada,
+            ADB    : sdpx9b_adb,
+            DI     : sdpx9b_di ,
+            BLKSELA: 3'b000    ,
+            BLKSELB: 3'b000    ,
+            DO     : sdpx9b_do ,
         );
     }
 }

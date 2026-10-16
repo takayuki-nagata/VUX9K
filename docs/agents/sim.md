@@ -23,7 +23,7 @@ runs all cocotb tests (see below).
 - The `.veryl` files there are the only Veryl sources outside `soc/`; Veryl mirrors
   the source tree into `build/veryl/`, so they compile to
   `build/veryl/sim/gowin_cells_sim.sv` (the Gowin cell models for GLS) and
-  `build/veryl/sim/tb_gowin_bram.sv` (a test wrapper for the SP/SDPB models),
+  `build/veryl/sim/tb_gowin_bram.sv` (a test wrapper for the SP/SDPB/DPX9B/SDPX9B models),
   `build/veryl/sim/psram_word_model.sv` and `tb_psram_contract.sv` (below), paths
   `sim/runners/sim_runner.py` hardcodes, and `build/veryl/sim/tb_hex_runner.sv`
   (a path `scripts/run_riscv_tests.py` hardcodes). Moving any of them
@@ -100,7 +100,7 @@ whether the model or the RTL is wrong; an RTL bug gets `xfail(strict=True)` unti
   tests there): use the module's default value in the test, not `dut.PARAM`.
 - **Functional coverage** (cocotb-coverage, `sim/unit/fcov.py`) counts which cases of the
   spec the stimulus reached: the random tests of the ALU, decoder, LSU, next-PC, trap
-  unit, CSRs, FIFO, UART RX, SD SPI and the wait-state window, and the CPU's stall tests,
+  unit, CSRs, FIFO, UART RX, SD SPI, the wait-state window and its caches, and the CPU's stall tests,
   sample cover points from the function that applies one stimulus, and export `fcov.yml`
   at the end of each test. `make
   coverage-fcov` (test-sim) checks each group against `coverage/thresholds.toml`'s

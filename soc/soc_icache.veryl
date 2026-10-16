@@ -1,0 +1,126 @@
+// Copyright (c) 2026 Takayuki Nagata
+// SPDX-License-Identifier: MIT
+
+// The instruction cache in front of the wait-state window (RV32 region
+// soc_pkg::RV_REGION_XMEM): direct-mapped, one word a line, 1024 lines (4 KB). It sits between
+// the CPU's fetch and soc_xmem_bridge, which sees only the misses.
+// - Lines are keyed by the PSRAM word (addr[22:2]: index [11:2], tag [22:12]), so every alias
+//   of a word in region 8 is the same line, as the memory behind the window repeats every 8 MB.
+// - The RAMs are read a cycle ahead at rd_idx (the CPU's pc_out: next_pc in the cycle before
+//   FETCH, pc_reg during it), as I-RAM is. In FETCH the registered tag is compared with
+//   fetch_addr (pc_reg); a hit completes in the first FETCH cycle, so a hit costs what an
+//   I-RAM fetch costs. ready comes from registers only (the RAM outputs, the registered read
+//   index, fetch_addr), never from the CPU's next-PC path.
+// - A miss goes to the bridge (mem_sel) and completes with it (mem_ready); once requested it
+//   stays a miss until then (missing), so mem_sel never drops under a request in flight even
+//   if the line could read as a hit later in the wait. The word the bridge returns
+//   goes to the CPU and fills the line in the same cycle.
+// - Coherence: inv is a store to the window completing (the CPU's only way to write the
+//   memory behind it); the line at its index is invalidated, whatever its tag. Code the CPU
+//   writes is therefore never fetched stale, and fence.i needs to do nothing.
+// - A tag write to the index being read in the same cycle (the store above, or a fill) leaves
+//   that read undefined on the board (synthesis drops the collision logic, -no-rw-check; RTL
+//   simulation shows the old tag): the next cycle then misses, which is the right answer
+//   anyway (the line was just invalidated, or the next cycle is no FETCH).
+// - clear (high while soc_top's power-on reset counts) invalidates every line once, one a
+//   cycle, before the CPU runs: the RAMs have no reset. Until then window fetches wait.
+pub module soc_icache (
+    clk  : input clock,
+    rst  : input reset,
+    clear: input logic,
+
+    // CPU side
+    rd_idx     : input  logic<10>, // pc_out[11:2]: the line of the next fetch, a cycle ahead
+    fetch_req  : input  logic    , // the CPU is in FETCH
+    fetch_sel  : input  logic    , // fetch_addr is in the window (RV32)
+    fetch_addr : input  logic<21>, // pc_reg[22:2]: the PSRAM word
+    instr_ready: output logic    ,
+    rdata      : output logic<32>, // the fetched word, valid when a window fetch completes
+    hit        : output logic    ,
+
+    // A store to the window completing, at line inv_idx (its address [11:2])
+    inv    : input logic    ,
+    inv_idx: input logic<10>,
+
+    // soc_xmem_bridge's fetch side: misses only
+    mem_sel  : output logic    ,
+    mem_ready: input  logic    ,
+    mem_rdata: input  logic<32>,
+) {
+    const LINES: u32 = 1024;
+
+    var tags : logic<12> [LINES]; // {valid, addr[22:12]}
+    var words: logic<32> [LINES];
+
+    var tag_q     : logic<12>;
+    var word_q    : logic<32>;
+    var rd_idx_q  : logic<10>;
+    var conflict_q: logic    ;
+    var swept     : logic    ;
+    var missing   : logic    ;
+    var sweep_idx : logic<10>;
+
+    let idx: logic<10> = fetch_addr[9:0];
+    let win: logic     = fetch_req && fetch_sel;
+
+    assign hit         = swept && !missing && !conflict_q && rd_idx_q == idx && tag_q == {1'b1, fetch_addr[20:10]};
+    assign mem_sel     = win && swept && !hit;
+    assign instr_ready = !win || swept && (hit || mem_ready);
+    assign rdata       = if hit ? word_q : mem_rdata;
+
+    let fill: logic = win && swept && !hit && mem_ready;
+
+    var tag_we   : logic    ;
+    var tag_waddr: logic<10>;
+    var tag_wdata: logic<12>;
+
+    always_comb {
+        if !swept {
+            tag_we    = clear;
+            tag_waddr = sweep_idx;
+            tag_wdata = 12'd0;
+        } else if fill {
+            tag_we    = 1'b1;
+            tag_waddr = idx;
+            tag_wdata = {1'b1, fetch_addr[20:10]};
+        } else {
+            tag_we    = inv;
+            tag_waddr = inv_idx;
+            tag_wdata = 12'd0;
+        }
+    }
+
+    always_ff (clk) {
+        if tag_we {
+            tags[tag_waddr] = tag_wdata;
+        }
+        tag_q = tags[rd_idx];
+    }
+
+    always_ff (clk) {
+        if fill {
+            words[idx] = mem_rdata;
+        }
+        word_q = words[rd_idx];
+    }
+
+    always_ff (clk, rst) {
+        if_reset {
+            swept      = 1'b0;
+            missing    = 1'b0;
+            sweep_idx  = 10'd0;
+            rd_idx_q   = 10'd0;
+            conflict_q = 1'b0;
+        } else {
+            if !swept && clear {
+                sweep_idx = sweep_idx + 10'd1;
+                if sweep_idx == 10'd1023 {
+                    swept = 1'b1;
+                }
+            }
+            missing    = mem_sel && !mem_ready;
+            rd_idx_q   = rd_idx;
+            conflict_q = tag_we && tag_waddr == rd_idx;
+        }
+    }
+}

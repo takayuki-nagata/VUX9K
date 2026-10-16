@@ -566,6 +566,8 @@ synth-units: veryl
 	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/uart/clk_timer.sv $(VERYL_OUT_DIR)/soc/uart/shift_registers.sv $(VERYL_OUT_DIR)/soc/uart/fifo_sync.sv $(VERYL_OUT_DIR)/soc/uart/uart_tx.sv $(VERYL_OUT_DIR)/soc/uart/uart_rx.sv $(VERYL_OUT_DIR)/soc/uart/uart_controller.sv; synth_gowin -top uart_controller $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/uart_controller_syn.v"
 	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_pkg.sv $(VERYL_OUT_DIR)/soc/cpu/auto_mode_detector.sv; synth_gowin -top auto_mode_detector $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/auto_mode_detector_syn.v"
 	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/soc_xmem_bridge.sv; synth_gowin -top soc_xmem_bridge $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/soc_xmem_bridge_syn.v"
+	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/soc_icache.sv; synth_gowin -top soc_icache $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/soc_icache_syn.v"
+	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/soc_dcache.sv; synth_gowin -top soc_dcache $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/soc_dcache_syn.v"
 	$(YOSYS) -p "read_verilog -sv $(PSRAM_RTL_SRCS); chparam -set CLK_HZ $(SOC_CLK_HZ) psram_psram_controller; synth_gowin -top psram_psram_controller $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/psram_controller_syn.v"
 
 # soc_pkg::CLK_HZ, for the PSRAM controller's netlist above (soc_top's instance sets it; a
@@ -653,7 +655,8 @@ PSRAM_RTL_SRCS = $(addprefix $(VERYL_OUT_DIR)/dependencies/psram/rtl/,psram_pkg.
 SOC_RTL_SRCS = $(VERYL_OUT_DIR)/soc/soc_pkg.sv $(CPU_RTL_SRCS) $(VERYL_OUT_DIR)/soc/uart/clk_timer.sv $(VERYL_OUT_DIR)/soc/uart/fifo_sync.sv $(VERYL_OUT_DIR)/soc/uart/shift_registers.sv \
                $(VERYL_OUT_DIR)/soc/uart/uart_tx.sv $(VERYL_OUT_DIR)/soc/uart/uart_rx.sv $(VERYL_OUT_DIR)/soc/uart/uart_controller.sv $(VERYL_OUT_DIR)/soc/timer_core.sv \
                $(VERYL_OUT_DIR)/soc/sdcard_spi.sv $(VERYL_OUT_DIR)/soc/gpio_controller.sv $(VERYL_OUT_DIR)/soc/soc_ram.sv $(VERYL_OUT_DIR)/soc/soc_addr_decoder.sv \
-               $(PSRAM_RTL_SRCS) $(VERYL_OUT_DIR)/soc/soc_xmem_bridge.sv $(VERYL_OUT_DIR)/soc/soc_top.sv $(VERYL_OUT_DIR)/soc/board_top.sv
+               $(PSRAM_RTL_SRCS) $(VERYL_OUT_DIR)/soc/soc_xmem_bridge.sv $(VERYL_OUT_DIR)/soc/soc_icache.sv $(VERYL_OUT_DIR)/soc/soc_dcache.sv \
+               $(VERYL_OUT_DIR)/soc/soc_top.sv $(VERYL_OUT_DIR)/soc/board_top.sv
 
 $(SYNTH_DIR)/soc.json $(SYNTH_DIR)/soc_syn.v: $(VERYL_OUT_DIR)/.stamp $(FIRMWARE_BUILD_DIR)/firmware.hex $(SOC_RTL_SRCS) $(SYNTH_OPTS_STAMP)
 	@mkdir -p $(SYNTH_DIR)
