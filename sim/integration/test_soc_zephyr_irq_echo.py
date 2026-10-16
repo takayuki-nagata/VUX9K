@@ -39,11 +39,14 @@ async def start(dut):
 async def reply(ser) -> bytes:
     """The echo and its rx/drop/err line."""
     out = await ser.wait_for(b"err=", timeout_cycles=10_000_000)
-    return out + await ser.wait_for(b"\n", timeout_cycles=100_000)
+    # The error code and the newline (TX from the PSRAM is slow); wait_for may have read them
+    if b"\n" not in out[out.index(b"err=") :]:
+        out += await ser.wait_for(b"\n", timeout_cycles=5_000_000)
+    return out
 
 
 # ~0.8M cycles to "ready" and well under 1M per line from the PSRAM (estimated from the
-# I-RAM build's instruction counts, to be measured); the waits allow 30M (1.7 s simulated)
+# I-RAM build's instruction counts, to be measured); the waits allow 40M (2.2 s simulated)
 @cocotb.test(timeout_time=2500, timeout_unit="ms")
 async def test_zephyr_irq_echo_from_the_psram(dut):
     """A 64-byte line (over both FIFOs), sent in paced chunks, comes back upper-cased with no overrun"""
@@ -61,11 +64,17 @@ async def test_zephyr_irq_echo_from_the_psram(dut):
 _back_to_back: list[bytes] = []
 
 
-@cocotb.test(timeout_time=1500, timeout_unit="ms")
+@cocotb.test(timeout_time=2000, timeout_unit="ms")
 async def test_zephyr_irq_echo_back_to_back_reports_the_overrun(dut):
     """A 64-byte line sent back to back loses bytes in the RX FIFO, and uart_err_check reports the overrun"""
     ser = await start(dut)
-    ser.write(BURST + b"\n")
+    # The overrun may drop any byte of the line, its newline too, and irq_echo answers only at
+    # a newline: that is sent alone once the handler has read what the RX FIFO kept (at most
+    # 32 bytes; the time for the whole line, twice, is the margin)
+    ser.write(BURST)
+    drain_frames = 2 * pace.HANDLER_FRAMES_PER_BYTE * len(BURST)
+    await wait_cycles((len(BURST) * BRIDGE_BYTE_BITS + drain_frames * pace.FRAME_BITS) * UART_BAUD_CYCLES)
+    ser.write(b"\n")
     out = await reply(ser)
     _back_to_back.append(out)
     m = re.fullmatch(rb"([A-Z0-9]*)\nrx=(\d+) drop=0 err=(\d+)\n", out)

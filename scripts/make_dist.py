@@ -177,6 +177,12 @@ def linked_into(manifest, platform, flags, crate):
     return sorted((pkgs[pid] for pid in seen if pkgs[pid]["source"]), key=lambda p: p["name"])
 
 
+def offers_apache(expr):
+    """Whether the SPDX license expression lets the crate be used under Apache-2.0 alone
+    ("MIT OR Apache-2.0", the older "MIT/Apache-2.0")."""
+    return "Apache-2.0" in (a.strip(" ()") for a in re.split(r"\s+OR\s+|/", expr or ""))
+
+
 def third_party_licenses(out_path):
     """License texts of the crates linked into the emulator binaries and bc (normal deps,
     no proc-macros)."""
@@ -197,14 +203,32 @@ def third_party_licenses(out_path):
         out += ["", f"{binary} links " + ("these Rust crates:" if crates else "no third-party Rust crates.")]
         out += [f"  {p['name']} {p['version']}  ({p['license']})" for p in crates]
         linked |= {p["id"]: p for p in crates}
+    unshipped = []  # crates without a license file, offered under Apache-2.0
+    apache_text = None  # (crate, file) whose text is the Apache License 2.0
     for p in sorted(linked.values(), key=lambda p: p["name"]):
         crate_dir = os.path.dirname(p["manifest_path"])
         texts = sorted(n for n in os.listdir(crate_dir) if re.match(r"(LICEN[CS]E|COPYING)", n, re.I))
         if not texts:
-            sys.exit(f"make_dist: no license file in {crate_dir}")
+            if not offers_apache(p["license"]):
+                sys.exit(f"make_dist: no license file in {crate_dir}, and {p['license']!r} offers no Apache-2.0")
+            unshipped.append(p)
         for name in texts:
             with open(os.path.join(crate_dir, name), errors="replace") as f:
-                out += ["", "=" * 78, f"{p['name']} {p['version']}: {name}", "=" * 78, "", f.read().rstrip()]
+                text = f.read().rstrip()
+            if apache_text is None and "apache" in name.lower() and text.lstrip().startswith("Apache License"):
+                apache_text = (f"{p['name']} {p['version']}", name)
+            out += ["", "=" * 78, f"{p['name']} {p['version']}: {name}", "=" * 78, "", text]
+    if unshipped:
+        if apache_text is None:
+            names = ", ".join(f"{p['name']} {p['version']}" for p in unshipped)
+            sys.exit(f"make_dist: no license file in {names}, and no Apache License 2.0 text to refer to")
+        out += ["", "=" * 78, "Crates without a license file", "=" * 78, ""]
+        out += [
+            f"{p['name']} {p['version']} ships no license file; it is offered under {p['license']} "
+            f"(Cargo.toml) and is distributed here under Apache-2.0, whose text is above under "
+            f"{apache_text[0]}: {apache_text[1]}."
+            for p in unshipped
+        ]
     with open(out_path, "w") as f:
         f.write("\n".join(out) + "\n")
 

@@ -71,13 +71,20 @@ def v4_file(data: bytes) -> bytes:
 
 def send_chunked(ser, data: bytes, chunk: int) -> None:
     """data in chunks of `chunk` bytes, each followed by pace.GAP_FRAMES frame times of
-    silence (0: all at once). The sleep counts from the write, so it covers the chunk's own
-    time on the line too; host and USB latency only add to the gaps."""
-    if chunk <= 0:
-        ser.write(data)
-        ser.flush()
-        return
+    silence (0: all at once, but a final newline alone once the app has had time to read the
+    rest: an overrun can drop it too, and the app answers only at a newline). The sleep counts
+    from the write, so it covers the chunk's own time on the line too; host and USB latency
+    only add to the gaps."""
     frame_s = pace.FRAME_BITS / 115200
+    if chunk <= 0:
+        line, newline = (data[:-1], data[-1:]) if data.endswith(b"\n") else (data, b"")
+        ser.write(line)
+        ser.flush()
+        if newline:
+            time.sleep((1 + 2 * pace.HANDLER_FRAMES_PER_BYTE) * len(line) * frame_s)
+            ser.write(newline)
+            ser.flush()
+        return
     for piece in pace.chunks(data, chunk):
         ser.write(piece)
         ser.flush()

@@ -17,10 +17,12 @@ is an expected failure until the cache (B4a), which must still report the overru
 import os
 import re
 
-import irq_echo_pace as pace
 import pytest
 from s1_env import STAGE1_DIR, STAGE2_BASE, run_from_card
 from vux9k import REPO_ROOT, UART_FRAME, XMEM_BASE, new_soc, read_hex_words, wait_for
+
+# isort: split
+import irq_echo_pace as pace  # noqa: E402 (sim/integration, on sys.path once vux9k is imported)
 
 ECHO_BIN = os.path.join(REPO_ROOT, "build", "zephyr-irq-echo", "zephyr", "zephyr.bin")
 FLASH_BYTES = 4 * 1024 * 1024  # the board's flash (vux9k.dts), from XMEM_BASE
@@ -65,8 +67,11 @@ def start(echo_bin: bytes, how: str):
 def reply(soc, mark: int) -> str:
     """The echo and its rx/drop/err line, from output index mark."""
     wait_for(soc, b"err=", timeout_cycles=10_000_000, start=mark)
-    soc.run(100_000)  # the error code and the newline
-    return soc.uart_received()[mark:].decode("utf-8", errors="replace")
+    # The error code and the newline: TX from the PSRAM is slow, so a real wait, not a fixed run
+    err = soc.uart_received().index(b"err=", mark)
+    wait_for(soc, b"\n", timeout_cycles=5_000_000, start=err)
+    end = soc.uart_received().index(b"\n", err) + 1
+    return soc.uart_received()[mark:end].decode("utf-8", errors="replace")
 
 
 def send_chunked(soc, data: bytes) -> int:
@@ -101,9 +106,25 @@ def test_echoes_a_paced_line_by_interrupt(echo_bin, how):
         )
         out = reply(soc, mark)
         assert out == ECHO, out
+        # The gap's margin over the measurement (irq_echo_pace): a slower handler shows here
+        assert period >= 2 * busy, f"a chunk every {period} cycles, read in {busy}"
 
 
 _back_to_back: dict[str, str] = {}
+
+
+def send_back_to_back(soc, line: bytes) -> None:
+    """line sent back to back, then its newline alone once the program has emptied the RX
+    FIFO: the overrun may drop any byte of the line, and irq_echo answers only at a newline."""
+    soc.uart_send(line)
+    soc.run(max(0, soc.uart_send_done - soc.cycle))
+    end = soc.cycle + 2 * pace.HANDLER_FRAMES_PER_BYTE * len(line) * UART_FRAME  # step cap
+    while soc.uart_rx_level and soc.cycle < end:
+        soc.run(500)
+    if soc.uart_rx_level:  # not an assertion: the xfail below would take it for the failure
+        raise RuntimeError("irq_echo stopped reading the RX FIFO")
+    soc.run(pace.CHUNK * UART_FRAME)  # margin: the handler done with the last byte
+    soc.uart_send(b"\n")
 
 
 def back_to_back_reply(echo_bin: bytes, how: str) -> str:
@@ -111,7 +132,7 @@ def back_to_back_reply(echo_bin: bytes, how: str) -> str:
     if how not in _back_to_back:
         soc = start(echo_bin, how)
         mark = len(soc.uart_received())
-        soc.uart_send(BURST + b"\n")
+        send_back_to_back(soc, BURST)
         _back_to_back[how] = reply(soc, mark)
     return _back_to_back[how]
 
