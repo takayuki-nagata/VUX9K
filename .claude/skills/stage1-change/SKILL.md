@@ -25,7 +25,8 @@ Read docs/agents/firmware.md first; the rows below are its rules in checklist fo
 - [ ] The first stage keeps its data in the PSRAM (`S1_RAM_BASE`), never region 0 or 2 (the ROM, an unassigned region), and writes
       nothing to the card.
 - [ ] Code that runs from the PSRAM (the second stage): no calls or loops on per-byte
-      paths; it fetches each word in ~35 cycles.
+      paths; a fetch that misses the 16 KB instruction cache, a load that misses the 2 KB
+      data cache and every store wait ~35 cycles.
 - [ ] VUX9 header changed: `fw_common::header` and `tools/vux_tool.py` together, vectors
       regenerated (`VUX9_VECTORS_UPDATE=1 pytest sim/emu/test_vux9_header.py`). Transfer v2
       changed: both sides and `sim/emu/test_upload_v2.py`'s transcripts.
