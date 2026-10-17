@@ -92,14 +92,15 @@ clock-and-board.md, "Board UART output that is noise: ModemManager and the bridg
   FAT32; `install` makes `\VUX9K\`, and the suite writes only there (versions 9001-9003,
   `\VUX9K\TEST\` and removes it, the demos in `\VUX9K\APPS\`, last the second stage under
   test). Besides the boot chain it runs the second stage's file commands and the demos
-  through `put`/`run`: `HELLO.BIN` (PSRAM), then, last, `HACK.BIN` (its PSRAM segment; it
-  soft-resets back to the first stage), `ZEPHYR.BIN` and `BC.BIN`
+  through `put`/`run`: `HELLO.BIN` (PSRAM) and `HACK.BIN` (its PSRAM segment), which both
+  soft-reset back to the first stage and its autoboot of the second stage, then, last,
+  `ZEPHYR.BIN` and `BC.BIN`
   (in the PSRAM; they leave the first stage, but only the reset button would start it; bc's
   put, load and start take minutes and print their wall-clock times), each followed
   by a load of `pack.fs` into SRAM with openFPGALoader (never `--reset`: that loads the
   flash's bitstream); then it installs the second stage under test again. Without
   `ZEPHYR.BIN`/`BC.BIN` (no Zephyr) tests 13 and 14 are skipped. It runs against the
-  emulator too, where the three bitstream-load tests are skipped: `vux9k-emu --tcp
+  emulator too, where the two bitstream-load tests are skipped: `vux9k-emu --tcp
   PORT --sd <mkfat image>` and `--port socket://127.0.0.1:PORT` (~3 min at the board's speed;
   `make sim-hw-suite-emu`, in test-slow, runs it: its timeouts are wall-clock, so a loaded
   host could fail it in `test-sim`; run it by hand after changing the second stage's commands

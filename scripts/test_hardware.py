@@ -9,8 +9,8 @@ End-to-end checks of the two-stage boot on a Sipeed Tang Nano 9K with a FAT32 Mi
 report, a RAM boot of the second stage and its refusals, installing second stages on the
 card (\\VUX9K\\STAGE2.BIN, the previous one kept as STAGE2.OLD; install makes \\VUX9K\\
 if it is missing), the fall back to STAGE2.OLD, the soft reset back to the first stage, the
-second stage's file commands, and the demos started by its `run`: HELLO.BIN in the PSRAM,
-then HACK.BIN in its PSRAM segment (Hack; it soft-resets back to the first stage at its end),
+second stage's file commands, and the demos started by its `run`: HELLO.BIN in the PSRAM
+and HACK.BIN in its PSRAM segment (Hack), which both soft-reset back to the first stage, then
 ZEPHYR.BIN and BC.BIN in the PSRAM (they leave the first stage in the ROM, but only the
 reset button would start it, and the suite can't press it), each followed by a load of the
 bitstream into the FPGA's SRAM (openFPGALoader, never --reset: that loads the flash's
@@ -368,7 +368,7 @@ def run_hardware_test_suite(port="auto", baud=115200, loader=None, reload=True):
         return out
 
     def run_demo_then_reload(name, app, check, **timeouts):
-        """Tests 12-14: a demo that never returns to the first stage (check(run_text) ->
+        """Tests 13-14: a demo that never returns to the first stage (check(run_text) ->
         (ok, msg) reads its output), then the bitstream loaded again; skipped or not run
         where that load can't happen. timeouts go to put_and_run."""
         if no_reload:
@@ -568,25 +568,38 @@ def run_hardware_test_suite(port="auto", baud=115200, loader=None, reload=True):
                 ok, msg = False, str(e)
             record(name, ok, msg)
 
-        # 12-14. Applications run last, each followed by a load of the bitstream into SRAM
-        # (not --reset: that loads the flash's): HACK.BIN (in its PSRAM segment; it
-        # soft-resets back to the first stage at its end), ZEPHYR.BIN and BC.BIN (in the
-        # PSRAM; they never return to the first stage, only the reset button would start it)
-        def hack_check(out):
-            if "Hack segment" not in out:
-                return False, fail_msg("Not started in the Hack segment.", out)
-            _, rest = vux_tool.read_until(ser, (HACK_DONE,), 20.0, vux_tool.after_run(out))
-            _, tail = vux_tool.read_until(ser, (HACK_END,), 3.0)
-            rest += tail
-            missing = [ln for ln in (*HACK_LINES, HACK_DONE) if ln not in rest]
-            if missing or "[FAIL]" in rest or not rest.endswith(HACK_END):
-                return False, fail_msg(f"Missing {missing} or a [FAIL].", rest)
-            return True, "the Hack demo's report, all [PASS]"
+        # 12. Hack in its PSRAM segment: the demo's report, then its soft reset without a mode
+        # back to the first stage, which boots the second stage from the card again
+        name = "12. HACK.BIN in its segment (Hack): its report, its soft reset to the first stage and its autoboot"
+        if apps["HACK.BIN"] is None:
+            record(name, False, f"{os.path.join(FILES['apps'], 'HACK.BIN')} missing (make apps)")
+        else:
+            try:
+                out = put_and_run("HACK.BIN")
+                # The demo runs ~4.1M cycles (~0.25 s), the first stage's key window and its
+                # load of the second stage from the card ~0.6 s more: bounds with room
+                done, rest = vux_tool.read_until(ser, (HACK_DONE,), 20.0, vux_tool.after_run(out))
+                back, rest = vux_tool.read_until(ser, (vux_tool.S2_PROMPT,), 30.0, rest)
+                banner = f"VUX9K Stage 1 (v{S1_VERSION})"
+                report, _, after = rest.partition(banner)
+                h = vux_tool.ImageHeader.parse(stage2)
+                s2_version = h.version if h else None  # test 9 left it on the card
+                missing = [ln for ln in (*HACK_LINES, HACK_DONE) if ln not in report]
+                if "Hack segment" not in out:
+                    ok, msg = False, fail_msg("Not started in the Hack segment.", out)
+                elif not done or missing or "[FAIL]" in report or f"{HACK_DONE}\n{HACK_END}" not in report:
+                    ok, msg = False, fail_msg(f"Missing {missing} or a [FAIL].", rest)
+                elif not back or f"[BOOT] STAGE2.BIN v{s2_version} " not in after:
+                    ok, msg = False, fail_msg(f"No first stage booting v{s2_version} after the demo.", rest)
+                else:
+                    ok, msg = True, f"the Hack demo's report, all [PASS], back to {banner} and s2>"
+            except (vux_tool.UploadError, vux_tool.S2Error, TimeoutError) as e:
+                ok, msg = False, str(e)
+            record(name, ok, msg)
 
-        run_demo_then_reload(
-            "12. HACK.BIN in its segment (Hack), then the bitstream loaded again", "HACK.BIN", hack_check
-        )
-
+        # 13-14. Applications run last, each followed by a load of the bitstream into SRAM
+        # (not --reset: that loads the flash's): ZEPHYR.BIN and BC.BIN (in the PSRAM; they
+        # never return to the first stage, only the reset button would start it)
         def zephyr_check(out):
             if ZEPHYR_RUN not in out:
                 return False, fail_msg("Not started in the PSRAM.", out)
