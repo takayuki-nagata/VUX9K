@@ -167,7 +167,10 @@ store and every fetch or load that misses the caches waits ~35 cycles
 The instruction segment holds at most 64 KB of code (32K instructions, two to a 32-bit word).
 The data segment is 96 KB of the PSRAM: each of the 24K RAM words is a 32-bit word of its
 own (Hack's registers are 32 bits wide in this CPU), and a store writes the whole word. `run`
-zeroes the data segment before it starts the program. A Hack application starts at 0; to
+zeroes the data segment before it starts the program. The instruction cache drops a line on
+every store into the PSRAM by its index alone, so a store to RAM word `A` also evicts the
+line holding instructions `2A` and `2A+1` (modulo 8192); a loop that writes the RAM words
+with the same low bits as its own addresses fetches its code again. A Hack application starts at 0; to
 give the board back to the first stage, it soft-resets without a mode (below).
 
 ### Packaging an application for the card

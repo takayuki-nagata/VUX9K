@@ -30,7 +30,7 @@ button S1 (the board's reset) goes back to it and the boot.
 | `vux9k` | the PSRAM: 4 MB ROM from 0x8000_0000 (run in place, XIP; the second stage's `run` loads the image there), 3 MB RAM from 0x8040_0000 | the board (started by the second stage's `run`) and the emulator |
 
 The CPU is RV32I + Zicsr + Zifencei, machine mode only, running at 18 MHz. On `vux9k` a
-fetch that misses the 4 KB instruction cache, a load that misses the 2 KB data cache and
+fetch that misses the 16 KB instruction cache, a load that misses the 2 KB data cache and
 every store wait ~35 cycles; hits take no longer than from the SoC's block RAMs, which
 `vux9k` leaves to the first stage. Big applications fit `vux9k` as well: bc_clone_rs on
 Zephyr (~260 KB, with a 64 KB heap and a 32 KB stack) runs there (its CPI to the first

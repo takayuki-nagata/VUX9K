@@ -38,14 +38,12 @@ async def read_both(dut, i_addr, d_addr):
     return int(dut.i_data_out.value), int(dut.d_data_out.value)
 
 
-@cocotb.test()
+# Skipped, and reported as skipped, when the runner staged no firmware.hex (make firmware;
+# test-sim builds it first): without it $readmemh loads nothing
+@cocotb.test(skip=not os.path.exists("firmware.hex"))
 async def test_preload(dut):
-    """The contents at power-up are firmware.hex's words, on both ports (checked when the
-    runner staged the file; without it, $readmemh loads nothing)"""
+    """The contents at power-up are firmware.hex's words, on both ports"""
     await setup(dut)
-    if not os.path.exists("firmware.hex"):
-        dut._log.warning("no firmware.hex in the run directory (make firmware): preload not checked")
-        return
     with open("firmware.hex") as f:
         words = [int(w, 16) for w in f.read().split()]
     assert len(words) == WORDS
