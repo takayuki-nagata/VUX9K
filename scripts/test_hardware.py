@@ -10,8 +10,8 @@ report, a RAM boot of the second stage and its refusals, installing second stage
 card (\\VUX9K\\STAGE2.BIN, the previous one kept as STAGE2.OLD; install makes \\VUX9K\\
 if it is missing), the fall back to STAGE2.OLD, the soft reset back to the first stage, the
 second stage's file commands, and the demos started by its `run`: HELLO.BIN in the PSRAM,
-then the three that never return to the first stage, HACK.BIN in I-RAM (it replaces the first
-stage), ZEPHYR.BIN and BC.BIN in the PSRAM (they leave the first stage in I-RAM, but only the
+then HACK.BIN in its PSRAM segment (Hack; it soft-resets back to the first stage at its end),
+ZEPHYR.BIN and BC.BIN in the PSRAM (they leave the first stage in I-RAM, but only the
 reset button would start it, and the suite can't press it), each followed by a load of the
 bitstream into the FPGA's SRAM (openFPGALoader, never --reset: that loads the flash's
 bitstream). The card stays in the board. The suite writes only in \\VUX9K\\: test versions
@@ -568,13 +568,13 @@ def run_hardware_test_suite(port="auto", baud=115200, loader=None, reload=True):
                 ok, msg = False, str(e)
             record(name, ok, msg)
 
-        # 12-14. Applications that never return to the first stage (HACK.BIN replaces it in
-        # I-RAM; ZEPHYR.BIN and BC.BIN run in the PSRAM and leave it, but only the reset
-        # button would start it): last, each followed by a load of the bitstream into SRAM
-        # (not --reset: that loads the flash's)
+        # 12-14. Applications run last, each followed by a load of the bitstream into SRAM
+        # (not --reset: that loads the flash's): HACK.BIN (in its PSRAM segment; it
+        # soft-resets back to the first stage at its end), ZEPHYR.BIN and BC.BIN (in the
+        # PSRAM; they never return to the first stage, only the reset button would start it)
         def hack_check(out):
-            if "I-RAM (Hack)" not in out:
-                return False, fail_msg("Not started in I-RAM (Hack).", out)
+            if "Hack segment" not in out:
+                return False, fail_msg("Not started in the Hack segment.", out)
             _, rest = vux_tool.read_until(ser, (HACK_DONE,), 20.0, vux_tool.after_run(out))
             _, tail = vux_tool.read_until(ser, (HACK_END,), 3.0)
             rest += tail
@@ -583,7 +583,9 @@ def run_hardware_test_suite(port="auto", baud=115200, loader=None, reload=True):
                 return False, fail_msg(f"Missing {missing} or a [FAIL].", rest)
             return True, "the Hack demo's report, all [PASS]"
 
-        run_demo_then_reload("12. HACK.BIN in I-RAM (Hack), then the bitstream loaded again", "HACK.BIN", hack_check)
+        run_demo_then_reload(
+            "12. HACK.BIN in its segment (Hack), then the bitstream loaded again", "HACK.BIN", hack_check
+        )
 
         def zephyr_check(out):
             if ZEPHYR_RUN not in out:

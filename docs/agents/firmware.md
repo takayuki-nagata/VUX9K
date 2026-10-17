@@ -69,15 +69,18 @@ release/`.
   `[INSTALL] ...` (`install -u`: `[UNCHECKED] ...`). `tools/vux_tool.py` (`s2_cmd`, `put`,
   `run_app`, `install_stage2`, `enter_s1`'s `reset`), `scripts/test_hardware.py` and the
   emulator tests (`sim/emu/test_stage2.py`, `s1_env.s2_cmd`) depend on those strings.
-- **The launcher writes I-RAM only after the CRC checked** (`fw_common::launch`, `run`): a
-  file loads within `LOAD_WINDOW` through `staging` (I-RAM addresses into the PSRAM at
-  `SCRATCH`), `plan` then picks the target from the checked header (RV32 in
-  `XMEM_BASE..STAGE2_BASE`: the PSRAM, a jump with a0-a2 as the first stage hands them over;
-  Hack: I-RAM, 16 KB, at a word; RV32 anywhere else, at 0 too, is out of the window: the I-RAM
-  RV32 target went with the second stage v3), and only then does the second stage copy a Hack
-  program into I-RAM (whole words, the last one's bytes past the payload 0), zero D-RAM, set
-  `GPIO_BOOT_MODE` and soft-reset. So a refused file leaves the first stage in I-RAM. The windows are spelled out in
-  `put_run_error`'s text (a const assert).
+- **The launcher writes nothing outside the PSRAM before the CRC checked** (`fw_common::launch`,
+  `run`): a file loads within `LOAD_WINDOW` through `staging` (addresses below
+  `HACK_I_BYTES` into the PSRAM at `SCRATCH`, which is `map::HACK_I_BASE`, a const assert),
+  `plan` then picks the target from the checked header (RV32 in `XMEM_BASE..STAGE2_BASE`:
+  the PSRAM, a jump with a0-a2 as the first stage hands them over; Hack: a word-aligned
+  offset in its 64 KB instruction segment, so staging put it where it runs; RV32 anywhere
+  else, at 0 too, is out of the window: the I-RAM RV32 target went with the second stage v3),
+  and only then does the second stage start it: for Hack the last word's bytes past the
+  payload 0, Hack's data segment (`HACK_D_BASE`, `HACK_D_WORDS`) zeroed, `fence.i`,
+  `GPIO_BOOT_MODE` and the soft reset (Hack starts at 0; its soft reset without a mode goes
+  back to the first stage). The first stage stays in I-RAM whatever runs. The windows are
+  spelled out in `put_run_error`'s text (a const assert).
 - **`fw_common` code that only the second stage needs stays out of the first stage's
   build**: merely adding `launch` to `lib.rs` changed the first stage's binary (36 bytes), so
   it is behind `fat-full`, as is the nibble-table `crc32_update` (the bitwise one, which the

@@ -5,8 +5,9 @@
 The real second stage on the RTL (make sim-stage2): the first stage boots it from a FAT32
 card laid out as the dist's sd/ (\\VUX9K\\STAGE2.BIN, the demos in \\VUX9K\\APPS\\, make
 apps), and its `run` starts a demo on each of fw_common::launch's paths the board uses
-first: the hello demo in place in the PSRAM (a jump with a0-a2), the Hack demo in I-RAM
-(copied over the first stage, soft reset in Hack mode). The other commands and the
+first: the hello demo in place in the PSRAM (a jump with a0-a2), the Hack demo in its
+segment in the PSRAM (soft reset in Hack mode; at its end it soft-resets back to the first
+stage). The other commands and the
 refusals are sim/emu/test_stage2.py's; the Zephyr demo started this way runs on the
 netlist (test_soc_zephyr_s2.py, make sim-zephyr-demo-gls).
 
@@ -49,13 +50,19 @@ async def test_s2_ls_and_run_hello_from_the_psram(dut):
     dut._log.info("[PASS] r: soft reset back to the first stage")
 
 
-# Boot ~12.8M, the load and the demo's first result ~2.1M: ~15M cycles (0.8 s); room for 4x
-@cocotb.test(timeout_time=3400, timeout_unit="ms")
-async def test_s2_run_hack_from_i_ram(dut):
-    """run VUX9K/APPS/HACK.BIN: copied into I-RAM over the first stage, started in Hack mode"""
+# Boot ~12.8M; the load, the data segment zeroed and the demo's first result ~3M, its end
+# and its soft reset to the first stage's banner ~2.5M more: ~18.3M cycles (1.0 s); room
+# for 4x
+@cocotb.test(timeout_time=4100, timeout_unit="ms")
+async def test_s2_run_hack_from_its_segment(dut):
+    """run VUX9K/APPS/HACK.BIN: loaded into Hack's segment, started in Hack mode, back to the first stage at its end"""
     ser, _ = await boot_s2(dut, "HACK.BIN")
     out = await s2_cmd(ser, "run VUX9K/APPS/HACK.BIN", b"Factorial(6) = 720 ... [PASS]", timeout_cycles=24_000_000)
-    assert '[RUN] v1 "Hack demo"' in out and "I-RAM (Hack), starting at 0x00000000" in out, out
+    assert '[RUN] v1 "Hack demo"' in out and "Hack segment, starting at 0x00000000" in out, out
     assert "VUX9K SoC Hack 16-bit C Firmware Test" in out, out
-    assert BANNER not in out, out  # the first stage is gone
-    dut._log.info("[PASS] run HACK.BIN: the Hack demo runs from I-RAM")
+    assert BANNER not in out, out
+    dut._log.info("[PASS] run HACK.BIN: the Hack demo runs from its segment in the PSRAM")
+
+    out = await ser.wait_for(BANNER.encode(), timeout_cycles=8_000_000)
+    assert b"ALL HACK C FIRMWARE TESTS PASSED (100%)!" in out, out
+    dut._log.info("[PASS] the Hack demo's soft reset: back to the first stage")

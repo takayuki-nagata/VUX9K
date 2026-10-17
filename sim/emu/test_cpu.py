@@ -4,9 +4,10 @@
 """CPU basics on the emulator, through programs (ported from sim/emulator/test_emulator.py)."""
 
 import pytest
-from lockstep_programs import boot_mode_hack, hack_soft_reset
-from rv32_asm import Asm
-from vux9k import XMEM_BASE, Soc
+from vux9k import HACK_BACK, HACK_D_BASE, HACK_I_BASE, XMEM_BASE, Soc, start_hack  # first: sets sys.path
+
+from lockstep_programs import boot_mode_hack, hack_soft_reset  # isort: skip
+from rv32_asm import Asm  # isort: skip
 
 
 def org(a, addr):
@@ -119,26 +120,62 @@ def test_byte_and_halfword_stores_to_dram():
 @pytest.mark.parametrize("key_by_addition", [True, False])
 def test_hack_soft_reset_key(key_by_addition):
     """A Hack program can soft-reset the CPU (lockstep_programs.hack_soft_reset): the
-    key it forms by addition is accepted, the one formed with ! is not."""
-    soc = Soc("real")
-    soc.load_iram_words(hack_soft_reset(key_by_addition))
+    key it forms by addition is accepted, and with no mode given the CPU restarts in RV32
+    (hack_stub prints HACK_BACK); the key formed with ! is not."""
+    soc = start_hack(hack_soft_reset(key_by_addition))
     soc.run(200_000)  # ~17 UART bytes' time
-    assert not soc.riscv_mode
     sent = soc.uart_received()
     if key_by_addition:
-        assert sent.count(b"R") >= 2, sent  # restarted from 0 after the soft reset
+        assert sent == b"R" + bytes([HACK_BACK]), sent
+        assert soc.riscv_mode
     else:
         assert sent == b"R", sent
+        assert not soc.riscv_mode
 
 
 def test_boot_mode_starts_hack_at_0():
     """The mode in GPIO 0x8 decides the ISA after a soft reset (lockstep_programs.boot_mode_hack):
-    a Hack program starting with `@0` runs as Hack and prints 'H'."""
+    a Hack program starting with `@0`, written into its I segment, runs as Hack and prints 'H'."""
     soc = Soc("real")
     soc.load_iram_words(boot_mode_hack())
     soc.run(5_000)
     assert not soc.riscv_mode
     assert soc.uart_received() == b"H"
+
+
+def test_power_on_starts_rv32():
+    """No ISA guess: whatever I-RAM holds runs as RV32 after the power-on reset (a Hack-looking
+    `@7` word is an illegal instruction)."""
+    soc = Soc("real")
+    soc.load_iram_words([0x0007_0007])
+    soc.step()
+    assert soc.riscv_mode
+    assert soc.mcause == 2
+
+
+def test_hack_runs_from_its_segments():
+    """Hack fetches from its I segment and keeps data word A at HACK_D_BASE + 4 * A, a 32-bit
+    word each, all through the window (no D-RAM, no 2K alias)."""
+    import hack_asm
+
+    h = hack_asm.Asm()
+    h.at(0x1234)
+    h.c("D=A")
+    h.at(0x0805)
+    h.c("M=D")
+    h.at(5)
+    h.c("D=M")  # word 5 is not word 0x805
+    h.label("halt")
+    h.at("halt")
+    h.c("0;JMP")
+    soc = Soc("real")
+    soc.load_app(b"".join(i.to_bytes(2, "big") for i in h.instructions()), "hack")
+    assert soc.xmem_word(HACK_I_BASE) == h.assemble()[0]
+    for _ in range(6):
+        soc.step()
+    assert soc.xmem_word(HACK_D_BASE + 4 * 0x805) == 0x1234
+    assert soc.regs[2] == 0
+    assert soc.dram_word(5) == 0 and soc.dram_word(0x805) == 0
 
 
 def test_load_app_into_the_psram():
@@ -156,7 +193,8 @@ def test_load_app_into_the_psram():
     assert soc.regs[10:12] == [XMEM_BASE, words[0]]
     soc.load_xmem(XMEM_BASE + 8, b"\x01\x02\x03")
     assert soc.xmem_word(XMEM_BASE + 8) == 0x030201
-    with pytest.raises(ValueError, match="into the PSRAM"):
+    # A Hack image's load address is an offset in its segment
+    with pytest.raises(ValueError, match="Hack instruction segment"):
         soc.load_app(image, "hack", XMEM_BASE)
     with pytest.raises(ValueError, match="word-aligned"):
         soc.load_xmem(0x2000_0000, image)

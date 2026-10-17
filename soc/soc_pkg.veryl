@@ -56,4 +56,13 @@ pub package soc_pkg {
     // Hack data address map (16-bit word addresses): RAM below HACK_MMIO_BASE,
     // MMIO in the 16 words from HACK_MMIO_BASE (UART in the first 4, GPIO after)
     const HACK_MMIO_BASE: logic<16> = 16'h6000;
+
+    // Hack's memory is in the window, in two segments soc_top forms by joining bits (README,
+    // "Hack memory"): instructions at {HACK_I_BASE[31:16], pc[15:0]} (64 KB, the byte
+    // address pc, two instructions a word), data word A (A < HACK_MMIO_BASE) at
+    // {HACK_D_BASE[31:17], A[14:0], 2'b00} (one Hack word a 32-bit word, 96 KB of the
+    // 128 KB segment). Copied by the emulator, fw_common::map, tools/vux_tool.py and
+    // sim/integration/lockstep_programs.py (docs/agents/sync-points.md).
+    const HACK_I_BASE: logic<32> = 32'h8000_0000;
+    const HACK_D_BASE: logic<32> = 32'h8002_0000;
 }

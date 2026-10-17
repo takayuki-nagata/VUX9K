@@ -54,8 +54,8 @@ emu/vux9k-emu --no-firmware --load demos/hack-demo.bin --mode hack --stdio
 ```
 
 (Ctrl-C stops the emulator. `--mode riscv` puts the image in the PSRAM at `0x8000_0000`,
-where the Zephyr board links and the second stage's `run` loads it; `--mode hack` in the
-instruction RAM.) Then read `docs/APP_DEVELOPMENT.md` to build your own
+where the Zephyr board links and the second stage's `run` loads it; `--mode hack` in Hack's
+instruction segment, also in the PSRAM.) Then read `docs/APP_DEVELOPMENT.md` to build your own
 applications.
 
 The SoC, firmware, tools and emulator are MIT-licensed (`LICENSE`); the Zephyr board

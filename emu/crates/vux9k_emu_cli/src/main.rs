@@ -9,7 +9,8 @@
 //! `vux_tool.py mkfat`). `--load`/`--hex` put a program at address 0 instead (over the
 //! preload, or alone with `--no-firmware`); `--load FILE --mode riscv|hack` starts an
 //! application image in its ISA from the first fetch, where the second stage's `run`
-//! starts it (`--load-addr`: RV32 in the PSRAM at 0x8000_0000, Hack in I-RAM at 0).
+//! starts it (`--load-addr`: RV32 in the PSRAM at 0x8000_0000; Hack at an offset in its
+//! instruction segment in the PSRAM, 0 by default).
 //!
 //! The UART is connected to stdout (batch), the terminal (`--stdio`), or a TCP
 //! client (`--tcp PORT`, e.g. `vux_tool.py --port socket://localhost:PORT`).
@@ -36,11 +37,12 @@ usage: vux9k-emu [options]
   --mode riscv|hack   with --load: FILE is an application image (hack: big-endian
                       16-bit instructions, as hcc -r writes them), started in that ISA
                       at its load address
-  --load-addr ADDR    with --mode: the image's load address and entry, as in its v4
-                      header: 0 (I-RAM; max 14 KB) or, riscv only, the
-                      PSRAM (0x80000000..); default 0x80000000 for riscv on real (where
-                      the vux9k Zephyr board links), else 0
-  --hex FILE          $readmemh words into I-RAM from word 0 (e.g. build/hack/firmware.hex)
+  --load-addr ADDR    with --mode: the image's load address, as in its v4 header.
+                      riscv: 0 (I-RAM; max 14 KB) or the PSRAM (0x80000000..), also
+                      the entry; default 0x80000000 on real (where the vux9k Zephyr
+                      board links), else 0. hack: the offset in Hack's 64 KB
+                      instruction segment (word-aligned; default 0); it starts at 0
+  --hex FILE          $readmemh words into I-RAM from word 0 (RV32 code)
   --sd IMAGE          raw SD image (sector n at byte 512 n; vux_tool.py mkfat makes FAT32
                       ones); changes are kept in memory
   --sd-write-back     write the SD image back to IMAGE on exit
@@ -171,8 +173,8 @@ fn parse_addr(text: &str) -> Result<u32, String> {
 }
 
 /// `--load-addr`'s default: where the board starts such an image (RV32 applications are
-/// linked at the PSRAM's start; Hack runs from I-RAM). The isa-test profile, which has
-/// no PSRAM, keeps 0.
+/// linked at the PSRAM's start; a Hack image goes to the start of its segment, offset 0).
+/// The isa-test profile, which has no PSRAM, keeps 0.
 fn default_load_addr(profile: Profile, isa: Isa) -> u32 {
     if profile == Profile::Real && isa == Isa::Rv32 {
         XMEM_BASE

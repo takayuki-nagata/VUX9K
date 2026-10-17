@@ -258,23 +258,36 @@ fn real_profile_aliasing_and_iram_stores() {
 }
 
 // ----- Hack ----------------------------------------------------------------------
-fn hack(instrs: &[u16]) -> Vec<u32> {
-    let mut v: Vec<u16> = instrs.to_vec();
-    if v.len() % 2 == 1 {
-        v.push(0xEA87); // 0;JMP (pads the last word; never reached in these tests)
-    }
-    v.chunks(2)
-        .map(|c| (c[1] as u32) << 16 | c[0] as u32)
-        .collect()
-}
+// Hack runs from the PSRAM: instructions in its I segment (HACK_I_BASE), data in its D
+// segment (HACK_D_BASE), both through the window's caches.
 fn c(dest: u16, comp: u16, a: bool, jump: u16) -> u16 {
     0xE000 | (if a { 0x1000 } else { 0 }) | (comp << 6) | (dest << 3) | jump
 }
 
+/// Hack instructions as an `hcc -r` image: big-endian 16-bit words.
+fn hack_image(instrs: &[u16]) -> Vec<u8> {
+    instrs.iter().flat_map(|i| i.to_be_bytes()).collect()
+}
+
+/// A Real SoC started in Hack on `instrs` (load_app: the I segment, Hack from 0).
+fn hack_app(instrs: &[u16]) -> Soc {
+    let mut soc = Soc::new(Profile::Real);
+    soc.load_app(&hack_image(instrs), Isa::Hack).unwrap();
+    soc
+}
+
+/// The PSRAM address of Hack data word `a`.
+fn dseg(a: u32) -> u32 {
+    vux9k_emu::soc::HACK_D_BASE + 4 * a
+}
+
 #[test]
 fn hack_semantics_and_cycles() {
-    // @7, D=A, @100, M=D, @100, D=M+1 (reads M: 4 cycles), AD=D+1 (dual dest: 3 cycles)
-    let prog = hack(&[
+    use vux9k_emu::soc::{XMEM_READ_LATENCY as R, XMEM_WRITE_LATENCY as W};
+    // @7, D=A, @100, M=D, @100, D=M+1 (reads M: 4 cycles), AD=D+1 (dual dest: 3 cycles).
+    // The first instruction of each word misses the instruction cache (R), M=D stores to
+    // the PSRAM (W) and allocates the line D=M+1 then hits.
+    let mut soc = hack_app(&[
         7,
         c(0b010, 0b110000, false, 0),
         100,
@@ -283,35 +296,68 @@ fn hack_semantics_and_cycles() {
         c(0b010, 0b110111, true, 0),
         c(0b110, 0b011111, false, 0),
     ]);
-    let mut soc = load(Profile::Real, &prog);
     run_n(&mut soc, 7);
-    assert!(!soc.riscv_mode, "a leading @7 selects Hack");
+    assert!(!soc.riscv_mode);
     assert_eq!(soc.regs[2], 9, "D");
     assert_eq!(soc.regs[1], 9, "A");
-    assert_eq!(soc.dram_word_index(100), 7);
-    assert_eq!(soc.cycle, 2 + 2 + 2 + 2 + 2 + 4 + 3);
+    assert_eq!(soc.xmem_word(dseg(100)), 7);
+    assert_eq!(
+        soc.cycle,
+        (2 + R + 2 + 2 + R + 2 + W + 2 + R + 4 + 3 + R) as u64
+    );
+}
+
+#[test]
+fn hack_window_waits() {
+    use vux9k_emu::soc::{XMEM_READ_LATENCY as R, XMEM_WRITE_LATENCY as W};
+    let mut soc = hack_app(&[
+        3,
+        c(0b111, 0b110111, true, 0), // AMD=M+1: M[3] misses (R), the store (W), D last
+        c(0b010, 0b110000, true, 0), // D=M: a new word, a miss, the fetch too
+        3,
+        c(0b001, 0b110111, true, 0), // M=M+1: M[3] hits (the store allocated it), the store
+        c(0b001, 0b111010, false, 0), // M=-1: the store in EXECUTE
+    ]);
+    let mut cycles = vec![];
+    let mut stores = vec![];
+    for _ in 0..6 {
+        let r = soc.step();
+        cycles.push(r.cycles);
+        stores.push(r.store);
+    }
+    assert_eq!(
+        cycles,
+        [2 + R, 4 + R + W + 1, 2 + R + 2 + R, 2, R + 4 + W, 2 + W],
+        "FETCH (+R on a miss), EXECUTE (+W for M=), MEM_WAIT (+R on a miss), HACK_WB (+W), HACK_WR_D"
+    );
+    // The bus shows the CPU's A; the word is in the D segment
+    assert_eq!(stores[1], Some((3, 1, 0b1111)));
+    assert_eq!(stores[4], Some((3, 2, 0b1111)));
+    assert_eq!((soc.regs[1], soc.regs[2]), (3, 0));
+    assert_eq!(soc.xmem_word(dseg(3)), 0xFFFF_FFFF);
+    let st = soc.caches.stats;
+    assert_eq!((st.load_hits, st.load_misses, st.stores), (1, 2, 3));
 }
 
 #[test]
 fn hack_registers_are_32_bit_and_conditions_16_bit() {
     // @0x7FFF, D=A, D=D+1 -> 0x8000 (negative as 16-bit), @4, D;JLT -> jumps to 8 (A*2)
-    let prog = hack(&[
+    let mut soc = hack_app(&[
         0x7FFF,
         c(0b010, 0b110000, false, 0),
         c(0b010, 0b011111, false, 0),
         4,
         c(0, 0b001100, false, 4),
     ]);
-    let mut soc = load(Profile::Real, &prog);
     run_n(&mut soc, 5);
     assert_eq!(soc.regs[2], 0x8000);
     assert_eq!(soc.pc, 8, "JLT on bit 15, target A << 1");
 }
 
 #[test]
-fn hack_ram_aliases_every_2k_words() {
-    // @5, D=A, @0x0805, M=D, @5, D=M
-    let prog = hack(&[
+fn hack_data_has_no_alias() {
+    // @5, D=A, @0x0805, M=D, @5, D=M: before the D segment (D-RAM), 0x0805 was word 5
+    let mut soc = hack_app(&[
         5,
         c(0b010, 0b110000, false, 0),
         0x0805,
@@ -319,29 +365,26 @@ fn hack_ram_aliases_every_2k_words() {
         5,
         c(0b010, 0b110000, true, 0),
     ]);
-    let mut soc = load(Profile::Real, &prog);
     run_n(&mut soc, 6);
-    assert_eq!(soc.regs[2], 5, "0x0805 is the same word as 0x0005");
+    assert_eq!(soc.regs[2], 0, "word 5 is still 0");
+    assert_eq!(soc.xmem_word(dseg(0x0805)), 5);
+    assert_eq!(soc.dram_word_index(5), 0, "D-RAM untouched");
 }
 
 #[test]
-fn isa_detection_skips_zero_words() {
-    // First word zero: the detector keeps looking (the CPU runs it as RV and traps)
-    let mut soc = load(Profile::Real, &[0, addi(1, 0, 1)]);
+fn power_on_starts_rv32() {
+    // No ISA guess: a Hack-looking first word (@7) runs as RV32, and traps as illegal
+    let mut soc = load(Profile::Real, &[0x0007_0007]);
     soc.step();
     assert!(soc.riscv_mode);
     assert_eq!(soc.csr.mcause, 2);
 }
 
 // ----- application images (load_app, vux9k-emu --load --mode) -------------------------
-/// Hack instructions as an `hcc -r` image: big-endian 16-bit words.
-fn hack_image(instrs: &[u16]) -> Vec<u8> {
-    instrs.iter().flat_map(|i| i.to_be_bytes()).collect()
-}
-
 #[test]
 fn load_app_starts_hack_in_hack_mode() {
-    // @19, D=A, @100, M=D: @19 (0x0013) looks like RV32 OP-IMM to the detector
+    use vux9k_emu::soc::HACK_I_BASE;
+    // @19, D=A, @100, M=D (@19, 0x0013, is RV32's OP-IMM: the mode, not the code, decides)
     let prog = [
         19,
         c(0b010, 0b110000, false, 0),
@@ -352,17 +395,23 @@ fn load_app_starts_hack_in_hack_mode() {
     let mut soc = Soc::new(Profile::Real);
     soc.load_app(&hack_image(&prog), Isa::Hack).unwrap();
     assert_eq!(
-        soc.iram_word(0),
+        soc.xmem_word(HACK_I_BASE),
         (c(0b010, 0b110000, false, 0) as u32) << 16 | 19
     );
+    assert_eq!(soc.iram_word(0), 0, "I-RAM untouched");
     run_n(&mut soc, 4);
     assert!(!soc.riscv_mode);
-    assert_eq!(soc.dram_word_index(100), 19);
+    assert_eq!(soc.xmem_word(dseg(100)), 19);
 
-    // The same words left to the ISA detector run as RV32
-    let mut soc = load(Profile::Real, &hack(&prog));
-    soc.step();
-    assert!(soc.riscv_mode, "@19 is detected as RV32I");
+    // At an offset in the segment: the CPU still starts at 0, as after a soft reset
+    let mut soc = Soc::new(Profile::Real);
+    soc.load_app_at(&hack_image(&prog), Isa::Hack, 0x100)
+        .unwrap();
+    assert_eq!((soc.pc, soc.riscv_mode), (0, false));
+    assert_eq!(
+        soc.xmem_word(HACK_I_BASE + 0x104),
+        100 | (c(0b001, 0b001100, false, 0) as u32) << 16
+    );
 }
 
 #[test]
@@ -391,6 +440,16 @@ fn load_app_rejects_what_the_board_cannot_load() {
         .load_app(&vec![0x13; 14 * 1024 + 4], Isa::Rv32)
         .unwrap_err()
         .contains("fits on the board"));
+    // Hack: its 64 KB segment, at a word
+    assert!(soc.load_app(&vec![0; 64 * 1024], Isa::Hack).is_ok());
+    for (len, at) in [(64 * 1024 + 2, 0), (64 * 1024 - 4, 8), (2, 2), (0, 0)] {
+        let e = soc.load_app_at(&vec![0; len], Isa::Hack, at).unwrap_err();
+        assert!(e.contains("Hack instruction segment"), "{e}");
+    }
+    assert!(Soc::new(Profile::IsaTest)
+        .load_app(&[0, 7], Isa::Hack)
+        .unwrap_err()
+        .contains("PSRAM"));
 }
 
 #[test]
@@ -424,7 +483,6 @@ fn load_app_at_rejects_what_the_board_cannot_start() {
     let mut soc = Soc::new(Profile::Real);
     let nop = 0x13u32.to_le_bytes();
     for (isa, addr) in [
-        (Isa::Hack, XMEM_BASE),
         (Isa::Rv32, 0x100),
         (Isa::Rv32, 0x2000_0000),
         (Isa::Rv32, 0x9000_0000),
@@ -432,6 +490,9 @@ fn load_app_at_rejects_what_the_board_cannot_start() {
         let e = soc.load_app_at(&nop, isa, addr).unwrap_err();
         assert!(e.contains("into the PSRAM"), "{e}");
     }
+    // Hack's load address is an offset in its segment
+    let e = soc.load_app_at(&nop, Isa::Hack, XMEM_BASE).unwrap_err();
+    assert!(e.contains("Hack instruction segment"), "{e}");
     assert!(soc.load_app_at(&[], Isa::Rv32, XMEM_BASE).is_err());
     let e = soc.load_app_at(&nop, Isa::Rv32, XMEM_BASE + 2).unwrap_err();
     assert!(e.contains("word-aligned"), "{e}");

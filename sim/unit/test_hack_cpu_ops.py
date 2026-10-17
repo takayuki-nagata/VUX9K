@@ -6,6 +6,7 @@ import random
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, FallingEdge, Timer
+from test_unified_cpu_stall import enter_hack
 from unit_models import HACK_COMP
 
 
@@ -25,7 +26,7 @@ async def test_hack_cpu_comprehensive(dut):
     clock = Clock(dut.clk, 10, unit="ns")
     cocotb.start_soon(clock.start())
 
-    # Reset in Hack Mode
+    # Reset, then a soft reset into Hack (its boot mode)
     await FallingEdge(dut.clk)
     dut.soft_rst.value = 0
     dut.rst.value = 0
@@ -43,6 +44,7 @@ async def test_hack_cpu_comprehensive(dut):
     await ClockCycles(dut.clk, 2)
     await FallingEdge(dut.clk)
     dut.rst.value = 1
+    await enter_hack(dut)
 
     # Cycle 1: Fetch -> Cycle 2: Execute
     await ClockCycles(dut.clk, 2)
@@ -227,7 +229,7 @@ async def test_hack_cpu_comprehensive(dut):
 
 
 async def _reset_hack(dut):
-    """Clock + reset with a Hack A-instruction first, so the CPU latches Hack mode."""
+    """Clock, reset and a soft reset into Hack (its boot mode), with @1 first."""
     cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start())
     await FallingEdge(dut.clk)
     for sig in (
@@ -248,6 +250,7 @@ async def _reset_hack(dut):
     await ClockCycles(dut.clk, 2)
     await FallingEdge(dut.clk)
     dut.rst.value = 1
+    await enter_hack(dut)
     await ClockCycles(dut.clk, 2)
     assert int(dut.active_mode.value) == 0, "Failed to enter Hack mode!"
 
@@ -389,7 +392,7 @@ def hack_c(a, comp, dest, jump):
 def random_hack_program(length):
     """A random Hack program: @n and C-instructions with every comp/dest, M accesses, and
     forward conditional jumps (@target; comp;Jxx), ending in an @END; 0;JMP loop.
-    Starts with @1 (so the CPU detects Hack) and D=0: registers have no reset."""
+    Starts with @1 and D=0: registers have no reset."""
     prog, jumps = [1, hack_c(0, 0b101010, 0b010, 0)], []
     comps = list(HACK_COMP)
     while len(prog) < length:
@@ -468,6 +471,7 @@ async def test_random_programs_against_interpreter(dut):
         await ClockCycles(dut.clk, 2)
         await FallingEdge(dut.clk)
         dut.rst.value = 1
+        await enter_hack(dut)  # instr_in stays words[0] for the first FETCH
         pending = (words[0], 0)  # what the RAM shows in the next cycle
         writes = []
         for _ in range(8 * len(prog) * 4):

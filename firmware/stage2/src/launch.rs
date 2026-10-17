@@ -27,8 +27,9 @@ fn zero_dram() {
     }
 }
 
-/// `run FILE`: load and check it (a Hack program into the PSRAM first: the first stage
-/// in I-RAM stays until the file has proved good), then start it. Returns on an error.
+/// `run FILE`: load and check it (a Hack program straight into its segment in the PSRAM:
+/// nothing outside the PSRAM changes until the file has proved good), then start it.
+/// Returns on an error.
 pub fn run(ctx: &Ctx, c: &mut Card, path: &[u8]) -> Result {
     let vol = &mut c.vol;
     let file = vol.resolve(&c.cwd, path)?;
@@ -49,7 +50,7 @@ pub fn run(ctx: &Ctx, c: &mut Card, path: &[u8]) -> Result {
     Uart::print_dec(h.size);
     Uart::print_str(match target {
         Target::Psram => " B, PSRAM, starting at 0x",
-        Target::IramHack => " B, I-RAM (Hack), starting at 0x",
+        Target::HackSeg => " B, Hack segment, starting at 0x",
     });
     Uart::print_hex(match target {
         Target::Psram => h.entry_point,
@@ -58,7 +59,7 @@ pub fn run(ctx: &Ctx, c: &mut Card, path: &[u8]) -> Result {
     Uart::print_str("\n\n");
     match target {
         Target::Psram => start_psram(&h, vol.partition_lba(), ctx.s1_version),
-        Target::IramHack => start_hack(&h),
+        Target::HackSeg => start_hack(&h),
     }
 }
 
@@ -83,21 +84,29 @@ fn start_psram(h: &ImageHeader, part_lba: u32, s1_version: u32) -> ! {
     }
 }
 
-/// Copy the checked payload from SCRATCH into I-RAM (whole words: I-RAM has no byte
-/// enables; the last word's bytes past the payload are 0), then soft-reset into it in Hack
-/// mode.
+/// The checked payload is in Hack's instruction segment already (staged at SCRATCH plus
+/// its offset, which is HACK_I_BASE plus it); the last word's bytes past it become 0. Then
+/// Hack's data segment all zero (as D-RAM was), fence.i, and a soft reset into it in Hack
+/// mode: it starts at 0.
 fn start_hack(h: &ImageHeader) -> ! {
-    let from = (SCRATCH + h.load_addr) as usize;
-    let words = (h.size as usize + 3) >> 2;
-    for i in 0..words {
-        let mut w = unsafe { core::ptr::read_volatile((from + (i << 2)) as *const u32) };
-        let rest = h.size as usize - (i << 2);
-        if rest < 4 {
-            w &= (1u32 << (rest << 3)) - 1;
-        }
-        write_word(h.load_addr as usize + (i << 2), w);
+    let end = SCRATCH as usize + h.load_addr as usize + h.size as usize;
+    let rest = end & 3;
+    if rest != 0 {
+        let at = end & !3;
+        let w = unsafe { core::ptr::read_volatile(at as *const u32) };
+        write_word(at, w & ((1u32 << (rest << 3)) - 1));
     }
-    zero_dram();
+    for i in 0..map::HACK_D_WORDS {
+        write_word(map::HACK_D_BASE + (i << 2), 0);
+    }
+    unsafe {
+        core::arch::asm!(
+            ".option push",
+            ".option arch, +zifencei",
+            "fence.i",
+            ".option pop"
+        );
+    }
     write_word(map::GPIO_BOOT_MODE, map::BOOT_MODE_VALID);
     reset_now()
 }

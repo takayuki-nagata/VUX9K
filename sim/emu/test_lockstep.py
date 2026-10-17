@@ -24,16 +24,18 @@ from collections import deque, namedtuple
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "integration"))
-from lockstep_programs import UART_BIT, UART_FRAME, XMEM_WAIT, programs  # noqa: E402
+from lockstep_programs import UART_BIT, UART_FRAME, XMEM_WAIT, XMEM_WRITE_WAIT, programs  # noqa: E402
 from vux9k import REPO_ROOT, start_soc  # noqa: E402
 
 TRACE = os.environ.get("LOCKSTEP_TRACE", "")
 DIFF_DIR = os.path.join(REPO_ROOT, "build", "sim", "diff")
 
 Instr = namedtuple("Instr", "cycle riscv pc regs writes trap")
-# Longest instruction in cycles: a window load fetched from the window (2 FETCH/EXECUTE + 1
-# MEM_WAIT + two waits of soc_pkg::XMEM_READ_LATENCY), with room to spare
-LONGEST = 3 + 2 * XMEM_WAIT + 7
+# Longest instruction in cycles: a Hack AMD=M+1 (FETCH, EXECUTE, MEM_WAIT, HACK_WB,
+# HACK_WR_D) whose fetch and M read miss the caches (two waits of soc_pkg::XMEM_READ_LATENCY)
+# and whose M write waits XMEM_WRITE_LATENCY; longer than any RV32 one (a window load fetched
+# from the window: 3 + 2 * XMEM_WAIT), with room to spare
+LONGEST = 5 + 2 * XMEM_WAIT + XMEM_WRITE_WAIT + 7
 
 
 def _index_trace(path):
@@ -173,6 +175,8 @@ def test_lockstep(trace, pid, prog):
     rtl = _rtl_instrs(TRACE, trace[pid], rtl_uart)
 
     soc = start_soc(sd_sectors=prog.sd_sectors, imem_words=prog.imem_words)
+    for addr, data in prog.xmem:
+        soc.load_xmem(addr, data)
     for cycle, data in prog.uart_rx:
         soc.uart_send(data, at=cycle)
     buttons = sorted(prog.button)

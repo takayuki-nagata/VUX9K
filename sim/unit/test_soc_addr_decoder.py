@@ -3,7 +3,8 @@
 
 """soc_addr_decoder: the data-address map of README ("Memory & MMIO Register Map", "Address
 decoding and aliases"), in RV32 and Hack mode, against a model; at most one select is ever
-active. Hack never selects the wait-state window (xmem)."""
+active. Hack's RAM (below 0x6000) is the wait-state window (xmem), which soc_top maps into
+Hack's D segment; Hack never selects ram."""
 
 import random
 
@@ -21,13 +22,13 @@ def model(addr, hack):
         a = addr & 0xFFFF
         if a >> 4 == 0x600:
             return "uart" if (a >> 2) & 3 == 0 else "gpio"
-        return "ram" if a < 0x6000 else None
+        return "xmem" if a < 0x6000 else None
     region, page = addr >> 28, (addr >> 12) & 0xF
     if region in (0x0, 0x2):
         return "ram"
     if region == 0x4:
         return {0: "uart", 1: "timer", 2: "sd", 3: "gpio"}.get(page)
-    if region == 0x8:  # the wait-state window (RV32 only)
+    if region == 0x8:  # the wait-state window
         return "xmem"
     return None
 
@@ -54,7 +55,7 @@ async def test_rv32_regions_and_pages(dut):
 
 @cocotb.test()
 async def test_hack_map(dut):
-    """RAM below 0x6000, the MMIO block's UART/GPIO words, nothing above; upper bits ignored"""
+    """RAM (the window) below 0x6000, the MMIO block's UART/GPIO words, nothing above; upper bits ignored"""
     for a in (0x0000, 0x1FFF, 0x5FFF, 0x6000, 0x6003, 0x6004, 0x600F, 0x6010, 0x7FFF, 0xFFFF):
         for high in (0, 0xABCD_0000):
             await check(dut, high | a, 1)

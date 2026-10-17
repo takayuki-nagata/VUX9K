@@ -87,7 +87,7 @@ $(VERYL_OUT_DIR)/.stamp: $(VERYL_SRCS)
 veryl: $(VERYL_OUT_DIR)/.stamp
 
 # Generated RTL (read order: packages first). SOC_RTL_SRCS, further down, adds the rest of the SoC.
-CPU_RTL_SRCS = $(addprefix $(VERYL_OUT_DIR)/soc/cpu/,rv32i_pkg.sv auto_mode_detector.sv hack_translator.sv \
+CPU_RTL_SRCS = $(addprefix $(VERYL_OUT_DIR)/soc/cpu/,rv32i_pkg.sv hack_translator.sv \
 	rv32i_alu.sv rv32i_decode.sv rv32i_regfile.sv rv32i_csrs.sv rv32i_lsu.sv rv32i_trap_unit.sv next_pc_unit.sv \
 	unified_cpu.sv)
 
@@ -152,7 +152,7 @@ firmware: $(FIRMWARE_BUILD_DIR)/firmware.hex $(STAGE2_DIR)/STAGE2.BIN
 #   ZEPHYR.BIN   the Zephyr Rust demo, RV32 linked at the PSRAM's start (board vux9k): in place
 #   IRQECHO.BIN  the Zephyr interrupt-driven UART echo, RV32 at the PSRAM's start: in place
 #   BC.BIN       bc_clone_rs on Zephyr (~260 KB), RV32 at the PSRAM's start: in place
-#   HACK.BIN     the Hack demo, Hack at 0: I-RAM (replaces the first stage)
+#   HACK.BIN     the Hack demo, Hack at 0: an offset in its segment in the PSRAM (soft-resets back to the first stage)
 # Without Zephyr (its builds skip) ZEPHYR.BIN, IRQECHO.BIN and BC.BIN are left out, saying so.
 APPS_DIR = $(FIRMWARE_BUILD_DIR)/apps
 # The PSRAM's start, where RV32 applications are linked (the Zephyr board vux9k's flash)
@@ -528,7 +528,7 @@ sim-hack-rtl: veryl build-hack
 sim-hack: sim-hack-emu sim-hack-pytest sim-hack-rtl
 
 # The real second stage booted from the card on the RTL: ls, run HELLO.BIN (PSRAM) and
-# HACK.BIN (I-RAM, Hack); ~51M cycles in two tests
+# HACK.BIN (its PSRAM segment, Hack; back to the first stage); ~54M cycles in two tests
 sim-stage2: veryl firmware apps
 	@echo "=== Running the second stage from the card and its run on the RTL ==="
 	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_stage2]"
@@ -564,7 +564,6 @@ synth-units: veryl
 	@mkdir -p $(SYNTH_DIR)
 	$(YOSYS) -p "read_verilog -sv $(CPU_RTL_SRCS); synth_gowin -top unified_cpu $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/unified_cpu_syn.v"
 	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/uart/clk_timer.sv $(VERYL_OUT_DIR)/soc/uart/shift_registers.sv $(VERYL_OUT_DIR)/soc/uart/fifo_sync.sv $(VERYL_OUT_DIR)/soc/uart/uart_tx.sv $(VERYL_OUT_DIR)/soc/uart/uart_rx.sv $(VERYL_OUT_DIR)/soc/uart/uart_controller.sv; synth_gowin -top uart_controller $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/uart_controller_syn.v"
-	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/cpu/rv32i_pkg.sv $(VERYL_OUT_DIR)/soc/cpu/auto_mode_detector.sv; synth_gowin -top auto_mode_detector $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/auto_mode_detector_syn.v"
 	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/soc_xmem_bridge.sv; synth_gowin -top soc_xmem_bridge $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/soc_xmem_bridge_syn.v"
 	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/soc_icache.sv; synth_gowin -top soc_icache $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/soc_icache_syn.v"
 	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/soc_dcache.sv; synth_gowin -top soc_dcache $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/soc_dcache_syn.v"

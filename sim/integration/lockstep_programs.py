@@ -12,7 +12,8 @@ UART TX byte with its cycle.
 
 A program is the power-on state (firmware preload from build/firmware, words over
 I-RAM, SD sectors; the words of the wait-state window the programs use (XMEM_USED) zeroed,
-as the emulator starts it) plus host
+as the emulator starts it, then its own words written into the window, e.g. a Hack program
+in Hack's instruction segment) plus host
 stimulus at exact cycles (cycle 0 = first cycle out of reset): UART bytes sent back to
 back from a cycle, and S2 button levels.
 """
@@ -23,7 +24,7 @@ import struct
 import sys
 from dataclasses import dataclass, field
 
-from rv32_asm import Asm, b_type, i_type, j_type, r_type
+from rv32_asm import Asm, b_type, i_type, r_type
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 UART_BIT = 156  # soc_pkg::UART_CNT: 18 MHz / 115200
@@ -31,6 +32,11 @@ UART_FRAME = 10 * UART_BIT
 XMEM = 0x8000_0000  # the wait-state window: soc_pkg::RV_REGION_XMEM, 8 MB of PSRAM
 XMEM_BYTES = 0x80_0000  # soc_pkg::XMEM_WORDS * 4: the window repeats every 8 MB of region 8
 XMEM_WAIT = 35  # soc_pkg::XMEM_READ_LATENCY: the longest wait of one access
+XMEM_WRITE_WAIT = 34  # soc_pkg::XMEM_WRITE_LATENCY: a store's wait
+# Hack's segments in the window (soc_pkg::HACK_I_BASE/HACK_D_BASE): instructions at
+# HACK_I_BASE + pc[15:0], data word A at HACK_D_BASE + 4 * A[14:0]
+HACK_I_BASE = 0x8000_0000
+HACK_D_BASE = 0x8002_0000
 
 
 @dataclass
@@ -41,6 +47,7 @@ class Program:
     uart_rx: list = field(default_factory=list)  # (cycle, bytes): start bits back to back from cycle
     button: list = field(default_factory=list)  # (cycle, pressed) S2 pin level from cycle
     sd_sectors: dict = field(default_factory=dict)  # lba -> bytes (after the MBR in sector 0)
+    xmem: list = field(default_factory=list)  # (addr, bytes) written into the window at power-on
     slow: bool = False  # only in the long run (make sim-lockstep-slow)
     needs: list = field(default_factory=list)  # build outputs its setup is made from
 
@@ -154,6 +161,58 @@ XMEM_USED += [(0x1000, 0x1200), (0x1800, 0x1A00), (0x2000, 0x2200)]
 XCACHE_A, XCACHE_B, XCACHE_D = 0x600, 0x1600, 0x700
 XCACHE_D2 = XCACHE_D + 0x1000
 XMEM_USED += [(XCACHE_B, XCACHE_B + 0x40), (XCACHE_D2, XCACHE_D2 + 4)]
+# Hack: the I segment up to HACK_DEMO_BYTES (the demo's image; the other Hack programs are
+# smaller), the D segment's first 256 words (R0-R15, the compiler's temporaries) and the
+# demo's stack (the 512 words below its SP, 0x4000), and hack_stub's pass counter
+HACK_DEMO_BYTES = 0x1600
+HACK_STUB_FLAG = XMEM + 0x40_0000
+XMEM_USED += [(0x800, HACK_DEMO_BYTES), (0x2_0000, 0x2_0400), (0x2_F800, 0x3_0000)]
+XMEM_USED += [(HACK_STUB_FLAG - XMEM, HACK_STUB_FLAG - XMEM + 4)]
+
+
+def _soft_reset_key(a, gpio: str):
+    """Store the soft-reset key (0x0000_A55A) to the GPIO at register gpio."""
+    a.lui("t0", 0xA)
+    a.addi("t0", "t0", 0x55A)  # SOFT_RESET_KEY's low half (0x0000_A55A)
+    a.sw("t0", 0xC, gpio)
+
+
+HACK_BACK = ord("S")  # what hack_stub prints when a soft reset without a mode brings it back
+# The Hack demo's report has left the UART by cycle ~4.12M (its stores wait on the PSRAM),
+# hack_stub's HACK_BACK after the demo's soft reset by ~4.125M
+HACK_DEMO_CYCLES = 4_140_000
+
+
+def hack_stub() -> list:
+    """RV32 code for I-RAM 0 that starts a Hack program already in its I segment, as a
+    loader does (the power-on reset and a soft reset without a mode start RV32): on its first
+    pass (the PSRAM word HACK_STUB_FLAG is 0) it sets that word, gives Hack (0x100) in GPIO
+    0x8 and soft-resets. When the Hack program soft-resets without a mode, the CPU comes back
+    here in RV32: it prints HACK_BACK (once the TX FIFO has room) and spins."""
+    a = Asm()
+    a.li("s0", HACK_STUB_FLAG)
+    a.lui("s1", 0x40003)  # GPIO
+    a.lw("t0", 0, "s0")
+    a.bnez("t0", "back")
+    a.addi("t0", "zero", 1)
+    a.sw("t0", 0, "s0")
+    a.addi("t0", "zero", 0x100)  # valid, Hack
+    a.sw("t0", 8, "s1")
+    _soft_reset_key(a, "s1")
+    a.label("spin")
+    a.j("spin")
+    a.label("back")
+    a.lui("s1", 0x40000)  # UART
+    _put_char(a, HACK_BACK, "wait")
+    a.label("halt")
+    a.j("halt")
+    return a.assemble()
+
+
+def hack_image_bytes(words: list) -> bytes:
+    """Hack program words (two instructions each, the first in the low half: hack_asm,
+    scripts/bin2hex.py) as the bytes of its I segment."""
+    return struct.pack(f"<{len(words)}I", *words)
 
 
 def xmem() -> list:
@@ -433,7 +492,7 @@ def traps() -> list:
     a.label("wait")
     a.li("t1", 2)
     a.bltu("s3", "t1", "wait")
-    # Soft reset with auto-detected ISA (x5 marks the second pass)
+    # Soft reset without a mode: RV32 again (x5 marks the second pass)
     a.li("x5", 1)
     a.li("t1", 0x40003000)
     a.li("t2", 0xA55A)
@@ -470,9 +529,10 @@ def traps() -> list:
 
 
 def hack_soft_reset(key_by_addition: bool = True) -> list:
-    """Hack: print 'R', store the soft-reset key to GPIO 0x600C, spin. Hack registers are
-    32 bits wide, so 0x255A + 0x4000 + 0x4000 is 0x0000_A55A, a key the GPIO accepts, and
-    the program restarts from 0 (ISA detected again); 0xFFFF_A55A from !0x5AA5 is not."""
+    """Hack (for its I segment, started by hack_stub): print 'R', store the soft-reset key to
+    GPIO 0x600C, spin. Hack registers are 32 bits wide, so 0x255A + 0x4000 + 0x4000 is
+    0x0000_A55A, a key the GPIO accepts: with no mode given the CPU restarts at 0 in RV32,
+    where hack_stub prints HACK_BACK; 0xFFFF_A55A from !0x5AA5 is not."""
     import hack_asm
 
     a = hack_asm.Asm()
@@ -498,14 +558,11 @@ def hack_soft_reset(key_by_addition: bool = True) -> list:
     return a.assemble()
 
 
-BOOT_MODE_CODE = 0x400  # boot_mode_hack's RV32 code, clear of the Hack program it writes at 0
-
-
 def boot_mode_hack() -> list:
-    """RV32 writes a Hack program starting with `@0` over I-RAM word 0, gives Hack in GPIO
-    0x8 (read back), and soft-resets: the CPU must start it in Hack mode, which prints 'H'.
-    Without the mode the first-instruction guess can't tell `@0` from RV32 (README, "ISA
-    selection"); a loader gives it for every program it starts."""
+    """RV32 writes a Hack program (starting with `@0`, which RV32 can't tell from its own
+    code) into Hack's instruction segment word by word, gives Hack in GPIO 0x8 (read back),
+    and soft-resets: the CPU must start it in Hack mode, which prints 'H'. The mode, given
+    by the loader, is the only way into Hack (README, "ISA selection")."""
     import hack_asm
 
     h = hack_asm.Asm()
@@ -519,21 +576,19 @@ def boot_mode_hack() -> list:
     h.at("halt")
     h.c("0;JMP")
 
-    a = Asm(origin=BOOT_MODE_CODE)
+    a = Asm()
+    a.li("s0", HACK_I_BASE)
     for i, w in enumerate(h.assemble()):
         a.li("t0", w)
-        a.sw("t0", 4 * i, "zero")  # I-RAM word i
+        a.sw("t0", 4 * i, "s0")  # the I segment's word i
     a.lui("s1", 0x40003)  # GPIO
     a.addi("t0", "zero", 0x100)  # valid, Hack
     a.sw("t0", 8, "s1")
     a.lw("s2", 8, "s1")
-    a.lui("t0", 0xA)
-    a.addi("t0", "t0", 0x55A)  # SOFT_RESET_KEY's low half (0x0000_A55A)
-    a.sw("t0", 0xC, "s1")
+    _soft_reset_key(a, "s1")
     a.label("spin")
     a.j("spin")
-
-    return [j_type(BOOT_MODE_CODE, "zero")] + [0] * (BOOT_MODE_CODE // 4 - 1) + a.assemble()
+    return a.assemble()
 
 
 # --- the second stage's launcher, by hand: code in the PSRAM starting code -----------------
@@ -541,7 +596,7 @@ S2L_CODE = XMEM + 0x1000  # the launcher's first part, as the second stage's cod
 S2L_COPY = XMEM + 0x1800  # where the first part copies the second (fence.i, then a jump)
 S2L_APP = XMEM + 0x2000  # where the second part copies an RV32 program (the PSRAM target)
 S2L_BYTES = 0x200  # room for each part and the RV32 program (XMEM_USED)
-# 'P' starts at cycle ~11,200 (Hack: ~9,800), 'L' after the jump at ~13,900 ('K' after the soft reset ~11,400)
+# 'P' starts at cycle ~4,100 (Hack: ~3,900), 'L' after the jump at ~5,600 ('K' after the soft reset ~5,500)
 S2_LAUNCH_CYCLES = 18_000
 
 
@@ -562,9 +617,9 @@ def s2_launch(hack: bool = False) -> list:
     jumps there; that part prints 'P', then starts one of fw_common::launch's targets.
     RV32 (the PSRAM target): it copies the program to S2L_APP word by word (as `run` loads
     it in place), sets a0-a2, fence.i and jumps there; the program prints 'L'. Hack: it
-    copies the program into I-RAM word by word (start_hack), gives Hack (0x100) in GPIO 0x8
-    (read back) and soft-resets: the CPU starts the program in Hack mode, which prints
-    'K'."""
+    copies the program into Hack's instruction segment word by word (where `run` loads it),
+    fence.i, gives Hack (0x100) in GPIO 0x8 (read back) and soft-resets (start_hack): the CPU
+    starts the program in Hack mode, which prints 'K'."""
     if hack:
         import hack_asm
 
@@ -585,12 +640,12 @@ def s2_launch(hack: bool = False) -> list:
         t.j("halt")
         target = t.assemble()
 
-    # The second part, run at S2L_COPY, with the program it copies (into I-RAM, or to
-    # S2L_APP) after it
+    # The second part, run at S2L_COPY, with the program it copies (into Hack's I segment,
+    # or to S2L_APP) after it
     s = Asm(origin=S2L_COPY)
     _put_char(s, ord("P"), "w")
     s.la("a0", "target")
-    s.li("a1", 0 if hack else S2L_APP)
+    s.li("a1", HACK_I_BASE if hack else S2L_APP)
     s.li("a2", len(target))
     s.label("copy")
     s.lw("t0", 0, "a0")
@@ -600,13 +655,12 @@ def s2_launch(hack: bool = False) -> list:
     s.addi("a2", "a2", -1)
     s.bnez("a2", "copy")
     if hack:
+        s.word(0x0000_100F)  # fence.i
         s.lui("s2", 0x40003)  # GPIO
         s.li("t0", 0x100)
         s.sw("t0", 8, "s2")
         s.lw("s3", 8, "s2")
-        s.lui("t0", 0xA)
-        s.addi("t0", "t0", 0x55A)  # SOFT_RESET_KEY's low half (0x0000_A55A)
-        s.sw("t0", 0xC, "s2")
+        _soft_reset_key(s, "s2")
     else:
         # a0-a2 as the first stage hands them over (SDHC, partition LBA, its version)
         s.li("a0", 1)
@@ -790,8 +844,12 @@ def programs() -> list:
     """All programs, in trace-id order (id = index + 1)."""
     progs = [Program(f"random_rv_{seed}", cycles=20_000, imem_words=random_rv(seed)) for seed in (1, 2, 3)]
     progs.append(Program("traps", cycles=6_000, imem_words=traps(), uart_rx=[(TRAPS_RX_CYCLE, b"Z")]))
+    # The Hack demo in its I segment, started by hack_stub; it soft-resets back to the stub
+    # at the end (HACK_BACK)
     hack_hex = os.path.join(REPO_ROOT, "build", "hack", "firmware.hex")
-    progs.append(Program("hack_demo", cycles=1_250_000, imem_words=_hex_words(hack_hex)))
+    hack_demo = hack_image_bytes(_hex_words(hack_hex))
+    assert len(hack_demo) <= HACK_DEMO_BYTES, "the Hack demo outgrew its XMEM_USED range"
+    progs.append(Program("hack_demo", cycles=HACK_DEMO_CYCLES, imem_words=hack_stub(), xmem=[(HACK_I_BASE, hack_demo)]))
     # The first stage: from power-on it boots STAGE2.BIN, which runs from the PSRAM ('#')
     progs.append(Program("s1_autoboot", cycles=3_300_000, sd_sectors=stage2_card()))
     # A key right after the banner keeps it at its prompt; then h and i
@@ -804,7 +862,14 @@ def programs() -> list:
             slow=True,
         )
     )
-    progs.append(Program("hack_soft_reset", cycles=20_000, imem_words=hack_soft_reset()))
+    progs.append(
+        Program(
+            "hack_soft_reset",
+            cycles=20_000,
+            imem_words=hack_stub(),
+            xmem=[(HACK_I_BASE, hack_image_bytes(hack_soft_reset()))],
+        )
+    )
     progs.append(Program("boot_mode_hack", cycles=6_000, imem_words=boot_mode_hack()))
     progs.append(Program("sd_clkdiv", cycles=30_000, imem_words=sd_clkdiv()))
     progs.append(Program("s2_launch", cycles=S2_LAUNCH_CYCLES, imem_words=s2_launch()))

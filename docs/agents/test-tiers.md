@@ -51,7 +51,8 @@ at ~250 cycles a byte as the board does: the other SoC tests boot a 28-byte `STA
 `test_soc_stage2.py` (`sim-stage2`) is the RTL test of the real second stage booted from the
 card (`soc_env.s2_card`: `STAGE2.BIN` and the demos of `make apps` in `\VUX9K\APPS\`): `ls`,
 `run HELLO.BIN` (the PSRAM, a0-a2, `r` back to the first stage; ~14M cycles) and `run
-HACK.BIN` (I-RAM in Hack mode; ~15M cycles). The prompt alone takes ~12.8M cycles (the 35 KB
+HACK.BIN` (its PSRAM segment in Hack mode, then its soft reset back to the first stage;
+~18M cycles). The prompt alone takes ~12.8M cycles (the 35 KB
 file at ~250 cycles a byte), and `run` loads at ~200-260 cycles a byte (the second stage
 runs from the PSRAM, through its caches): the 13 KB Zephyr demo through it is ~19M cycles,
 minutes on the netlist, so it runs there only in `sim-zephyr-demo-gls` (`test_soc_zephyr_s2.py`, test-slow);
@@ -91,8 +92,8 @@ clock-and-board.md, "Board UART output that is noise: ModemManager and the bridg
   FAT32; `install` makes `\VUX9K\`, and the suite writes only there (versions 9001-9003,
   `\VUX9K\TEST\` and removes it, the demos in `\VUX9K\APPS\`, last the second stage under
   test). Besides the boot chain it runs the second stage's file commands and the demos
-  through `put`/`run`: `HELLO.BIN` (PSRAM), then, last because they never return to the
-  first stage, `HACK.BIN` (it replaces the first stage in I-RAM), `ZEPHYR.BIN` and `BC.BIN`
+  through `put`/`run`: `HELLO.BIN` (PSRAM), then, last, `HACK.BIN` (its PSRAM segment; it
+  soft-resets back to the first stage), `ZEPHYR.BIN` and `BC.BIN`
   (in the PSRAM; they leave the first stage, but only the reset button would start it; bc's
   put, load and start take minutes and print their wall-clock times), each followed
   by a load of `pack.fs` into SRAM with openFPGALoader (never `--reset`: that loads the

@@ -36,21 +36,25 @@ def test_until_not_reached_fails():
     assert b"cycle budget" in r.stderr
 
 
-def test_hack_demo_without_firmware():
-    r = run("--no-firmware", "--no-card", "--hex", "build/hack/firmware.hex", "--until", "(100%)!")
-    assert r.returncode == 0, r.stderr
-    assert b"ALL HACK C FIRMWARE TESTS PASSED" in r.stdout
+def test_hex_runs_as_rv32():
+    # --hex fills I-RAM, which starts RV32 (the ISA isn't guessed): the Hack demo's words garble
+    r = run(
+        "--no-firmware", "--no-card", "--hex", "build/hack/firmware.hex", "--until", "(100%)!", "--cycles", "2000000"
+    )
+    assert r.returncode == 1
+    assert b"ALL HACK C FIRMWARE TESTS PASSED" not in r.stdout
 
 
 def test_hack_bin_with_mode():
-    # The image vux_tool.py flash-sd --mode hack writes, as an application developer runs it
+    # The image vux_tool.py mkv4 --mode hack wraps, as an application developer runs it: in
+    # Hack's instruction segment in the PSRAM, started in Hack at 0
     r = run("--no-firmware", "--no-card", "--load", "build/hack/firmware.bin", "--mode", "hack", "--until", "(100%)!")
     assert r.returncode == 0, r.stderr
     assert b"ALL HACK C FIRMWARE TESTS PASSED" in r.stdout
 
 
 def test_load_without_mode_is_raw_words():
-    # Without --mode the file is little-endian words and the ISA a guess: a Hack .bin garbles
+    # Without --mode the file is little-endian words in I-RAM, run as RV32: a Hack .bin garbles
     r = run(
         "--no-firmware", "--no-card", "--load", "build/hack/firmware.bin", "--until", "(100%)!", "--cycles", "2000000"
     )
@@ -105,7 +109,10 @@ def test_mode_rejects_an_image_too_big_for_the_board(tmp_path):
     "args,error",
     [
         (["--load-addr", "0x80000000"], b"--load-addr needs --mode"),
-        (["--load", "build/hack/firmware.bin", "--mode", "hack", "--load-addr", "0x80000000"], b"into the PSRAM"),
+        (
+            ["--load", "build/hack/firmware.bin", "--mode", "hack", "--load-addr", "0x80000000"],
+            b"Hack instruction segment",
+        ),
         (["--load", "build/hack/firmware.bin", "--mode", "riscv", "--load-addr", "0x8000"], b"into the PSRAM"),
         (["--load", "build/hack/firmware.bin", "--mode", "riscv", "--load-addr", "nowhere"], b"--load-addr"),
     ],

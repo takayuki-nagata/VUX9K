@@ -36,7 +36,7 @@ pub struct Gpio {
 pub struct SoftReset {
     /// First cycle with cpu_soft_rst low again: the CPU fetches from address 0 here.
     pub release: u64,
-    /// ISA given in register 0x8 (Some(true) = RV32), or None to auto-detect.
+    /// ISA given in register 0x8 (Some(true) = RV32), or None (RV32).
     pub mode: Option<bool>,
 }
 

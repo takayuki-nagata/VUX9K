@@ -31,8 +31,8 @@ from cocotb.triggers import ClockCycles, FallingEdge, Timer
 from rv32_asm import Asm
 
 MAX_CYCLES = 160
-RV_INSTR_GARBAGE = 0xFFFFFFFF  # illegal in RV32; the mode detector would take it for Hack
-HACK_INSTR_GARBAGE = 0x00000013  # an RV32 nop: the mode detector would take it for RV32
+RV_INSTR_GARBAGE = 0xFFFFFFFF  # illegal in RV32: a garbage word latched traps
+HACK_INSTR_GARBAGE = 0x00000013  # @19 / @0 in Hack: a garbage word latched changes A
 DATA_GARBAGE = 0xDEADBEEF
 IRQ_LINES = ("timer_irq_in", "ext_irq_in", "sw_irq_in")
 KINDS = ("fetch", "load", "store", "hack_m_read", "hack_m_write")
@@ -103,7 +103,8 @@ async def run(
     max_cycles=MAX_CYCLES,
 ):
     """Reset the CPU and run max_cycles cycles of `imem` ({word address: word}); the
-    clock runs already (start_clock, once per test: a test makes several runs).
+    clock runs already (start_clock, once per test: a test makes several runs). hack: a
+    soft reset with the Hack boot mode follows the reset (the only way into Hack).
 
     instr_ready/data_ready(cycle) give the ready inputs per cycle (cycle 0: the first
     after reset); irq(cycle) the set of IRQ_LINES that are high. dmem ({address: word};
@@ -121,6 +122,8 @@ async def run(
     await ClockCycles(dut.clk, 2)
     await FallingEdge(dut.clk)
     dut.rst.value = 1
+    if hack:
+        await enter_hack(dut)
 
     def word_addr(addr):
         return addr if hack else addr & ~3
@@ -166,6 +169,17 @@ async def run(
             writes.append((cycle, c.waddr, c.wdata, c.wbe))
         prev_pc, prev_daddr = c.pc, c.daddr
     return Run(trace, dmem, writes)
+
+
+async def enter_hack(dut):
+    """One cycle of soft_rst with boot_mode_valid and boot_mode 0 (Hack), from a falling
+    edge to the next: the CPU then fetches from 0 in Hack (a hard reset starts RV32)."""
+    dut.soft_rst.value = 1
+    dut.boot_mode_valid.value = 1
+    dut.boot_mode.value = 0
+    await FallingEdge(dut.clk)
+    dut.soft_rst.value = 0
+    dut.boot_mode_valid.value = 0
 
 
 def low_during(start, n):
@@ -242,7 +256,7 @@ async def test_harness_baseline(dut):
 async def test_stalled_fetch_holds_state(dut):
     """instr_ready low in a FETCH (the first after reset, and one mid-program) for 1-4
     cycles: pc_out stays, nothing is written, and the program continues unchanged once
-    ready rises. The first FETCH also shows the mode detector garbage that looks like Hack."""
+    ready rises."""
     start_clock(dut)
     imem, labels = fetch_program()
     base = await run(dut, imem)
@@ -427,8 +441,8 @@ def hack_program():
 @cocotb.test(timeout_time=1, timeout_unit="ms")
 async def test_stalled_hack_m_read(dut):
     """Hack: data_ready low in the MEM_WAIT of an M read latches data_in only on
-    completion (garbage before it), and a stalled first FETCH (showing an RV32 word)
-    doesn't make the mode detector pick RV32"""
+    completion (garbage before it), and the first FETCH after the soft reset into Hack
+    can wait too"""
     start_clock(dut)
     imem = hack_program()
     data = {5: 0x1234}
@@ -444,7 +458,7 @@ async def test_stalled_hack_m_read(dut):
         assert stalled.dmem.get(6) == 0x1234
     stalled = await run(dut, imem, data, instr_ready=low_during(0, 2), hack=True)
     sample_access("fetch", 2, False)
-    assert int(dut.active_mode.value) == 0, "a stalled first FETCH set RV32 mode"
+    assert int(dut.active_mode.value) == 0, "left Hack mode"
     check_stalled(base, stalled, 0, 2, "Hack first FETCH stalled 2")
     fcov.export()
 

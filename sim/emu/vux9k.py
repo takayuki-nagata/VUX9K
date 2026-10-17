@@ -26,6 +26,8 @@ try:
     import vux9k_emu  # noqa: E402
 except ImportError as e:  # pragma: no cover - a setup problem, not a test result
     raise ImportError(f"{e}: build the emulator's Python module with `make emu-py`") from e
+from lockstep_programs import HACK_BACK, HACK_D_BASE, HACK_I_BASE, hack_image_bytes, hack_stub  # noqa: E402, F401
+
 import tools.vux_tool as vux_tool  # noqa: E402, F401 (the tests take it from here)
 
 Soc = vux9k_emu.Soc
@@ -127,6 +129,17 @@ def start_soc(*, profile="real", sd_sectors=None, mbr=True, sd_card=None, card=T
         soc.load_iram_words(list(imem_words))
     if card:
         soc.sd_insert(sd_image(sd_sectors or {}, mbr=mbr), **(sd_card or {}))
+    return soc
+
+
+def start_hack(words, **kw):
+    """A SoC that starts a Hack program the way soc_env.start_hack() does on the RTL: its
+    words (two instructions each, the first in the low half: hack_asm, scripts/bin2hex.py)
+    in Hack's I segment, lockstep_programs.hack_stub at I-RAM 0, which gives Hack in GPIO
+    0x8 and soft-resets into it (the power-on reset starts RV32), and prints HACK_BACK when
+    the program soft-resets back without a mode. kw goes to start_soc()."""
+    soc = start_soc(imem_words=hack_stub(), **kw)
+    soc.load_xmem(HACK_I_BASE, hack_image_bytes(list(words)))  # the window starts zeroed
     return soc
 
 

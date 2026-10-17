@@ -8,7 +8,10 @@ soc_xmem_bridge and the PSRAM (a load miss or a store completes after a random d
 store's bytes reach the memory then; outside those mem_ready is 1, as the bridge's
 data_ready). A Python model of the cache predicts hit, mem_sel and data_ready in every
 cycle, and every word a load returns is checked against the memory, so a stale line or a
-wrong byte merge fails the test."""
+wrong byte merge fails the test. Besides RV32's accesses (one per MEM_WAIT, a FETCH between
+two), the CPU makes one pair back to back: a Hack instruction that reads M and writes it
+(AM=M+1) loads in MEM_WAIT and stores the whole word from the next cycle (HACK_WB), the line
+read at the same index all along."""
 
 import random
 
@@ -36,6 +39,14 @@ OUTCOMES = ("hit", "miss", "outside", "sweep_wait")
 )
 @fcov.point("dcache.read_ahead", ("match", "mismatch"), xf=lambda kind, outcome, line, ahead: ahead)
 def sample(kind, outcome, line, ahead):
+    pass
+
+
+# A store right after a load of the same word (Hack's MEM_WAIT then HACK_WB): after a load
+# hit (the store hits too, merging), and after a load miss (its fill collides with the
+# line's read: the store misses and allocates)
+@fcov.point("dcache.load_then_store", ("hit", "miss"), xf=lambda load: load)
+def sample_load_then_store(load):
     pass
 
 
@@ -205,6 +216,28 @@ class Bench:
                 return outcome
         raise AssertionError(f"{kind} of {word:06x} never completed")
 
+    async def load_then_store(self, word, clear=1):
+        """A Hack instruction that reads M and writes it (AM=M+1): EXECUTE (the line read
+        ahead), MEM_WAIT's load until ready, then from the next cycle HACK_WB's full-word
+        store until ready, data_req high in both and rd_idx at the word's line throughout
+        (Hack's address is A itself). Returns the load's outcome, "hit" or "miss"."""
+        idx = idx_of(word)
+        await self.tick(clear, idx)
+        load = None
+        for kind in ("load", "store"):
+            wdata = random.getrandbits(32)
+            for _ in range(LINES + 100):  # the sweep, or a bridge access
+                ready, h = await self.tick(clear, idx, kind, True, word, wdata, 0xF)
+                if load is None:  # the load's first cycle
+                    load = "hit" if h else "miss"
+                if ready:
+                    break
+            else:
+                raise AssertionError(f"{kind} of {word:06x} after a load never completed")
+        assert self.swept, "load_then_store before the sweep"
+        sample_load_then_store(load)
+        return load
+
 
 def pool(n_lines=6, n_tags=3):
     """Words on a few lines with a few tags each: hits, conflicts and evictions."""
@@ -246,18 +279,29 @@ async def test_directed(dut):
     await b.access("load", w, sel=False)  # outside the window
     await b.access("store", w, sel=False, wstrb=0b0001)
     await b.access("load", w)
+    # Hack's load and store back to back: after a miss (the store follows the fill), then
+    # after a hit; each word read back
+    u = 0x2_0123
+    assert await b.load_then_store(u) == "miss"
+    await b.access("load", u)
+    assert await b.load_then_store(u) == "hit"
+    await b.access("load", u)
     fcov.export()
 
 
 @cocotb.test(timeout_time=20, timeout_unit="ms")
 async def test_random(dut):
     """Random loads and stores (random strobes) over a few lines and tags, stale
-    read-aheads and accesses outside the window, against the model"""
+    read-aheads, accesses outside the window and Hack's back-to-back load and store,
+    against the model"""
     b = Bench(dut)
     await b.reset()
     words = pool()
     await b.access("store", random.choice(words))  # waits for the sweep
     for _ in range(1500):
+        if random.random() < 0.1:  # Hack's AM=M+1
+            await b.load_then_store(random.choice(words), clear=random.randint(0, 1))
+            continue
         kind = random.choice(KINDS)
         wstrb = random.choice((0xF, 0xF, 0x1, 0x2, 0x4, 0x8, 0x3, 0xC, random.randrange(1, 16)))
         await b.access(kind, random.choice(words), sel=random.random() < 0.9, wstrb=wstrb,

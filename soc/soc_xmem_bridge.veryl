@@ -1,13 +1,15 @@
 // Copyright (c) 2026 Takayuki Nagata
 // SPDX-License-Identifier: MIT
 
-// The CPU's side of the wait-state window (RV32 region soc_pkg::RV_REGION_XMEM): turns a
-// fetch (FETCH) or a data access (RV32 MEM_WAIT) in the window into one request of the
+// The CPU's side of the wait-state window (RV32 region soc_pkg::RV_REGION_XMEM, and Hack's
+// segments in it): turns a fetch (FETCH) or a data access (unified_cpu's data_req: RV32
+// MEM_WAIT, a Hack M read or write) in the window into one request of the
 // memory controller's request/response contract (psram::psram_controller, its header) and tells the
 // CPU when it completes. Outside the window instr_ready/data_ready are 1: everything else
 // answers in one cycle.
-// - The request is raised in the first cycle of the CPU's FETCH/MEM_WAIT and held, with
-//   the same fields, until accepted: the CPU holds its address and data while it waits.
+// - The request is raised in the first cycle of the CPU's access and held, with the same
+//   fields, until accepted: the CPU holds its address and data while it waits. A Hack M
+//   read and the write of the same instruction (HACK_WB) are two requests back to back.
 // - busy (accepted, no response yet) drops req_valid, so the access the CPU is still
 //   waiting on is never requested twice; the response's cycle completes it (ready).
 // - ready comes from registers only (fetch_addr is pc_reg, data_addr the registered

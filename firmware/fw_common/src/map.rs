@@ -42,7 +42,7 @@ pub const SOFT_RESET_KEY: u32 = 0x5A5A_A55A;
 
 // ----- Memories -------------------------------------------------------------------
 /// I-RAM: the first stage at power-on; a store there replaces it (whole words: no byte
-/// enables), and every soft reset starts what is there.
+/// enables), and every soft reset into RV32 starts what is there.
 pub const IRAM_BASE: usize = 0x0000_0000;
 pub const IRAM_BYTES: usize = 16 * 1024;
 pub const DRAM_BASE: usize = 0x2000_0000;
@@ -60,6 +60,15 @@ pub const STAGE2_BYTES: usize = 1024 * 1024;
 /// The first stage's data and stack: the 64 KB below the second stage's window.
 pub const S1_RAM_BASE: usize = 0x806F_0000;
 pub const S1_RAM_BYTES: usize = 64 * 1024;
+/// Hack's instruction segment (soc_pkg::HACK_I_BASE): a Hack fetch of byte address pc
+/// reads `HACK_I_BASE + pc[15:0]`, two 16-bit instructions a word, the first in the low
+/// half. A Hack program starts at 0 (a soft reset into Hack).
+pub const HACK_I_BASE: usize = 0x8000_0000;
+pub const HACK_I_BYTES: usize = 64 * 1024;
+/// Hack's data segment (soc_pkg::HACK_D_BASE): Hack data word A (A < 0x6000) is the 32-bit
+/// word at `HACK_D_BASE + 4 * A[14:0]`.
+pub const HACK_D_BASE: usize = 0x8002_0000;
+pub const HACK_D_WORDS: usize = 0x6000;
 
 // ----- Clock ----------------------------------------------------------------------
 /// mtime ticks at the SoC clock, 18 MHz (soc_pkg::CLK_HZ).

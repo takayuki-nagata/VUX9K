@@ -5,13 +5,14 @@
 The second stage (firmware/stage2) on the emulator: its line prompt (echo, backspace,
 usage), the file commands on FAT32 cards (long names read, 8.3 names written, every error
 they report), put/install over transfer v2 through tools/vux_tool.py, `run` of the two
-targets of fw_common::launch (PSRAM, I-RAM Hack) and what it refuses (an RV32 file at 0
+targets of fw_common::launch (PSRAM, Hack's segment) and what it refuses (an RV32 file at 0
 among them, with the first stage left intact in I-RAM), `info`, `reset` and the trap report.
 """
 
 import os
 import struct
 import sys
+import zlib
 
 import pytest
 
@@ -43,6 +44,9 @@ HACK_DONE = b"ALL HACK C FIRMWARE TESTS PASSED (100%)!"
 S1_WORDS = read_hex_words(os.path.join(STAGE1_DIR, "firmware.hex"))
 # Run commands: the [RUN] line and the blank line after it
 RUN_CYCLES = 20_000_000
+# Hack's segments in the PSRAM (soc_pkg::HACK_I_BASE/HACK_D_BASE)
+HACK_I_BASE = 0x8000_0000
+HACK_D_BASE = 0x8002_0000
 
 
 def err(out: str) -> str:
@@ -504,21 +508,47 @@ def test_run_refuses_rv32_in_i_ram():
     I-RAM and the prompt comes back."""
     soc, _ = boot_s2({"APP.BIN": v4(app(0, "Iram\n"), load_addr=0, name="iram")})
     out = s2_cmd(soc, "run APP.BIN", timeout_cycles=RUN_CYCLES)
-    assert out == "[ERR] loads outside 80000000-806FFFFF (RV32), 0-3FFF (Hack, at a word)\n", out
+    assert out == "[ERR] loads outside 80000000-806FFFFF (RV32), 0-FFFF (Hack, at a word)\n", out
     assert "Iram" not in out and "[RUN]" not in out
     assert s1_intact(soc)
     assert "VUX9K" in s2_cmd(soc, "ls")
 
 
-def test_run_hack_from_i_ram():
+def test_run_hack_from_its_segment():
+    """A Hack file loads into Hack's instruction segment in the PSRAM (its load address, 0, an
+    offset there), the data segment is zeroed and a soft reset starts it in Hack mode; the
+    first stage stays in I-RAM, and the demo's soft reset at its end goes back to it."""
     assert os.path.exists(HACK_BIN), f"{HACK_BIN} missing; run `make build-hack` first"
     with open(HACK_BIN, "rb") as f:
         hack = v4(f.read(), mode="hack", name="Hack demo")
     soc, _ = boot_s2({"VUX9K/APPS/HACK.BIN": hack})
+    last = HACK_D_BASE + 4 * 0x5FFF  # the data segment's last word, which the demo doesn't use
+    soc.load_xmem(last, b"\xff" * 4)
     out = s2_cmd(soc, "run VUX9K/APPS/HACK.BIN", until=HACK_DONE, timeout_cycles=RUN_CYCLES + 20_000_000)
-    assert f'[RUN] v1 "Hack demo" {len(hack) - 64} B, I-RAM (Hack), starting at 0x00000000\n\n' in out, out
+    assert f'[RUN] v1 "Hack demo" {len(hack) - 64} B, Hack segment, starting at 0x00000000\n\n' in out, out
     assert "[FAIL]" not in out
     assert not soc.riscv_mode
+    assert soc.xmem_word(HACK_I_BASE) == int.from_bytes(hack[64:68], "little"), "the payload in place"
+    assert soc.xmem_word(last) == 0, "the data segment zeroed"
+    assert s1_intact(soc)
+    out = wait_for(soc, BANNER.encode(), 5_000_000, start=len(soc.uart_received()))
+    assert soc.riscv_mode, "the demo's soft reset without a mode: RV32, the first stage"
+
+
+def test_run_hack_zeroes_the_last_word_past_its_payload():
+    """A Hack payload that ends mid-word (vux_tool packs whole words; another tool may not):
+    the rest of its last word in the segment is 0, whatever the PSRAM held there."""
+    file = bytearray(v4(b"\x00\x05\xec\x10\x00\x06", mode="hack", name="odd"))  # @5, D=A, @6
+    payload = bytes(file[64:70])  # the three instructions, without the packing's last half
+    file[12:16] = len(payload).to_bytes(4, "little")
+    file[24:28] = (zlib.crc32(payload) & 0xFFFF_FFFF).to_bytes(4, "little")
+    soc, _ = boot_s2({"ODD.BIN": bytes(file[:64]) + payload})
+    soc.load_xmem(HACK_I_BASE + 4, b"\xff" * 4)
+    out = s2_cmd(soc, "run ODD.BIN", until=b"\n\n", timeout_cycles=RUN_CYCLES)
+    assert '[RUN] v1 "odd" 6 B, Hack segment, starting at 0x00000000' in out, out
+    soc.run(2_000_000)  # the data segment zeroed, the soft reset
+    assert not soc.riscv_mode
+    assert soc.xmem_word(HACK_I_BASE + 4) == 0x0006, hex(soc.xmem_word(HACK_I_BASE + 4))
 
 
 def bad_mode(file: bytes) -> bytes:
@@ -535,9 +565,10 @@ REFUSED = {
     "SIZE.BIN": (v4(PS_APP, load_addr=PSRAM_APP)[:-4], "file size is not the header's"),
     "DRAM.BIN": (v4(PS_APP, load_addr=0x2000_0000), "loads outside"),
     "S2WIN.BIN": (v4(PS_APP, load_addr=0x8070_0000), "loads outside"),
-    # RV32 in I-RAM (second stage v3: the PSRAM only), and Hack past I-RAM's end
+    # RV32 in I-RAM (second stage v3: the PSRAM only), and Hack past its 64 KB segment
     "RVIRAM.BIN": (v4(app(0, "x"), load_addr=0), "loads outside"),
-    "BIGHACK.BIN": (v4(bytes(0x4002), mode="hack"), "loads outside"),
+    "BIGHACK.BIN": (v4(bytes(0x1_0002), mode="hack"), "loads outside"),
+    "HACKFAR.BIN": (v4(b"\x12\x34" * 8, mode="hack", load_addr=0xFFF8), "loads outside"),
     "HACKODD.BIN": (v4(b"\x12\x34" * 8, mode="hack", load_addr=2), "loads outside"),
     "MODE.BIN": (bad_mode(v4(PS_APP, load_addr=PSRAM_APP)), "not RV32 or Hack, mode 2"),
     "ENTRY.BIN": (v4(PS_APP, load_addr=PSRAM_APP, entry_point=PSRAM_APP + 2), "bad entry point 80000002"),
@@ -560,7 +591,7 @@ def test_run_refusals_leave_the_first_stage():
         assert s1_intact(soc), name
     assert err(s2_cmd(soc, "run BAD")) == "is a directory"
     assert err(s2_cmd(soc, "run NOPE.BIN")) == "not found"
-    assert err(s2_cmd(soc, "run BAD/DRAM.BIN")) == "loads outside 80000000-806FFFFF (RV32), 0-3FFF (Hack, at a word)"
+    assert err(s2_cmd(soc, "run BAD/DRAM.BIN")) == "loads outside 80000000-806FFFFF (RV32), 0-FFFF (Hack, at a word)"
     # Still at the prompt, and `reset` finds the first stage as it was
     out = s2_cmd(soc, "reset", until=S2_PROMPT)
     assert out.startswith("[RESET] Soft reset\n") and BANNER in out, out

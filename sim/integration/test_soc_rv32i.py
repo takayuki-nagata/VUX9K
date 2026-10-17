@@ -445,7 +445,7 @@ async def test_soc_mmio_map(dut):
     rv32_asm.selftest()
     program = mmio_program()
     ser, _ = await start_soc(dut, btn=0, during_reset=lambda soc: load_imem(soc, program))
-    assert int(dut.soc.active_mode.value) == 1, "program must be detected as RISC-V"
+    assert int(dut.soc.active_mode.value) == 1, "the power-on reset must start RISC-V"
 
     await ser.wait_for(b"?", timeout_cycles=200_000)
     ser.write(b"x")

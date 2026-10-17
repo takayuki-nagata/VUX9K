@@ -143,10 +143,10 @@ def setup_demo(soc: Any, build: str) -> bool:
 
 
 def setup_hack(soc: Any, build: str) -> bool:
-    data = _read(os.path.join(build, "hack", "firmware.hex"))
+    data = _read(os.path.join(build, "hack", "firmware.bin"))
     if data is None:
         return False
-    soc.load_iram_words([int(line, 16) for line in data.decode().split() if line])
+    soc.load_app(data, "hack")  # Hack's instruction segment in the PSRAM, Hack from 0
     return True
 
 

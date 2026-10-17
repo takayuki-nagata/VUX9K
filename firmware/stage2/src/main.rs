@@ -26,7 +26,7 @@ use fw_drivers::uart::Uart;
 /// Raise it with every change of the second stage: its v4 header carries it (the
 /// Makefile's mkv4 reads it from here), `info` and the banner show it, and the tests
 /// read it from here.
-const STAGE2_VERSION: u32 = 4;
+const STAGE2_VERSION: u32 = 5;
 
 #[no_mangle]
 pub extern "C" fn main(a0: u32, a1: u32, a2: u32) -> ! {

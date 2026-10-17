@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: MIT
 
 //! The prompt: lines typed with echo and backspace (fw_common::shell::LineBuf), run on
-//! Enter. The second stage runs from the PSRAM (a fetch that misses its cache waits ~35
-//! cycles), so the per-byte loop here has no calls besides the inlined UART accesses and
-//! `feed`.
+//! Enter. The second stage runs from the PSRAM (a fetch that misses the instruction cache
+//! waits ~35 cycles; a hit doesn't), so the per-byte loop here has no calls besides the
+//! inlined UART accesses and `feed`.
 
 use fw_common::shell::{Args, Key, LineBuf, Path};
 use fw_drivers::uart::Uart;

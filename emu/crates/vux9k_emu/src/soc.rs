@@ -8,21 +8,27 @@
 //! - trap priority and legality: soc/cpu/rv32i_trap_unit.veryl
 //! - CSRs: soc/cpu/rv32i_csrs.veryl (crate::csr)
 //! - Hack decode: soc/cpu/hack_translator.veryl, next PC: soc/cpu/next_pc_unit.veryl
-//! - ISA detection: soc/cpu/auto_mode_detector.veryl
+//! - the ISA: unified_cpu's is_riscv_mode, RV32 from a power-on reset, a soft reset's GPIO
+//!   boot mode (else RV32)
 //! - address decode and memories: soc/soc_addr_decoder.veryl, soc/soc_ram.veryl,
-//!   soc/soc_top.veryl; the IsaTest profile follows sim/tb_hex_runner.veryl.
+//!   soc/soc_top.veryl (with Hack's segments in the window); the IsaTest profile follows
+//!   sim/tb_hex_runner.veryl.
 //! - the wait-state window: soc/soc_xmem_bridge.veryl, the PSRAM controller behind it in
 //!   soc/soc_top.veryl (vendor/psram_controller), and the caches in front of it
 //!   (soc/soc_icache.veryl, soc/soc_dcache.veryl; crate::cache).
 //!
 //! Timing: `cycle` counts SoC clocks (18 MHz) since reset release. An instruction starts
 //! with its FETCH cycle; `Soc::step` executes one instruction and advances `cycle` by
-//! its cost (RV: 2, +1 MEM_WAIT for loads/stores; Hack: 2, +2 when the comp reads M,
-//! +1 when it writes both A and D). A trap costs 2 (it is taken in EXECUTE).
-//! Window accesses (RV32 only) wait on top of that: a fetch from the window that misses
-//! the instruction cache stays in FETCH `XMEM_READ_LATENCY` cycles more (a hit, none), a
+//! its cost (RV: 2, +1 MEM_WAIT for loads/stores; Hack: 2, +2 (MEM_WAIT, HACK_WB) when the
+//! comp reads M, +1 (HACK_WR_D) when it writes both A and D). A trap costs 2 (it is taken
+//! in EXECUTE).
+//! Window accesses wait on top of that: a fetch from the window that misses the
+//! instruction cache stays in FETCH `XMEM_READ_LATENCY` cycles more (a hit, none), a
 //! window load that misses the data cache in MEM_WAIT `XMEM_READ_LATENCY` more (a hit,
-//! none), a window store in MEM_WAIT `XMEM_WRITE_LATENCY` more. Nothing in the CPU moves while a
+//! none), a window store `XMEM_WRITE_LATENCY` more where it is made (RV32: MEM_WAIT; Hack:
+//! EXECUTE for `M=` with a comp that doesn't read M, else HACK_WB, after the load's wait).
+//! Every Hack fetch is from the window (its I segment, `HACK_I_BASE`), and Hack's data
+//! below 0x6000 is too (its D segment, `HACK_D_BASE`). Nothing in the CPU moves while a
 //! fetch waits (it samples the interrupt in its last FETCH cycle), so an instruction
 //! fetched with a wait `w` runs exactly like one fetched `w` cycles later: its interrupt
 //! sampling, counter reads and MMIO access times all shift by `w`. Its `Retire::cycle`
@@ -59,6 +65,17 @@ pub const XMEM_BASE: u32 = XMEM_REGION << 28;
 /// Bytes in the window (8 MB).
 pub const XMEM_BYTES: usize = XMEM_WORDS * 4;
 
+// Hack's segments in the window, copied from soc/soc_pkg.veryl (keep in sync, see
+// docs/agents/sync-points.md). soc_top joins bits: a Hack fetch of byte address pc reads
+// `HACK_I_BASE | pc[15:0]` (two 16-bit instructions a word, the first in the low half), Hack
+// data word A (A < 0x6000) is the 32-bit word at `HACK_D_BASE | A[14:0] << 2`.
+/// Hack's instruction segment (64 KB): soc_pkg::HACK_I_BASE.
+pub const HACK_I_BASE: u32 = 0x8000_0000;
+/// Bytes in Hack's instruction segment.
+pub const HACK_I_BYTES: usize = 0x1_0000;
+/// Hack's data segment (0x6000 words of 32 bits used of its 128 KB): soc_pkg::HACK_D_BASE.
+pub const HACK_D_BASE: u32 = 0x8002_0000;
+
 /// The ISA of an application image (a VUX9 header's mode).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Isa {
@@ -66,9 +83,9 @@ pub enum Isa {
     Hack,
 }
 
-/// Largest application image loaded into I-RAM (`load_app`; the
+/// Largest RV32 application image loaded into I-RAM (`load_app`; the
 /// 14 KB of the second stage's I-RAM RV32 target up to v2; RV32 applications on the board
-/// now run from the PSRAM).
+/// now run from the PSRAM). A Hack image may fill its segment (`HACK_I_BYTES`).
 pub const MAX_APP_BYTES: usize = 14 * 1024;
 
 /// Why `Soc::run` returned.
@@ -112,9 +129,8 @@ pub struct Soc {
     pub pc: u32,
     pub csr: Csrs,
     pub periph: Periph,
-    /// true: RV32I, false: Hack (auto_mode_detector's is_riscv_mode).
+    /// true: RV32I, false: Hack (unified_cpu's is_riscv_mode).
     pub riscv_mode: bool,
-    mode_latched: bool,
     /// Instructions executed (retired or trapped), for statistics.
     pub steps: u64,
     iram: Vec<u32>,
@@ -190,23 +206,6 @@ const OP_REG: u32 = 0x33;
 const OP_FENCE: u32 = 0x0F;
 const OP_SYSTEM: u32 = 0x73;
 
-/// auto_mode_detector: is `op` one of the RV32I opcodes it recognizes?
-fn is_rv32i_opcode(op: u32) -> bool {
-    matches!(
-        op,
-        OP_REG
-            | OP_IMM
-            | OP_LOAD
-            | OP_STORE
-            | OP_BRANCH
-            | OP_JAL
-            | OP_JALR
-            | OP_LUI
-            | OP_AUIPC
-            | OP_SYSTEM
-    )
-}
-
 /// rv32i_trap_unit's `is_illegal` for an RV32 instruction word.
 fn rv_illegal(i: u32) -> bool {
     let f3 = funct3(i);
@@ -249,7 +248,6 @@ impl Soc {
             csr: Csrs::default(),
             periph: Periph::default(),
             riscv_mode: true,
-            mode_latched: false,
             steps: 0,
             iram: vec![0; iram_words],
             dram: vec![0; dram_words],
@@ -277,28 +275,20 @@ impl Soc {
         self.periph = Periph::default();
         self.periph.sd.card = card;
         self.riscv_mode = true;
-        self.mode_latched = false;
         self.cycle = 0;
         self.tohost = None;
     }
 
     /// cpu_soft_rst (GPIO 0xC): the FSM, PC and CSRs reset, the register file and
-    /// everything outside the CPU don't; the CPU fetches from 0 once the pulse ends.
+    /// everything outside the CPU don't; the CPU fetches from 0 once the pulse ends, in the
+    /// ISA given in GPIO 0x8, else RV32. (soc_top gives the instruction cache no fetch
+    /// during the pulse, so the first one after it hits or misses by its line alone.)
     fn soft_reset(&mut self, sr: SoftReset) {
         self.pc = 0;
         self.csr = Csrs::default();
         self.mcycle_written = None;
         self.cycle = sr.release;
-        match sr.mode {
-            Some(rv32) => {
-                self.riscv_mode = rv32;
-                self.mode_latched = true;
-            }
-            None => {
-                self.riscv_mode = true;
-                self.mode_latched = false;
-            }
-        }
+        self.riscv_mode = sr.mode.unwrap_or(true);
     }
 
     // ----- memory loading (preload, like $readmemh / the loaders) ------------------
@@ -313,54 +303,76 @@ impl Soc {
         }
     }
 
-    /// Start an application image the way a loader that soft-resets into it does: the
-    /// bytes (RV32: little-endian words; Hack: big-endian 16-bit instructions, two per
-    /// word with the first in the low half, as vux_tool.py packs them) at address 0, and
-    /// the CPU in `isa` from the first fetch (the loader's GPIO 0x8 write before its
-    /// soft reset) instead of guessing it from the code.
-    /// Call it after `reset`, which drops the ISA again.
+    /// Start an application image the way a loader that soft-resets into it does, the
+    /// CPU in `isa` from the first fetch (the loader's GPIO 0x8 write before its soft
+    /// reset). RV32: little-endian words at address 0 (I-RAM). Hack: big-endian 16-bit
+    /// instructions, two per word with the first in the low half (as vux_tool.py packs
+    /// them), at the start of Hack's instruction segment (`load_app_at` with offset 0).
+    /// Call it after `reset`, which starts RV32 again.
     pub fn load_app(&mut self, bytes: &[u8], isa: Isa) -> Result<(), String> {
+        if isa == Isa::Hack {
+            return self.load_hack(bytes, 0);
+        }
         if bytes.is_empty() || bytes.len() > MAX_APP_BYTES {
             return Err(format!(
                 "application image of {} bytes: must be 1 to {MAX_APP_BYTES} bytes (what fits on the board)",
                 bytes.len()
             ));
         }
-        match isa {
-            Isa::Rv32 => self.load_iram(0, bytes),
-            Isa::Hack => {
-                if !bytes.len().is_multiple_of(2) {
-                    return Err(format!(
-                        "Hack image of {} bytes: 16-bit instructions need an even length",
-                        bytes.len()
-                    ));
-                }
-                let instrs: Vec<u32> = bytes
-                    .chunks(2)
-                    .map(|c| u16::from_be_bytes([c[0], c[1]]) as u32)
-                    .collect();
-                let words: Vec<u32> = instrs
-                    .chunks(2)
-                    .map(|p| p[0] | p.get(1).map_or(0, |i| i << 16))
-                    .collect();
-                self.load_iram_words(0, &words);
-            }
-        }
-        self.riscv_mode = isa == Isa::Rv32;
-        self.mode_latched = true;
+        self.load_iram(0, bytes);
+        self.riscv_mode = true;
         Ok(())
     }
 
-    /// `load_app` at `addr`: 0 is I-RAM (`load_app`); an address in the wait-state window
-    /// (RV32 only) puts the image there (`load_xmem`) and starts the CPU in RV32 at `addr`,
-    /// the way the second stage's `run` jumps to an application in the PSRAM.
+    /// A Hack image into Hack's instruction segment at byte `offset` (word-aligned, the
+    /// image within the segment's 64 KB), the CPU in Hack at 0, as after the second stage's
+    /// soft reset into it (a Hack program always starts at 0).
+    fn load_hack(&mut self, bytes: &[u8], offset: u32) -> Result<(), String> {
+        let offset = offset as usize;
+        if bytes.is_empty() || !offset.is_multiple_of(4) || offset + bytes.len() > HACK_I_BYTES {
+            return Err(format!(
+                "Hack image of {} bytes at offset {offset:#x}: must be 1 byte or more, at a word, within the {HACK_I_BYTES:#x} bytes of the Hack instruction segment",
+                bytes.len()
+            ));
+        }
+        if !bytes.len().is_multiple_of(2) {
+            return Err(format!(
+                "Hack image of {} bytes: 16-bit instructions need an even length",
+                bytes.len()
+            ));
+        }
+        if self.xmem.is_empty() {
+            return Err("a Hack image needs the PSRAM (profile real)".into());
+        }
+        let instrs: Vec<u32> = bytes
+            .chunks(2)
+            .map(|c| u16::from_be_bytes([c[0], c[1]]) as u32)
+            .collect();
+        let words: Vec<u8> = instrs
+            .chunks(2)
+            .flat_map(|p| (p[0] | p.get(1).map_or(0, |i| i << 16)).to_le_bytes())
+            .collect();
+        self.load_xmem(HACK_I_BASE + offset as u32, &words)?;
+        self.pc = 0;
+        self.riscv_mode = false;
+        Ok(())
+    }
+
+    /// `load_app` at `addr`: RV32 at 0 is I-RAM (`load_app`); an RV32 address in the
+    /// wait-state window puts the image there (`load_xmem`) and starts the CPU in RV32 at
+    /// `addr`, the way the second stage's `run` jumps to an application in the PSRAM. Hack:
+    /// `addr` is the byte offset in Hack's instruction segment (the v4 header's load address
+    /// for Hack), and the CPU starts in Hack at 0.
     pub fn load_app_at(&mut self, bytes: &[u8], isa: Isa, addr: u32) -> Result<(), String> {
+        if isa == Isa::Hack {
+            return self.load_hack(bytes, addr);
+        }
         if addr == 0 {
             return self.load_app(bytes, isa);
         }
-        if isa != Isa::Rv32 || !self.in_xmem(addr) {
+        if !self.in_xmem(addr) {
             return Err(format!(
-                "load address {addr:#010x}: an application loads at 0, or (RV32) into the PSRAM at {XMEM_BASE:#010x}"
+                "load address {addr:#010x}: an RV32 application loads at 0, or into the PSRAM at {XMEM_BASE:#010x}"
             ));
         }
         if bytes.is_empty() {
@@ -369,7 +381,6 @@ impl Soc {
         self.load_xmem(addr, bytes)?;
         self.pc = addr;
         self.riscv_mode = true;
-        self.mode_latched = true;
         Ok(())
     }
 
@@ -441,20 +452,27 @@ impl Soc {
     // ----- fetch and data bus -------------------------------------------------------
 
     /// The instruction word at `pc` and the cycles its FETCH waits. soc_top fetches
-    /// from the window in RV32 mode (at region 8), through the instruction cache; every
-    /// other fetch reads I-RAM, also for addresses outside it.
+    /// from the window through the instruction cache in RV32 mode at region 8, and in Hack
+    /// mode always (its instruction segment); every other fetch reads I-RAM, also for
+    /// addresses outside it.
     #[inline]
     fn fetch(&mut self, pc: u32) -> (u32, u32) {
-        if self.riscv_mode && self.in_xmem(pc) {
-            let idx = Self::xmem_index(pc);
-            let wait = if self.caches.fetch(idx) {
-                0
-            } else {
-                XMEM_READ_LATENCY
-            };
-            (self.xmem[idx], wait)
+        let win = if self.riscv_mode {
+            self.in_xmem(pc).then_some(pc)
         } else {
-            (self.iram[((pc >> 2) & self.iram_mask) as usize], 0)
+            (!self.xmem.is_empty()).then_some(HACK_I_BASE | (pc & 0xFFFF))
+        };
+        match win {
+            Some(addr) => {
+                let idx = Self::xmem_index(addr);
+                let wait = if self.caches.fetch(idx) {
+                    0
+                } else {
+                    XMEM_READ_LATENCY
+                };
+                (self.xmem[idx], wait)
+            }
+            None => (self.iram[((pc >> 2) & self.iram_mask) as usize], 0),
         }
     }
 
@@ -558,27 +576,46 @@ impl Soc {
         0x4000_0000 | if a16 & 0xC == 0 { 0 } else { 0x3000 } | (a16 & 0xF)
     }
 
-    /// Hack data read of the word at address `a` (Hack decode: RAM below 0x6000), for
-    /// the instruction fetched in cycle `t`.
-    fn hack_read(&mut self, a: u32, t: u64) -> u32 {
+    /// The window word of Hack data address `a` (below 0x6000): its D segment.
+    #[inline]
+    fn hack_data_index(a: u32) -> usize {
+        Self::xmem_index(HACK_D_BASE | (a & 0x7FFF) << 2)
+    }
+
+    /// Hack data read of the word at address `a` (Hack decode: the D segment below 0x6000,
+    /// MMIO at 0x6000-0x600F, nothing above), for the instruction fetched in cycle `t`, and
+    /// the cycles its MEM_WAIT waits (a data-cache miss).
+    fn hack_read(&mut self, a: u32, t: u64) -> (u32, u32) {
         let a16 = a & 0xFFFF;
         if (0x6000..0x6010).contains(&a16) {
-            self.mmio_read(Self::hack_mmio(a16), t)
-        } else if a16 < 0x6000 {
-            self.dram[(a16 & self.dram_mask) as usize]
+            (self.mmio_read(Self::hack_mmio(a16), t), 0)
+        } else if a16 < 0x6000 && !self.xmem.is_empty() {
+            let idx = Self::hack_data_index(a16);
+            let wait = if self.caches.load(idx) {
+                0
+            } else {
+                XMEM_READ_LATENCY
+            };
+            (self.xmem[idx], wait)
         } else {
-            0
+            (0, 0)
         }
     }
 
-    /// Hack data write taking effect at the end of cycle `edge`.
-    fn hack_write(&mut self, a: u32, v: u32, edge: u64) {
+    /// Hack data write, at the end of cycle `edge` for MMIO, and the cycles it waits (a
+    /// store to the D segment: the whole word, all byte enables, through the data cache).
+    fn hack_write(&mut self, a: u32, v: u32, edge: u64) -> u32 {
         let a16 = a & 0xFFFF;
         if (0x6000..0x6010).contains(&a16) {
             self.mmio_write(Self::hack_mmio(a16), v, edge);
-        } else if a16 < 0x6000 {
-            let idx = (a16 & self.dram_mask) as usize;
-            self.dram[idx] = v;
+            0
+        } else if a16 < 0x6000 && !self.xmem.is_empty() {
+            let idx = Self::hack_data_index(a16);
+            self.xmem[idx] = v;
+            self.caches.store(idx, 0b1111);
+            XMEM_WRITE_LATENCY
+        } else {
+            0
         }
     }
 
@@ -625,20 +662,6 @@ impl Soc {
 
     // ----- execution ------------------------------------------------------------------
 
-    /// auto_mode_detector, evaluated on the fetched word until it latches.
-    fn detect_mode(&mut self, word: u32) {
-        if self.mode_latched || word == 0 {
-            return;
-        }
-        if word & 3 == 3 && is_rv32i_opcode(word & 0x7F) {
-            self.riscv_mode = true;
-            self.mode_latched = true;
-        } else if (word >> 13) & 7 == 7 || (word & 0x8000 == 0 && word & 0x7FFF != 0) {
-            self.riscv_mode = false;
-            self.mode_latched = true;
-        }
-    }
-
     /// Execute one instruction (or take a trap) and return what it did.
     pub fn step(&mut self) -> Retire {
         let pc = self.pc;
@@ -648,7 +671,6 @@ impl Soc {
         // fetched then (mcycle counts the wait); its cost and Retire::cycle are fixed below
         self.cycle += wait as u64;
         self.csr.mcycle = self.csr.mcycle.wrapping_add(wait as u64);
-        self.detect_mode(word);
         let mut r = Retire {
             cycle: start,
             riscv: self.riscv_mode,
@@ -914,7 +936,13 @@ impl Soc {
             let uses_y = !matches!(comp, 0b001101 | 0b001111 | 0b011111 | 0b001110);
             let use_mem = a_bit && uses_y;
             let t = self.cycle;
-            let y = if use_mem { self.hack_read(a, t) } else { a };
+            // FETCH t, EXECUTE t + 1; a comp reading M: MEM_WAIT from t + 2 (+ its wait),
+            // then HACK_WB
+            let (y, read_wait) = if use_mem {
+                self.hack_read(a, t)
+            } else {
+                (a, 0)
+            };
             let out = match comp {
                 0b101010 => 0,
                 0b111111 => 1,
@@ -937,9 +965,16 @@ impl Soc {
                 0b000101 => d ^ y,
                 _ => d.wrapping_add(y), // hack_translator default: ADD D, Y
             };
+            let mut write_wait = 0;
             if dest & 1 != 0 {
-                // M is written in EXECUTE, or in HACK_WB when the comp read M
-                self.hack_write(a, out, if use_mem { t + 3 } else { t + 1 });
+                // M is written in EXECUTE, or in HACK_WB when the comp read M; the CPU's bus
+                // shows A (soc_top maps it into the D segment)
+                let edge = if use_mem {
+                    t + 3 + read_wait as u64
+                } else {
+                    t + 1
+                };
+                write_wait = self.hack_write(a, out, edge);
                 r.store = Some((a, out, 0b1111));
             }
             if dest & 4 != 0 {
@@ -975,7 +1010,10 @@ impl Soc {
                     next = a << 1;
                 }
             }
-            r.cycles = 2 + if use_mem { 2 } else { 0 } + if dest & 6 == 6 { 1 } else { 0 };
+            r.cycles = 2
+                + if use_mem { 2 + read_wait } else { 0 }
+                + write_wait
+                + if dest & 6 == 6 { 1 } else { 0 };
         }
         self.pc = next;
     }

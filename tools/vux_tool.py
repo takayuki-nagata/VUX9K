@@ -50,6 +50,12 @@ S2_PROMPT = "s2> "
 
 HEADER_VERSION_V4 = 4
 XMEM_BASE = 0x80000000  # the PSRAM, where RV32 images load by default
+# Hack's segments in the PSRAM (soc_pkg::HACK_I_BASE/HACK_D_BASE): a Hack image's load
+# address is a byte offset in the 64 KB instruction segment (default 0; it starts at 0),
+# its data word A is the 32-bit word at HACK_D_BASE + 4 * A
+HACK_I_BASE = 0x80000000
+HACK_I_BYTES = 0x10000
+HACK_D_BASE = 0x80020000
 
 
 @dataclass(frozen=True)
@@ -386,8 +392,9 @@ def build_vux9_v4_image(
     magic_override=None,
 ):
     """A VUX9 v4 file: the 64-byte header, then the payload (Hack binaries packed as
-    pack_hack does). load_addr defaults to XMEM_BASE for RV32 and 0 for Hack,
-    entry_point to load_addr. Returns (bytes, ImageHeader)."""
+    pack_hack does). load_addr defaults to XMEM_BASE for RV32 and 0 for Hack (an offset in
+    Hack's instruction segment, HACK_I_BASE), entry_point to load_addr. Returns (bytes,
+    ImageHeader)."""
     payload, default_name = _read_payload(file_or_bytes)
     mode_val = MODE_HACK if mode == "hack" else MODE_RISCV
     if mode_val == MODE_HACK:
@@ -952,7 +959,11 @@ def main():
     sub_v4.add_argument("--mode", choices=["hack", "riscv"], default="riscv", help="Target ISA mode")
     sub_v4.add_argument("--name", default="", help="Program name (max 32 characters)")
     sub_v4.add_argument("--version", type=int, default=1, help="Version number (default: 1)")
-    sub_v4.add_argument("--load-addr", help="Load address (default: 0x80000000 for RV32, 0 for Hack)")
+    sub_v4.add_argument(
+        "--load-addr",
+        help="Load address (default: 0x80000000 for RV32; for Hack an offset in its 64 KB "
+        "instruction segment in the PSRAM, default 0)",
+    )
     sub_v4.add_argument("--entry", help="Entry point (default: the load address)")
 
     # two-stage boot

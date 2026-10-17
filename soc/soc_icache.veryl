@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // The instruction cache in front of the wait-state window (RV32 region
-// soc_pkg::RV_REGION_XMEM): direct-mapped, one word a line, 1024 lines (4 KB). It sits between
+// soc_pkg::RV_REGION_XMEM, and Hack's I segment in it): direct-mapped, one word a line, 1024 lines (4 KB). It sits between
 // the CPU's fetch and soc_xmem_bridge, which sees only the misses.
 // - Lines are keyed by the PSRAM word (addr[22:2]: index [11:2], tag [22:12]), so every alias
 //   of a word in region 8 is the same line, as the memory behind the window repeats every 8 MB.
@@ -36,7 +36,7 @@ pub module soc_icache #(
     // CPU side
     rd_idx     : input  logic<10>, // pc_out[11:2]: the line of the next fetch, a cycle ahead
     fetch_req  : input  logic    , // the CPU is in FETCH
-    fetch_sel  : input  logic    , // fetch_addr is in the window (RV32)
+    fetch_sel  : input  logic    , // fetch_addr is in the window (RV32 region 8, or Hack)
     fetch_addr : input  logic<21>, // pc_reg[22:2]: the PSRAM word
     instr_ready: output logic    ,
     rdata      : output logic<32>, // the fetched word, valid when a window fetch completes

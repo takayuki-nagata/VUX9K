@@ -90,7 +90,7 @@ python3 tools/vux_tool.py run-app VUX9K/APPS/HELLO.BIN
 | `ZEPHYR.BIN` | the Zephyr Rust demo | the PSRAM at `0x8000_0000` (it never returns: S1 goes back to the first stage) |
 | `IRQECHO.BIN` | Zephyr's interrupt-driven UART echo | the PSRAM at `0x8000_0000` |
 | `BC.BIN` | [bc_clone_rs](https://github.com/takayuki-nagata/bc_clone_rs), an arbitrary-precision calculator (`bc`) on Zephyr: self-tests, then its `bc> ` prompt. ~260 KB: on the board `put` takes ~29 s, `run`'s load ~3 s, and bc reaches its prompt ~4 s later | the PSRAM at `0x8000_0000` (it never returns, like `ZEPHYR.BIN`) |
-| `HACK.BIN` | the Hack C demo | I-RAM, in Hack mode (replaces the first stage until the FPGA is configured again) |
+| `HACK.BIN` | the Hack C demo | Hack's segments in the PSRAM, in Hack mode; at its end it soft-resets back to the first stage |
 
 `demos/` holds the Zephyr and Hack demos' raw images for the emulator (section 4).
 
@@ -161,8 +161,12 @@ writes to the UART at Hack address 24576):
 hcc -r hack/main.c -o app.bin    # the image for the emulator (--mode hack)
 ```
 
-Hack mode sees the UART at `0x6000`-`0x6003`, the GPIO at `0x6004`-`0x600F` and 2K words
-of RAM ([Hack Mode Address Space](../README.md#hack-mode-address-space-16-bit-word-addresses)).
+Hack mode sees the UART at `0x6000`-`0x6003`, the GPIO at `0x6004`-`0x600F` and 24K words
+of RAM (`0x0000`-`0x5FFF`); its code and data are in the PSRAM, in two segments, so every
+store and every fetch or load that misses the caches waits ~35 cycles
+([Hack Mode Address Space](../README.md#hack-mode-address-space-16-bit-word-addresses)).
+A Hack application starts at 0; to give the board back to the first stage, it soft-resets
+without a mode (below).
 
 ### Packaging an application for the card
 
@@ -173,7 +177,7 @@ where it runs:
 | Application | `mkv4` | Where it runs |
 |---|---|---|
 | Zephyr on the board `vux9k`, or RV32 linked into the PSRAM | the default (`0x8000_0000`) or `--load-addr` inside `0x8000_0000`-`0x806F_FFFF` | the PSRAM, in place |
-| Hack | `--mode hack` (load address 0) | I-RAM, at most 16 KB, in Hack mode |
+| Hack | `--mode hack` (load address 0: an offset in Hack's instruction segment) | Hack's segments in the PSRAM, at most 64 KB of code, in Hack mode from 0 |
 
 ```sh
 python3 tools/vux_tool.py mkv4 --name "my app" build/zephyr/zephyr.bin APP.BIN
@@ -203,7 +207,7 @@ emu/vux9k-emu --no-firmware --load app.bin --mode hack --stdio
 
 `--mode` starts the CPU in that ISA with the image where the second stage's `run` would put
 it: an RV32 image in the PSRAM at `0x8000_0000` (where the board `vux9k` links), a Hack image
-at address 0 of the instruction RAM. `--load-addr ADDR` gives the load address of an image
+at the start of Hack's instruction segment (also in the PSRAM, at `0x8000_0000`). `--load-addr ADDR` gives the load address of an image
 linked elsewhere (as `mkv4 --load-addr`): an RV32 image at 0 goes into the instruction RAM,
 at most 14 KB. That is the emulator's own direct load: on the board the second stage starts
 RV32 files only in the PSRAM.
@@ -288,16 +292,15 @@ python3 tools/vux_tool.py run-app VUX9K/APPS/APP.BIN        # run; then `monitor
 ```
 
 or copy it to `\VUX9K\APPS\` with a PC and type `run VUX9K/APPS/APP.BIN` at the `s2>`
-prompt in a terminal (`monitor`). A PSRAM application (Zephyr, `HELLO.BIN`) leaves the
-first stage in I-RAM: button S1 or a soft reset starts the boot again, as below. An
-application in I-RAM (Hack) replaces the first stage: until the FPGA is
-configured again (power cycle, or `openFPGALoader -b tangnano9k bitstream/pack.fs`;
-`openFPGALoader --reset` loads the flash's bitstream), a soft reset or S1 restarts the
-application, not the boot. What applies to anything that runs there:
+prompt in a terminal (`monitor`). Every application (Zephyr, `HELLO.BIN`, Hack ones) leaves
+the first stage in I-RAM: button S1 or a soft reset starts the boot again, as below. What
+applies to anything that runs there:
 
 Writing `0x5A5A_A55A` to `0x4000_300C` resets the CPU only, like S1, and starts the first
 stage again, which boots the card. A Hack program writes `0x0000_A55A` to `0x600C` instead,
-formed by addition such as `0x255A + 0x4000 + 0x4000` (an `@n` holds at most `0x7FFF`).
+formed by addition such as `0x255A + 0x4000 + 0x4000` (an `@n` holds at most `0x7FFF`), and
+without writing `0x6008` first: a soft reset without a mode starts RV32, the first stage (the
+Hack demo ends this way).
 The UART, timer, GPIO and SD SPI master keep their state across it
 ([Memory & MMIO Register Map](../README.md#memory--mmio-register-map)).
 

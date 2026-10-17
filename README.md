@@ -30,7 +30,7 @@ Around it: **Zephyr RTOS** board support for the real board (C or Rust applicati
 |  |                     Unified Dual-ISA Core (unified_cpu)                     |  |
 |  |                                                                             |  |
 |  |   +-----------------------+     +-------------------+     +-------------+   |  |
-|  |   |  Auto-Mode Detector   | --> |  Multi-Cycle FSM  | --> | Shared ALU  |   |  |
+|  |   |  ISA mode register    | --> |  Multi-Cycle FSM  | --> | Shared ALU  |   |  |
 |  |   | (RV32I vs Hack 16-bit)|     | (FETCH->EXEC->MEM)|     | (32-bit ops)|   |  |
 |  |   +-----------------------+     +-------------------+     +-------------+   |  |
 |  |               |                                                  |          |  |
@@ -77,7 +77,7 @@ bitstream works; test it on the board.
 The RTL modules in this repository were originally authored in VHDL-2008 and have been fully ported to modern Veryl:
 
 - **CPU Core (`unified_cpu`)**: Ported from [`takayuki-nagata/hack_cpu`](https://github.com/takayuki-nagata/hack_cpu)
-  - Unified datapath supporting both **RISC-V RV32I** (32-bit) and **Nand2Tetris Hack** (16-bit) execution with dynamic ISA auto-detection.
+  - Unified datapath supporting both **RISC-V RV32I** (32-bit) and **Nand2Tetris Hack** (16-bit) execution; the ISA is chosen at each soft reset (RV32I from power-on).
 - **UART Controller (`uart_controller`)**: Ported from [`takayuki-nagata/uart_controller`](https://github.com/takayuki-nagata/uart_controller)
   - Parameterized baud rate clock timer (18.0 MHz -> 115200 bps), 8N1 serial framing, and dual 32-entry synchronous TX/RX FIFOs.
 - **Arbitrary-Precision Math Engine & REPL (`vendor/bc_clone_rs`)**: Submodule from [`takayuki-nagata/bc_clone_rs`](https://github.com/takayuki-nagata/bc_clone_rs)
@@ -92,13 +92,13 @@ The RTL modules in this repository were originally authored in VHDL-2008 and hav
 ### System Address Space
 | Address Range | Size | Component | Description |
 |:---|:---|:---|:---|
-| `0x0000_0000` - `0x0000_3FFF` | 16 KB | **Instruction RAM** | Hardware `RESET_VECTOR` (`0x0000_0000`); the bitstream preloads it with the first stage (the boot ROM, see [Two-stage boot](#two-stage-boot-the-first-stage-and-the-sd-card)), and power-on and every soft reset start it. Writable: a program loaded here replaces the first stage until the FPGA is reconfigured |
+| `0x0000_0000` - `0x0000_3FFF` | 16 KB | **Instruction RAM** | Hardware `RESET_VECTOR` (`0x0000_0000`); the bitstream preloads it with the first stage (the boot ROM, see [Two-stage boot](#two-stage-boot-the-first-stage-and-the-sd-card)), and power-on and every soft reset into RV32 start it. Writable: a program loaded here replaces the first stage until the FPGA is reconfigured |
 | `0x2000_0000` - `0x2000_1FFF` | 8 KB | **Data RAM** | `.data`, `.bss`, stack, and heap. The first stage doesn't use it |
 | `0x4000_0000` - `0x4000_000F` | 16 B | **UART Controller** | 115200 bps 8N1, 32-byte TX and RX FIFOs. `0x0` data: read pops a received byte, write sends one (only this offset transmits). `0x4` status: bit 0 `rx_empty`, bit 1 `tx_full`, bit 2 `overrun` (a byte was dropped, RX FIFO full), bit 3 `frame_err` (a stop bit was low); bits 2-3 stay set until the status register is read. While the RX FIFO holds data, the machine external interrupt is pending (`mip.MEIP`, level; taken when `mie.MEIE` and `mstatus.MIE` are set; reading the bytes clears it) |
 | `0x4000_1000` - `0x4000_100F` | 16 B | **System Timer (CLINT)** | 64-bit `mtime` (`0x0`/`0x4`) and `mtimecmp` (`0x8`/`0xC`) registers |
 | `0x4000_2000` - `0x4000_200F` | 16 B | **MicroSD SPI Master** | SPI TX/RX data (`0x0`), CS (`0x4`), busy (`0x8`), SCLK divider (`0xC`): half period in clocks, bits 7:0, resets to 23 (391 kHz, for card init); writes below 3 (3 MHz, the fastest the MISO synchronizer can read) set 3. The first stage initializes the card at 23 and switches to 3 when the card is ready. Writes while busy are ignored (all registers): wait for busy to clear first. Only power-on resets the registers, not a CPU soft reset |
 | `0x4000_3000` - `0x4000_300F` | 16 B | **GPIO Controller** | 6 onboard active-low LEDs (`0x00`=ON, `0x3F`=OFF) & user buttons (Button S2 on pin 3); offset `0x8` is the ISA for the next soft reset (bit 8 valid, bit 0: 1 = RV32, 0 = Hack; valid clears once a soft reset has used it); offset `0xC` is a soft-reset trigger — writing `0x5A5A_A55A` (or its short form `0x0000_A55A`) pulses `cpu_soft_rst`, resetting the CPU FSM/PC/CSRs to `RESET_VECTOR` without a full FPGA reload |
-| `0x8000_0000` - `0x807F_FFFF` | 8 MB | **PSRAM** | The on-package PSRAM (W955D8MBYA, two 4 MB dies) through `psram_controller` ([`vendor/psram_controller`](vendor/psram_controller)): code and data (RV32 only). Fetches go through a 4 KB instruction cache (direct-mapped, one word a line: the address bits `[11:2]` pick the line, so code 4 KB apart competes for it): a hit takes no more cycles than an I-RAM fetch, a miss 35 more. Loads go through a 2 KB data cache (direct-mapped, one word a line, bits `[10:2]`): a hit takes no more cycles than a D-RAM load, a miss 35 more. Stores write through to the PSRAM and take 34 cycles more; a store keeps the data cache's line current when it holds the word, allocates it for a whole word, and drops it for a byte or halfword that misses. Every store to the PSRAM invalidates its instruction-cache line, and the CPU is the only writer, so code stored there is fetched as stored; `fence.i` is still what RISC-V requires before running it, but the hardware doesn't depend on it. The 8 MB repeat every 8 MB through `0x8FFF_FFFF`; the PSRAM's own registers (ID/configuration) are not reachable. Contents are undefined at power-up: write before reading. Its power-up sequence ends inside the power-on reset, so it is ready from the first instruction. Applications the second stage's `run` starts load from `0x8000_0000` (the Zephyr board `vux9k`: its image from `0x8000_0000`, its RAM `0x8040_0000`-`0x806F_FFFF`); the first stage's data is at `0x806F_0000`, the second stage at `0x8070_0000` ([Two-stage boot](#two-stage-boot-the-first-stage-and-the-sd-card)) |
+| `0x8000_0000` - `0x807F_FFFF` | 8 MB | **PSRAM** | The on-package PSRAM (W955D8MBYA, two 4 MB dies) through `psram_controller` ([`vendor/psram_controller`](vendor/psram_controller)): code and data, for RV32 and for Hack (its segments: [Hack Mode Address Space](#hack-mode-address-space-16-bit-word-addresses)). Fetches go through a 4 KB instruction cache (direct-mapped, one word a line: the address bits `[11:2]` pick the line, so code 4 KB apart competes for it): a hit takes no more cycles than an I-RAM fetch, a miss 35 more. Loads go through a 2 KB data cache (direct-mapped, one word a line, bits `[10:2]`): a hit takes no more cycles than a D-RAM load, a miss 35 more. Stores write through to the PSRAM and take 34 cycles more; a store keeps the data cache's line current when it holds the word, allocates it for a whole word, and drops it for a byte or halfword that misses. Every store to the PSRAM invalidates its instruction-cache line, and the CPU is the only writer, so code stored there is fetched as stored; `fence.i` is still what RISC-V requires before running it, but the hardware doesn't depend on it. The 8 MB repeat every 8 MB through `0x8FFF_FFFF`; the PSRAM's own registers (ID/configuration) are not reachable. Contents are undefined at power-up: write before reading. Its power-up sequence ends inside the power-on reset, so it is ready from the first instruction. Applications the second stage's `run` starts load from `0x8000_0000` (the Zephyr board `vux9k`: its image from `0x8000_0000`, its RAM `0x8040_0000`-`0x806F_FFFF`); the first stage's data is at `0x806F_0000`, the second stage at `0x8070_0000` ([Two-stage boot](#two-stage-boot-the-first-stage-and-the-sd-card)) |
 
 **Address decoding and aliases.** This describes how the hardware behaves, not an interface: applications use only the documented addresses and registers (the tables in this README; [Hardware revisions and compatibility](docs/APP_DEVELOPMENT.md#6-hardware-revisions-and-compatibility)). Only the address bits needed to tell the regions apart are decoded, so every region repeats and nothing raises an access fault:
 - `0x2xxx_xxxx` is D-RAM repeating every 8 KB (`0x2000_2100` is the same word as `0x2000_0100`).
@@ -124,17 +124,28 @@ The CPU is machine-mode only. Accessing any CSR not listed here raises an illega
 Interrupts: timer (`MTI`, cause 7) from `mtime >= mtimecmp`, external (`MEI`, cause 11) while the UART RX FIFO holds data; `MSI` is never raised.
 
 ### Hack Mode Address Space (16-bit word addresses)
-Hack instructions are packed two per 32-bit I-RAM word (first instruction in the low half, as `scripts/bin2hex.py` does). The data side:
+Hack's memory is in the PSRAM, in two segments, through the same caches and with the same
+waits as RV32's PSRAM accesses (a fetch or a load that misses 35 cycles more, every store 34
+more):
+- **Instructions**: the 64 KB at `0x8000_0000` (the I segment). The Hack PC is a byte address
+  (an instruction is 2 bytes; a jump goes to `A * 2`) and its low 16 bits pick the byte, so
+  the segment repeats every 64 KB of PC. Instructions are packed two per 32-bit word (first
+  instruction in the low half, as `scripts/bin2hex.py` and `vux_tool.py mkv4 --mode hack` do).
+  A Hack program starts at PC 0, the segment's first word.
+- **Data**: Hack word `A` below `0x6000` is the 32-bit PSRAM word at `0x8002_0000 + 4 * A`
+  (the D segment, 96 KB of its 128 KB), written whole (Hack's registers are 32 bits wide).
+
+The data side:
 
 | Address | Component | Notes |
 |:---|:---|:---|
-| `0x0000` - `0x5FFF` | **RAM** | Only 2K words exist (the D-RAM, one Hack word per 32-bit word): addresses repeat every `0x0800`, so `0x0900` is the same word as `0x0100` |
+| `0x0000` - `0x5FFF` | **RAM** | The D segment in the PSRAM: 24K words, each its own (no alias) |
 | `0x6000` | **UART data** | Read: received byte (pops the RX FIFO). Write: byte to send |
 | `0x6001` - `0x6003` | **UART status** | Same bits as the RV32 status register; reading it clears `overrun`/`frame_err` |
 | `0x6004` - `0x600F` | **GPIO** | Register = address bits `[3:0]`: `0x6004` button (1 = pressed), `0x6008` ISA for the next soft reset, `0x600C` soft reset in progress (read) and trigger (write). The LED register (GPIO `0x0`) is unreachable from Hack mode. To soft-reset, store the short key `0x0000_A55A`: an `@n` holds at most `0x7FFF`, but Hack registers are 32 bits wide in this CPU, so `0x255A + 0x4000 + 0x4000` forms it (`!0x5AA5` gives `0xFFFF_A55A`, which is ignored) |
 | other | unmapped | Reads 0, writes ignored |
 
-**ISA selection.** A loader that soft-resets into a program it placed in I-RAM gives that program's ISA in GPIO register `0x8` before the soft reset, and the CPU latches it. Only when no mode is given (power-on with a program already in I-RAM, or a soft reset without one) is the mode guessed from the first non-zero instruction word (`auto_mode_detector`): RV32I if its low 7 bits are an RV32I opcode; Hack if its low half is a C-instruction or a non-zero `@n`; otherwise the CPU stays in its reset default, RV32I, and keeps looking. So such a Hack program must not start with `@0`, nor with an `@n` whose `n & 0x7F` is an RV32I opcode (`0x03`, `0x13`, `0x17`, `0x23`, `0x33`, `0x37`, `0x63`, `0x67`, `0x6F`, `0x73`; e.g. `@19` or `@51`), which is detected as RV32I.
+**ISA selection.** Power-on starts RV32I, at `0x0000_0000` (the first stage). The ISA changes only at a soft reset: a loader that soft-resets into a program gives its ISA in GPIO register `0x8` first (`0x100` = Hack, `0x101` = RV32I), and the CPU starts in it at address 0; a soft reset without a mode starts RV32I, so a Hack program that soft-resets (`0x0000_A55A` to `0x600C`) without writing `0x6008` goes back to the first stage. To start a Hack program, put it into the I segment (`0x8000_0000`), write `0x100` to `0x4000_3008` and the soft-reset key to `0x4000_300C`, as the second stage's `run` does.
 
 ### Two-stage boot: the first stage and the SD card
 
@@ -216,7 +227,7 @@ python3 tools/vux_tool.py install-stage2 build/firmware/stage2/STAGE2.BIN
 python3 tools/vux_tool.py run build/firmware/stage2/STAGE2.BIN
 
 # 4. Wrap a binary in a VUX9 v4 header (an application: RV32 loads at 0x80000000 unless
-#    --load-addr says otherwise, Hack at 0)
+#    --load-addr says otherwise, Hack at offset 0 of its segment)
 python3 tools/vux_tool.py mkv4 build/firmware/stage2/stage2.bin STAGE2.BIN --load-addr 0x80700000
 python3 tools/vux_tool.py mkv4 --mode hack --name "Hack demo" build/hack/firmware.bin HACK.BIN
 
@@ -282,13 +293,11 @@ says (`fw_common::launch`):
 | Header | Where it runs | How it starts |
 |:---|:---|:---|
 | RV32, load address in `0x8000_0000`-`0x806F_FFFF` (the Zephyr board `vux9k`, the hello demo) | The PSRAM below the second stage | In place: D-RAM zeroed, a jump to the entry point with `a0`-`a2` as the first stage handed them over. The first stage stays in I-RAM: a soft reset, or Button S1, goes back to it |
-| Hack, a word-aligned load address in I-RAM (at most 16 KB) | I-RAM | Copied into I-RAM over the first stage, D-RAM zeroed, soft reset in Hack mode |
+| Hack, a word-aligned load address `0`-`0xFFFF`: the offset in Hack's I segment (at most 64 KB) | Hack's segments in the PSRAM | In place (`0x8000_0000` + the offset), the D segment zeroed, `fence.i`, soft reset in Hack mode: it starts at 0. The first stage stays in I-RAM: the program's soft reset without a mode (or Button S1) goes back to it |
 
 RV32 runs from the PSRAM only: since the second stage v3, an RV32 file that loads at `0`
 (I-RAM, as Zephyr applications for the board's first, 14 KB I-RAM layout were) is refused as
-outside the window. A Hack application replaces the first stage until the FPGA is configured again (power
-cycle, or the bitstream loaded again): a soft reset then restarts the application, not the
-boot. A PSRAM application that never returns (the Zephyr demos) leaves the first stage
+outside the window. A PSRAM application that never returns (the Zephyr demos) leaves the first stage
 there, so Button S1 (the board's reset) starts the boot again. A file `run` refuses (bad
 magic, CRC, a load address outside these windows, ...) leaves everything as it was. An exception in a PSRAM application that set no trap vector of its own
 is reported by the second stage (`[TRAP] ...`).
@@ -311,9 +320,9 @@ python3 tools/vux_tool.py mkfat sd.img --file VUX9K/STAGE2.BIN=build/firmware/st
 build/emu/target/release/vux9k-emu --sd sd.img --stdio
 # ... or on TCP, for vux_tool.py (--port socket://localhost:4000) or a terminal program
 build/emu/target/release/vux9k-emu --sd sd.img --sd-write-back --tcp 4000
-# Start an application image in its ISA where the second stage's `run` would (Hack: I-RAM;
-# RV32: the PSRAM at 0x80000000, or --load-addr), without the first stage; stop when it
-# prints a text
+# Start an application image in its ISA where the second stage's `run` would (Hack: its I
+# segment in the PSRAM; RV32: the PSRAM at 0x80000000, or --load-addr), without the first
+# stage; stop when it prints a text
 build/emu/target/release/vux9k-emu --no-firmware --load build/hack/firmware.bin --mode hack --until "(100%)!"
 build/emu/target/release/vux9k-emu --no-firmware --load build/zephyr-demo/zephyr/zephyr.bin --mode riscv --stdio
 ```
@@ -451,17 +460,17 @@ Short tests run on Icarus, long SoC/GLS runs on Verilator (`SIM_UNIT` / `SIM_SOC
 
 | Level | Command | Typical Time | Verification Scope |
 |:---|:---|:---|:---|
-| **RTL Unit Tests** | `make sim-unit` | ~1 min | 31 cocotb modules: CPU (ALU, decoder, regfile, CSRs, LSU, next-PC, trap unit, mode detector, Hack translator and ops, RV32I smoke, branches, trap path, CSRs through the CPU, bus wait states), UART, timer, GPIO, SD SPI master, address decoder, RAM, the PSRAM window's bus bridge and its instruction and data caches, and the SP/SDPB/DPX9B/SDPX9B block-RAM cell models. Each has boundary-value and random tests against a Python model (fixed seed; *slow*: `sim-unit-random`, a new seed each day) |
+| **RTL Unit Tests** | `make sim-unit` | ~1 min | 31 cocotb modules: CPU (ALU, decoder, regfile, CSRs, LSU, next-PC, trap unit, Hack translator and ops, RV32I smoke, branches, trap path, CSRs through the CPU, bus wait states), UART, timer, GPIO, SD SPI master, address decoder, RAM, the PSRAM window's bus bridge and its instruction and data caches, and the SP/SDPB/DPX9B/SDPX9B block-RAM cell models. Each has boundary-value and random tests against a Python model (fixed seed; *slow*: `sim-unit-random`, a new seed each day) |
 | **PSRAM Word Model** | `make sim-psram-contract` | ~1 min | `sim/psram_word_model.veryl` (the PSRAM controller without pins, for Verilator SoC runs) side by side with the real controller on the pin-level W955D8MBYA model (Icarus only): same power-up length (`soc_pkg::PSRAM_INIT_CYCLES`), same response cycle and read data for random requests, no protocol/timing error in the PSRAM model |
 | **ISA Tests** | `make test-isa` | ~20 sec | riscv-tests `rv32ui`/`rv32mi` on `tb_hex_runner`, whose RAM has the SoC's synchronous timing (56 pass; 2 known gaps, hardware misaligned access and PMP, tracked as expected failures in `scripts/run_riscv_tests.py`) |
 | **GLS ISA Tests** | `make test-isa-gls` | ~1.5 min | The same riscv-tests on the gate-level `unified_cpu` netlist |
 | **ACT4 Tests** | `make test-act4` (`-gls`, `-emu`) | ~2 min each | riscv-arch-test 4.1.0: self-checking tests whose expected values the Sail reference model computed for this CPU's configuration (`scripts/act4/`), on RTL, netlist and emulator (73 pass; 4 known differences from the Sail configuration, tracked in `scripts/run_riscv_tests.py`). `make act4-elfs` generates them with the upstream image (docker or podman) |
 | **ISA Tests with Waits** | `make test-isa-waits` | ~4 min | riscv-tests and ACT4 on `tb_hex_runner` with pseudo-random wait cycles on the instruction and data buses (the CPU's stall logic) |
-| **GLS Unit Tests** | `make sim-gls-unit` | ~20 sec | Gowin primitive netlists (`sim/gowin_cells_sim.veryl`) of the CPU, UART controller, mode detector and the PSRAM window's bus bridge and caches |
+| **GLS Unit Tests** | `make sim-gls-unit` | ~20 sec | Gowin primitive netlists (`sim/gowin_cells_sim.veryl`) of the CPU, UART controller and the PSRAM window's bus bridge and caches |
 | **SoC Boot** | `make sim-soc-fast` / `sim-soc-fast-icarus` | ~10 sec / a few min | Power-on reset, the first stage booting `\VUX9K\STAGE2.BIN` from a FAT32 card into the PSRAM and running it there (Verilator / 4-state Icarus with the real PSRAM controller) |
 | **SoC MMIO** | `make sim-soc-mmio` | ~5 sec | RV32I program from I-RAM checking the memory map, D-RAM lanes, the PSRAM window (both dies' byte lanes, its 8 MB aliases, the hidden register space, code run from it), timer, GPIO, UART RX and status flags, soft reset; timer and UART RX interrupts. Verilator runs it on `sim/psram_word_model.veryl` in place of the PSRAM controller; 4-state Icarus SoC runs have the real controller on the IP's pin-level PSRAM model |
 | **First Stage Prompt** | `make sim-boot` | ~40 sec | A key keeps the first stage at its prompt; its commands' output; a soft reset boots the card |
-| **Hack Mode** | `make sim-hack-rtl` | ~2 sec | Hack C firmware's self-test report over the UART |
+| **Hack Mode** | `make sim-hack-rtl` | ~5 sec | Hack C firmware from its PSRAM segments: its self-test report over the UART, then its soft reset back to RV32 |
 | **SD Edge Cases** | `make sim-sd-quirks` | ~20 sec | Strict SD model: power-up preamble, an SDSC card booted twice across a soft reset |
 | **End-to-End Flow** | `make sim-hw-flow` | ~1 min | RAM boot of the second stage over transfer v2, which installs a `STAGE2.BIN` on the FAT32 card; the first stage boots it after a soft reset |
 | **GLS SoC Boot** | `make sim-soc-gls-fast` | ~1.5 min | Full Gowin netlist boots to the first stage's prompt (S2 held) |
@@ -499,7 +508,7 @@ stage under test as `STAGE2.BIN` and `STAGE2.OLD`:
 9. **Install the second stage under test** and boot it
 10. **File commands** in `\VUX9K\TEST\`: `mkdir`, `put` of a two-sector file, `ls`, `cat` read back, `mv` into `TEST\SUB\` and back, `rm`, `rmdir` (a leftover `TEST` tree is removed first, and the tree also after a failure)
 11. **`HELLO.BIN` in the PSRAM** (`put` into `\VUX9K\APPS\`, `run`): `a0`-`a2` as in test 3, then `r` soft-resets to the first stage, which is still in I-RAM and boots the second stage again
-12. **`HACK.BIN` in I-RAM** (Hack mode): the Hack demo's report, all `[PASS]`; then the bitstream is loaded into SRAM again (openFPGALoader with the suite's `pack.fs`, as `make prog-sram`; not `--reset`, which loads the flash's bitstream) and the first stage's banner checked
+12. **`HACK.BIN` in its PSRAM segment** (Hack mode): the Hack demo's report, all `[PASS]` (at its end it soft-resets back to the first stage); then the bitstream is loaded into SRAM again (openFPGALoader with the suite's `pack.fs`, as `make prog-sram`; not `--reset`, which loads the flash's bitstream) and the first stage's banner checked
 13. **`ZEPHYR.BIN` in the PSRAM**: the Zephyr demo's tasks finish and `k_msleep(100)` takes 100-102 ms (a tick and rounding; 100 ticks/s would take 110 or more); then the bitstream again (the demo never returns, and only Button S1 would start the first stage again). Skipped, saying so, when the build has no `ZEPHYR.BIN` (no Zephyr)
 14. **`BC.BIN` in the PSRAM**: bc_clone_rs on Zephyr (~260 KB; `put` and `run` with longer timeouts): its self-tests pass and it prompts `bc> `; then `2^32` and a `define` at that prompt, and the bitstream again. The wall-clock time of each step is printed (`[TIME]` lines). Skipped, saying so, when the build has no `BC.BIN` (no Zephyr)
 15. **Install the second stage under test again**, after the loads, and boot it: what the suite leaves on the card and in the FPGA
@@ -539,7 +548,6 @@ VUX9K/
 ├── tangnano9k.cst                  # Physical pin constraints for Tang Nano 9K (GW1NR-9)
 ├── soc/                            # Veryl SoC Top Level & Interconnect
 │   ├── cpu/                        # Unified CPU & Dual-ISA modules
-│   │   ├── auto_mode_detector.veryl    # First-instruction ISA auto-detector
 │   │   ├── hack_translator.veryl       # Hack 16-bit instruction to uOp translator
 │   │   ├── rv32i_alu.veryl             # Shared 32-bit ALU
 │   │   ├── rv32i_csrs.veryl            # Machine-mode CSRs (mstatus, mie, mtvec, mepc, mcause, ...) and the cycle/time/instret counters

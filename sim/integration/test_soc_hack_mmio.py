@@ -6,9 +6,9 @@ SoC MMIO read decode in Hack 16-bit mode (test_soc_hack_mmio.py).
 
 The Hack firmware (hack_demo/) only ever writes the UART, so the Hack-mode read
 side of soc_top's address decoder (0x6000-0x600F: UART data/status, GPIO) is
-otherwise unexercised. Small hand-assembled Hack programs (hack_asm) are
-preloaded straight into I-RAM, read registers and print what they read as one
-character each, which the tests compare against the expected values.
+otherwise unexercised. Small hand-assembled Hack programs (hack_asm), started in
+Hack's I segment by soc_env.start_hack, read registers and print what they read
+as one character each, which the tests compare against the expected values.
 
 test_soc_hack_uart_rx guards a fixed bug: soc_top used to pop the UART RX FIFO
 on every cycle the A register pointed at the UART (even for a status read), so a
@@ -24,18 +24,18 @@ import cocotb
 sys.path.append(os.path.dirname(__file__))
 import hack_asm
 from hack_asm import Asm
-from soc_env import load_imem, start_soc
+from soc_env import start_hack
 
 # Hack-mode MMIO window (soc_top: data_addr[15:4] == 0x600; [3:2] == 0 -> UART, else GPIO)
 UART_DATA = 0x6000  # read: RX byte (pops the FIFO), write: TX byte
 UART_STATUS = 0x6001  # {tx_full, rx_empty}
 GPIO_BTN = 0x6004  # gpio_controller addr 4: button pressed (active-low pin, synchronized)
 GPIO_SOFT_RST = 0x600C  # gpio_controller addr C: soft-reset pulse in progress
-# Hack RAM is 0x0000-0x5FFF (d_mem indexed by addr[10:0]); these are neither RAM nor MMIO
+# Hack RAM is 0x0000-0x5FFF, one PSRAM word each in Hack's D segment (no alias)
 RAM_PROBE = 0x0100
 UNMAPPED_ALIAS = 0x6900  # addr[10:0] == RAM_PROBE: a write must not land in RAM
 UNMAPPED_READ = 0x6010  # just past the MMIO window: reads as 0
-RAM_ALIAS = 0x0900  # RAM has 2K words: 0x0900 is the same word as RAM_PROBE (README)
+RAM_OLD_ALIAS = 0x0900  # the same word as RAM_PROBE when Hack RAM was D-RAM's 2K words
 
 
 def _print_reg(a: Asm, addr: int):
@@ -65,7 +65,7 @@ def _store(a: Asm, addr: int, value: int):
 def status_gpio_program() -> list[int]:
     """Reads without any received byte: UART status, GPIO button and soft-reset status,
     then an unmapped write (must not alias into RAM), an unmapped read (0) and a
-    write through a RAM alias (documented: 2K words repeat across 0x0000-0x5FFF)."""
+    write to RAM_OLD_ALIAS, which is a word of its own (RAM_PROBE keeps its value)."""
     a = Asm()
     _print_reg(a, UART_STATUS)  # idle: rx_empty -> '1'
     _print_reg(a, GPIO_BTN)  # button held by the test: '1'
@@ -77,8 +77,12 @@ def status_gpio_program() -> list[int]:
     a.at(UART_DATA)
     a.c("M=D")
     _print_reg(a, UNMAPPED_READ)  # '0'
-    _store(a, RAM_ALIAS, ord("7"))
-    a.at(RAM_PROBE)  # now '7'
+    _store(a, RAM_OLD_ALIAS, ord("7"))
+    a.at(RAM_PROBE)  # still '5'
+    a.c("D=M")
+    a.at(UART_DATA)
+    a.c("M=D")
+    a.at(RAM_OLD_ALIAS)  # '7'
     a.c("D=M")
     a.at(UART_DATA)
     a.c("M=D")
@@ -114,9 +118,7 @@ def uart_rx_program() -> list[int]:
 
 
 async def _start_hack(dut, program):
-    ser, _ = await start_soc(dut, btn=0, during_reset=lambda soc: load_imem(soc, program))
-    mode = int(dut.soc.active_mode.value)
-    assert mode == 0, f"program must be detected as Hack (active_mode=0), got {mode}"
+    ser, _ = await start_hack(dut, program, btn=0)
     return ser
 
 
@@ -126,9 +128,9 @@ async def test_soc_hack_mmio_status_gpio(dut):
     hack_asm.selftest()
     ser = await _start_hack(dut, status_gpio_program())
     out = (await ser.wait_for(b"\n", timeout_cycles=200_000)).decode("ascii", errors="replace")
-    assert out == "110507\n", (
-        "expected '110507\\n' (UART status rx_empty, button, soft-reset, RAM after unmapped write, "
-        f"unmapped read, RAM after a write to its alias), got {out!r}"
+    assert out == "1105057\n", (
+        "expected '1105057\\n' (UART status rx_empty, button, soft-reset, RAM after unmapped write, "
+        f"unmapped read, RAM after a write to its old alias, the old alias), got {out!r}"
     )
     dut._log.info("Hack-mode MMIO reads (UART status, GPIO) and unmapped accesses verified")
 

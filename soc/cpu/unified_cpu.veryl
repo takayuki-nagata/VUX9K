@@ -9,7 +9,7 @@ pub module unified_cpu #(
     clk     : input clock,
     rst     : input reset,
     soft_rst: input logic,
-    // ISA to start in after this soft reset, if valid (else detected from the first instruction)
+    // ISA to start in after this soft reset, if valid (else RV32); a hard reset starts RV32
     boot_mode_valid: input logic    ,
     boot_mode      : input logic    , // 1: RV32, 0: Hack
     instr_in       : input logic<32>,
@@ -33,8 +33,9 @@ pub module unified_cpu #(
     active_mode : output logic    , // 0: Hack 16-bit, 1: RISC-V 32-bit
     // The access the CPU waits on, for a memory that can make it wait (soc_xmem_bridge):
     // a fetch of fetch_addr while in FETCH (pc_reg: unlike pc_out a register, so a
-    // ready derived from it stays off the next-PC path), and an RV32 load or store of
-    // data_waddr (registered) with mem_write/data_out/mem_byte_we while in MEM_WAIT
+    // ready derived from it stays off the next-PC path), and a data access: an RV32 load or
+    // store of data_waddr (registered) with mem_write/data_out/mem_byte_we while in MEM_WAIT,
+    // or a Hack M read (MEM_WAIT) or M write (EXECUTE, HACK_WB) of A
     fetch_req : output logic    ,
     fetch_addr: output logic<32>,
     data_req  : output logic    ,
@@ -51,7 +52,7 @@ pub module unified_cpu #(
     var r_load_we    : logic       ;
     var r_hack_data  : logic   <32>;
     var r_hack_d     : logic   <32>; // D value waiting for HACK_WR_D
-    var is_riscv_mode: logic       ;
+    var is_riscv_mode: logic       ; // the ISA: RV32 from a hard reset, a soft reset's boot_mode
     // A data read completes in MEM_WAIT: an RV32 load, or a Hack comp reading M
     // (Hack mode enters MEM_WAIT only for that), in the cycle data_ready is 1.
     // Peripherals with read side effects (UART RX pop) act on this, not on the
@@ -167,18 +168,6 @@ pub module unified_cpu #(
             (if (state == CpuState::EXECUTE) ? (h_we_mem && !h_use_mem) : 1'b0)
         )
     ;
-
-    inst mode_detect: auto_mode_detector (
-        clk            : clk            ,
-        rst            : rst            ,
-        soft_rst       : soft_rst       ,
-        boot_mode_valid: boot_mode_valid,
-        boot_mode      : boot_mode      ,
-        first_instr    : instr_in       ,
-        // instr_in is not an instruction yet while a FETCH waits
-        instr_valid  : !(state == CpuState::FETCH && !instr_ready),
-        is_riscv_mode: is_riscv_mode                              ,
-    );
 
     // Hack Translator (16-bit Front-End)
     var h_instr_16: logic<16>;
@@ -516,6 +505,7 @@ pub module unified_cpu #(
             r_hack_mem_we   = 1'b0;
             r_hack_data     = 32'd0;
             r_hack_d        = 32'd0;
+            is_riscv_mode   = 1'b1;
         } else if soft_rst {
             state           = CpuState::FETCH;
             r_irq           = 1'b0;
@@ -534,6 +524,9 @@ pub module unified_cpu #(
             r_hack_mem_we   = 1'b0;
             r_hack_data     = 32'd0;
             r_hack_d        = 32'd0;
+            // The ISA the loader gave for this soft reset (gpio_controller register 0x8),
+            // else RV32: Hack is entered only this way
+            is_riscv_mode = if boot_mode_valid ? boot_mode : 1'b1;
         } else {
             case state {
                 CpuState::FETCH: {

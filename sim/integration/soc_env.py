@@ -18,7 +18,7 @@ import sys
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, Timer
-from lockstep_programs import hash_program
+from lockstep_programs import HACK_I_BASE, HACK_STUB_FLAG, hack_image_bytes, hack_stub, hash_program
 from rv32_asm import Asm
 from sdcard_model import SpiSdCardModel
 from virtual_serial import VirtualSerialBridge
@@ -244,6 +244,32 @@ def preload_psram_app(image: bytes, addr: int = XMEM_BASE):
         load_imem(soc, jump_words(addr))
 
     return preload
+
+
+# Cycles from start_soc's return to the CPU in Hack: hack_stub's PSRAM load and store, the
+# GPIO stores and the 15-cycle soft-reset pulse (~150), with room to spare
+HACK_START_CYCLES = 400
+
+
+async def start_hack(dut, words, **kw):
+    """start_soc for a Hack program: its words (two instructions each, the first in the low
+    half: hack_asm, scripts/bin2hex.py) in Hack's I segment (load_xmem: Verilator RTL builds
+    only) and lockstep_programs.hack_stub at I-RAM 0, which gives Hack in GPIO 0x8 and
+    soft-resets into it, as a loader does (the power-on reset starts RV32); when the program
+    soft-resets back without a mode, the stub prints HACK_BACK and spins. kw goes to
+    start_soc. Returns (ser, sd_model) once the CPU runs the program in Hack."""
+    image = hack_image_bytes(list(words))
+
+    def preload(soc):
+        load_imem(soc, hack_stub())
+        load_xmem(soc, HACK_I_BASE, image)
+        load_xmem(soc, HACK_STUB_FLAG, bytes(4))  # the stub's first pass
+
+    ser, sd_model = await start_soc(dut, during_reset=preload, **kw)
+    await wait_cycles(HACK_START_CYCLES)
+    mode = int(soc_of(dut).active_mode.value)
+    assert mode == 0, f"hack_stub's soft reset must start Hack (active_mode=0), got {mode}"
+    return ser, sd_model
 
 
 def read_hex_words(path) -> list[int]:

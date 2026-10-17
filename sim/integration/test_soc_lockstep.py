@@ -15,7 +15,7 @@ import os
 import cocotb
 from cocotb.triggers import ReadOnly, RisingEdge, Timer
 from lockstep_programs import UART_BIT, XMEM_USED, programs
-from soc_env import CLK_PERIOD_PS, REPO_ROOT, XMEM_HALF_WORDS, load_imem, read_hex_words, soc_of, start_soc
+from soc_env import CLK_PERIOD_PS, REPO_ROOT, XMEM_HALF_WORDS, load_imem, load_xmem, read_hex_words, soc_of, start_soc
 
 SLOW = os.environ.get("LOCKSTEP_SLOW", "") not in ("", "0")
 
@@ -27,13 +27,14 @@ def _firmware():
     return iram, lanes
 
 
-def _power_on_memories(soc, imem_words):
+def _power_on_memories(soc, prog):
     """What $readmemh loaded at time 0 (earlier programs changed it), plus the program;
-    the window's words the programs use zeroed (lockstep_programs.XMEM_USED)."""
+    the window's words the programs use zeroed (lockstep_programs.XMEM_USED), then the
+    program's own window words."""
     iram, lanes = _firmware()
     load_imem(soc, iram)
-    if imem_words:
-        load_imem(soc, imem_words)
+    if prog.imem_words:
+        load_imem(soc, prog.imem_words)
     for lane, words in enumerate(lanes):
         mem = getattr(soc.ram_inst, f"d_mem{lane}")
         for i, v in enumerate(words):
@@ -43,6 +44,8 @@ def _power_on_memories(soc, imem_words):
         for word in range(start // 4, end // 4):
             # No initial contents in the RTL; the emulator starts it zeroed
             xmem[word // XMEM_HALF_WORDS][word % XMEM_HALF_WORDS].value = 0
+    for addr, data in prog.xmem:
+        load_xmem(soc, addr, data)
     regs = soc.cpu_inst.reg_file.registers
     for i in range(32):
         regs[i].value = 0  # no reset in rv32i_regfile; the emulator starts from 0
@@ -91,7 +94,7 @@ async def test_lockstep_trace(dut):
         await start_soc(
             dut,
             sd_sectors=prog.sd_sectors,
-            during_reset=lambda soc, prog=prog: _power_on_memories(soc, prog.imem_words),
+            during_reset=lambda soc, prog=prog: _power_on_memories(soc, prog),
         )
         driver = cocotb.start_soon(_drive(dut, prog))
         await _at_cycle(dut, prog.cycles)

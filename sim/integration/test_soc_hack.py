@@ -3,8 +3,10 @@
 
 """
 Cocotb RTL verification for VUX9K SoC executing the Hack 16-bit C/Asm firmware (hack_demo/).
-Verifies Hack mode auto-detection (active_mode = 0), instruction execution and Hack UART MMIO
-output, by checking the firmware's own self-test report on the UART.
+Started as a loader starts it (soc_env.start_hack: the program in Hack's I segment in the
+PSRAM, a soft reset with the Hack boot mode), it runs from the window through its caches,
+data in its D segment; checked by the firmware's own self-test report on the UART, then its
+soft reset without a mode back to RV32 (the stub's HACK_BACK).
 """
 
 import os
@@ -13,7 +15,8 @@ import sys
 import cocotb
 
 sys.path.append(os.path.dirname(__file__))
-from soc_env import load_imem, read_hex_words, start_soc
+from lockstep_programs import HACK_BACK
+from soc_env import read_hex_words, soc_of, start_hack
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 HACK_HEX = os.path.join(REPO_ROOT, "build", "hack", "firmware.hex")
@@ -30,17 +33,21 @@ DONE = "ALL HACK C FIRMWARE TESTS PASSED (100%)!"
 
 @cocotb.test()
 async def test_soc_hack_firmware(dut):
-    """Hack firmware runs from I-RAM and reports all self-tests passed over the UART"""
+    """Hack firmware runs from its PSRAM segments, reports its self-tests passed and soft-resets to RV32"""
     assert os.path.exists(HACK_HEX), f"{HACK_HEX} missing; run `make build-hack` first"
-    words = read_hex_words(HACK_HEX)
+    ser, _ = await start_hack(dut, read_hex_words(HACK_HEX))
 
-    ser, _ = await start_soc(dut, during_reset=lambda soc: load_imem(soc, words))
-
-    mode = int(dut.soc.active_mode.value)
-    assert mode == 0, f"SoC must auto-detect Hack 16-bit mode (active_mode=0), got {mode}"
-
+    # The report ends at ~4.1M cycles (the emulator's count)
     out = (await ser.wait_for(DONE.encode(), timeout_cycles=20_000_000)).decode("utf-8", errors="replace")
     for line in EXPECTED_LINES:
         assert line in out, f"missing {line!r} in Hack firmware output: {out!r}"
     assert "[FAIL]" not in out, f"Hack firmware reported a failure: {out!r}"
     dut._log.info("Hack 16-bit firmware self-test report verified over UART")
+
+    # The closing rule, then the soft reset without a mode: RV32 at 0, where the stub prints
+    back = "=" * 41 + "\n" + chr(HACK_BACK)
+    out = (await ser.wait_for(back.encode(), timeout_cycles=2_000_000)).decode("utf-8", errors="replace")
+    assert out.endswith(back), out
+    mode = int(soc_of(dut).active_mode.value)
+    assert mode == 1, f"the demo's soft reset must start RV32 (active_mode=1), got {mode}"
+    dut._log.info("Hack demo soft-reset back to RV32")

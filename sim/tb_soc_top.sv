@@ -95,8 +95,8 @@ module tb_soc_top #(
     //   F cycle pc               first cycle of a FETCH (not while cpu_soft_rst holds
     //                            the CPU; a FETCH waiting on the window, !instr_ready,
     //                            goes on without a new record)
-    //   M cycle isa              active_mode from this cycle on (1 = RV32); it latches
-    //                            the auto-detected ISA at the end of a FETCH
+    //   M cycle isa              active_mode from this cycle on (1 = RV32); it changes
+    //                            only at a soft reset (to the GPIO's boot mode, else RV32)
     //   R cycle rd data          register file write, x0 excluded (Hack: A = x1, D = x2)
     //   W cycle addr data be     CPU bus write, in the cycle it completes
     //                            (mem_write && data_ready: a waiting store holds mem_write)

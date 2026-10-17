@@ -5,6 +5,9 @@
 
 #include "uart.c"
 
+/* GPIO's soft-reset register in Hack's MMIO (RV32 0x4000_300C) */
+#define HACK_GPIO_SOFT_RESET ((volatile unsigned int *)24588)
+
 static int factorial(int n) {
     if (n <= 1) return 1;
     return n * factorial(n - 1);
@@ -80,6 +83,22 @@ static void print_test3_header(void) {
     uart_putc(' '); uart_putc('='); uart_putc(' ');
 }
 
+/*
+ * Back to the first stage: the soft-reset key without a boot mode, so the CPU restarts
+ * in RV32 at 0 (README, "ISA selection"). The GPIO takes 0x0000_A55A; Hack's registers are
+ * 32 bits wide and an A-instruction loads 15 bits, so the key is added up at run time
+ * (0xA55A as a constant would come out with its top half set). A soft reset leaves the
+ * UART alone: the bytes still in its TX FIFO go out, and the first stage waits for room
+ * before it prints.
+ */
+static void soft_reset(void) {
+    volatile unsigned int key = 0x255A;
+    key += 0x4000;
+    key += 0x4000;
+    *HACK_GPIO_SOFT_RESET = key;
+    for (;;);
+}
+
 static void print_all_passed(void) {
     for (int i = 0; i < 41; i++) uart_putc('-');
     uart_putc('\n');
@@ -136,5 +155,6 @@ int main(void) {
 
     print_all_passed();
 
+    soft_reset();
     return 0;
 }

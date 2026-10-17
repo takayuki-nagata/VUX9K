@@ -5,6 +5,7 @@ import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, FallingEdge, Timer
 from rv32_asm import Asm
+from test_unified_cpu_stall import enter_hack
 from test_unified_cpu_traps import run_program
 
 
@@ -34,11 +35,12 @@ async def test_unified_cpu_hack_and_riscv(dut):
     await ClockCycles(dut.clk, 2)
     await FallingEdge(dut.clk)
     dut.rst.value = 1
+    await enter_hack(dut)  # a soft reset with the Hack boot mode: the only way into Hack
 
     # Cycle 1: Fetch -> Cycle 2: Execute (@15) -> Next PC becomes 2
     await ClockCycles(dut.clk, 2)
     await Timer(1, unit="ns")
-    assert int(dut.active_mode.value) == 0, "Hack mode auto-detection failed!"
+    assert int(dut.active_mode.value) == 0, "the soft reset's Hack boot mode wasn't taken"
     assert int(dut.pc_out.value) == 2, f"Expected PC=2, got {int(dut.pc_out.value)}"
 
     # PC=2: Hack C-instruction D=A (0xEC10 -> "1110110000010000")
@@ -76,7 +78,7 @@ async def test_unified_cpu_hack_and_riscv(dut):
     # Cycle 1: Fetch -> Cycle 2: Execute -> PC becomes 4
     await ClockCycles(dut.clk, 2)
     await Timer(1, unit="ns")
-    assert int(dut.active_mode.value) == 1, "RISC-V mode auto-detection failed!"
+    assert int(dut.active_mode.value) == 1, "the reset must start RISC-V mode"
     assert int(dut.pc_out.value) == 4, f"Expected PC=4, got {int(dut.pc_out.value)}"
 
     # PC=4: ADDI x11, x10, 8 (42 + 8 = 50)
@@ -188,15 +190,34 @@ async def test_high_pc_continues_after_load_and_store(dut):
     assert done in pcs, f"never got back; last PCs {[hex(p) for p in pcs[-4:]]}"
 
 
-# The RV32I opcodes the mode detector accepts as a first instruction (with bits [1:0] = 11)
-RV_FIRST_OPCODES = (0x33, 0x13, 0x03, 0x23, 0x63, 0x6F, 0x67, 0x37, 0x17, 0x73)
+# RV32I opcodes (with bits [1:0] = 11), and words that look like Hack (a C-instruction, A-
+# instructions, 0), which an ISA guess from the first instruction once took for Hack
+FIRST_WORDS = (0x33, 0x13, 0x03, 0x23, 0x63, 0x6F, 0x67, 0x37, 0x17, 0x73, 0xEC10, 0x0007, 0x7FFF, 0, 0xFFFF_FFFF)
+
+
+async def hard_reset(dut, word):
+    """The reset, with `word` as every fetched instruction, ending at a falling edge"""
+    dut.rst.value = 0
+    dut.instr_in.value = word
+    await ClockCycles(dut.clk, 2)
+    await FallingEdge(dut.clk)
+    dut.rst.value = 1
+
+
+async def mode_for(dut, cycles):
+    """active_mode in each of the next `cycles` cycles (at their falling edges)"""
+    modes = []
+    for _ in range(cycles):
+        await FallingEdge(dut.clk)
+        modes.append(int(dut.active_mode.value))
+    return modes
 
 
 @cocotb.test()
-async def test_first_instruction_selects_mode(dut):
-    """With no boot mode given, the first instruction word picks the ISA: each RV32I
-    opcode above selects RISC-V; a word one opcode bit away from one of them that isn't
-    an RV32I opcode itself (bit 15 clear, non-zero) is a Hack A-instruction"""
+async def test_mode_from_reset_and_boot_mode(dut):
+    """The ISA is a register, not a guess from the code: RV32 after the reset whatever the
+    first instructions are; after a soft reset, from either ISA, the boot mode given with
+    it (boot_mode_valid: boot_mode, 0 = Hack), else RV32; it holds while the CPU runs"""
     cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start())
     for sig in (
         "soft_rst",
@@ -211,18 +232,30 @@ async def test_first_instruction_selects_mode(dut):
         getattr(dut, sig).value = 0
     dut.instr_ready.value = 1
     dut.data_ready.value = 1
-    others = sorted({op ^ (1 << b) for op in RV_FIRST_OPCODES for b in range(2, 7)} - set(RV_FIRST_OPCODES))
-    cases = [(op, 1) for op in RV_FIRST_OPCODES] + [(op, 0) for op in others]
-    for word, want in cases:
-        dut.rst.value = 0
-        dut.instr_in.value = word
-        await ClockCycles(dut.clk, 2)
-        await FallingEdge(dut.clk)
-        dut.rst.value = 1
-        await ClockCycles(dut.clk, 3)
-        await FallingEdge(dut.clk)
-        got = int(dut.active_mode.value)
-        assert got == want, f"first word 0x{word:08x}: active_mode {got}, want {want} ({'RV32' if want else 'Hack'})"
+    for word in FIRST_WORDS:
+        await hard_reset(dut, word)
+        got = await mode_for(dut, 8)
+        assert got == [1] * 8, f"instructions 0x{word:08x} after the reset: active_mode {got}, want RV32 (1)"
+    for from_hack in (False, True):
+        for valid, mode, want in ((0, 0, 1), (0, 1, 1), (1, 0, 0), (1, 1, 1)):
+            await hard_reset(dut, 0x0000_0013)  # RV32 nop, Hack @19
+            if from_hack:
+                await enter_hack(dut)
+                assert int(dut.active_mode.value) == 0, "positive control: not in Hack"
+            await ClockCycles(dut.clk, 3)
+            await FallingEdge(dut.clk)
+            dut.soft_rst.value = 1
+            dut.boot_mode_valid.value = valid
+            dut.boot_mode.value = mode
+            await FallingEdge(dut.clk)
+            dut.soft_rst.value = 0
+            dut.boot_mode_valid.value = 0
+            dut.boot_mode.value = 1 - mode  # only the soft reset's cycle counts
+            got = await mode_for(dut, 8)
+            assert got == [want] * 8, (
+                f"soft reset from {'Hack' if from_hack else 'RV32'} with valid={valid} mode={mode}: "
+                f"active_mode {got}, want {want}"
+            )
 
 
 async def count_cycles_high(dut, signal, counts):

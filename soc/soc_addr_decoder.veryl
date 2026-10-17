@@ -5,7 +5,8 @@
 // (data_waddr) addresses. Only the bits needed to tell the regions apart are
 // decoded, so regions repeat (README, "Address decoding and aliases"); an address
 // matching nothing selects nothing (reads 0, writes are ignored). xmem is the
-// wait-state window (RV32 only; soc_xmem_bridge serves it, not soc_ram).
+// wait-state window (soc_xmem_bridge serves it, not soc_ram): RV32 region 8, and Hack's
+// data below HACK_MMIO_BASE, which soc_top maps into the window's D segment.
 pub module soc_addr_decoder (
     addr     : input  logic<32>,
     hack_mode: input  logic    , // 1: Hack 16-bit word addresses, 0: RV32 byte addresses
@@ -32,7 +33,7 @@ pub module soc_addr_decoder (
                     gpio = 1'b1;
                 }
             } else if addr[15:0] <: soc_pkg::HACK_MMIO_BASE {
-                ram = 1'b1;
+                xmem = 1'b1;
             }
         } else {
             let region: logic<4> = addr[31:28];

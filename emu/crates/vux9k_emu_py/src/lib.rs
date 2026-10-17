@@ -49,11 +49,12 @@ impl Soc {
 
     /// Start an application image at `addr`, as the second stage's `run` does: `mode`
     /// "riscv" or "hack" (a Hack image is big-endian 16-bit instructions, as `hcc -r`
-    /// writes them). At 0 the image goes into I-RAM, as a loader that soft-resets into
-    /// it puts it; an RV32 image at a PSRAM address (0x8000_0000, where the board's RV32
-    /// applications are linked) goes there and the CPU starts at `addr`. The CPU runs it
-    /// in that ISA from the first fetch; call this after `reset()`, which drops the ISA
-    /// again.
+    /// writes them). RV32: at 0 the image goes into I-RAM, as a loader that soft-resets
+    /// into it puts it; at a PSRAM address (0x8000_0000, where the board's RV32
+    /// applications are linked) it goes there and the CPU starts at `addr`. Hack: `addr`
+    /// is the byte offset in Hack's instruction segment (the PSRAM at 0x8000_0000, 64 KB)
+    /// and the CPU starts at 0. The CPU runs it in that ISA from the first fetch; call this
+    /// after `reset()`, which starts RV32 again.
     #[pyo3(signature = (data, mode = "riscv", addr = 0))]
     fn load_app(&mut self, data: &[u8], mode: &str, addr: u32) -> PyResult<()> {
         let isa = match mode {

@@ -4,7 +4,7 @@
 //! Timer and GPIO through the CPU: MMIO reads/writes, the timer interrupt, soft reset
 //! with and without a boot mode, LEDs and the button.
 
-use vux9k_emu::{Profile, Soc};
+use vux9k_emu::{Isa, Profile, Soc};
 
 fn i(op: u32, imm: i32, rs1: u32, f3: u32, rd: u32) -> u32 {
     ((imm as u32 & 0xFFF) << 20) | (rs1 << 15) | (f3 << 12) | (rd << 7) | op
@@ -119,21 +119,24 @@ fn soft_reset_restarts_at_zero_with_the_given_isa() {
 }
 
 #[test]
-fn soft_reset_without_mode_auto_detects() {
-    let mut soc = load(&[
-        lui(1, 0x40003),
-        lui(3, 0xA),
-        addi(3, 3, 0x55A),
-        sw(3, 1, 0xC),
-        addi(6, 0, 1),
-    ]);
-    for _ in 0..4 {
+fn soft_reset_without_mode_starts_rv32() {
+    // Hack (in its I segment) writes the key to 0x600C with no mode in register 0x8:
+    // @0x255A, D=A, @0x4000, D=D+A, @0x4000, D=D+A (0x0000_A55A), @0x600C, M=D
+    let hack: Vec<u8> = [
+        0x255A_u16, 0xEC10, 0x4000, 0xE090, 0x4000, 0xE090, 0x600C, 0xE308,
+    ]
+    .iter()
+    .flat_map(|i| i.to_be_bytes())
+    .collect();
+    let mut soc = load(&[addi(6, 0, 1)]);
+    soc.load_app(&hack, Isa::Hack).unwrap();
+    for _ in 0..8 {
         soc.step();
     }
     assert_eq!(soc.pc, 0);
-    assert!(soc.riscv_mode);
-    soc.step(); // lui again: detected as RV32
-    assert!(soc.riscv_mode);
+    assert!(soc.riscv_mode, "no mode given: RV32");
+    soc.step(); // I-RAM word 0, as RV32
+    assert_eq!(soc.regs[6], 1);
 }
 
 #[test]

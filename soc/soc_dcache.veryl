@@ -3,7 +3,8 @@
 
 // The data cache in front of the wait-state window (RV32 region soc_pkg::RV_REGION_XMEM):
 // direct-mapped, write-through, one word a line, 512 lines (2 KB). It sits between the CPU's
-// RV32 MEM_WAIT and soc_xmem_bridge, which sees the load misses and every store.
+// data accesses (RV32 MEM_WAIT; Hack's M reads and writes, in its D segment) and
+// soc_xmem_bridge, which sees the load misses and every store.
 // - Lines are keyed by the PSRAM word (addr[22:2]: index [10:2], tag [22:11]), so every alias
 //   of a word in region 8 is the same line, as the memory behind the window repeats every 8 MB.
 // - The RAMs are read a cycle ahead at rd_idx (the CPU's data_addr: the access address,
@@ -20,7 +21,10 @@
 //   partial store that misses invalidates the line, whatever it holds.
 // - A write to the index being read in the same cycle leaves that read undefined on the board
 //   (-no-rw-check, as soc_icache): the next cycle then misses. Writes happen only in a
-//   completing cycle, after which the CPU fetches, so no access sees it.
+//   completing cycle, after which the CPU fetches, so no access sees it, except the store of
+//   a Hack instruction that reads M and writes it (AM=M+1), the cycle after its load: after
+//   a load miss's fill it misses, and with Hack's full-word stores (wstrb 1111) allocating
+//   the line leaves it as a hit's merge would have.
 // - clear (high while soc_top's power-on reset counts) invalidates every line once, one a
 //   cycle, before the CPU runs: the RAMs have no reset. Until then window accesses wait.
 // - ENABLE = 0 passes every access to the bridge as if this module weren't there (its RAMs

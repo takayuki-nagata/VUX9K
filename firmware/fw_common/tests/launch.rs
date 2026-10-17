@@ -38,14 +38,16 @@ fn window(w: Window) -> (u32, u32) {
 #[test]
 fn targets_and_their_windows() {
     assert_eq!(window(Target::Psram.window()), (0x8000_0000, 0x70_0000));
-    assert_eq!(window(Target::IramHack.window()), (0, 0x4000));
+    assert_eq!(window(Target::HackSeg.window()), (0, 0x1_0000));
     // Every target's window is inside the one files load with
-    for t in [Target::Psram, Target::IramHack] {
+    for t in [Target::Psram, Target::HackSeg] {
         let w = t.window();
         assert!(w.base >= LOAD_WINDOW.base && w.base + w.len <= LOAD_WINDOW.base + LOAD_WINDOW.len);
     }
     assert_eq!(window(LOAD_WINDOW), (0, map::STAGE2_BASE as u32));
     assert_eq!((SCRATCH, SCRATCH_BYTES), (0x8000_0000, 0x70_0000));
+    // A Hack offset stages into Hack's instruction segment
+    assert_eq!(SCRATCH as usize, map::HACK_I_BASE);
 }
 
 #[test]
@@ -66,11 +68,14 @@ fn plan_picks_the_target_from_mode_and_load_address() {
         (header(MODE_RISCV, 16, 0), Err(OutOfWindow)),
         (header(MODE_RISCV, 0x3800, 0), Err(OutOfWindow)),
         (header(MODE_RISCV, 16, 0x100), Err(OutOfWindow)),
-        (header(MODE_HACK, 16, 0), Ok(Target::IramHack)),
-        (header(MODE_HACK, 0x4000, 0), Ok(Target::IramHack)),
-        (header(MODE_HACK, 16, 0x3FF0), Ok(Target::IramHack)),
-        (header(MODE_HACK, 0x4002, 0), Err(OutOfWindow)),
-        (header(MODE_HACK, 16, 0x3FF4), Err(OutOfWindow)),
+        // Hack: an offset in its 64 KB instruction segment, at a word
+        (header(MODE_HACK, 16, 0), Ok(Target::HackSeg)),
+        (header(MODE_HACK, 0x4002, 0), Ok(Target::HackSeg)),
+        (header(MODE_HACK, 0x1_0000, 0), Ok(Target::HackSeg)),
+        (header(MODE_HACK, 16, 0xFFF0), Ok(Target::HackSeg)),
+        (header(MODE_HACK, 0x1_0002, 0), Err(OutOfWindow)),
+        (header(MODE_HACK, 16, 0xFFF4), Err(OutOfWindow)),
+        (header(MODE_HACK, 16, 0x1_0000), Err(OutOfWindow)),
         (header(MODE_HACK, 16, 2), Err(OutOfWindow)),
         (header(MODE_HACK, 16, PS), Err(OutOfWindow)),
         (header(2, 16, PS), Err(BadMode(2))),
@@ -89,11 +94,11 @@ fn plan_picks_the_target_from_mode_and_load_address() {
 }
 
 #[test]
-fn staging_keeps_i_ram_in_the_psram() {
+fn staging_puts_hack_offsets_into_the_segment() {
     assert_eq!(staging(0), Some(SCRATCH));
     assert_eq!(staging(0x3E00), Some(SCRATCH + 0x3E00));
-    assert_eq!(staging(0x3FFF), Some(SCRATCH + 0x3FFF));
-    assert_eq!(staging(0x4000), None);
+    assert_eq!(staging(0xFFFF), Some(SCRATCH + 0xFFFF));
+    assert_eq!(staging(0x1_0000), None);
     assert_eq!(staging(0x2000_0000), None);
     assert_eq!(staging(0x7FFF_FFFF), None);
     assert_eq!(staging(0x8000_0000), Some(0x8000_0000));
@@ -121,7 +126,7 @@ fn run_errors() {
     );
     assert_eq!(
         text(BootError::Image(ImageError::OutOfWindow)),
-        "loads outside 80000000-806FFFFF (RV32), 0-3FFF (Hack, at a word)"
+        "loads outside 80000000-806FFFFF (RV32), 0-FFFF (Hack, at a word)"
     );
     // The rest as the first stage words it
     assert_eq!(text(BootError::Crc), "CRC mismatch");
@@ -212,13 +217,17 @@ mod run {
         assert_eq!(r, Ok(Target::Psram));
         assert_eq!(mem.keys().next(), Some(&0x8001_0000));
         assert_eq!(mem.len(), payload.len());
+        // Hack: in its segment, where it runs
         let (r, mem) = run(&v4(MODE_HACK, 0, &payload));
-        assert_eq!(r, Ok(Target::IramHack));
-        assert_eq!(mem.keys().next(), Some(&SCRATCH));
+        assert_eq!(r, Ok(Target::HackSeg));
+        assert_eq!(mem.keys().next(), Some(&(map::HACK_I_BASE as u32)));
         assert_eq!(mem.values().copied().collect::<Vec<u8>>(), payload);
         let (r, mem) = run(&v4(MODE_HACK, 0x100, &payload));
-        assert_eq!(r, Ok(Target::IramHack));
-        assert_eq!(mem.keys().next(), Some(&(SCRATCH + 0x100)));
+        assert_eq!(r, Ok(Target::HackSeg));
+        assert_eq!(mem.keys().next(), Some(&(map::HACK_I_BASE as u32 + 0x100)));
+        let (r, mem) = run(&v4(MODE_HACK, 0xC000, &payload));
+        assert_eq!(r, Ok(Target::HackSeg));
+        assert_eq!(mem.keys().next(), Some(&(map::HACK_I_BASE as u32 + 0xC000)));
         // RV32 at 0 stages like a Hack file, in the PSRAM only, then is refused: the first
         // stage in I-RAM stays
         let (r, mem) = run(&v4(MODE_RISCV, 0, &payload));
@@ -228,9 +237,9 @@ mod run {
         let (r, mem) = run(&v4(MODE_RISCV, 0x2000_0000, &payload));
         assert_eq!(r, Err(BootError::Image(ImageError::OutOfWindow)));
         assert!(mem.is_empty());
-        let (r, mem) = run(&v4(MODE_HACK, 0x3F00, &payload));
+        let (r, mem) = run(&v4(MODE_HACK, 0xFF00, &payload));
         assert_eq!(r, Err(BootError::Image(ImageError::OutOfWindow)));
-        assert!(mem.keys().all(|&a| a >= SCRATCH && a < SCRATCH + 0x4400));
+        assert!(mem.keys().all(|&a| a >= SCRATCH && a < SCRATCH + 0x1_0400));
         // load_file's own checks: the second stage's window is not a target's
         let (r, _) = run(&v4(MODE_RISCV, 0x8070_0000, &payload));
         assert_eq!(r, Err(BootError::Image(ImageError::OutOfWindow)));

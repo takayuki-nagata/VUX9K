@@ -62,9 +62,10 @@ sides flattened below `<top>` (~6 min per top on 4 cores). Notes:
   `EQY_NOMATCH="pc_select.mem_wait"`: with the inputs tied, opt_merge shares the
   FSM's `state == MEM_WAIT` compare with the net of that name in the gate only, and
   as a cut point it became a free input of partitions `r_store_we`/`r_load_we`, which
-  then failed. And `auto_mode_detector` got an enable input rather than a muxed
-  `first_instr`: the mux split the `instr_in` alias gold keeps ("conflicting matches
-  for gold bit \instr_in[0] … \mode_detect.first_instr[0]"), which no exclusion fixes.
+  then failed. And the first-instruction ISA detector it had then (removed since) got an
+  enable input rather than a muxed `first_instr`: the mux split the `instr_in` alias gold
+  keeps ("conflicting matches for gold bit \instr_in[0] … \mode_detect.first_instr[0]"),
+  which no exclusion fixes.
 - Putting a new instance between two existing ones (the window's caches between the CPU and
   `soc_xmem_bridge`, disabled) moves the old instance's flattened port names onto other
   nets: gold's `xmem_bridge.data_ready` is the CPU's `data_ready`, the gate's the bridge's
