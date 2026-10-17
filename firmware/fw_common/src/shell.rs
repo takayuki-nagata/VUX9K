@@ -27,7 +27,7 @@ pub enum Key {
 }
 
 /// A line being typed. `feed` is on the per-byte path of code that runs from the
-/// PSRAM (a fetch costs ~35 cycles): it has no loop and is inlined.
+/// PSRAM (a fetch that misses its cache waits ~35 cycles): it has no loop and is inlined.
 pub struct LineBuf {
     buf: [u8; LINE_MAX],
     len: usize,
