@@ -41,7 +41,7 @@ build/                  ALL generated/build output (gitignored) — see below
 
 Everything under `soc/`, `firmware/`, `hack_demo/`, `zephyr_workspace/`, `scripts/`,
 `tools/` is source. Nothing generated should ever be written outside `build/`
-except the handful of firmware-hex symlinks described below
+except the root `firmware.hex` symlink described below
 (docs/agents/layout.md, "`build/`").
 
 ## Rules for every change

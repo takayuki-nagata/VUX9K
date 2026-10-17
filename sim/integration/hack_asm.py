@@ -9,7 +9,7 @@ Standard nand2tetris encoding: `@value` / `@label` A-instructions and
     a = Asm()
     a.label("loop"); a.at("loop"); a.c("0;JMP")
     words = a.assemble()
-assemble() packs two instructions per 32-bit I-RAM word the way
+assemble() packs two instructions per 32-bit word of Hack's instruction segment the way
 scripts/bin2hex.py does for hack_demo (first instruction in the low half).
 Encodings are checked against the nand2tetris reference by selftest().
 """

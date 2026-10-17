@@ -164,8 +164,11 @@ Hack mode sees the UART at `0x6000`-`0x6003`, the GPIO at `0x6004`-`0x600F` and 
 of RAM (`0x0000`-`0x5FFF`); its code and data are in the PSRAM, in two segments, so every
 store and every fetch or load that misses the caches waits ~35 cycles
 ([Hack Mode Address Space](../README.md#hack-mode-address-space-16-bit-word-addresses)).
-A Hack application starts at 0; to give the board back to the first stage, it soft-resets
-without a mode (below).
+The instruction segment holds at most 64 KB of code (32K instructions, two to a 32-bit word).
+The data segment is 96 KB of the PSRAM: each of the 24K RAM words is a 32-bit word of its
+own (Hack's registers are 32 bits wide in this CPU), and a store writes the whole word. `run`
+zeroes the data segment before it starts the program. A Hack application starts at 0; to
+give the board back to the first stage, it soft-resets without a mode (below).
 
 ### Packaging an application for the card
 
@@ -184,8 +187,9 @@ python3 tools/vux_tool.py mkv4 --mode hack --name "my hack app" app.bin HACKAPP.
 ```
 
 The PSRAM window is `XMEM_BASE` (`0x8000_0000`) up to the second stage at `STAGE2_BASE`
-(`0x8070_0000`); the entry point defaults to the load address. Code there runs slower: every
-fetch waits ~35 cycles. A PSRAM application starts with `a0` = 1 on an SDHC card (else 0),
+(`0x8070_0000`); the entry point defaults to the load address. Code there can run slower: a
+fetch that misses the 16 KB instruction cache, a load that misses the 2 KB data cache and
+every store wait ~35 cycles. A PSRAM application starts with `a0` = 1 on an SDHC card (else 0),
 `a1` = the FAT32 partition's first LBA, `a2` = the first stage's version, and the first stage
 in the ROM (a soft reset goes back to it); `sd/VUX9K/APPS/HELLO.BIN` and the Zephyr
 demos are. `run` checks the file's header and CRC before it writes anything, and refuses a
@@ -240,8 +244,8 @@ assert end is not None, soc.uart_received()
 print(f"demo finished after {soc.cycle} cycles ({soc.cycle / 18e6:.2f} s at 18 MHz)")
 ```
 
-The board's way, from a card: `emu/firmware/` holds the first stage's memory images (what
-the bitstream's block RAM holds), `--firmware emu/firmware` boots them, and the first stage
+The board's way, from a card: `emu/firmware/` holds the first stage's ROM image (what
+the bitstream's boot ROM holds), `--firmware emu/firmware` boots them, and the first stage
 starts the second stage from a card image made with `vux_tool.py mkfat`:
 
 ```sh

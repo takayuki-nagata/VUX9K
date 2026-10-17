@@ -25,7 +25,7 @@ pub mod upload;
 
 /// CRC-32 (IEEE, reflected, poly 0xEDB88320) over `data`, continuing from `crc`.
 /// Start with 0xFFFF_FFFF and invert the result, as zlib/binascii.crc32 do.
-/// Bit by bit: the first stage's (small, and fast enough from I-RAM).
+/// Bit by bit: the first stage's (small, and fast enough from the ROM).
 #[cfg(not(feature = "fat-full"))]
 pub fn crc32_update(data: &[u8], mut crc: u32) -> u32 {
     for &b in data {

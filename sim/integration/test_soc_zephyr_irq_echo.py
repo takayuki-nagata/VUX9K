@@ -3,7 +3,7 @@
 
 """
 The Zephyr interrupt-driven UART echo (build/zephyr-irq-echo, board vux9k) on the RTL,
-preloaded into the PSRAM and started by a jump from I-RAM like the Rust demo
+preloaded into the PSRAM and started by a jump from the ROM like the Rust demo
 (sim/integration/test_soc_zephyr_demo.py; the emulator counterpart is
 sim/emu/test_zephyr_irq_echo.py). Its interrupt handlers run from the PSRAM as well; with the
 instruction cache in front of it they keep up with a line sent back to back at 115200 baud.

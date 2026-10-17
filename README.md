@@ -469,10 +469,13 @@ Short tests run on Icarus, long SoC/GLS runs on Verilator (`SIM_UNIT` / `SIM_SOC
 | **Hack Mode** | `make sim-hack-rtl` | ~5 sec | Hack C firmware from its PSRAM segments: its self-test report over the UART, then its soft reset back to RV32 |
 | **SD Edge Cases** | `make sim-sd-quirks` | ~20 sec | Strict SD model: power-up preamble, an SDSC card booted twice across a soft reset |
 | **End-to-End Flow** | `make sim-hw-flow` | ~1 min | RAM boot of the second stage over transfer v2, which installs a `STAGE2.BIN` on the FAT32 card; the first stage boots it after a soft reset |
+| **Second Stage on the RTL** | `make sim-stage2` | a few min | The real second stage booted from a FAT32 card: `ls`, `run HELLO.BIN` (the PSRAM, `a0`-`a2`, `r` back to the first stage) and `run HACK.BIN` (its PSRAM segments in Hack mode, then its soft reset back to the first stage) |
 | **GLS SoC Boot** | `make sim-soc-gls-fast` | ~1.5 min | Full Gowin netlist boots to the first stage's prompt (S2 held) |
 | *slow* **GLS End-to-End** | `make sim-gls-hw-flow` | ~3-6 min | The end-to-end flow on the full Gowin netlist |
 | *slow* **Icarus End-to-End** | `make sim-hw-flow-icarus` | ~30 min | The end-to-end flow on 4-state Icarus |
 | *slow* **PSRAM on Icarus** | `make sim-psram-icarus` | a few min | The SoC MMIO program's PSRAM window checks with the real controller on the pin-level W955D8MBYA model (no protocol/timing error in it), and the PSRAM word model's contract test against the controller's Gowin netlist |
+| *slow* **Zephyr Demo through the Second Stage, GLS** | `make sim-zephyr-demo-gls` | minutes | The second stage booted from the card on the full Gowin netlist, its `run VUX9K/APPS/ZEPHYR.BIN` loading the Zephyr demo into the PSRAM and starting it |
+| *slow* **Board Suite on the Emulator** | `make sim-hw-suite-emu` | ~3 min | `scripts/test_hardware.py` against `vux9k-emu --tcp` at the board's speed, the two tests that need a bitstream load skipped (wall-clock timeouts, hence slow) |
 | **Emulator** | `make emu-test` / `test-isa-emu` | ~10 sec | Rust unit tests of the emulator; riscv-tests on it (same results as `test-isa`) |
 | **Emulator Speed** | `make emu-bench` | ~10 sec | MIPS from Python and final-state digests (`--compare` with a saved run); prints only |
 | **Firmware on the Emulator** | `make test-emu` | ~30 sec | The first stage on FAT32 cards (boot, `.OLD`, what keeps a second stage from starting, card types, prompt, soft reset), RAM boot and install through `vux_tool.py`, Hack demo, Zephyr demo, interrupt-driven UART echo and bc from the PSRAM (loaded directly and through the second stage's `run`; bc's cycle counts are printed), SD transcripts, FAT32 images from mkfs.fat/mtools |

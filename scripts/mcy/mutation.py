@@ -153,7 +153,7 @@ ACCEPTED: dict[str, dict[str, str]] = {
         " r_hack_data while it holds outside MEM_WAIT and its bit 16 is set. Its value counts only in"
         " HACK_WB, right after MEM_WAIT reloaded it from data_in; in EXECUTE and MEM_WAIT it reaches only"
         " data_out without mem_write (a Hack M write in EXECUTE has no M operand) and, in EXECUTE, the pc_out"
-        " of an instruction that goes to MEM_WAIT, an I-RAM read no FETCH uses. Differs only outside the"
+        " of an instruction that goes to MEM_WAIT, an instruction read no FETCH uses. Differs only outside the"
         " interface's contract",
         "cnot1 A[27] ctrl 1 @ rv32i_csrs.sv:124.18-175.12 rv32i_csrs.sv:124.22-124.30": "flips bit 27 of"
         " mepc's next value when its bit 1 is set, which never happens: trap entry stores the PC of an RV32"

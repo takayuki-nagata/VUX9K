@@ -83,7 +83,7 @@ def where_am_i() -> bytes:
 @pytest.mark.parametrize(
     "args,where",
     [([], b"P"), (["--load-addr", "0x8000_0100"], b"P"), (["--load-addr", "0"], b"I")],
-    ids=["default", "psram", "i-ram"],
+    ids=["default", "psram", "rom"],
 )
 def test_mode_riscv_loads_at_the_load_address(tmp_path, args, where):
     # RV32 applications start where the second stage's `run` starts them: the PSRAM

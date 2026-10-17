@@ -3,7 +3,7 @@
 
 """
 The Zephyr Rust demo (build/zephyr-demo, board vux9k) on the RTL, preloaded into the PSRAM
-where its board links it, and started by a jump from I-RAM 0 in place of the first stage
+where its board links it, and started by a jump at ROM word 0 in place of the first stage
 (soc_env.preload_psram_app): the second stage's `run` starts it the same way, after loading
 it from the card, which is test_soc_zephyr_s2.py (GLS, test-slow). The emulator counterpart
 is sim/emu/test_zephyr_demo.py. Verilator RTL only: the preload writes the PSRAM word model.
