@@ -3,7 +3,8 @@
 
 """
 unified_cpu's wait states: instr_ready = 0 holds a FETCH, data_ready = 0 holds a
-MEM_WAIT (RV32 load/store, Hack M read), and nothing else may happen meanwhile.
+MEM_WAIT (RV32 load/store, Hack M read) or a Hack M write (EXECUTE, HACK_WB), and nothing
+else may happen meanwhile.
 
 The harness drives the CPU cycle by cycle from a memory model with soc_ram's timing
 (each port returns the word at the address the CPU presented in the previous cycle) and
@@ -34,7 +35,7 @@ RV_INSTR_GARBAGE = 0xFFFFFFFF  # illegal in RV32; the mode detector would take i
 HACK_INSTR_GARBAGE = 0x00000013  # an RV32 nop: the mode detector would take it for RV32
 DATA_GARBAGE = 0xDEADBEEF
 IRQ_LINES = ("timer_irq_in", "ext_irq_in", "sw_irq_in")
-KINDS = ("fetch", "load", "store", "hack_m_read")
+KINDS = ("fetch", "load", "store", "hack_m_read", "hack_m_write")
 
 
 # (kind, waited, irq pending while it waited). The CPU looks at interrupts only in the
@@ -61,6 +62,7 @@ class Cycle(NamedTuple):
     daddr: int | None
     instr_ready: int
     data_ready: int
+    data_req: int
 
     def store(self):
         return (self.waddr, self.wdata, self.wbe) if self.mem_write else None
@@ -152,6 +154,7 @@ async def run(
             daddr=val(dut.data_addr),
             instr_ready=ir,
             data_ready=dr,
+            data_req=int(dut.data_req.value),
         )
         trace.append(c)
         if c.mem_write and dr:
@@ -443,6 +446,77 @@ async def test_stalled_hack_m_read(dut):
     sample_access("fetch", 2, False)
     assert int(dut.active_mode.value) == 0, "a stalled first FETCH set RV32 mode"
     check_stalled(base, stalled, 0, 2, "Hack first FETCH stalled 2")
+    fcov.export()
+
+
+# Hack M writes of every kind, each followed by one that shows the A or D it left:
+# (instruction, what it is)
+HACK_WRITES = [
+    (0x0005, "@5"),
+    (0xFC10, "D=M"),
+    (0x0006, "@6"),
+    (0xE308, "M=D"),  # EXECUTE: M[6] = 0x1234
+    (0x0007, "@7"),
+    (0xE328, "AM=D"),  # EXECUTE, and A: M[7] = 0x1234, A = 0x1234
+    (0xE308, "M=D"),  # M[0x1234] = 0x1234
+    (0x0008, "@8"),
+    (0xFDC8, "M=M+1"),  # HACK_WB: M[8] = 0x11
+    (0xFDE8, "AM=M+1"),  # HACK_WB, and A: M[8] = 0x12, A = 0x12
+    (0xE308, "M=D"),  # M[0x12] = 0x1234
+    (0x0009, "@9"),
+    (0xE7F8, "AMD=D+1"),  # EXECUTE, A and then D (HACK_WR_D): M[9] = A = D = 0x1235
+    (0xE308, "M=D"),  # M[0x1235] = 0x1235
+    (0x000A, "@10"),
+    (0xFDF8, "AMD=M+1"),  # HACK_WB, A and then D: M[10] = A = D = 0x21
+    (0xE308, "M=D"),  # M[0x21] = 0x21
+    (0x0012, "@18"),
+    (0xEA87, "0;JMP"),  # to itself
+    (0x0000, "@0"),  # padding to a whole word, never reached
+]
+HACK_WRITES_DATA = {5: 0x1234, 8: 0x10, 10: 0x20}
+HACK_WRITES_RESULT = [
+    (6, 0x1234),
+    (7, 0x1234),
+    (0x1234, 0x1234),
+    (8, 0x11),
+    (8, 0x12),
+    (0x12, 0x1234),
+    (9, 0x1235),
+    (0x1235, 0x1235),
+    (10, 0x21),
+    (0x21, 0x21),
+]
+
+
+def hack_writes_program():
+    instrs = [i for i, _ in HACK_WRITES]
+    return {4 * i: hack_word(instrs[2 * i], instrs[2 * i + 1]) for i in range(len(instrs) // 2)}
+
+
+@cocotb.test(timeout_time=2, timeout_unit="ms")
+async def test_stalled_hack_m_write(dut):
+    """Hack: data_ready low under an M write, direct (EXECUTE: M=, AM=, AMD=) or after an M
+    read (HACK_WB: M=M+1, AM=M+1, AMD=M+1): the write stays on the bus with data_req, and
+    A and D keep their values (A is the address) until it completes, once"""
+    start_clock(dut)
+    imem = hack_writes_program()
+    base = await run(dut, imem, HACK_WRITES_DATA, hack=True)
+    assert int(dut.active_mode.value) == 0, "positive control: not in Hack mode"
+    assert [(a, d & 0xFFFF) for _, a, d, _ in base.writes] == HACK_WRITES_RESULT, base.writes
+    for i, c in enumerate(base.trace):
+        assert not c.mem_write or c.data_req, f"cycle {i}: a Hack M write without data_req"
+    sample_access("hack_m_write", 0, False)
+    for k, (start, addr, _, _) in enumerate(base.writes):
+        for n in (1, 3):
+            stalled = await run(dut, imem, HACK_WRITES_DATA, data_ready=low_during(start, n), hack=True)
+            sample_access("hack_m_write", n, False)
+            what = f"Hack write {k} (to 0x{addr:x}) stalled {n}"
+            check_stalled(base, stalled, start, n, what)
+            for i in range(start, start + n + 1):
+                assert stalled.trace[i].data_req, f"{what}: no data_req in cycle {i}"
+            held = sum(1 for c in stalled.trace[start : start + n + 1] if c.mem_write and c.waddr == addr)
+            assert held == n + 1, f"{what}: mem_write for {held} cycles, expected {n + 1}"
+            assert stalled.dmem == base.dmem, f"{what}: memory differs"
     fcov.export()
 
 

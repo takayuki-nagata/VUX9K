@@ -24,7 +24,7 @@ pub module soc_xmem_bridge (
     fetch_req  : input  logic    , // the CPU is in FETCH
     fetch_sel  : input  logic    , // fetch_addr is in the window
     fetch_addr : input  logic<32>,
-    data_req   : input  logic    , // the CPU is in an RV32 MEM_WAIT
+    data_req   : input  logic    , // the CPU has a data access on the bus (unified_cpu)
     data_sel   : input  logic    , // data_addr is in the window
     data_addr  : input  logic<32>,
     data_we    : input  logic    , // 1: store, 0: load

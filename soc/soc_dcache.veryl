@@ -34,7 +34,7 @@ pub module soc_dcache #(
 
     // CPU side
     rd_idx    : input  logic<9> , // data_addr[10:2]: the line of the access, from EXECUTE on
-    data_req  : input  logic    , // the CPU is in an RV32 MEM_WAIT
+    data_req  : input  logic    , // the CPU has a data access on the bus (unified_cpu)
     data_sel  : input  logic    , // data_addr is in the window
     data_addr : input  logic<21>, // data_waddr[22:2]: the PSRAM word of the registered access address
     data_we   : input  logic    , // 1: store, 0: load

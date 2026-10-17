@@ -145,7 +145,9 @@ pub module unified_cpu #(
     assign active_mode = is_riscv_mode;
     assign fetch_req   = state == CpuState::FETCH;
     assign fetch_addr  = pc_reg;
-    assign data_req    = is_riscv_mode && state == CpuState::MEM_WAIT;
+    // A data access is on the bus: an RV32 MEM_WAIT, or a Hack M read (MEM_WAIT) or M write
+    // (EXECUTE or HACK_WB, whenever mem_write is 1)
+    assign data_req = state == CpuState::MEM_WAIT || !is_riscv_mode && mem_write;
     // pc_reg is already final in HACK_WR_D (updated in the cycle before it)
     assign pc_out = if state == CpuState::FETCH || state == CpuState::HACK_WR_D ? pc_reg : next_pc;
     let rv_mem_addr: logic<32> = rf_rs1_data + rv_imm;
@@ -276,6 +278,9 @@ pub module unified_cpu #(
     // The cycle a Hack instruction writes its results: EXECUTE, or HACK_WB when the comp reads M
     let hack_writeback: logic = if h_use_mem ? state == CpuState::HACK_WB : state == CpuState::EXECUTE;
     let hack_dual_dest: logic = !is_riscv_mode && h_we_reg_a && h_we_reg_d;
+    // A Hack M write that waits: the instruction holds its state and writes no register
+    // until data_ready, since the address is A itself
+    let hack_mem_stall: logic = !is_riscv_mode && mem_write && !data_ready;
 
     // ALU operands and operation. Kept apart from the writeback below, which reads the
     // ALU result: in one always_comb, Verilator saw a combinational loop (UNOPTFLAT).
@@ -431,10 +436,11 @@ pub module unified_cpu #(
             // file writes one port per cycle, so an instruction writing both A and D
             // writes A now and D from r_hack_d in the extra HACK_WR_D cycle.
             rf_rd_addr    = 5'd1;
-            rf_we         = hack_writeback && h_we_reg_a;
+            rf_we         = hack_writeback && h_we_reg_a && !hack_mem_stall;
             rf_wr_data    = alu_result;
             rf_rd2_addr   = 5'd2;
-            rf_we2        = (hack_writeback && h_we_reg_d && !h_we_reg_a) || state == CpuState::HACK_WR_D;
+            rf_we2        = (hack_writeback && h_we_reg_d && !h_we_reg_a && !hack_mem_stall) || state
+                == CpuState::HACK_WR_D;
             rf_wr2_data   = if state == CpuState::HACK_WR_D ? r_hack_d : alu_result;
             r_data_out    = alu_result;
             r_mem_byte_we = 4'b1111;
@@ -575,6 +581,9 @@ pub module unified_cpu #(
                         r_load_we     = 1'b0;
                         r_hack_mem_we = h_we_mem;
                         state         = CpuState::MEM_WAIT;
+                    } else if hack_mem_stall {
+                        // The M write waits: stay in EXECUTE
+                        state = CpuState::EXECUTE;
                     } else {
                         r_store_we    = 1'b0;
                         r_load_we     = 1'b0;
@@ -606,15 +615,18 @@ pub module unified_cpu #(
                     }
                 }
                 CpuState::HACK_WB: {
-                    r_store_we    = 1'b0;
-                    r_load_we     = 1'b0;
-                    r_hack_mem_we = 1'b0;
-                    pc_reg        = next_pc;
-                    r_hack_d      = alu_result;
-                    if hack_dual_dest {
-                        state = CpuState::HACK_WR_D;
-                    } else {
-                        state = CpuState::FETCH;
+                    // An M write here (AM=M+1 and the like) holds r_hack_mem_we until it completes
+                    if !hack_mem_stall {
+                        r_store_we    = 1'b0;
+                        r_load_we     = 1'b0;
+                        r_hack_mem_we = 1'b0;
+                        pc_reg        = next_pc;
+                        r_hack_d      = alu_result;
+                        if hack_dual_dest {
+                            state = CpuState::HACK_WR_D;
+                        } else {
+                            state = CpuState::FETCH;
+                        }
                     }
                 }
                 CpuState::HACK_WR_D: {
