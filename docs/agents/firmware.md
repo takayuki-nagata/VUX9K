@@ -86,7 +86,7 @@ release/`.
   it is behind `fat-full`, as is the nibble-table `crc32_update` (the bitwise one, which the
   first stage keeps, cost ~1,800 cycles a byte from the PSRAM). Check
   `build/firmware/firmware.hex` is unchanged after any `fw_common` change.
-- **Code in the PSRAM can be slow**: a fetch that misses the 4 KB instruction cache, a load
+- **Code in the PSRAM can be slow**: a fetch that misses the 16 KB instruction cache, a load
   that misses the 2 KB data cache and every store wait ~35 cycles. Before the caches, the
   second stage's transfer loop lost UART bytes at 115200 baud until the
   receive stopped calling `mul_u32` for its timeout on every byte (`fw_drivers`'

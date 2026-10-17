@@ -198,9 +198,9 @@ pub module soc_top (
     assign cpu_instr_in   = if xmem_fetch_sel ? icache_rdata : instr_data;
 
     // The caches key lines by the PSRAM word (addr[22:2]) and read them a cycle ahead, at
-    // the CPU's pc_out and data_addr (in Hack, the segments' bits of them: pc_out[11:2] is
+    // the CPU's pc_out and data_addr (in Hack, the segments' bits of them: pc_out[13:2] is
     // the same, A[8:0] the data line). Their RAMs have no reset: they clear every line while
-    // the power-on reset counts (raw_rst low; 1,024 cycles of its 32,768), so they are reset
+    // the power-on reset counts (raw_rst low; 4,096 cycles of its 32,768), so they are reset
     // by rst_n, not by it. A store to the window completing invalidates its
     // instruction-cache line. While cpu_soft_rst holds the CPU in FETCH the instruction cache
     // sees no fetch: one it started then (a soft reset into Hack fetches from the window at
@@ -210,7 +210,7 @@ pub module soc_top (
         clk                                                          ,
         rst        : rst_n                                           ,
         clear      : !raw_rst                                        ,
-        rd_idx     : instr_addr[11:2]                                ,
+        rd_idx     : instr_addr[13:2]                                ,
         fetch_req  : fetch_req && !cpu_soft_rst,
         fetch_sel  : xmem_fetch_sel                                  ,
         fetch_addr : win_fetch_addr[22:2]                            ,
@@ -218,7 +218,7 @@ pub module soc_top (
         rdata      : icache_rdata                                    ,
         hit        : _                                               ,
         inv        : data_req && xmem_wsel && mem_write && data_ready,
-        inv_idx    : win_data_waddr[11:2]                            ,
+        inv_idx    : win_data_waddr[13:2]                            ,
         mem_sel    : icache_mem_sel                                  ,
         mem_ready  : bridge_instr_ready                              ,
         mem_rdata  : xmem_rdata                                      ,

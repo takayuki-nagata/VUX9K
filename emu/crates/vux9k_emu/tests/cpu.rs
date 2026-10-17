@@ -672,8 +672,8 @@ fn xmem_fetch_samples_the_interrupt_in_its_last_cycle() {
 #[test]
 fn xmem_fetch_hits_the_icache_and_stores_invalidate_it() {
     // A two-instruction routine at 0x8000_0000 (addi x11 += 1; jalr x0, 0(x9)) called
-    // four times from the ROM: cold, warm, after a store to 0x8000_1000 (another word on
-    // the routine's first line), and through the 8 MB alias
+    // four times from the ROM: cold, warm, after a store to 0x8000_4000 (another word on
+    // the routine's first line, 16 KB up), and through the 8 MB alias
     let mut w = vec![lui(1, 0x80000)];
     for (k, word) in [addi(11, 11, 1), i(0x67, 0, 9, 0, 0)].iter().enumerate() {
         w.extend(li(2, *word));
@@ -686,7 +686,7 @@ fn xmem_fetch_hits_the_icache_and_stores_invalidate_it() {
     };
     call(&mut w, 1);
     call(&mut w, 1);
-    w.push(lui(4, 0x80001));
+    w.push(lui(4, 0x80004));
     w.push(s(0, 0, 4, 2)); // sw x0, 0(x4)
     call(&mut w, 1);
     w.push(lui(5, 0x80800));

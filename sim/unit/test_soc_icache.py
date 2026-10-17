@@ -16,7 +16,8 @@ import fcov
 from cocotb.clock import Clock
 from cocotb.triggers import FallingEdge, Timer
 
-LINES = 1024
+LINES = 4096
+TAG_SHIFT = 12  # index fetch_addr[11:0] (addr[13:2]), tag fetch_addr[20:12] (addr[22:14])
 WORD_MASK = (1 << 21) - 1  # fetch_addr: the PSRAM word, addr[22:2]
 
 OUTCOMES = ("hit", "miss", "outside", "sweep_wait")
@@ -36,7 +37,7 @@ def idx_of(word):
 
 
 def tag_of(word):
-    return word >> 10
+    return word >> TAG_SHIFT
 
 
 class Bench:
@@ -186,8 +187,8 @@ class Bench:
 def pool(n_lines=6, n_tags=3):
     """Words on a few lines with a few tags each: hits, conflicts and evictions."""
     lines = random.sample(range(LINES), n_lines)
-    tags = random.sample(range(1 << 11), n_tags)
-    return [t << 10 | ln for ln in lines for t in tags]
+    tags = random.sample(range(1 << (21 - TAG_SHIFT)), n_tags)
+    return [t << TAG_SHIFT | ln for ln in lines for t in tags]
 
 
 @cocotb.test(timeout_time=1, timeout_unit="ms")
@@ -208,10 +209,10 @@ async def test_directed(dut):
     w = 0x0_4007
     await b.fetch(w)  # miss
     await b.fetch(w)  # hit
-    await b.fetch(w, inv=w + (1 << 10))  # a store to the same line (another tag): invalidated
+    await b.fetch(w, inv=w + (1 << TAG_SHIFT))  # a store to the same line (another tag): invalidated
     await b.fetch(w)  # miss again
     await b.fetch(w, inv=0x0_0123)  # a store to another line leaves it
-    await b.fetch(w + (2 << 10))  # another tag on the line: replaces it
+    await b.fetch(w + (2 << TAG_SHIFT))  # another tag on the line: replaces it
     await b.fetch(w)
     await b.fetch(w, inv=w)  # the store rewrites the very word: the fetch gets the new one
     await b.fetch(w)
@@ -244,7 +245,7 @@ async def test_reset_sweeps_valid_lines(dut):
     b = Bench(dut, max_delay=2)
     await b.reset()
     await b.sweep()
-    words = [random.getrandbits(11) << 10 | ln for ln in range(LINES)]
+    words = [random.getrandbits(21 - TAG_SHIFT) << TAG_SHIFT | ln for ln in range(LINES)]
     for w in words:
         assert await b.fetch(w) == "miss"
     assert len(b.tags) == LINES

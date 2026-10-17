@@ -10,7 +10,7 @@
 //! a line always equals the memory. Lines are keyed by the PSRAM word (`addr[22:2]`), so
 //! the window's 8 MB aliases share them. Every rule mirrors the RTL:
 //! - direct-mapped, one word a line: the instruction cache `ICACHE_LINES` lines (index
-//!   `addr[11:2]`, tag `addr[22:12]`), the data cache `DCACHE_LINES` (index `addr[10:2]`,
+//!   `addr[13:2]`, tag `addr[22:14]`), the data cache `DCACHE_LINES` (index `addr[10:2]`,
 //!   tag `addr[22:11]`);
 //! - a hit costs nothing over a fetch or a load of the ROM, a miss waits as an uncached
 //!   access did and fills the line;
@@ -26,7 +26,7 @@
 //!   miss anyway.
 
 /// Lines of the instruction cache (soc_icache's LINES).
-pub const ICACHE_LINES: usize = 1024;
+pub const ICACHE_LINES: usize = 4096;
 /// Lines of the data cache (soc_dcache's LINES).
 pub const DCACHE_LINES: usize = 512;
 

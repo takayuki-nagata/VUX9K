@@ -105,7 +105,7 @@ The CPU is RV32I with Zicsr and Zifencei, machine mode only, at 18 MHz, with a 1
 ROM (the first stage, read-only) and 8 MB of PSRAM, its only RAM. The Zephyr board `vux9k`
 links applications into the PSRAM: the image runs in place from `0x8000_0000` (4 MB, where
 the second stage's `run` loads it), its RAM is the 3 MB from `0x8040_0000`. In the PSRAM, a
-fetch that misses the 4 KB instruction cache, a load that misses the 2 KB data cache (both
+fetch that misses the 16 KB instruction cache, a load that misses the 2 KB data cache (both
 one word a line) and every store (written through) wait ~35 cycles; a hit takes no longer
 than a fetch or load from the ROM.
 Misaligned loads and stores trap, and so does any CSR that isn't implemented

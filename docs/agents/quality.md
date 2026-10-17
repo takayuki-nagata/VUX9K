@@ -31,7 +31,7 @@ Things that went wrong while building it, and must stay fixed:
 - **The equivalence check needs `memory_map` and `async2sync`**; without them every
   sequential mutant, even mcy's no-op mutation 1, counted as non-equivalent.
 - **The equivalence check is bounded by memory.** `memory_map` turns RAMs into flip-flops,
-  so a module with real memories makes it huge: `soc_icache`'s 1024 lines were ~45k
+  so a module with real memories makes it huge: `soc_icache`'s 1024 lines (4096 since) were ~45k
   flip-flops a side, each check grew to 1.4 GB and two of them stalled the 3.5 GB CI host for
   hours (2026-10-17). Each check gets `ulimit -v` (`EQ_MEM_SHARE` of the host's memory,
   shared by the jobs); one that runs out counts as not equivalent, so its mutant goes to the

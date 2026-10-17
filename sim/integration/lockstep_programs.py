@@ -157,9 +157,10 @@ STAGE2_BASE = 0x8070_0000
 XMEM_USED += [(0x6F_0000, 0x6F_0100), (0x6F_E000, 0x70_0000), (0x70_0000, 0x70_0100)]
 # s2_launch's two parts and its RV32 program (S2L_CODE, S2L_COPY, S2L_APP, S2L_BYTES each)
 XMEM_USED += [(0x1000, 0x1200), (0x1800, 0x1A00), (0x2000, 0x2200)]
-# xcache's routines: A, and B one instruction-cache size (4 KB) above it on the same lines;
+# xcache's routines: A, and B one instruction-cache size (16 KB) above it on the same lines;
 # its data word D, and D2 4 KB above it on D's data-cache line
-XCACHE_A, XCACHE_B, XCACHE_D = 0x600, 0x1600, 0x700
+XCACHE_I_BYTES = 0x4000  # soc_icache: 4096 lines of a word
+XCACHE_A, XCACHE_B, XCACHE_D = 0x600, 0x600 + XCACHE_I_BYTES, 0x700
 XCACHE_D2 = XCACHE_D + 0x1000
 XMEM_USED += [(XCACHE_B, XCACHE_B + 0x40), (XCACHE_D2, XCACHE_D2 + 4)]
 # Hack: the I segment up to HACK_DEMO_BYTES (the demo's image; the other Hack programs are
@@ -335,7 +336,7 @@ def xcache() -> list:
     (with a window load) that hits from its second pass on, then a store to the next
     instruction's word (no fence.i: the store invalidates the line, in the very cycle that
     line is read ahead, which the cache turns into a miss) and a store to the next fetch's
-    line under another tag (the data stays, the line goes); routine B, 4 KB above A on the
+    line under another tag (the data stays, the line goes); routine B, 16 KB above A on the
     same lines, called alternately with A so each evicts the other; A through the window's 8
     MB alias (the same lines: a hit); and a last long pass of A's loop, all hits, during
     which a timer interrupt is taken. Data cache, from the ROM: loads of D cold and warm, a
@@ -354,13 +355,13 @@ def xcache() -> list:
     r.sw("t2", 4, "s5")  # s5 = smc: rewrites the next word before it is fetched
     r.addi("a1", "zero", 1)  # becomes `addi a1, zero, 2`
     r.label("other")
-    r.sw("zero", 12, "s11")  # s11 = smc + 4 KB: 4 KB above the next fetch (other + 4), its line
+    r.sw("zero", 12, "s11")  # s11 = smc + 16 KB: 16 KB above the next fetch (other + 4), its line
     r.addi("a2", "a2", 1)
     r.jalr("zero", "ra", 0)
     ra_words = r.assemble()
     smc = r.labels["smc"]
-    assert r.labels["other"] + 4 + 0x1000 == smc + 0x1000 + 12
-    assert smc + 0x1000 + 12 >= XMEM + XCACHE_B + 8, "the store above must miss routine B"
+    assert r.labels["other"] + 4 + XCACHE_I_BYTES == smc + XCACHE_I_BYTES + 12
+    assert smc + XCACHE_I_BYTES + 12 >= XMEM + XCACHE_B + 8, "the store above must miss routine B"
     rb = Asm(origin=XMEM + XCACHE_B)
     rb.addi("s8", "s8", 1)
     rb.jalr("zero", "ra", 0)
@@ -373,7 +374,7 @@ def xcache() -> list:
     t.addi("a1", "zero", 2)
     a.li("t2", t.assemble()[0])
     a.li("s5", smc)
-    a.li("s11", smc + 0x1000)
+    a.li("s11", smc + XCACHE_I_BYTES)
     a.li("s7", XCACHE_LOOPS)
     a.li("s3", XMEM + XCACHE_A)
     a.li("s4", XMEM + XCACHE_B)

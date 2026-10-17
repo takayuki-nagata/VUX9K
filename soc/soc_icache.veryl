@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: MIT
 
 // The instruction cache in front of the wait-state window (RV32 region
-// soc_pkg::RV_REGION_XMEM, and Hack's I segment in it): direct-mapped, one word a line, 1024 lines (4 KB). It sits between
+// soc_pkg::RV_REGION_XMEM, and Hack's I segment in it): direct-mapped, one word a line, 4096 lines (16 KB). It sits between
 // the CPU's fetch and soc_xmem_bridge, which sees only the misses.
-// - Lines are keyed by the PSRAM word (addr[22:2]: index [11:2], tag [22:12]), so every alias
+// - Lines are keyed by the PSRAM word (addr[22:2]: index [13:2], tag [22:14]), so every alias
 //   of a word in region 8 is the same line, as the memory behind the window repeats every 8 MB.
 // - The RAMs are read a cycle ahead at rd_idx (the CPU's pc_out: next_pc in the cycle before
 //   FETCH, pc_reg during it), as the ROM is. In FETCH the registered tag is compared with
@@ -34,7 +34,7 @@ pub module soc_icache #(
     clear: input logic,
 
     // CPU side
-    rd_idx     : input  logic<10>, // pc_out[11:2]: the line of the next fetch, a cycle ahead
+    rd_idx     : input  logic<12>, // pc_out[13:2]: the line of the next fetch, a cycle ahead
     fetch_req  : input  logic    , // the CPU is in FETCH
     fetch_sel  : input  logic    , // fetch_addr is in the window (RV32 region 8, or Hack)
     fetch_addr : input  logic<21>, // pc_reg[22:2]: the PSRAM word
@@ -42,35 +42,35 @@ pub module soc_icache #(
     rdata      : output logic<32>, // the fetched word, valid when a window fetch completes
     hit        : output logic    ,
 
-    // A store to the window completing, at line inv_idx (its address [11:2])
+    // A store to the window completing, at line inv_idx (its address [13:2])
     inv    : input logic    ,
-    inv_idx: input logic<10>,
+    inv_idx: input logic<12>,
 
     // soc_xmem_bridge's fetch side: misses only
     mem_sel  : output logic    ,
     mem_ready: input  logic    ,
     mem_rdata: input  logic<32>,
 ) {
-    const LINES: u32 = 1024;
+    const LINES: u32 = 4096;
 
-    var tags : logic<12> [LINES]; // {valid, addr[22:12]}
+    var tags : logic<10> [LINES]; // {valid, addr[22:14]}
     var words: logic<32> [LINES];
 
-    var tag_q     : logic<12>;
+    var tag_q     : logic<10>;
     var word_q    : logic<32>;
-    var rd_idx_q  : logic<10>;
+    var rd_idx_q  : logic<12>;
     var conflict_q: logic    ;
     var swept     : logic    ;
     var missing   : logic    ;
-    var sweep_idx : logic<10>;
+    var sweep_idx : logic<12>;
 
-    let idx: logic<10> = fetch_addr[9:0];
+    let idx: logic<12> = fetch_addr[11:0];
     let win: logic     = fetch_req && fetch_sel;
 
     let on: logic = !ENABLE || swept; // serving accesses
 
     assign hit         = ENABLE && swept && !missing && !conflict_q && rd_idx_q == idx && tag_q
-        == {1'b1, fetch_addr[20:10]};
+        == {1'b1, fetch_addr[20:12]};
     assign mem_sel     = win && on && !hit;
     assign instr_ready = !win || on && (hit || mem_ready);
     assign rdata       = if hit ? word_q : mem_rdata;
@@ -78,22 +78,22 @@ pub module soc_icache #(
     let fill: logic = win && swept && !hit && mem_ready;
 
     var tag_we   : logic    ;
-    var tag_waddr: logic<10>;
-    var tag_wdata: logic<12>;
+    var tag_waddr: logic<12>;
+    var tag_wdata: logic<10>;
 
     always_comb {
         if !swept {
             tag_we    = clear;
             tag_waddr = sweep_idx;
-            tag_wdata = 12'd0;
+            tag_wdata = 10'd0;
         } else if fill {
             tag_we    = 1'b1;
             tag_waddr = idx;
-            tag_wdata = {1'b1, fetch_addr[20:10]};
+            tag_wdata = {1'b1, fetch_addr[20:12]};
         } else {
             tag_we    = inv;
             tag_waddr = inv_idx;
-            tag_wdata = 12'd0;
+            tag_wdata = 10'd0;
         }
     }
 
@@ -115,13 +115,13 @@ pub module soc_icache #(
         if_reset {
             swept      = 1'b0;
             missing    = 1'b0;
-            sweep_idx  = 10'd0;
-            rd_idx_q   = 10'd0;
+            sweep_idx  = 12'd0;
+            rd_idx_q   = 12'd0;
             conflict_q = 1'b0;
         } else {
             if !swept && clear {
-                sweep_idx = sweep_idx + 10'd1;
-                if sweep_idx == 10'd1023 {
+                sweep_idx = sweep_idx + 12'd1;
+                if sweep_idx == 12'd4095 {
                     swept = 1'b1;
                 }
             }

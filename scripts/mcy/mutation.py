@@ -76,7 +76,8 @@ EQ_MEM_SHARE = 0.6
 # Modules whose mutants skip the equivalence check: all go to the tests, so a survivor may
 # be an equivalent mutant (read it before adding a test). {module: reason}
 NO_EQUIV = {
-    "soc_icache": "memory_map makes its 1024 lines 45k flip-flops a side: one check took hours and 1.4 GB",
+    "soc_icache": "memory_map makes its 4096 lines ~172k flip-flops a side (at 1024 lines, 45k: one check took"
+    " hours and 1.4 GB)",
     "soc_dcache": "memory_map makes its 512 lines 22k flip-flops a side, as soc_icache's",
 }
 
@@ -162,19 +163,19 @@ ACCEPTED: dict[str, dict[str, str]] = {
     },
     # The caches skip the equivalence check (NO_EQUIV): these were read in the mutated netlist
     "soc_icache": {
-        "const1 B[5] @ soc_icache.sv:124.21-124.42": "no change: bit 5 of the constant 1023 is 1 already",
+        "const1 B[5] @ soc_icache.sv:124.21-124.42": "no change: bit 5 of the constant 4095 is 1 already",
         "const1 B[0] @ soc_icache.sv:101.13-101.19 soc_icache.sv:101.9-103.12": "no change: the tag write's"
         " enable is `tag_we ? 1 : 0`, its B input 1 already",
         "inv A[30] @ soc_icache.sv:108.13-108.17 soc_icache.sv:108.9-110.12": "changes the word write's data"
         " when fill is 0, i.e. when nothing is written",
-        "cnot0 Y[7] ctrl 11 tag_wdata[7] @ soc_icache.sv:82.20-82.29 soc_icache.sv:85.13-85.19"
-        " soc_icache.sv:85.9-97.12": "sets bit 7 of a tag only when it is written invalid (bit 11 = 0):"
+        "cnot0 Y[7] ctrl 9 tag_wdata[7] @ soc_icache.sv:82.20-82.29 soc_icache.sv:85.13-85.19"
+        " soc_icache.sv:85.9-97.12": "sets bit 7 of a tag only when it is written invalid (bit 9 = 0):"
         " an invalid line misses whatever its other bits",
         "const0 A[0] @ soc_icache.sv:122.17-122.23": "the sweep counter keeps counting after the sweep (while"
         " clear); sweep_idx is read only before swept, and rst zeroes both",
         "cnot1 B[7] ctrl 6 @ soc_icache.sv:122.13-127.16 soc_icache.sv:122.17-122.32": "the sweep counts in"
         " another order (bit 7 of the next index flipped with bit 6) and still clears every line once in"
-        " 1024 cycles (counted out); test_reset_sweeps_valid_lines would see a skipped line",
+        " 4096 cycles (counted out); test_reset_sweeps_valid_lines would see a skipped line",
     },
     "soc_dcache": {
         "inv Y[7] @ soc_dcache.sv:112.18-116.12 soc_dcache.sv:112.22-112.26": "sets bit 7 of the tag written"

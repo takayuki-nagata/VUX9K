@@ -62,7 +62,7 @@ UART_BAUD_CYCLES = 156  # 18.0 MHz / 115200 baud
 POR_DONE = 1 << 15  # soc_top.por_counter value that ends the ~1.2 ms power-on reset
 # Cycles the window's caches take to clear their lines (soc_icache's LINES, one a cycle) while
 # the power-on reset counts: accelerate_por lets them pass before it ends the POR
-CACHE_CLEAR_CYCLES = 1024
+CACHE_CLEAR_CYCLES = 4096
 
 
 def mbr_sector() -> bytes:

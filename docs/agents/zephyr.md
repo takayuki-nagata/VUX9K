@@ -29,13 +29,13 @@ bc_clone_rs (`make build-zephyr`: `vendor/bc_clone_rs/examples/zephyr_app`, its 
 `prj.conf` with a 32 KB main stack and a 64 KB static heap, ~260 KB) is built for `vux9k`
 like the demos; nothing of it is changed for this board (the submodule is upstream), and
 `make apps` makes it `BC.BIN`. It runs from the PSRAM through the caches: the second
-stage's `run` loads it in ~52M cycles (2.9 s), and its start to the first `bc> ` is ~74M
-(4.1 s; 314M, 17.4 s, without the caches). `sim/emu/test_zephyr_bc.py` loads it
+stage's `run` loads it in ~52M cycles (2.9 s), and its start to the first `bc> ` is ~51M
+(2.8 s; ~74M with the earlier 4 KB instruction cache, 314M, 17.4 s, without the caches). `sim/emu/test_zephyr_bc.py` loads it
 straight into the PSRAM for the self-tests and the REPL, starts it once through the second
 stage's `run` from a card (`s1_env.run_from_card(..., load_cycles=...)`), and prints the
 cycles and `minstret` (`Soc.instret`) to the first `bc> ` and per REPL line: the emulator is
 cycle-exact to the RTL (`sim-lockstep`), so these are the RTL's counts (the board's `[TIME]` lines
-match them: 4.1 s to the first `bc> `, and 17.4 s, 314M cycles at 18 MHz, without the caches),
+matched them: 4.1 s to the first `bc> ` with the 4 KB instruction cache, and 17.4 s, 314M cycles at 18 MHz, without the caches),
 with the caches' hit rates, to compare speed work against. Its cycle caps are bounds, not measurements. On the board, `test_hardware.py` 14
 puts, runs and types at it, printing wall-clock `[TIME]` lines.
 
