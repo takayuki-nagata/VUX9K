@@ -6,7 +6,7 @@ The Zephyr Rust demo started the way the board starts it, on the gate-level netl
 sim-zephyr-demo-gls, test-slow): the first stage boots the real second stage from a FAT32
 card, whose `run VUX9K/APPS/ZEPHYR.BIN` loads the demo into the PSRAM, where the board vux9k
 links it, and jumps to it (fw_common::launch's PSRAM target), the first stage staying in
-I-RAM. The same demo preloaded into the PSRAM is test_soc_zephyr_demo.py (RTL, test-sim); on
+the ROM. The same demo preloaded into the PSRAM is test_soc_zephyr_demo.py (RTL, test-sim); on
 the emulator both ways are sim/emu/test_zephyr_demo.py.
 
 Cycles (emulator): the prompt at ~12.8M, the 13 KB load ~3.5M (the second stage runs from

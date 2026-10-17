@@ -4,8 +4,8 @@
 [build]
 target = "riscv32i-unknown-none-elf"
 
-# Its own memory layout: it replaces the first stage in firmware.hex, but keeps its stack in
-# D-RAM. The path is relative to the workspace root (docs/agents/firmware.md, "Cargo
+# Its own memory layout: it replaces the first stage in firmware.hex, but keeps its data and
+# stack where its PSRAM tests leave them alone. The path is relative to the workspace root (docs/agents/firmware.md, "Cargo
 # workspace gotcha").
 [target.riscv32i-unknown-none-elf]
 rustflags = [

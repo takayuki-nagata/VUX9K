@@ -20,13 +20,6 @@ fn write_word(addr: usize, w: u32) {
     unsafe { core::ptr::write_volatile(addr as *mut u32, w) }
 }
 
-/// D-RAM all zero, as at power-on: an application finds it so.
-fn zero_dram() {
-    for at in (map::DRAM_BASE..map::DRAM_BASE + map::DRAM_BYTES).step_by(4) {
-        write_word(at, 0);
-    }
-}
-
 /// `run FILE`: load and check it (a Hack program straight into its segment in the PSRAM:
 /// nothing outside the PSRAM changes until the file has proved good), then start it.
 /// Returns on an error.
@@ -66,7 +59,6 @@ pub fn run(ctx: &Ctx, c: &mut Card, path: &[u8]) -> Result {
 /// Jump to an application in the PSRAM with a0-a2 as the first stage hands them to the
 /// second stage.
 fn start_psram(h: &ImageHeader, part_lba: u32, s1_version: u32) -> ! {
-    zero_dram();
     let sdhc = SdCard::is_sdhc() as u32;
     unsafe {
         core::arch::asm!(
@@ -86,7 +78,7 @@ fn start_psram(h: &ImageHeader, part_lba: u32, s1_version: u32) -> ! {
 
 /// The checked payload is in Hack's instruction segment already (staged at SCRATCH plus
 /// its offset, which is HACK_I_BASE plus it); the last word's bytes past it become 0. Then
-/// Hack's data segment all zero (as D-RAM was), fence.i, and a soft reset into it in Hack
+/// Hack's data segment all zero (as D-RAM was when it held Hack's data), fence.i, and a soft reset into it in Hack
 /// mode: it starts at 0.
 fn start_hack(h: &ImageHeader) -> ! {
     let end = SCRATCH as usize + h.load_addr as usize + h.size as usize;

@@ -7,8 +7,8 @@ description: Prove a behavior-preserving VUX9K RTL refactor equivalent to its pa
 
 Rules and background: docs/agents/rtl-workflow.md, "Step 3 commit rule" (read it first).
 
-1. The commit must be a refactor only: no cycle-visible change, no `soc_ram` port change
-   (stubbed on both sides: such changes are their own, tested commit), nothing in `soc_ram`.
+1. The commit must be a refactor only: no cycle-visible change, no `soc_rom` port change
+   (stubbed on both sides: such changes are their own, tested commit), nothing in `soc_rom`.
 2. Commit it, then run both tops against the parent (remote CI; ~6 min each on 4 cores):
    `make eqy EQY_BASE=<parent-sha> EQY_TOP=unified_cpu` and `... EQY_TOP=soc_top`.
 3. Also run the quick checks that eqy can't replace: `make check-rtl-syntax lint-rtl`

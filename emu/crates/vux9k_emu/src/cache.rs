@@ -12,7 +12,7 @@
 //! - direct-mapped, one word a line: the instruction cache `ICACHE_LINES` lines (index
 //!   `addr[11:2]`, tag `addr[22:12]`), the data cache `DCACHE_LINES` (index `addr[10:2]`,
 //!   tag `addr[22:11]`);
-//! - a hit costs nothing over an I-RAM fetch or a D-RAM load, a miss waits as an uncached
+//! - a hit costs nothing over a fetch or a load of the ROM, a miss waits as an uncached
 //!   access did and fills the line;
 //! - a store always waits (write-through); in the data cache a hit keeps the line (its
 //!   bytes merged), a full-word miss allocates it, a partial miss invalidates the line at

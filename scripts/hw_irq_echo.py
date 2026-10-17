@@ -11,7 +11,7 @@ is sent in paced chunks by default (sim/integration/irq_echo_pace.py, measured o
 emulator when the PSRAM had no cache and the app couldn't read a line sent back to back at
 115200 baud); --chunk 0 sends it back to back, which the instruction cache makes pass. The
 application runs in the PSRAM, its handlers too, and never returns: the first stage stays in
-I-RAM, but only the reset button would start it again, so the bitstream is loaded into the
+the ROM, but only the reset button would start it again, so the bitstream is loaded into the
 FPGA's SRAM from --pack-fs at the end (not openFPGALoader --reset, which loads the flash's
 bitstream). With --dist both come from a `make dist` tree, so the board is
 left on that tree's bitstream rather than the working tree's. Needs the board at a prompt of

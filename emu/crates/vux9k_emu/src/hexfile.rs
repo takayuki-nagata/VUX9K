@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 //! `$readmemh` files: whitespace-separated hex words, `@addr` (word index) directives
-//! and `//` comments, as soc_ram's preload reads firmware.hex and firmware_d0-3.hex.
+//! and `//` comments, as soc_rom's preload reads firmware.hex.
 
 /// Words by index; indices a file skips over with `@` read as 0.
 pub fn parse(text: &str) -> Result<Vec<u32>, String> {

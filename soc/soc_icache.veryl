@@ -7,9 +7,9 @@
 // - Lines are keyed by the PSRAM word (addr[22:2]: index [11:2], tag [22:12]), so every alias
 //   of a word in region 8 is the same line, as the memory behind the window repeats every 8 MB.
 // - The RAMs are read a cycle ahead at rd_idx (the CPU's pc_out: next_pc in the cycle before
-//   FETCH, pc_reg during it), as I-RAM is. In FETCH the registered tag is compared with
-//   fetch_addr (pc_reg); a hit completes in the first FETCH cycle, so a hit costs what an
-//   I-RAM fetch costs. ready comes from registers only (the RAM outputs, the registered read
+//   FETCH, pc_reg during it), as the ROM is. In FETCH the registered tag is compared with
+//   fetch_addr (pc_reg); a hit completes in the first FETCH cycle, so a hit costs what a
+//   fetch from the ROM costs. ready comes from registers only (the RAM outputs, the registered read
 //   index, fetch_addr), never from the CPU's next-PC path.
 // - A miss goes to the bridge (mem_sel) and completes with it (mem_ready); once requested it
 //   stays a miss until then (missing), so mem_sel never drops under a request in flight even

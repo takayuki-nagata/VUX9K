@@ -551,7 +551,7 @@ pub module unified_cpu #(
                         pc_reg        = next_pc;
                         state         = CpuState::FETCH;
                     } else if is_riscv_mode && rv_op == rv32i_pkg::Opcode::LOAD {
-                        // 1 cycle wait for synchronous D-RAM read
+                        // 1 cycle wait for the synchronous memory read
                         r_store_addr    = rv_mem_addr;
                         r_load_byte_sel = mem_addr_low;
                         r_load_f3       = rv_f3;

@@ -3,8 +3,8 @@
 
 //! `vux9k-emu`: run the VUX9K emulator.
 //!
-//! By default the SoC powers up like the board: I-RAM and D-RAM preloaded from
-//! build/firmware/firmware.hex and firmware_d0-3.hex (`--firmware DIR`), so the
+//! By default the SoC powers up like the board: the boot ROM preloaded from
+//! build/firmware/firmware.hex (`--firmware DIR`), so the
 //! first stage starts and boots the SD card from `--sd` (a FAT32 image, e.g. from
 //! `vux_tool.py mkfat`). `--load`/`--hex` put a program at address 0 instead (over the
 //! preload, or alone with `--no-firmware`); `--load FILE --mode riscv|hack` starts an
@@ -31,18 +31,18 @@ const USAGE: &str = "\
 usage: vux9k-emu [options]
 
   --profile NAME      memory profile: real (default, the board) or isa-test (riscv-tests)
-  --firmware DIR      preload firmware.hex + firmware_d0-3.hex from DIR (default build/firmware)
+  --firmware DIR      preload the ROM from DIR/firmware.hex (default build/firmware)
   --no-firmware       start with empty memories
-  --load FILE         raw binary into I-RAM at address 0
+  --load FILE         raw binary into the ROM at address 0
   --mode riscv|hack   with --load: FILE is an application image (hack: big-endian
                       16-bit instructions, as hcc -r writes them), started in that ISA
                       at its load address
   --load-addr ADDR    with --mode: the image's load address, as in its v4 header.
-                      riscv: 0 (I-RAM; max 14 KB) or the PSRAM (0x80000000..), also
+                      riscv: 0 (the ROM; max 14 KB) or the PSRAM (0x80000000..), also
                       the entry; default 0x80000000 on real (where the vux9k Zephyr
                       board links), else 0. hack: the offset in Hack's 64 KB
                       instruction segment (word-aligned; default 0); it starts at 0
-  --hex FILE          $readmemh words into I-RAM from word 0 (RV32 code)
+  --hex FILE          $readmemh words into the ROM from word 0 (RV32 code)
   --sd IMAGE          raw SD image (sector n at byte 512 n; vux_tool.py mkfat makes FAT32
                       ones); changes are kept in memory
   --sd-write-back     write the SD image back to IMAGE on exit
@@ -190,11 +190,7 @@ fn read_text(path: &str) -> Result<String, String> {
 fn setup(o: &Opts) -> Result<Soc, String> {
     let mut soc = Soc::new(o.profile);
     if let Some(dir) = &o.firmware {
-        let iram = read_text(&format!("{dir}/firmware.hex"))?;
-        let lanes: Vec<String> = (0..4)
-            .map(|i| read_text(&format!("{dir}/firmware_d{i}.hex")))
-            .collect::<Result<_, _>>()?;
-        soc.load_readmemh(&iram, [&lanes[0], &lanes[1], &lanes[2], &lanes[3]])?;
+        soc.load_readmemh(&read_text(&format!("{dir}/firmware.hex"))?)?;
     }
     if let Some(path) = &o.load {
         let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
@@ -206,11 +202,11 @@ fn setup(o: &Opts) -> Result<Soc, String> {
                 soc.load_app_at(&bytes, isa, addr)
                     .map_err(|e| format!("{path}: {e}"))?
             }
-            None => soc.load_iram(0, &bytes),
+            None => soc.load_rom(0, &bytes),
         }
     }
     if let Some(path) = &o.hex {
-        soc.load_iram_words(0, &hexfile::parse(&read_text(path)?)?);
+        soc.load_rom_words(0, &hexfile::parse(&read_text(path)?)?);
     }
     if o.card {
         let image = match &o.sd {

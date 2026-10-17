@@ -30,7 +30,7 @@ const J_SELF: u32 = 0x0000_006F;
 fn load(words: &[u32]) -> Soc {
     let mut soc = Soc::new(Profile::Real);
     let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
-    soc.load_iram(0, &bytes);
+    soc.load_rom(0, &bytes);
     soc
 }
 
@@ -135,7 +135,7 @@ fn soft_reset_without_mode_starts_rv32() {
     }
     assert_eq!(soc.pc, 0);
     assert!(soc.riscv_mode, "no mode given: RV32");
-    soc.step(); // I-RAM word 0, as RV32
+    soc.step(); // ROM word 0, as RV32
     assert_eq!(soc.regs[6], 1);
 }
 

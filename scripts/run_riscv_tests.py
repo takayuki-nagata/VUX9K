@@ -271,7 +271,7 @@ def simulate_emu(hexf):
     with open(hexf) as f:
         image = b"".join(int(line, 16).to_bytes(4, "little") for line in f if line.strip())
     soc = vux9k_emu.Soc("isa-test")
-    soc.load_iram(0, image)
+    soc.load_rom(0, image)  # the isa-test profile's flat RAM at 0
     stop, code = soc.run(MAX_CYCLES)
     if stop != "tohost":
         return False, f"[FAIL] Simulation timeout after {MAX_CYCLES} cycles at PC={soc.pc:08x}"

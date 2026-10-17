@@ -64,7 +64,7 @@ fn plan_picks_the_target_from_mode_and_load_address() {
         (header(MODE_RISCV, 16, S2), Err(OutOfWindow)),
         (header(MODE_RISCV, 16, PS - 16), Err(OutOfWindow)),
         (header(MODE_RISCV, 16, 0x2000_0000), Err(OutOfWindow)),
-        // RV32 runs from the PSRAM only: in I-RAM, at 0 or elsewhere, it is outside
+        // RV32 runs from the PSRAM only: in the ROM, at 0 or elsewhere, it is outside
         (header(MODE_RISCV, 16, 0), Err(OutOfWindow)),
         (header(MODE_RISCV, 0x3800, 0), Err(OutOfWindow)),
         (header(MODE_RISCV, 16, 0x100), Err(OutOfWindow)),
@@ -229,7 +229,7 @@ mod run {
         assert_eq!(r, Ok(Target::HackSeg));
         assert_eq!(mem.keys().next(), Some(&(map::HACK_I_BASE as u32 + 0xC000)));
         // RV32 at 0 stages like a Hack file, in the PSRAM only, then is refused: the first
-        // stage in I-RAM stays
+        // stage in the ROM stays
         let (r, mem) = run(&v4(MODE_RISCV, 0, &payload));
         assert_eq!(r, Err(BootError::Image(ImageError::OutOfWindow)));
         assert!(mem.keys().all(|&a| a >= SCRATCH && a < SCRATCH + 0x4000));

@@ -89,7 +89,7 @@ def entry_at(img: bytes | bytearray, name: bytes) -> int:
 
 
 def start(image=None, *, files=None, card_present=True, sd_card=None, button=False):
-    """The SoC with the first stage in I-RAM, right after power-on reset."""
+    """The SoC with the first stage in the ROM, right after power-on reset."""
     soc = new_soc()
     preload_firmware(soc, STAGE1_DIR)
     if card_present:

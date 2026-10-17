@@ -47,7 +47,7 @@ import sim_runner  # noqa: E402
 import test_sim  # noqa: E402
 
 MCY_DIR = REPO_ROOT / "build" / "mcy"
-# Modules worth mutating. soc_ram/soc_top need firmware
+# Modules worth mutating. soc_rom/soc_top need firmware
 # files at elaboration and aren't unit-sized.
 TARGETS = (
     "rv32i_alu",
@@ -317,7 +317,7 @@ RISCV_TESTS = (
 
 def sources():
     """The generated RTL files, packages first; Yosys keeps only what module uses."""
-    skip = {"soc_ram", "soc_top"}
+    skip = {"soc_rom", "soc_top"}
     return [str(p) for p in sim_runner.RTL_SOURCES if p.stem not in skip]
 
 

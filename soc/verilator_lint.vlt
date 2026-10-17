@@ -9,8 +9,8 @@
 // ----- By design ---------------------------------------------------------------------
 
 // Address aliasing (README "Memory map"): regions decode only the bits they need
-lint_off -rule UNUSEDSIGNAL -file "*/soc_ram.sv" -match "*'i_addr'*"
-lint_off -rule UNUSEDSIGNAL -file "*/soc_ram.sv" -match "*'d_addr'*"
+lint_off -rule UNUSEDSIGNAL -file "*/soc_rom.sv" -match "*'i_addr'*"
+lint_off -rule UNUSEDSIGNAL -file "*/soc_rom.sv" -match "*'d_addr'*"
 lint_off -rule UNUSEDSIGNAL -file "*/soc_addr_decoder.sv" -match "*'addr'*"
 // The window passes its 8 MB offset to the PSRAM; region bits are decoded before it, and
 // bit 23 (the controller's register space) is hidden (soc_top)
@@ -37,6 +37,8 @@ lint_off -rule UNUSEDSIGNAL -file "*/sdcard_spi.sv" -match "*'data_in'*"
 lint_off -rule PINCONNECTEMPTY -file "*/uart_tx.sv" -match "*'pout'*"
 lint_off -rule PINCONNECTEMPTY -file "*/uart_rx.sv" -match "*'sout'*"
 lint_off -rule PINCONNECTEMPTY -file "*/board_top.sv" -match "*'CLKOUT*'*"
+// The write-address decoder's ROM select: the ROM takes no stores
+lint_off -rule PINCONNECTEMPTY -file "*/soc_top.sv" -match "*'rom'*"
 // The caches' hit outputs are for their unit tests; the SoC's hit counts are the emulator's
 lint_off -rule PINCONNECTEMPTY -file "*/soc_top.sv" -match "*'hit'*"
 // The PSRAM controller's init_done (its power-up ends inside the POR, soc_top) and its

@@ -6,8 +6,8 @@ __pycache__/
 # Unified build output (all generated/build artifacts live here)
 build/
 
-# Staged firmware.hex/firmware_d*.hex copies at repo root and sim/, required because
-# soc_ram.veryl's $readmemh() resolves these relative to each tool's process cwd
+# The firmware.hex symlink at the repo root, required because soc_rom.veryl's $readmemh()
+# resolves it relative to each tool's process cwd (and the D-RAM preloads' links of older trees)
 firmware*.hex
 
 # Veryl toolchain internal cache & fetched dependency sources (not build output)

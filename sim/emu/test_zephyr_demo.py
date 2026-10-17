@@ -7,7 +7,7 @@ profile, started two ways with the same expectations: loaded into the PSRAM as t
 an application (`vux9k-emu --load ... --mode riscv`, at 0x8000_0000 by default), and as the
 board starts it, from the card: the first stage boots the second, whose `run
 VUX9K/APPS/ZEPHYR.BIN` (make apps) loads it into the PSRAM and jumps to it, the first stage
-staying in I-RAM.
+staying in the ROM.
 """
 
 import os
@@ -41,9 +41,9 @@ def start(how: str, demo_bin: bytes):
         soc.load_app(demo_bin, "riscv", XMEM_BASE)
         return soc, 0
     soc, mark = run_from_card("ZEPHYR.BIN")
-    # The card's file is the demo as built, in the PSRAM; the first stage is still in I-RAM
+    # The card's file is the demo as built, in the PSRAM; the first stage is still in the ROM
     assert soc.xmem_word(XMEM_BASE) == int.from_bytes(demo_bin[:4], "little")
-    assert all(soc.iram_word(4 * i) == w for i, w in enumerate(read_hex_words(f"{STAGE1_DIR}/firmware.hex")))
+    assert all(soc.rom_word(4 * i) == w for i, w in enumerate(read_hex_words(f"{STAGE1_DIR}/firmware.hex")))
     return soc, mark
 
 

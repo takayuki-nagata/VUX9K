@@ -20,7 +20,7 @@ the PSRAM at 0x8000_0000). On the board, the second stage starts it from the mic
 wrap it as a VUX9 v4 file (`vux_tool.py mkv4 build/zephyr/zephyr.bin APP.BIN`: an RV32 image
 at 0x8000_0000 by default), put it in the card's `\VUX9K\APPS\` (`vux_tool.py put APP.BIN
 VUX9K/APPS/APP.BIN`, or with a PC), and `run` it at the `s2>` prompt (`vux_tool.py run-app
-VUX9K/APPS/APP.BIN`). It runs in place in the PSRAM; the first stage stays in I-RAM, and
+VUX9K/APPS/APP.BIN`). It runs in place in the PSRAM; the first stage stays in the boot ROM, and
 button S1 (the board's reset) goes back to it and the boot.
 
 ## Board

@@ -5,7 +5,7 @@
 """Board smoke test of routed placements: `make hw-smoke`.
 
 For each nextpnr seed routed under --seed-dir (seed_<N>/soc_pnr.json, as run_pnr.py
-leaves them; `make timing` routes them all), put firmware/hw_test into the I-RAM block
+leaves them; `make timing` routes them all), put firmware/hw_test into the boot ROM's block
 RAMs' initial contents in place of the first stage, pack, load it into the board's
 SRAM and read hw_test's verdict from the UART. Only the INIT_RAM_* parameters change,
 so the test runs on exactly that seed's placement and routing (the bitstream is
@@ -14,15 +14,14 @@ otherwise byte-identical to one built from scratch with hw_test as firmware.hex)
 STA alone doesn't prove a bitstream works on the board (README, "Clock"); run this
 before adopting a seed for `make prog-flash`.
 
-I-RAM mapping (yosys' block-RAM mapping of soc_ram's i_mem): cells
-`...ram_inst.i_mem.<copy>.<c>`, two identical copies (instruction and data port) of
-eight DPB x4 cells; cell c holds bits [4c+3:4c] of word a as 4-bit entry a, and
-INIT_RAM_LL holds entries 64*LL..64*LL+63 (entry e at bits [4e+3:4e]). Before patching,
-the script checks that the routed netlist's contents match --base-hex (the firmware it
-was synthesized with) under this mapping, so a changed mapping or a stale netlist
-stops it instead of producing a wrong bitstream. D-RAM is left alone: the firmware
-images start with an all-zero D-RAM (their .data is copied from I-RAM at startup),
-which the script also checks.
+ROM mapping (yosys' block-RAM mapping of soc_rom's mem): cells `...rom_inst.mem.0.<c>`,
+eight DPB x4 cells (true dual port: the fetch and the data port read the same cell);
+cell c holds bits [4c+3:4c] of word a as 4-bit entry a, and INIT_RAM_LL holds entries
+64*LL..64*LL+63 (entry e at bits [4e+3:4e]). Before patching, the script checks that the
+routed netlist's contents match --base-hex (the firmware it was synthesized with) under
+this mapping, so a changed mapping or a stale netlist stops it instead of producing a
+wrong bitstream. The ROM is the only memory with initial contents (hw_test keeps its data
+in the PSRAM and copies .data there at startup).
 """
 
 import argparse
@@ -36,8 +35,9 @@ import time
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 
-IMEM_WORDS = 4096
-IMEM_CELL = re.compile(r"(^|\.)ram_inst\.i_mem\.([01])\.([0-7])$")
+ROM_WORDS = 4096
+ROM_CELL = re.compile(r"(^|\.)rom_inst\.mem\.0\.([0-7])$")
+ROM_CELLS = 8
 RESULT = re.compile(rb"RESULT (PASS|FAIL) ([0-9A-F]{2})/([0-9A-F]{2}) ([0-9A-F]{8})\n")
 BANNER = b"\nhw_test\n"
 
@@ -45,9 +45,9 @@ BANNER = b"\nhw_test\n"
 def read_hex(path):
     with open(path) as f:
         words = [int(w, 16) for w in f.read().split()]
-    if len(words) > IMEM_WORDS:
-        sys.exit(f"{path}: {len(words)} words, I-RAM holds {IMEM_WORDS}")
-    return words + [0] * (IMEM_WORDS - len(words))
+    if len(words) > ROM_WORDS:
+        sys.exit(f"{path}: {len(words)} words, the ROM holds {ROM_WORDS}")
+    return words + [0] * (ROM_WORDS - len(words))
 
 
 def init_lines(words, col):
@@ -61,41 +61,32 @@ def init_lines(words, col):
     return lines
 
 
-def imem_cells(netlist):
+def rom_cells(netlist):
     cells = netlist["modules"][next(iter(netlist["modules"]))]["cells"]
     found = {}
     for name, cell in cells.items():
-        m = IMEM_CELL.search(name)
+        m = ROM_CELL.search(name)
         if m:
-            found[name] = (cell, int(m.group(3)))
-    if len(found) != 16:
-        sys.exit(f"expected 16 I-RAM block-RAM cells (ram_inst.i_mem.<0-1>.<0-7>), found {len(found)}")
+            found[name] = (cell, int(m.group(2)))
+    if len(found) != ROM_CELLS:
+        sys.exit(f"expected {ROM_CELLS} ROM block-RAM cells (rom_inst.mem.0.<0-7>), found {len(found)}")
     return found
 
 
 def patch(routed_path, base_words, new_words, out_path):
     with open(routed_path) as f:
         netlist = json.load(f)
-    for name, (cell, col) in imem_cells(netlist).items():
+    for name, (cell, col) in rom_cells(netlist).items():
         params = cell["parameters"]
         expected = init_lines(base_words, col)
         if any(params.get(k) != v for k, v in expected.items()):
             sys.exit(
                 f"{routed_path}: {name} doesn't hold --base-hex under the known mapping "
-                "(stale netlist, or yosys mapped soc_ram differently)"
+                "(stale netlist, or yosys mapped soc_rom differently)"
             )
         params.update(init_lines(new_words, col))
     with open(out_path, "w") as f:
         json.dump(netlist, f)
-
-
-def check_dram_zero(fw_dir):
-    for i in range(4):
-        path = os.path.join(fw_dir, f"firmware_d{i}.hex")
-        if os.path.exists(path):
-            with open(path) as f:
-                if any(int(w, 16) for w in f.read().split()):
-                    sys.exit(f"{path} is not all zero; this script only rewrites I-RAM")
 
 
 def hw_test_result(buf):
@@ -133,7 +124,7 @@ def run_on_board(fs, port, timeout):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    p.add_argument("--hex", required=True, help="hw_test image (4096-word I-RAM hex)")
+    p.add_argument("--hex", required=True, help="hw_test image (4096-word ROM hex)")
     p.add_argument("--base-hex", required=True, help="firmware.hex the netlists were synthesized with")
     p.add_argument("--seed-dir", required=True, help="directory of seed_<N>/soc_pnr.json")
     p.add_argument("--out", required=True, help="where the patched bitstreams go")
@@ -143,7 +134,6 @@ def main():
     p.add_argument("--timeout", type=float, default=20.0, help="seconds per seed")
     args = p.parse_args()
 
-    check_dram_zero(os.path.dirname(args.hex))
     base, new = read_hex(args.base_hex), read_hex(args.hex)
     seeds = args.seeds or sorted(
         int(d.split("_")[1])

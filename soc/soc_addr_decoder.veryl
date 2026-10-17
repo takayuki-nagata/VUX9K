@@ -4,13 +4,14 @@
 // Data-address decoder, one instance each for the read (data_addr) and write
 // (data_waddr) addresses. Only the bits needed to tell the regions apart are
 // decoded, so regions repeat (README, "Address decoding and aliases"); an address
-// matching nothing selects nothing (reads 0, writes are ignored). xmem is the
-// wait-state window (soc_xmem_bridge serves it, not soc_ram): RV32 region 8, and Hack's
-// data below HACK_MMIO_BASE, which soc_top maps into the window's D segment.
+// matching nothing selects nothing (reads 0, writes are ignored). rom is RV32 region 0,
+// the boot ROM (soc_rom; soc_top reads it, nothing writes it). xmem is the wait-state
+// window (soc_xmem_bridge serves it): RV32 region 8, and Hack's data below
+// HACK_MMIO_BASE, which soc_top maps into the window's D segment.
 pub module soc_addr_decoder (
     addr     : input  logic<32>,
     hack_mode: input  logic    , // 1: Hack 16-bit word addresses, 0: RV32 byte addresses
-    ram      : output logic    ,
+    rom      : output logic    ,
     uart     : output logic    ,
     timer    : output logic    ,
     sd       : output logic    ,
@@ -18,7 +19,7 @@ pub module soc_addr_decoder (
     xmem     : output logic    ,
 ) {
     always_comb {
-        ram   = 1'b0;
+        rom   = 1'b0;
         uart  = 1'b0;
         timer = 1'b0;
         sd    = 1'b0;
@@ -38,8 +39,8 @@ pub module soc_addr_decoder (
         } else {
             let region: logic<4> = addr[31:28];
             let page  : logic<4> = addr[15:12];
-            if region == soc_pkg::RV_REGION_IRAM || region == soc_pkg::RV_REGION_DRAM {
-                ram = 1'b1;
+            if region == soc_pkg::RV_REGION_ROM {
+                rom = 1'b1;
             } else if region == soc_pkg::RV_REGION_MMIO {
                 switch {
                     page == soc_pkg::MMIO_PAGE_UART : uart  = 1'b1;

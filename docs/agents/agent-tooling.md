@@ -25,7 +25,7 @@ when their trigger happens.
 | `PY_DIRS` in `.claude/hooks/hooklib.py` | `pyproject.toml`'s ruff `include` | a new Python directory isn't linted after edits | **checked** |
 | `CARGO_DIRS` and the per-crate `cargo check` in `.claude/hooks/stop_check.py` | the Rust crates (`firmware/<member>/`, found by directory, so a new member such as `hello` needs nothing; `emu/`) and their targets | a new crate outside these, or a moved one, isn't checked on stop | review |
 | `stop_check.py` running `make check-rtl-syntax` and `make lint-rtl` | those Makefile targets | a renamed target fails every stop | **checked** (named in AGENTS.md) |
-| `make check-rtl-syntax` | `SOC_RTL_SRCS`; `soc_ram`'s `$readmemh` being the only file Yosys can't read without `firmware.hex` | a new RTL module outside `SOC_RTL_SRCS` isn't parsed; a second `$readmemh` fails the target | review |
+| `make check-rtl-syntax` | `SOC_RTL_SRCS`; `soc_rom`'s `$readmemh` being the only file Yosys can't read without `firmware.hex` | a new RTL module outside `SOC_RTL_SRCS` isn't parsed; a second `$readmemh` fails the target | review |
 | `pre_edit.py`'s refused paths (`build/`, `vendor/`, `target/`, root `firmware*.hex`) | where generated and upstream code lives | a dependency developed in place under `vendor/` (e.g. a Veryl path dependency) can't be edited; new generated output elsewhere isn't protected | review |
 | `NOISE` in `hooklib.py` | the output format of veryl and Icarus | new progress lines push errors out of the clipped hook output; changed ones let noise through | review |
 | `stop_check.py`'s budget (90 s), lock and timeouts | the machine and how long the checks take | checks skipped with a note, or slow stops | review |

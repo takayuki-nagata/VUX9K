@@ -13,7 +13,7 @@ Read before changing anything under `firmware/` or the file format in `tools/vux
 
 ## Cargo workspace gotcha: rustflags paths are workspace-root-relative
 
-`firmware/` is a Cargo workspace: `stage1` (the first stage, the boot ROM in I-RAM,
+`firmware/` is a Cargo workspace: `stage1` (the first stage, the boot ROM's contents,
 `build/firmware/firmware.{bin,hex}`), `stage2` (the second stage, file manager and
 launcher, linked into the PSRAM and wrapped as the v4 file
 `build/firmware/stage2/STAGE2.BIN`; built with the `coverage` profile, see "Firmware
@@ -49,11 +49,11 @@ release/`.
   update it. It loads `\VUX9K\STAGE2.BIN` (else `STAGE2.OLD`) into the PSRAM and starts it
   with a0 = SDHC, a1 = the FAT32 partition's LBA (0: none mounted), a2 = `STAGE1_VERSION`;
   S2 held or a key within `AUTOBOOT_MS` of its banner keeps it at its prompt (`s1> `).
-  Its data and stack are in the PSRAM (`S1_RAM_BASE`), never in D-RAM (`hw_smoke.py`
-  needs D-RAM's preload all zero, and D-RAM is to go away). It doesn't write
+  Its data and stack are in the PSRAM (`S1_RAM_BASE`): the ROM is read-only and region 2
+  (D-RAM until it went) is unassigned, both ignore stores. It doesn't write
   the card: installing a second stage is the second stage's job (`fat::stage2::install`),
-  after a RAM boot (`u`) of it if need be. Keep it small: 14 KB of 16 KB, and a later ROM
-  may be 8 KB. Its `t` and `d` commands were dropped for room; what a feature costs is
+  after a RAM boot (`u`) of it if need be. Keep it small: 14 KB of the 16 KB ROM, and a later
+  ROM may be 8 KB. Its `t` and `d` commands were dropped for room; what a feature costs is
   measured by building without it, and `Volume::open`'s path parsing alone cost 1.3 KB (the
   stage finds `\VUX9K\` with `stage2::dir`, by its 8.3 name).
 - **Raise `STAGE1_VERSION` with every first-stage change** (`firmware/stage1/src/main.rs`):
@@ -79,7 +79,7 @@ release/`.
   and only then does the second stage start it: for Hack the last word's bytes past the
   payload 0, Hack's data segment (`HACK_D_BASE`, `HACK_D_WORDS`) zeroed, `fence.i`,
   `GPIO_BOOT_MODE` and the soft reset (Hack starts at 0; its soft reset without a mode goes
-  back to the first stage). The first stage stays in I-RAM whatever runs. The windows are
+  back to the first stage). The first stage stays in the ROM whatever runs. The windows are
   spelled out in `put_run_error`'s text (a const assert).
 - **`fw_common` code that only the second stage needs stays out of the first stage's
   build**: merely adding `launch` to `lib.rs` changed the first stage's binary (36 bytes), so

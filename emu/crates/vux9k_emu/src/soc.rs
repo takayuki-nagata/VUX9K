@@ -10,7 +10,7 @@
 //! - Hack decode: soc/cpu/hack_translator.veryl, next PC: soc/cpu/next_pc_unit.veryl
 //! - the ISA: unified_cpu's is_riscv_mode, RV32 from a power-on reset, a soft reset's GPIO
 //!   boot mode (else RV32)
-//! - address decode and memories: soc/soc_addr_decoder.veryl, soc/soc_ram.veryl,
+//! - address decode and memories: soc/soc_addr_decoder.veryl, soc/soc_rom.veryl,
 //!   soc/soc_top.veryl (with Hack's segments in the window); the IsaTest profile follows
 //!   sim/tb_hex_runner.veryl.
 //! - the wait-state window: soc/soc_xmem_bridge.veryl, the PSRAM controller behind it in
@@ -83,9 +83,9 @@ pub enum Isa {
     Hack,
 }
 
-/// Largest RV32 application image loaded into I-RAM (`load_app`; the
-/// 14 KB of the second stage's I-RAM RV32 target up to v2; RV32 applications on the board
-/// now run from the PSRAM). A Hack image may fill its segment (`HACK_I_BYTES`).
+/// Largest RV32 application image put into the ROM in place of the first stage (`load_app`;
+/// the 14 KB of the second stage's I-RAM RV32 target up to v2, before the ROM; RV32
+/// applications on the board run from the PSRAM). A Hack image may fill its segment (`HACK_I_BYTES`).
 pub const MAX_APP_BYTES: usize = 14 * 1024;
 
 /// Why `Soc::run` returned.
@@ -133,15 +133,14 @@ pub struct Soc {
     pub riscv_mode: bool,
     /// Instructions executed (retired or trapped), for statistics.
     pub steps: u64,
-    iram: Vec<u32>,
-    dram: Vec<u32>,
+    /// The boot ROM at 0 (Real: 16 KB, the CPU can't write it); IsaTest: the flat RAM.
+    rom: Vec<u32>,
     /// The wait-state window (empty in the IsaTest profile). The RTL's has no initial
     /// contents; here it starts zeroed.
     xmem: Vec<u32>,
     /// The window's caches (which words they hold; window accesses' waits).
     pub caches: Caches,
-    iram_mask: u32,
-    dram_mask: u32,
+    rom_mask: u32,
     /// The IsaTest profile: one flat RAM, `TOHOST` (see `rv_read_word`/`rv_write`).
     isa_test: bool,
     /// IsaTest profile: the first value stored to `TOHOST`.
@@ -238,8 +237,7 @@ fn rv_illegal(i: u32) -> bool {
 
 impl Soc {
     pub fn new(profile: Profile) -> Soc {
-        let iram_words = profile.iram_bytes() / 4;
-        let dram_words = profile.dram_bytes().max(4) / 4;
+        let rom_words = profile.rom_bytes() / 4;
         let mut soc = Soc {
             profile,
             cycle: 0,
@@ -249,12 +247,10 @@ impl Soc {
             periph: Periph::default(),
             riscv_mode: true,
             steps: 0,
-            iram: vec![0; iram_words],
-            dram: vec![0; dram_words],
+            rom: vec![0; rom_words],
             xmem: vec![0; profile.xmem_bytes() / 4],
             caches: Caches::default(),
-            iram_mask: (iram_words - 1) as u32,
-            dram_mask: (dram_words - 1) as u32,
+            rom_mask: (rom_words - 1) as u32,
             isa_test: profile == Profile::IsaTest,
             tohost: None,
             mcycle_written: None,
@@ -293,19 +289,21 @@ impl Soc {
 
     // ----- memory loading (preload, like $readmemh / the loaders) ------------------
 
-    /// Write `bytes` into I-RAM at byte offset `addr` (little-endian words).
-    pub fn load_iram(&mut self, addr: u32, bytes: &[u8]) {
+    /// Write `bytes` into the ROM at byte offset `addr` (little-endian words): its contents
+    /// as a bitstream would hold them (the CPU can't write it).
+    pub fn load_rom(&mut self, addr: u32, bytes: &[u8]) {
         for (n, chunk) in bytes.chunks(4).enumerate() {
             let mut w = [0u8; 4];
             w[..chunk.len()].copy_from_slice(chunk);
-            let idx = ((addr / 4) + n as u32) & self.iram_mask;
-            self.iram[idx as usize] = u32::from_le_bytes(w);
+            let idx = ((addr / 4) + n as u32) & self.rom_mask;
+            self.rom[idx as usize] = u32::from_le_bytes(w);
         }
     }
 
     /// Start an application image the way a loader that soft-resets into it does, the
     /// CPU in `isa` from the first fetch (the loader's GPIO 0x8 write before its soft
-    /// reset). RV32: little-endian words at address 0 (I-RAM). Hack: big-endian 16-bit
+    /// reset). RV32: little-endian words at address 0 (the ROM, in place of the first stage;
+    /// on the board that takes a bitstream with it as firmware.hex). Hack: big-endian 16-bit
     /// instructions, two per word with the first in the low half (as vux_tool.py packs
     /// them), at the start of Hack's instruction segment (`load_app_at` with offset 0).
     /// Call it after `reset`, which starts RV32 again.
@@ -319,7 +317,7 @@ impl Soc {
                 bytes.len()
             ));
         }
-        self.load_iram(0, bytes);
+        self.load_rom(0, bytes);
         self.riscv_mode = true;
         Ok(())
     }
@@ -358,7 +356,7 @@ impl Soc {
         Ok(())
     }
 
-    /// `load_app` at `addr`: RV32 at 0 is I-RAM (`load_app`); an RV32 address in the
+    /// `load_app` at `addr`: RV32 at 0 is the ROM (`load_app`); an RV32 address in the
     /// wait-state window puts the image there (`load_xmem`) and starts the CPU in RV32 at
     /// `addr`, the way the second stage's `run` jumps to an application in the PSRAM. Hack:
     /// `addr` is the byte offset in Hack's instruction segment (the v4 header's load address
@@ -403,45 +401,24 @@ impl Soc {
         Ok(())
     }
 
-    /// soc_ram's preload: I-RAM from firmware.hex, D-RAM byte lanes 0-3 from
-    /// firmware_d0-3.hex (all `$readmemh` text).
-    pub fn load_readmemh(&mut self, iram: &str, dram_lanes: [&str; 4]) -> Result<(), String> {
-        let words = crate::hexfile::parse(iram)?;
-        self.load_iram_words(0, &words);
-        let mut dram = vec![0u32; self.dram.len()];
-        for (lane, text) in dram_lanes.iter().enumerate() {
-            for (i, b) in crate::hexfile::parse(text)?.into_iter().enumerate() {
-                if let Some(w) = dram.get_mut(i) {
-                    *w |= (b & 0xFF) << (8 * lane);
-                }
-            }
-        }
-        self.load_dram_words(&dram);
+    /// soc_rom's preload: the ROM from firmware.hex (`$readmemh` text).
+    pub fn load_readmemh(&mut self, rom: &str) -> Result<(), String> {
+        let words = crate::hexfile::parse(rom)?;
+        self.load_rom_words(0, &words);
         Ok(())
     }
 
-    /// Write 32-bit words into I-RAM from word index `start`.
-    pub fn load_iram_words(&mut self, start: u32, words: &[u32]) {
+    /// Write 32-bit words into the ROM from word index `start`.
+    pub fn load_rom_words(&mut self, start: u32, words: &[u32]) {
         for (n, w) in words.iter().enumerate() {
-            let idx = (start + n as u32) & self.iram_mask;
-            self.iram[idx as usize] = *w;
+            let idx = (start + n as u32) & self.rom_mask;
+            self.rom[idx as usize] = *w;
         }
     }
 
-    /// Write 32-bit words into D-RAM starting at word index 0.
-    pub fn load_dram_words(&mut self, words: &[u32]) {
-        for (n, w) in words.iter().enumerate() {
-            let idx = n as u32 & self.dram_mask;
-            self.dram[idx as usize] = *w;
-        }
-    }
-
-    pub fn iram_word(&self, addr: u32) -> u32 {
-        self.iram[((addr >> 2) & self.iram_mask) as usize]
-    }
-
-    pub fn dram_word_index(&self, idx: u32) -> u32 {
-        self.dram[(idx & self.dram_mask) as usize]
+    /// The ROM word at byte address `addr` (it repeats every 16 KB).
+    pub fn rom_word(&self, addr: u32) -> u32 {
+        self.rom[((addr >> 2) & self.rom_mask) as usize]
     }
 
     /// The window word at RV32 address `addr` (it repeats every `XMEM_WORDS` words, 8 MB).
@@ -453,7 +430,7 @@ impl Soc {
 
     /// The instruction word at `pc` and the cycles its FETCH waits. soc_top fetches
     /// from the window through the instruction cache in RV32 mode at region 8, and in Hack
-    /// mode always (its instruction segment); every other fetch reads I-RAM, also for
+    /// mode always (its instruction segment); every other fetch reads the ROM, also for
     /// addresses outside it.
     #[inline]
     fn fetch(&mut self, pc: u32) -> (u32, u32) {
@@ -472,7 +449,7 @@ impl Soc {
                 };
                 (self.xmem[idx], wait)
             }
-            None => (self.iram[((pc >> 2) & self.iram_mask) as usize], 0),
+            None => (self.rom[((pc >> 2) & self.rom_mask) as usize], 0),
         }
     }
 
@@ -487,20 +464,15 @@ impl Soc {
         (addr >> 2) as usize & (XMEM_WORDS - 1)
     }
 
-    /// RV32 data read of the 32-bit word containing `addr` (soc_addr_decoder + soc_ram),
+    /// RV32 data read of the 32-bit word containing `addr` (soc_addr_decoder + soc_rom),
     /// by the instruction fetched in cycle `t`.
     fn rv_read_word(&mut self, addr: u32, t: u64) -> u32 {
         if self.isa_test {
-            return self.iram[((addr >> 2) & self.iram_mask) as usize];
+            return self.rom[((addr >> 2) & self.rom_mask) as usize];
         }
         match addr >> 28 {
-            0 | 2 => {
-                if self.in_iram_window(addr) {
-                    self.iram[((addr >> 2) & self.iram_mask) as usize]
-                } else {
-                    self.dram[((addr >> 2) & self.dram_mask) as usize]
-                }
-            }
+            // The ROM, repeating every 16 KB across region 0
+            0 => self.rom[((addr >> 2) & self.rom_mask) as usize],
             4 => self.mmio_read(addr, t),
             _ if self.in_xmem(addr) => self.xmem[Self::xmem_index(addr)],
             _ => 0,
@@ -515,35 +487,21 @@ impl Soc {
                 self.tohost = Some(data);
             }
             if addr >> 18 == 0 {
-                let idx = ((addr >> 2) & self.iram_mask) as usize;
-                self.iram[idx] = merge_bytes(self.iram[idx], data, be);
+                let idx = ((addr >> 2) & self.rom_mask) as usize;
+                self.rom[idx] = merge_bytes(self.rom[idx], data, be);
             }
             return;
         }
         match addr >> 28 {
-            // I-RAM takes the whole word: soc_ram has no byte enables on i_mem
-            0 if self.in_iram_window(addr) => {
-                let idx = ((addr >> 2) & self.iram_mask) as usize;
-                self.iram[idx] = data;
-            }
-            2 => {
-                let idx = ((addr >> 2) & self.dram_mask) as usize;
-                self.dram[idx] = merge_bytes(self.dram[idx], data, be);
-            }
             4 => self.mmio_write(addr, data, t + 2),
             _ if self.in_xmem(addr) => {
                 let idx = Self::xmem_index(addr);
                 self.xmem[idx] = merge_bytes(self.xmem[idx], data, be);
                 self.caches.store(idx, be);
             }
+            // Region 0 (the ROM) and the unassigned regions take no stores
             _ => {}
         }
-    }
-
-    /// Data addresses that reach I-RAM (the `addr[31:16] == 0` rule of soc_ram/soc_top).
-    #[inline]
-    fn in_iram_window(&self, addr: u32) -> bool {
-        addr >> 16 == 0
     }
 
     /// MMIO read by the instruction fetched in cycle `t`. The registered peripherals

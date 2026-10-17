@@ -11,7 +11,7 @@ card (\\VUX9K\\STAGE2.BIN, the previous one kept as STAGE2.OLD; install makes \\
 if it is missing), the fall back to STAGE2.OLD, the soft reset back to the first stage, the
 second stage's file commands, and the demos started by its `run`: HELLO.BIN in the PSRAM,
 then HACK.BIN in its PSRAM segment (Hack; it soft-resets back to the first stage at its end),
-ZEPHYR.BIN and BC.BIN in the PSRAM (they leave the first stage in I-RAM, but only the
+ZEPHYR.BIN and BC.BIN in the PSRAM (they leave the first stage in the ROM, but only the
 reset button would start it, and the suite can't press it), each followed by a load of the
 bitstream into the FPGA's SRAM (openFPGALoader, never --reset: that loads the flash's
 bitstream). The card stays in the board. The suite writes only in \\VUX9K\\: test versions
@@ -198,7 +198,7 @@ def find_loader(name="openFPGALoader"):
 
 def load_bitstream(loader, pack_fs):
     """Load pack_fs into the FPGA's SRAM (as `make prog-sram`; not --reset, which loads
-    the flash's bitstream): the first stage is back in I-RAM. Returns an error or None."""
+    the flash's bitstream): the first stage is back in the ROM. Returns an error or None."""
     if not loader:
         return "no openFPGALoader (--loader)"
     if not os.path.isfile(pack_fs):
@@ -279,7 +279,7 @@ def print_test_result(name, passed, detail=""):
 
 def run_hardware_test_suite(port="auto", baud=115200, loader=None, reload=True):
     """The tests on the board at port (or the emulator at a socket:// port). loader is the
-    openFPGALoader for the bitstream loads after the I-RAM demos; without reload (or on the
+    openFPGALoader for the bitstream loads after the demos that never return; without reload (or on the
     emulator) those tests are skipped."""
     print_banner("VUX9K Real Hardware Test Suite (Tang Nano 9K + FAT32 MicroSD)")
     results = []
@@ -324,7 +324,7 @@ def run_hardware_test_suite(port="auto", baud=115200, loader=None, reload=True):
     lost = None  # set once the board no longer answers: the tests after it fail with it
 
     def reload_board():
-        """Load the bitstream into SRAM again (the first stage back in I-RAM) and see its
+        """Load the bitstream into SRAM again (the first stage back in the ROM) and see its
         banner after a soft reset this suite causes: (ok, message)."""
         nonlocal ser, lost
         try:
@@ -543,7 +543,7 @@ def run_hardware_test_suite(port="auto", baud=115200, loader=None, reload=True):
                 msg += f"; and removing TEST: {e2}"
         record(name, ok, msg)
 
-        # 11. A PSRAM application: the first stage stays in I-RAM, `r` goes back to it
+        # 11. A PSRAM application: the first stage stays in the ROM, `r` goes back to it
         name = "11. HELLO.BIN in the PSRAM ('put', 'run'): a0-a2, 'r' to the first stage and its autoboot"
         if apps["HELLO.BIN"] is None:
             record(name, False, f"{os.path.join(FILES['apps'], 'HELLO.BIN')} missing (make apps)")

@@ -101,14 +101,13 @@ and rebuild applications (section 3).
 
 ## 3. Building an application
 
-The CPU is RV32I with Zicsr and Zifencei, machine mode only, at 18 MHz, with 16 KB of
-instruction RAM, 8 KB of data RAM and 8 MB of PSRAM. The Zephyr board `vux9k` links
-applications into the PSRAM: the image runs in place from `0x8000_0000` (4 MB, where the
-second stage's `run` loads it), its RAM is the 3 MB from `0x8040_0000`; the instruction RAM
-(the first stage) and the data RAM are left alone. In the PSRAM, a fetch that misses the
-4 KB instruction cache, a load that misses the 2 KB data cache (both one word a line) and
-every store (written through) wait ~35 cycles; a hit takes no longer than from the block
-RAMs.
+The CPU is RV32I with Zicsr and Zifencei, machine mode only, at 18 MHz, with a 16 KB boot
+ROM (the first stage, read-only) and 8 MB of PSRAM, its only RAM. The Zephyr board `vux9k`
+links applications into the PSRAM: the image runs in place from `0x8000_0000` (4 MB, where
+the second stage's `run` loads it), its RAM is the 3 MB from `0x8040_0000`. In the PSRAM, a
+fetch that misses the 4 KB instruction cache, a load that misses the 2 KB data cache (both
+one word a line) and every store (written through) wait ~35 cycles; a hit takes no longer
+than a fetch or load from the ROM.
 Misaligned loads and stores trap, and so does any CSR that isn't implemented
 ([RV32 CSRs](../README.md#rv32-csrs) in the repository's README lists them).
 
@@ -188,11 +187,12 @@ The PSRAM window is `XMEM_BASE` (`0x8000_0000`) up to the second stage at `STAGE
 (`0x8070_0000`); the entry point defaults to the load address. Code there runs slower: every
 fetch waits ~35 cycles. A PSRAM application starts with `a0` = 1 on an SDHC card (else 0),
 `a1` = the FAT32 partition's first LBA, `a2` = the first stage's version, and the first stage
-still in I-RAM (a soft reset goes back to it); `sd/VUX9K/APPS/HELLO.BIN` and the Zephyr
+in the ROM (a soft reset goes back to it); `sd/VUX9K/APPS/HELLO.BIN` and the Zephyr
 demos are. `run` checks the file's header and CRC before it writes anything, and refuses a
 file outside these windows with the first stage untouched. RV32 runs from the PSRAM only:
 the second stage v3 refuses an RV32 file at load address 0 (`mkv4 --load-addr 0`, the
-I-RAM target of earlier second stages); link it into the PSRAM and wrap it again.
+I-RAM target of earlier second stages; 0 is the read-only boot ROM now); link it into the
+PSRAM and wrap it again.
 
 ## 4. Testing on the emulator
 
@@ -208,9 +208,10 @@ emu/vux9k-emu --no-firmware --load app.bin --mode hack --stdio
 `--mode` starts the CPU in that ISA with the image where the second stage's `run` would put
 it: an RV32 image in the PSRAM at `0x8000_0000` (where the board `vux9k` links), a Hack image
 at the start of Hack's instruction segment (also in the PSRAM, at `0x8000_0000`). `--load-addr ADDR` gives the load address of an image
-linked elsewhere (as `mkv4 --load-addr`): an RV32 image at 0 goes into the instruction RAM,
-at most 14 KB. That is the emulator's own direct load: on the board the second stage starts
-RV32 files only in the PSRAM.
+linked elsewhere (as `mkv4 --load-addr`): an RV32 image at 0 goes into the boot ROM in place
+of the first stage, at most 14 KB. That is the emulator's own direct load (on the board it
+would take a bitstream with it in the ROM): the second stage starts RV32 files only in the
+PSRAM.
 
 - `--stdio` connects the UART to the terminal (input goes line by line); `--tcp PORT`
   serves it on `localhost:PORT` instead, for a terminal program.
@@ -263,8 +264,7 @@ for name in ("STAGE2.BIN", "APPS/HELLO.BIN"):
     with open(f"sd/VUX9K/{name}", "rb") as f:
         files[f"VUX9K/{name}"] = f.read()
 soc = vux9k_emu.Soc("real")
-hexes = ["firmware.hex"] + [f"firmware_d{i}.hex" for i in range(4)]
-soc.load_readmemh(*(open(f"emu/firmware/{name}").read() for name in hexes))
+soc.load_readmemh(open("emu/firmware/firmware.hex").read())
 soc.sd_insert(vux_tool.build_fat32_image(files))
 assert soc.run_until_tx(b"s2> ", 40_000_000) is not None, soc.uart_received()
 soc.uart_send(b"run VUX9K/APPS/HELLO.BIN\r")
@@ -273,7 +273,7 @@ print(soc.uart_received().decode().splitlines()[-2])
 ```
 
 Useful methods of `Soc`: `load_app(image, mode, addr=0)` (`mode` `"riscv"` or `"hack"`,
-as `--load --mode`; `addr` as `--load-addr`, but 0 by default), `load_readmemh(iram, d0, d1, d2, d3)` (memory images, as `--firmware`),
+as `--load --mode`; `addr` as `--load-addr`, but 0 by default), `load_readmemh(rom)` (the boot ROM's image, as `--firmware`),
 `sd_insert(image)` (a card, as `--sd`), `reset()` (power-on reset; load the image again after it),
 `run(max_cycles)`,
 `run_until_tx(needle, max_cycles)` (returns the output position after `needle`, or
@@ -293,7 +293,7 @@ python3 tools/vux_tool.py run-app VUX9K/APPS/APP.BIN        # run; then `monitor
 
 or copy it to `\VUX9K\APPS\` with a PC and type `run VUX9K/APPS/APP.BIN` at the `s2>`
 prompt in a terminal (`monitor`). Every application (Zephyr, `HELLO.BIN`, Hack ones) leaves
-the first stage in I-RAM: button S1 or a soft reset starts the boot again, as below. What
+the first stage in the ROM: button S1 or a soft reset starts the boot again, as below. What
 applies to anything that runs there:
 
 Writing `0x5A5A_A55A` to `0x4000_300C` resets the CPU only, like S1, and starts the first

@@ -201,7 +201,7 @@ def test_exception_is_reported():
     soc.run(ms(1))
     pc = soc.pc  # the next instruction of the prompt's idle loop
     mark = len(soc.uart_received())
-    soc.load_iram_words([0], start=pc // 4)  # all-zero word: illegal instruction
+    soc.load_rom_words([0], start=pc // 4)  # all-zero word: illegal instruction
     out = wait_for(soc, b"Reset the board.\n", ms(20), start=mark)
     assert f"[TRAP] mcause=0x00000002 mepc=0x{pc:08X} mtval=0x00000000" in out, out
     end = len(soc.uart_received())

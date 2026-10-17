@@ -53,7 +53,7 @@ const MRET: u32 = 0x3020_0073;
 fn load(profile: Profile, words: &[u32]) -> Soc {
     let mut soc = Soc::new(profile);
     let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
-    soc.load_iram(0, &bytes);
+    soc.load_rom(0, &bytes);
     soc
 }
 
@@ -94,11 +94,11 @@ fn alu_and_immediates() {
 
 #[test]
 fn loads_stores_sign_extension_and_cycles() {
-    // D-RAM at 0x2000_0000: lui x1, 0x20000
+    // The riscv-tests' flat RAM at 0x1000 (the real profile has no RAM without waits)
     let mut soc = load(
-        Profile::Real,
+        Profile::IsaTest,
         &[
-            lui(1, 0x20000),
+            lui(1, 0x1),
             addi(2, 0, -2),       // 0xFFFF_FFFE
             s(4, 2, 1, 0),        // sb -> byte 4
             i(0x03, 4, 1, 0, 3),  // lb  x3 = -2
@@ -234,26 +234,35 @@ fn counters_and_write_replacing_increment() {
 }
 
 #[test]
-fn real_profile_aliasing_and_iram_stores() {
+fn real_profile_rom_aliases_and_ignored_stores() {
     let mut soc = load(
         Profile::Real,
         &[
-            lui(1, 0x20002), // 0x2000_2000 = D-RAM word 0 (8 KB alias)
             addi(2, 0, 0x5A),
-            s(0, 2, 1, 0), // sb 0x5A
-            lui(3, 0x20000),
-            i(0x03, 0, 3, 4, 4), // lbu x4 from 0x2000_0000 -> 0x5A
-            lui(5, 0x1),         // 0x1000: I-RAM via data port
-            s(0, 2, 5, 0),       // sb 0x5A into I-RAM: whole word 0x5A5A5A5A
-            lui(6, 0x5),         // 0x5000 = I-RAM 0x1000 (16 KB alias)
+            lui(5, 0x1),         // 0x1000: the ROM through the data port
+            s(0, 2, 5, 2),       // sw: ignored
+            s(1, 2, 5, 0),       // sb: ignored
+            lui(6, 0x01235),     // 0x0123_5000 = the ROM's 0x1000 (16 KB aliases)
             i(0x03, 0, 6, 2, 7), // lw x7
+            lui(1, 0x20000),     // 0x2000_0000: region 2, unassigned (D-RAM until it went)
+            s(0, 2, 1, 2),       // sw: ignored
+            i(0x03, 0, 1, 2, 4), // lw x4 = 0
+            lui(3, 0xF0000),     // region 0xF, unassigned
+            s(4, 2, 3, 2),
+            i(0x03, 4, 3, 2, 8), // lw x8 = 0
         ],
     );
-    run_n(&mut soc, 9);
-    assert_eq!(soc.regs[4], 0x5A);
+    soc.load_rom_words(0x400, &[0xCAFE_F00D]);
+    run_n(&mut soc, 12);
     assert_eq!(
-        soc.regs[7], 0x5A5A_5A5A,
-        "I-RAM has no byte enables: SB writes the replicated word"
+        soc.regs[7], 0xCAFE_F00D,
+        "the ROM word, unchanged by the stores"
+    );
+    assert_eq!(soc.rom_word(0x1000), 0xCAFE_F00D);
+    assert_eq!(
+        (soc.regs[4], soc.regs[8]),
+        (0, 0),
+        "unassigned regions read 0"
     );
 }
 
@@ -356,7 +365,7 @@ fn hack_registers_are_32_bit_and_conditions_16_bit() {
 
 #[test]
 fn hack_data_has_no_alias() {
-    // @5, D=A, @0x0805, M=D, @5, D=M: before the D segment (D-RAM), 0x0805 was word 5
+    // @5, D=A, @0x0805, M=D, @5, D=M: before the D segment (D-RAM's 2K words), 0x0805 was word 5
     let mut soc = hack_app(&[
         5,
         c(0b010, 0b110000, false, 0),
@@ -368,7 +377,6 @@ fn hack_data_has_no_alias() {
     run_n(&mut soc, 6);
     assert_eq!(soc.regs[2], 0, "word 5 is still 0");
     assert_eq!(soc.xmem_word(dseg(0x0805)), 5);
-    assert_eq!(soc.dram_word_index(5), 0, "D-RAM untouched");
 }
 
 #[test]
@@ -398,7 +406,7 @@ fn load_app_starts_hack_in_hack_mode() {
         soc.xmem_word(HACK_I_BASE),
         (c(0b010, 0b110000, false, 0) as u32) << 16 | 19
     );
-    assert_eq!(soc.iram_word(0), 0, "I-RAM untouched");
+    assert_eq!(soc.rom_word(0), 0, "ROM untouched");
     run_n(&mut soc, 4);
     assert!(!soc.riscv_mode);
     assert_eq!(soc.xmem_word(dseg(100)), 19);
@@ -455,7 +463,7 @@ fn load_app_rejects_what_the_board_cannot_load() {
 #[test]
 fn load_app_at_the_psram_runs_rv32_in_place() {
     use vux9k_emu::soc::{XMEM_BASE, XMEM_READ_LATENCY};
-    // Bigger than the I-RAM window: the 14 KB limit is I-RAM's only
+    // Bigger than the ROM: the 14 KB limit is the ROM's only
     let mut prog: Vec<u8> = [addi(1, 0, 5), addi(1, 1, 1)]
         .iter()
         .flat_map(|w| w.to_le_bytes())
@@ -465,7 +473,7 @@ fn load_app_at_the_psram_runs_rv32_in_place() {
     let mut soc = Soc::new(Profile::Real);
     soc.load_app_at(&prog, Isa::Rv32, at).unwrap();
     assert_eq!((soc.pc, soc.xmem_word(at + 4)), (at, addi(1, 1, 1)));
-    assert_eq!(soc.iram_word(0), 0, "I-RAM untouched");
+    assert_eq!(soc.rom_word(0), 0, "ROM untouched");
     run_n(&mut soc, 2);
     assert!(soc.riscv_mode);
     assert_eq!(soc.regs[1], 6);
@@ -474,7 +482,7 @@ fn load_app_at_the_psram_runs_rv32_in_place() {
     let mut soc = Soc::new(Profile::Real);
     assert!(soc.load_app_at(&prog, Isa::Rv32, 0).is_err());
     soc.load_app_at(&prog[..8], Isa::Rv32, 0).unwrap();
-    assert_eq!((soc.pc, soc.iram_word(0)), (0, addi(1, 0, 5)));
+    assert_eq!((soc.pc, soc.rom_word(0)), (0, addi(1, 0, 5)));
 }
 
 #[test]
@@ -579,7 +587,7 @@ fn xmem_loads_stores_aliases_and_wait_cycles() {
     assert_eq!(soc.cycle, 2 + 3 + 3);
 }
 
-/// I-RAM code that copies `routine` to 0x8000_0000, sets x9 to the return address and
+/// ROM code that copies `routine` to 0x8000_0000, sets x9 to the return address and
 /// jumps there; returns the program and the number of steps up to the jump.
 fn xmem_call(routine: &[u32]) -> (Vec<u32>, usize) {
     let mut w = vec![lui(1, 0x80000)];
@@ -627,7 +635,7 @@ fn xmem_fetch_waits_and_runs_late() {
         "mtime as read in EXECUTE"
     );
     soc.step();
-    assert_eq!(soc.pc, 4 * steps as u32, "returned to I-RAM");
+    assert_eq!(soc.pc, 4 * steps as u32, "returned to the ROM");
     assert_eq!(soc.cycle, c0 + 3 * (2 + w));
 }
 
@@ -664,7 +672,7 @@ fn xmem_fetch_samples_the_interrupt_in_its_last_cycle() {
 #[test]
 fn xmem_fetch_hits_the_icache_and_stores_invalidate_it() {
     // A two-instruction routine at 0x8000_0000 (addi x11 += 1; jalr x0, 0(x9)) called
-    // four times from I-RAM: cold, warm, after a store to 0x8000_1000 (another word on
+    // four times from the ROM: cold, warm, after a store to 0x8000_1000 (another word on
     // the routine's first line), and through the 8 MB alias
     let mut w = vec![lui(1, 0x80000)];
     for (k, word) in [addi(11, 11, 1), i(0x67, 0, 9, 0, 0)].iter().enumerate() {

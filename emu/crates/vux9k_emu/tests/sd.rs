@@ -342,7 +342,7 @@ fn cpu_sees_busy_from_the_cycle_after_its_store() {
         lw(4, 1, 4),
     ];
     let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
-    soc.load_iram(0, &bytes);
+    soc.load_rom(0, &bytes);
     for _ in 0..5 {
         soc.step();
     }

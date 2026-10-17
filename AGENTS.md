@@ -15,7 +15,7 @@ soc/                    Veryl RTL: board_top (PLL), soc_top + peripherals direct
   cpu/                  CPU core submodules
   uart/                 UART controller submodules
 firmware/               Cargo workspace (virtual manifest)
-  stage1/               First stage of the two-stage boot: the boot ROM in I-RAM (firmware.hex)
+  stage1/               First stage of the two-stage boot: the boot ROM's contents (firmware.hex)
   stage2/               Second stage, file manager and launcher: \VUX9K\STAGE2.BIN on the card, runs in PSRAM
   hello/                Hello demo for the PSRAM (\VUX9K\APPS\HELLO.BIN, make apps), started by the second stage's run
   fw_common/            Firmware logic without MMIO (FAT32, v4 header, transfer), host-tested (make test-fw-host)
@@ -46,9 +46,9 @@ except the handful of firmware-hex symlinks described below
 
 ## Rules for every change
 
-- **Generated output goes to `build/` only.** The root `firmware.hex`/`firmware_d0-3.hex`
-  symlinks are the one exception and must stay: `soc_ram`'s `$readmemh` bakes the boot
-  firmware into the bitstream through them (layout.md).
+- **Generated output goes to `build/` only.** The root `firmware.hex` symlink is the one
+  exception and must stay: `soc_rom`'s `$readmemh` bakes the boot firmware into the
+  bitstream through it (layout.md).
 - **An RTL commit is either a refactor proven with `make eqy` or a tested behavior change,
   never both** (rtl-workflow.md, "Step 3 commit rule").
 - **The emulator follows the RTL**: a behavior change carries the emulator change and a

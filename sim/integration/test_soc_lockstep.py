@@ -21,24 +21,16 @@ SLOW = os.environ.get("LOCKSTEP_SLOW", "") not in ("", "0")
 
 
 def _firmware():
-    base = os.path.join(REPO_ROOT, "build", "firmware")
-    iram = read_hex_words(os.path.join(base, "firmware.hex"))
-    lanes = [read_hex_words(os.path.join(base, f"firmware_d{i}.hex")) for i in range(4)]
-    return iram, lanes
+    return read_hex_words(os.path.join(REPO_ROOT, "build", "firmware", "firmware.hex"))
 
 
 def _power_on_memories(soc, prog):
-    """What $readmemh loaded at time 0 (earlier programs changed it), plus the program;
-    the window's words the programs use zeroed (lockstep_programs.XMEM_USED), then the
-    program's own window words."""
-    iram, lanes = _firmware()
-    load_imem(soc, iram)
+    """The ROM as $readmemh loaded it at time 0 (earlier programs replaced words of it),
+    plus the program; the window's words the programs use zeroed
+    (lockstep_programs.XMEM_USED), then the program's own window words."""
+    load_imem(soc, _firmware())
     if prog.imem_words:
         load_imem(soc, prog.imem_words)
-    for lane, words in enumerate(lanes):
-        mem = getattr(soc.ram_inst, f"d_mem{lane}")
-        for i, v in enumerate(words):
-            mem[i].value = v
     xmem = soc.xmem_inst.mem  # the PSRAM word model (Verilator RTL builds)
     for start, end in XMEM_USED:
         for word in range(start // 4, end // 4):

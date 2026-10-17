@@ -6,7 +6,7 @@ The second stage (firmware/stage2) on the emulator: its line prompt (echo, backs
 usage), the file commands on FAT32 cards (long names read, 8.3 names written, every error
 they report), put/install over transfer v2 through tools/vux_tool.py, `run` of the two
 targets of fw_common::launch (PSRAM, Hack's segment) and what it refuses (an RV32 file at 0
-among them, with the first stage left intact in I-RAM), `info`, `reset` and the trap report.
+among them, with the first stage left intact in the ROM), `info`, `reset` and the trap report.
 """
 
 import os
@@ -72,8 +72,8 @@ def hexdump(data: bytes) -> str:
 
 
 def s1_intact(soc) -> bool:
-    """I-RAM still holds the first stage word for word."""
-    return all(soc.iram_word(4 * i) == w for i, w in enumerate(S1_WORDS))
+    """The ROM still holds the first stage word for word."""
+    return all(soc.rom_word(4 * i) == w for i, w in enumerate(S1_WORDS))
 
 
 def app(origin: int, text: str, tail=None) -> bytes:
@@ -490,22 +490,20 @@ PSRAM_APP = 0x8000_0000
 def test_run_from_the_psram():
     soc, _ = boot_s2({"VUX9K/APPS/HELLO.BIN": v4(app(PSRAM_APP + 0x100, "Hello\n"), load_addr=PSRAM_APP + 0x100,
                                                    name="hello", version=3)})  # fmt: skip
-    soc.load_dram_words([0xDEADBEEF] * 2048)
     out = s2_cmd(soc, "run VUX9K/APPS/HELLO.BIN", until=b"Hello\n", timeout_cycles=RUN_CYCLES)
     size = len(app(PSRAM_APP + 0x100, "Hello\n"))
     assert out.startswith(f'[RUN] v3 "hello" {size} B, PSRAM, starting at 0x{PSRAM_APP + 0x100:08X}\n\n'), out
     soc.run(ms(1))
     assert PSRAM_APP + 0x100 <= soc.pc < PSRAM_APP + 0x100 + size
-    # a0-a2 as the first stage hands them to the second stage; D-RAM zeroed
+    # a0-a2 as the first stage hands them to the second stage
     assert soc.regs[10:13] == [1, FAT_LBA, STAGE1_VERSION]
-    assert all(soc.dram_word(i) == 0 for i in range(2048))
     assert s1_intact(soc)
 
 
 def test_run_refuses_rv32_in_i_ram():
     """RV32 runs from the PSRAM only (second stage v3): a file linked at 0, as the Zephyr
     board's I-RAM build made them, is refused after it loaded, the first stage stays in
-    I-RAM and the prompt comes back."""
+    the ROM and the prompt comes back."""
     soc, _ = boot_s2({"APP.BIN": v4(app(0, "Iram\n"), load_addr=0, name="iram")})
     out = s2_cmd(soc, "run APP.BIN", timeout_cycles=RUN_CYCLES)
     assert out == "[ERR] loads outside 80000000-806FFFFF (RV32), 0-FFFF (Hack, at a word)\n", out
@@ -517,7 +515,7 @@ def test_run_refuses_rv32_in_i_ram():
 def test_run_hack_from_its_segment():
     """A Hack file loads into Hack's instruction segment in the PSRAM (its load address, 0, an
     offset there), the data segment is zeroed and a soft reset starts it in Hack mode; the
-    first stage stays in I-RAM, and the demo's soft reset at its end goes back to it."""
+    first stage stays in the ROM, and the demo's soft reset at its end goes back to it."""
     assert os.path.exists(HACK_BIN), f"{HACK_BIN} missing; run `make build-hack` first"
     with open(HACK_BIN, "rb") as f:
         hack = v4(f.read(), mode="hack", name="Hack demo")

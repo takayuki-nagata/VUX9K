@@ -29,7 +29,7 @@ eqy can't see this (zero-delay models, and both sides of eqy come from Yosys). S
   board across several seeds. `make timing` then `make hw-smoke` is that test at the
   current clock: `hw_test` on each routed seed with only the block-RAM contents
   replaced (`scripts/hw_smoke.py`; it refuses to patch when the routed netlist doesn't
-  hold `firmware.hex` under the known I-RAM mapping). Run it after RTL changes, before
+  hold `firmware.hex` under the known ROM mapping). Run it after RTL changes, before
   flashing a new bitstream. If you change `hw_test`'s tests, take the new checksums
   from the emulator (`sim/emu/test_hw_test.py` prints them on failure).
 - **`CLK_HZ` has copies that must change with it**, all but one written out by hand: the emulator (`uart::BIT`, `sdspi::HALF_PERIOD`/`CLK_HZ`, the CLI's real-time

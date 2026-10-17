@@ -104,15 +104,15 @@ lint-rtl: veryl
 
 # The generated SoC RTL read by Yosys and compiled by Icarus, nothing else: catches in seconds
 # the Veryl constructs these tools reject though veryl build accepts them (docs/agents/veryl.md,
-# "Veryl constructs the toolchain rejects"). soc_ram is left out of the Yosys read: its
+# "Veryl constructs the toolchain rejects"). soc_rom is left out of the Yosys read: its
 # $$readmemh needs firmware.hex.
 check-rtl-syntax: veryl
-	$(YOSYS) -q -p "read_verilog -sv $(filter-out %/soc_ram.sv,$(SOC_RTL_SRCS))"
+	$(YOSYS) -q -p "read_verilog -sv $(filter-out %/soc_rom.sv,$(SOC_RTL_SRCS))"
 	iverilog -g2012 -o /dev/null -s board_top $(SOC_RTL_SRCS) $(GOWIN_CELLS_SV)
 
 # ===== Firmware (Rust: the two-stage boot's first and second stage) =====
 
-# The first stage (firmware/stage1), the boot ROM in I-RAM: build/firmware/firmware.{bin,hex}.
+# The first stage (firmware/stage1), the boot ROM (soc_rom): build/firmware/firmware.{bin,hex}.
 # The second stage (firmware/stage2: file manager and launcher) as the v4 file \VUX9K\STAGE2.BIN
 # for the card, linked at fw_common::map::STAGE2_BASE, its header's version STAGE2_VERSION from
 # its main.rs: build/firmware/stage2/STAGE2.BIN
@@ -127,13 +127,12 @@ STAGE2_SRCS = $(wildcard firmware/stage2/src/*.rs firmware/stage2/bootstrap/*) f
 $(FIRMWARE_BUILD_DIR)/firmware.hex: $(FIRMWARE_SRCS)
 	@mkdir -p $(FIRMWARE_BUILD_DIR)
 	cd firmware/stage1 && $(CARGO) build --release
-	$(PYTHON) scripts/elf2bin.py firmware/target/riscv32i-unknown-none-elf/release/stage1 $(FIRMWARE_BUILD_DIR)/firmware.bin $(FIRMWARE_BUILD_DIR)
+	$(PYTHON) scripts/elf2bin.py firmware/target/riscv32i-unknown-none-elf/release/stage1 $(FIRMWARE_BUILD_DIR)/firmware.bin
 	$(PYTHON) scripts/merge_firmware_hex.py $(FIRMWARE_BUILD_DIR)/firmware.bin $(FIRMWARE_BUILD_DIR)/firmware.hex
-	@# soc_ram.veryl's $$readmemh() resolves these bare filenames relative to each tool's own
-	@# process cwd. yosys/nextpnr run from the repo root, so they need these symlinks (not cp, to stay
-	@# identical to build/firmware/); cocotb tests get their own per-run symlinks from sim/runners/sim_runner.py.
+	@# soc_rom.veryl's $$readmemh() resolves this bare filename relative to each tool's own
+	@# process cwd. yosys/nextpnr run from the repo root, so they need this symlink (not cp, to stay
+	@# identical to build/firmware/); cocotb tests get their own per-run symlink from sim/runners/sim_runner.py.
 	ln -sf $(CURDIR)/$(FIRMWARE_BUILD_DIR)/firmware.hex ./firmware.hex
-	ln -sf $(CURDIR)/$(FIRMWARE_BUILD_DIR)/firmware_d0.hex $(CURDIR)/$(FIRMWARE_BUILD_DIR)/firmware_d1.hex $(CURDIR)/$(FIRMWARE_BUILD_DIR)/firmware_d2.hex $(CURDIR)/$(FIRMWARE_BUILD_DIR)/firmware_d3.hex .
 
 # (Built with the coverage profile, the release code plus line tables: with debug info, rustc
 # orders the second stage's functions differently, so coverage-fw maps the very ELF that runs)
@@ -181,9 +180,8 @@ apps: $(APPS_DIR)/HELLO.BIN build-hack build-zephyr-demo build-zephyr-irq-echo b
 	$(call app_v4,$(ZEPHYR_IRQ_ECHO_BUILD_DIR)/zephyr/zephyr.bin,IRQECHO.BIN,riscv,Zephyr irq_echo,,$(HELLO_BASE))
 	$(call app_v4,$(ZEPHYR_BUILD_DIR)/zephyr/zephyr.bin,BC.BIN,riscv,bc_clone_rs,,$(HELLO_BASE))
 
-# Board self-test (firmware/hw_test), an I-RAM image in place of the first stage for
-# `make hw-smoke`; its D-RAM preload (elf2bin's firmware_d*.hex) goes to its own
-# directory and must stay all zero (scripts/hw_smoke.py checks it)
+# Board self-test (firmware/hw_test), a ROM image in place of the first stage for
+# `make hw-smoke`
 HWTEST_DIR = $(FIRMWARE_BUILD_DIR)/hw_test
 HWTEST_SRCS = $(wildcard firmware/hw_test/src/*) firmware/hw_test/Cargo.toml firmware/hw_test/link.x \
 	$(wildcard firmware/fw_common/src/*.rs)
@@ -191,7 +189,7 @@ HWTEST_SRCS = $(wildcard firmware/hw_test/src/*) firmware/hw_test/Cargo.toml fir
 $(HWTEST_DIR)/hw_test.hex: $(HWTEST_SRCS)
 	@mkdir -p $(HWTEST_DIR)
 	cd firmware/hw_test && $(CARGO) build --release
-	$(PYTHON) scripts/elf2bin.py firmware/target/riscv32i-unknown-none-elf/release/hw_test $(HWTEST_DIR)/hw_test.bin $(HWTEST_DIR)
+	$(PYTHON) scripts/elf2bin.py firmware/target/riscv32i-unknown-none-elf/release/hw_test $(HWTEST_DIR)/hw_test.bin
 	$(PYTHON) scripts/merge_firmware_hex.py $(HWTEST_DIR)/hw_test.bin $(HWTEST_DIR)/hw_test.hex
 
 hwtest: $(HWTEST_DIR)/hw_test.hex
@@ -276,7 +274,7 @@ coverage-rust: coverage-rust-tool firmware hwtest build-hack build-zephyr build-
 	$(PYTHON) scripts/coverage_rust.py $(RUST_COV_REPORT)/emu.json $(RUST_COV_REPORT)/fw_common.json \
 		--thresholds coverage/thresholds.toml --summary $(RUST_COV_DIR)/summary.md
 
-# Size budget: the first stage fills at most the 16 KB I-RAM it runs from (a ROM of 8 KB
+# Size budget: the first stage fills at most the 16 KB ROM it runs from (a ROM of 8 KB
 # would take half the block RAM: keep it small)
 S1_MAX_BYTES = 16384
 firmware-size: firmware
@@ -548,9 +546,10 @@ sim: sim-unit test-isa sim-gls-unit test-isa-gls sim-soc-fast sim-soc-mmio sim-b
 # synth_gowin options, shared by the SoC and the unit gate-level netlists (docs/agents/rtl-workflow.md, "Synthesis flags").
 # -nowidelut: no MUX2_LUT5..8 wide-LUT muxes. Behavior-neutral; they made the mapping (and timing)
 #   swing by hundreds of LUTs on small RTL changes and routed worse.
-# -no-rw-check: no collision emulation for BSRAM read/write to the same address in one cycle. It put
-#   the combinational fetch address (pc_out) on the critical path; the only collision is a store to
-#   the next instruction's I-RAM word, whose fetch is then undefined (not supported; see README).
+# -no-rw-check: no collision emulation for BSRAM read/write to the same address in one cycle. The
+#   ROM has no write port; the window's caches (soc_icache/soc_dcache) need it: without it yosys adds
+#   ~215 flops of read-first/transparency logic to their tag and word RAMs, and a read colliding with
+#   a write there is harmless by design (their headers).
 SYNTH_GOWIN_OPTS = -nowidelut -no-rw-check
 SYNTH_OPTS_STAMP := $(SYNTH_DIR)/.synth_gowin_opts
 
@@ -605,7 +604,7 @@ sim-sd-quirks: veryl firmware
 # Full flashing flow on Icarus: 4-state coverage of the longest RTL run (~15 min; test-slow only)
 # Formal equivalence of the working tree's RTL against EQY_BASE (scripts/run_eqy.py), for
 # behavior-preserving refactors: `make eqy EQY_BASE=<commit> EQY_TOP=unified_cpu|soc_top`.
-# soc_ram is a black box on both sides. Not part of test-sim (it depends on the base commit).
+# soc_rom is a black box on both sides. Not part of test-sim (it depends on the base commit).
 # EQY_GATE_TIE="name=1 ..." ties new top inputs of the gate to constants (run_eqy.py --gate-tie).
 EQY_BASE ?= HEAD
 EQY_TOP ?= unified_cpu
@@ -653,7 +652,7 @@ sim-soc-gls-fast: synth-top firmware
 PSRAM_RTL_SRCS = $(addprefix $(VERYL_OUT_DIR)/dependencies/psram/rtl/,psram_pkg.sv psram_core.sv psram_phy.sv psram_controller.sv)
 SOC_RTL_SRCS = $(VERYL_OUT_DIR)/soc/soc_pkg.sv $(CPU_RTL_SRCS) $(VERYL_OUT_DIR)/soc/uart/clk_timer.sv $(VERYL_OUT_DIR)/soc/uart/fifo_sync.sv $(VERYL_OUT_DIR)/soc/uart/shift_registers.sv \
                $(VERYL_OUT_DIR)/soc/uart/uart_tx.sv $(VERYL_OUT_DIR)/soc/uart/uart_rx.sv $(VERYL_OUT_DIR)/soc/uart/uart_controller.sv $(VERYL_OUT_DIR)/soc/timer_core.sv \
-               $(VERYL_OUT_DIR)/soc/sdcard_spi.sv $(VERYL_OUT_DIR)/soc/gpio_controller.sv $(VERYL_OUT_DIR)/soc/soc_ram.sv $(VERYL_OUT_DIR)/soc/soc_addr_decoder.sv \
+               $(VERYL_OUT_DIR)/soc/sdcard_spi.sv $(VERYL_OUT_DIR)/soc/gpio_controller.sv $(VERYL_OUT_DIR)/soc/soc_rom.sv $(VERYL_OUT_DIR)/soc/soc_addr_decoder.sv \
                $(PSRAM_RTL_SRCS) $(VERYL_OUT_DIR)/soc/soc_xmem_bridge.sv $(VERYL_OUT_DIR)/soc/soc_icache.sv $(VERYL_OUT_DIR)/soc/soc_dcache.sv \
                $(VERYL_OUT_DIR)/soc/soc_top.sv $(VERYL_OUT_DIR)/soc/board_top.sv
 
@@ -751,7 +750,7 @@ test-ci: test
 
 test-hardware: test-hw
 
-# The demos (make apps) are put on the card by the suite; the I-RAM ones end with the
+# The demos (make apps) are put on the card by the suite; the ones that never return end with the
 # bitstream loaded into SRAM again with $(OPENFPGALOADER), as prog-sram does
 test-hw: firmware apps build-hw prog-sram
 	@echo "=== Running Automated End-to-End Hardware Test Suite on Tang Nano 9K ==="

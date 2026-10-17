@@ -204,7 +204,7 @@ hw-flow RTL 860 s (Icarus) -> ~30 s; gls-fast ~1,050 s -> ~33 s. Verilator needs
   Verilator's optimization — on the gate-level netlist it was ~18x slower to
   simulate and ~5x slower to compile. `sim_runner.py` strips it and generates a
   `public.vlt` exposing only the toplevel's own signals, plus `SOC_RTL_PUBLIC`
-  (`soc_top.*`, `unified_cpu.pc_out`, `soc_ram.i_mem`) for RTL SoC builds. **A test
+  (`soc_top.*`, `unified_cpu.pc_out`, `soc_rom.mem`) for RTL SoC builds. **A test
   that starts touching another internal signal fails on Verilator with "no such
   attribute" until you add it to `SOC_RTL_PUBLIC`** (Icarus sees everything, so
   it won't catch this).

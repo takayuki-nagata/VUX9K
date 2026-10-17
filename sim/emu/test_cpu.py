@@ -20,7 +20,7 @@ def run_program(build, steps):
     a = Asm()
     build(a)
     soc = Soc("real")
-    soc.load_iram_words(a.assemble())
+    soc.load_rom_words(a.assemble())
     for _ in range(steps):
         soc.step()
     return soc
@@ -103,9 +103,9 @@ def test_timer_interrupt():
     assert soc.mstatus & 0x88 == 0x80
 
 
-def test_byte_and_halfword_stores_to_dram():
+def test_byte_and_halfword_stores_to_the_psram():
     def prog(a):
-        a.li("x1", 0x20000000)
+        a.li("x1", XMEM_BASE + 0x100)
         a.li("x3", -1)
         a.sw("x3", 0, "x1")
         a.li("x2", 0xAB)
@@ -113,8 +113,36 @@ def test_byte_and_halfword_stores_to_dram():
         a.li("x2", 0x1234)
         a.sh("x2", 2, "x1")
 
-    soc = run_program(prog, 8)
-    assert soc.dram_word(0) == 0x1234ABFF
+    soc = run_program(prog, 9)
+    assert soc.xmem_word(XMEM_BASE + 0x100) == 0x1234ABFF
+
+
+def test_stores_to_the_rom_and_unassigned_regions_are_ignored():
+    """The ROM (region 0) takes no stores, and region 2 (D-RAM until it went) is unassigned:
+    stores ignored, loads 0 (lockstep_programs.rom_stores checks the same against the RTL)."""
+
+    def prog(a):
+        a.li("x3", -1)
+        a.sw("x3", 0x100, "zero")
+        a.sb("x3", 0x101, "zero")
+        a.lw("x4", 0x100, "zero")
+        a.li("x1", 0x2000_0000)
+        a.sw("x3", 0, "x1")
+        a.sh("x3", 2, "x1")
+        a.lw("x5", 0, "x1")
+        a.li("x1", 0x0123_4100)  # an alias of the ROM's 0x100
+        a.lw("x6", 0, "x1")
+
+    soc = Soc("real")
+    soc.load_rom_words([0xCAFE_F00D], start=0x40)
+    a = Asm()
+    prog(a)
+    words = a.assemble()
+    soc.load_rom_words(words)
+    for _ in range(len(words)):
+        soc.step()
+    assert soc.rom_word(0x100) == 0xCAFE_F00D
+    assert soc.regs[4:7] == [0xCAFE_F00D, 0, 0xCAFE_F00D]
 
 
 @pytest.mark.parametrize("key_by_addition", [True, False])
@@ -137,17 +165,17 @@ def test_boot_mode_starts_hack_at_0():
     """The mode in GPIO 0x8 decides the ISA after a soft reset (lockstep_programs.boot_mode_hack):
     a Hack program starting with `@0`, written into its I segment, runs as Hack and prints 'H'."""
     soc = Soc("real")
-    soc.load_iram_words(boot_mode_hack())
+    soc.load_rom_words(boot_mode_hack())
     soc.run(5_000)
     assert not soc.riscv_mode
     assert soc.uart_received() == b"H"
 
 
 def test_power_on_starts_rv32():
-    """No ISA guess: whatever I-RAM holds runs as RV32 after the power-on reset (a Hack-looking
+    """No ISA guess: whatever the ROM holds runs as RV32 after the power-on reset (a Hack-looking
     `@7` word is an illegal instruction)."""
     soc = Soc("real")
-    soc.load_iram_words([0x0007_0007])
+    soc.load_rom_words([0x0007_0007])
     soc.step()
     assert soc.riscv_mode
     assert soc.mcause == 2
@@ -155,7 +183,7 @@ def test_power_on_starts_rv32():
 
 def test_hack_runs_from_its_segments():
     """Hack fetches from its I segment and keeps data word A at HACK_D_BASE + 4 * A, a 32-bit
-    word each, all through the window (no D-RAM, no 2K alias)."""
+    word each, all through the window (no 2K alias, as when Hack's RAM was D-RAM)."""
     import hack_asm
 
     h = hack_asm.Asm()
@@ -175,7 +203,6 @@ def test_hack_runs_from_its_segments():
         soc.step()
     assert soc.xmem_word(HACK_D_BASE + 4 * 0x805) == 0x1234
     assert soc.regs[2] == 0
-    assert soc.dram_word(5) == 0 and soc.dram_word(0x805) == 0
 
 
 def test_load_app_into_the_psram():
@@ -186,7 +213,7 @@ def test_load_app_into_the_psram():
     image = b"".join(w.to_bytes(4, "little") for w in words)
     soc = Soc("real")
     soc.load_app(image, "riscv", XMEM_BASE)
-    assert (soc.pc, soc.iram_word(0)) == (XMEM_BASE, 0)
+    assert (soc.pc, soc.rom_word(0)) == (XMEM_BASE, 0)
     assert [soc.xmem_word(XMEM_BASE + 4 * i) for i in range(2)] == words
     soc.step()
     soc.step()

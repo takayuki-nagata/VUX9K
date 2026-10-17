@@ -43,7 +43,7 @@ TEST_MODULE_DIRS = [SIM_DIR / "unit", SIM_DIR / "integration"]
 _CPU = ["rv32i_pkg", "rv32i_alu", "rv32i_decode", "rv32i_regfile", "rv32i_csrs", "rv32i_lsu", "rv32i_trap_unit",
         "next_pc_unit", "hack_translator", "unified_cpu"]  # fmt: skip
 _UART = ["clk_timer", "shift_registers", "fifo_sync", "uart_tx", "uart_rx", "uart_controller"]
-_SOC = ["timer_core", "sdcard_spi", "gpio_controller", "soc_ram", "soc_addr_decoder", "soc_xmem_bridge",
+_SOC = ["timer_core", "sdcard_spi", "gpio_controller", "soc_rom", "soc_addr_decoder", "soc_xmem_bridge",
         "soc_icache", "soc_dcache", "soc_top"]  # fmt: skip
 # The PSRAM controller (a Veryl dependency, vendor/psram_controller; package first) and the IP's
 # pin-level W955D8MBYA model, Icarus only: it is timed in real time (`realtime`, `#` delays)
@@ -106,8 +106,7 @@ COVERAGE_ARGS = ["--coverage-line", "--coverage-toggle"]
 SOC_RTL_PUBLIC = [
     ("soc_top", "*"),  # por_counter, active_mode, clk, ...
     ("unified_cpu", "pc_out"),  # dut.cpu_inst.pc_out
-    ("soc_ram", "i_mem"),  # dut.ram_inst.i_mem[] (firmware preload)
-    ("soc_ram", "d_mem*"),  # d_mem0-3[] (test_soc_lockstep: power-on contents per program)
+    ("soc_rom", "mem"),  # dut.rom_inst.mem[] (the boot ROM: a test's program in place of the first stage)
     ("rv32i_regfile", "registers"),  # test_soc_lockstep zeroes the register file
     ("psram_word_model", "mem"),  # ...and the words of the wait-state window its programs use
     ("psram_word_model", "init_count"),  # soc_env.start_soc skips the PSRAM power-up
@@ -118,8 +117,8 @@ SOC_RTL_PUBLIC = [
 # (make sim-unit-random, in test-slow, uses the date). Reproduce a failure with its seed.
 DEFAULT_RANDOM_SEED = "20261003"
 
-# soc_ram's $readmemh() calls use bare file names, resolved against the simulator's cwd
-FIRMWARE_HEX = ["firmware.hex", "firmware_d0.hex", "firmware_d1.hex", "firmware_d2.hex", "firmware_d3.hex"]
+# soc_rom's $readmemh() uses a bare file name, resolved against the simulator's cwd
+FIRMWARE_HEX = ["firmware.hex"]
 
 
 def _gowin_cells_with_net_inputs() -> Path:

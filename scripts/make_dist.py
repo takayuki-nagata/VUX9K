@@ -52,9 +52,8 @@ FILES = {
     "hack/uart.h": "hack_demo/src/uart.h",
     "emu/vux9k-emu": "build/emu/target/release/vux9k-emu",
     "emu/vux9k_emu.abi3.so": "build/emu/python/vux9k_emu.abi3.so",
-    # The block RAMs as the bitstream holds them (the first stage), for --firmware emu/firmware
+    # The boot ROM as the bitstream holds it (the first stage), for --firmware emu/firmware
     "emu/firmware/firmware.hex": "build/firmware/firmware.hex",
-    **{f"emu/firmware/firmware_d{i}.hex": f"build/firmware/firmware_d{i}.hex" for i in range(4)},
 }
 # docs/APP_DEVELOPMENT.md links the repository's README as ../README.md; in the dist that
 # path is the dist's own README, so those links go to the README of the source commit

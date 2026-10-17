@@ -446,7 +446,7 @@ def run_hack(prog, initial):
 
 @cocotb.test()
 async def test_random_programs_against_interpreter(dut):
-    """Random Hack programs on unified_cpu behind a memory model with soc_ram's timing
+    """Random Hack programs on unified_cpu behind a memory model with soc_rom's read timing
     (both ports read one cycle after the address, before that edge's write): the memory
     writes, in order, match a Hack interpreter's"""
     cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start())

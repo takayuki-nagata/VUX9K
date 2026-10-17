@@ -150,7 +150,7 @@ async def start_soc(dut, *, sd_sectors=None, mbr=True, btn=1, accelerate_por=Tru
         PSRAM word model's power-up with it (Verilator RTL builds), so the window is ready
         from the CPU's first cycle as on the board, where both end inside the POR. The real
         controller (Icarus) isn't accelerated: a window access waits for it.
-    during_reset: optional callable(soc) run while rst_n is still low, e.g. to preload I-RAM.
+    during_reset: optional callable(soc) run while rst_n is still low, e.g. to preload the ROM.
     sd_card: optional kwargs for SpiSdCardModel (e.g. {"sdhc": False, "strict": True}).
 
     Returns (ser, sd_model).
@@ -203,9 +203,10 @@ def check_psram_pins(dut) -> bool:
 
 
 def load_imem(soc, words):
-    """Overwrite soc_ram's I-RAM from word 0 (call while the CPU is held in reset)."""
+    """Overwrite the boot ROM (soc_rom) from word 0, through VPI: a test's program in place
+    of the first stage (the CPU can't write it). Call it while the CPU is held in reset."""
     for idx, word in enumerate(words):
-        soc.ram_inst.i_mem[idx].value = word
+        soc.rom_inst.mem[idx].value = word
 
 
 def load_xmem(soc, addr: int, image: bytes):
@@ -225,7 +226,7 @@ def load_xmem(soc, addr: int, image: bytes):
 
 
 def jump_words(target: int) -> list[int]:
-    """I-RAM words that jump to target (lui t0; jalr x0, 0(t0)): placed at 0 in place of
+    """ROM words that jump to target (lui t0; jalr x0, 0(t0)): placed at 0 in place of
     the first stage, they start an application the way the second stage's `run` does,
     without the boot. target must be 4 KB-aligned (lui's reach)."""
     assert target % 4096 == 0, hex(target)
@@ -237,7 +238,7 @@ def jump_words(target: int) -> list[int]:
 
 def preload_psram_app(image: bytes, addr: int = XMEM_BASE):
     """start_soc's during_reset for an RV32 application linked into the PSRAM at addr: the
-    image in the PSRAM (load_xmem) and a jump to it at I-RAM 0 (jump_words)."""
+    image in the PSRAM (load_xmem) and a jump to it at ROM word 0 (jump_words)."""
 
     def preload(soc):
         load_xmem(soc, addr, image)
@@ -254,7 +255,7 @@ HACK_START_CYCLES = 400
 async def start_hack(dut, words, **kw):
     """start_soc for a Hack program: its words (two instructions each, the first in the low
     half: hack_asm, scripts/bin2hex.py) in Hack's I segment (load_xmem: Verilator RTL builds
-    only) and lockstep_programs.hack_stub at I-RAM 0, which gives Hack in GPIO 0x8 and
+    only) and lockstep_programs.hack_stub at ROM word 0, which gives Hack in GPIO 0x8 and
     soft-resets into it, as a loader does (the power-on reset starts RV32); when the program
     soft-resets back without a mode, the stub prints HACK_BACK and spins. kw goes to
     start_soc. Returns (ser, sd_model) once the CPU runs the program in Hack."""

@@ -49,9 +49,9 @@ has no initial contents. Keep every loop's trip count small (a few hundred at mo
 also refuses a single unpacked dimension of 2^21 elements ("exceed evaluate size limit"),
 which is why that model's array is `[2, WORDS / 2]`.
 
-`$readmemh` in synthesized RTL: `soc_ram` preloads its arrays in a plain Veryl
-`initial` block, allowed by `#[allow(initial_assign)]` on each array. Veryl emits it
-without a `` `ifndef SYNTHESIS `` guard, so yosys reads the files and the firmware
+`$readmemh` in synthesized RTL: `soc_rom` preloads its array in a plain Veryl
+`initial` block, allowed by `#[allow(initial_assign)]` on the array. Veryl emits it
+without a `` `ifndef SYNTHESIS `` guard, so yosys reads the file and the firmware
 lands in the bitstream's block-RAM init (the old `embed` needed an
 `` `endif ``/`` `ifndef `` trick for that). If you ever touch it, check that the
 synthesized BRAM cells still carry non-zero `INIT_RAM_*` parameters.
@@ -74,6 +74,6 @@ whole SoC as synthesized, with the PLL's cell model), `tb_hex_runner` and `tb_go
 Any warning fails it. Veryl can't emit Verilator comments, so waivers go into
 `soc/verilator_lint.vlt`, one `lint_off` per finding with `-file` and a `-match` as narrow
 as the message allows, and a comment saying why it's by design. Fix a finding in the
-Veryl source instead when the fix is a refactor (`make eqy`); `soc_ram` changes aren't
+Veryl source instead when the fix is a refactor (`make eqy`); `soc_rom` changes aren't
 covered by eqy, so its findings are waived. The simulator builds keep `-Wno-lint`
 (`sim_runner.py`'s `BUILD_ARGS`): lint is this target's job, not the tests'.

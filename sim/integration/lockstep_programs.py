@@ -11,7 +11,7 @@ instruction (fetch cycle, ISA, PC, register writes, bus writes, traps) and every
 UART TX byte with its cycle.
 
 A program is the power-on state (firmware preload from build/firmware, words over
-I-RAM, SD sectors; the words of the wait-state window the programs use (XMEM_USED) zeroed,
+the boot ROM, SD sectors; the words of the wait-state window the programs use (XMEM_USED) zeroed,
 as the emulator starts it, then its own words written into the window, e.g. a Hack program
 in Hack's instruction segment) plus host
 stimulus at exact cycles (cycle 0 = first cycle out of reset): UART bytes sent back to
@@ -43,7 +43,7 @@ HACK_D_BASE = 0x8002_0000
 class Program:
     name: str
     cycles: int  # run length, from cycle 0
-    imem_words: list | None = None  # over the firmware preload, from word 0
+    imem_words: list | None = None  # over the firmware preload in the ROM, from word 0
     uart_rx: list = field(default_factory=list)  # (cycle, bytes): start bits back to back from cycle
     button: list = field(default_factory=list)  # (cycle, pressed) S2 pin level from cycle
     sd_sectors: dict = field(default_factory=dict)  # lba -> bytes (after the MBR in sector 0)
@@ -57,7 +57,7 @@ def _csr_read(rd, csr):
 
 
 # --- constrained-random RV32I ----------------------------------------------------------
-# x2 (sp) = base for loads/stores (D-RAM, or the window), x30 = timer base, x31 = loop
+# x2 (sp) = base for loads/stores (RV_DATA in the window by default), x30 = timer base, x31 = loop
 # counter; the rest are random. No traps: aligned accesses only, branches only forward or
 # counted loops.
 _R_OPS = [(0, 0), (0x20, 0), (0, 1), (0, 2), (0, 3), (0, 4), (0, 5), (0x20, 5), (0, 6), (0, 7)]
@@ -65,7 +65,8 @@ _I_OPS = [0, 2, 3, 4, 6, 7]  # addi slti sltiu xori ori andi
 _DEST = [f"x{i}" for i in range(1, 30) if i != 2]
 
 
-def random_rv(seed: int, blocks: int = 300, base: int = 0x2000_0800) -> list:
+def random_rv(seed: int, blocks: int = 300, base: int = 0) -> list:
+    base = base or RV_DATA
     rnd = random.Random(seed)
     a = Asm()
     a.li("sp", base)
@@ -168,6 +169,11 @@ HACK_DEMO_BYTES = 0x1600
 HACK_STUB_FLAG = XMEM + 0x40_0000
 XMEM_USED += [(0x800, HACK_DEMO_BYTES), (0x2_0000, 0x2_0400), (0x2_F800, 0x3_0000)]
 XMEM_USED += [(HACK_STUB_FLAG - XMEM, HACK_STUB_FLAG - XMEM + 4)]
+# The data the RV32 programs once kept in D-RAM: random_rv's loads and stores (sp +-512 B
+# around RV_DATA; traps' sp, whose accesses trap) and xmem's store between window accesses
+RV_DATA = XMEM + 0x5_0000
+XMEM_ASIDE = XMEM + 0x6_0000
+XMEM_USED += [(RV_DATA - XMEM - 0x200, RV_DATA - XMEM + 0x200), (XMEM_ASIDE - XMEM + 0x40, XMEM_ASIDE - XMEM + 0x44)]
 
 
 def _soft_reset_key(a, gpio: str):
@@ -184,7 +190,7 @@ HACK_DEMO_CYCLES = 4_140_000
 
 
 def hack_stub() -> list:
-    """RV32 code for I-RAM 0 that starts a Hack program already in its I segment, as a
+    """RV32 code for ROM word 0 that starts a Hack program already in its I segment, as a
     loader does (the power-on reset and a soft reset without a mode start RV32): on its first
     pass (the PSRAM word HACK_STUB_FLAG is 0) it sets that word, gives Hack (0x100) in GPIO
     0x8 and soft-resets. When the Hack program soft-resets without a mode, the CPU comes back
@@ -228,7 +234,7 @@ def xmem() -> list:
     a.li("s0", XMEM)
     a.li("s1", 0x4000_0000)  # UART
     a.li("s2", 0x4000_1000)  # timer
-    a.li("s10", 0x2000_0800)  # D-RAM
+    a.li("s10", XMEM_ASIDE)  # another window word, for a store in between
     # Stores of every size, loads back, an alias 8 MB up and one at the top of the region
     a.li("t0", 0x1122_3344)
     a.sw("t0", 0x40, "s0")
@@ -247,7 +253,7 @@ def xmem() -> list:
     a.sw("t0", 0x44, "s4")
     a.li("t1", XMEM + XMEM_BYTES - 0x800)
     a.lw("t3", 0x44, "t1")
-    a.sw("t3", 0x40, "s10")  # a D-RAM store between window accesses
+    a.sw("t3", 0x40, "s10")  # a store to another window word between window accesses
     # Not the register space: 0x8080_0020 is the word at 0x8000_0020
     a.li("t1", 0xC0DE_0020)
     a.sw("t1", 0x20, "s3")
@@ -332,7 +338,7 @@ def xcache() -> list:
     line under another tag (the data stays, the line goes); routine B, 4 KB above A on the
     same lines, called alternately with A so each evicts the other; A through the window's 8
     MB alias (the same lines: a hit); and a last long pass of A's loop, all hits, during
-    which a timer interrupt is taken. Data cache, from I-RAM: loads of D cold and warm, a
+    which a timer interrupt is taken. Data cache, from the ROM: loads of D cold and warm, a
     byte store hit (merged, loaded back), D2 on D's line evicting it, a halfword store miss
     (the line goes), a word store miss (allocates), and a load through the 8 MB alias."""
     a = Asm()
@@ -441,7 +447,7 @@ def traps() -> list:
     a.bnez("x5", "second")
     a.la("t0", "handler")
     a.csrw("mtvec", "t0")
-    a.li("sp", 0x20000800)
+    a.li("sp", RV_DATA)
     a.li("s1", 0x40000000)  # UART
     a.li("s2", 0x40001000)  # timer
     # Exceptions: the handler adds 4 to mepc and keeps mcause in s0
@@ -457,7 +463,7 @@ def traps() -> list:
     a.jalr("ra", "t1", 2)  # misaligned jump target
     a.label("after_ma")
     a.nop()
-    a.lw("t1", 0, "zero")  # load from I-RAM
+    a.lw("t1", 0, "zero")  # load from the ROM
     a.lbu("t1", 4, "s1")  # UART status via a byte load
     # CSRs
     a.li("t1", 0x12345678)
@@ -611,7 +617,7 @@ def _put_char(a, ch: int, tag: str):
 
 
 def s2_launch(hack: bool = False) -> list:
-    """What the second stage's `run` does, hand-assembled: I-RAM code writes the launcher
+    """What the second stage's `run` does, hand-assembled: ROM code writes the launcher
     into the PSRAM (fence.i) and jumps there; the launcher copies its second part to
     another PSRAM address word by word (PSRAM loads and stores from PSRAM code), fence.i,
     jumps there; that part prints 'P', then starts one of fw_common::launch's targets.
@@ -697,7 +703,7 @@ def s2_launch(hack: bool = False) -> list:
     first = r.assemble()
     assert 4 * len(first) <= S2L_BYTES and 4 * len(second) <= S2L_BYTES and 4 * len(target) <= S2L_BYTES
 
-    # From I-RAM: the first part into the PSRAM, fence.i, a jump there
+    # From the ROM: the first part into the PSRAM, fence.i, a jump there
     a = Asm()
     a.li("s1", 0x4000_0000)  # UART, for both parts
     a.li("s0", S2L_CODE)
@@ -840,6 +846,50 @@ def s2_hello_card() -> dict:
     return _card_sectors(files)
 
 
+def rom_stores() -> list:
+    """Stores the SoC ignores, read back: to the ROM (region 0; sw, sh, sb, at the word of
+    the next instruction too, which then runs as it was) and to the unassigned regions 2
+    (D-RAM until it went), 1 and 0xF, which read 0. Loads of the ROM through its aliases
+    (16 KB up, the top of region 0) return its words. Prints 'K' at the end."""
+    a = Asm()
+    a.li("s1", 0x4000_0000)  # UART
+    a.li("t1", 0x1234_5678)
+    # The ROM: a word, its aliases, then stores of every size and a load back of each
+    a.lw("t2", 0x100, "zero")
+    a.li("s2", 0x0000_4100)  # 16 KB up
+    a.lw("t3", 0, "s2")
+    a.li("s3", 0x0FFF_C100)  # the top of region 0
+    a.lw("t4", 0, "s3")
+    a.sw("t1", 0x100, "zero")
+    a.lw("t5", 0x100, "zero")
+    a.sh("t1", 0x102, "zero")
+    a.word(i_type(0x102, "zero", 5, "t5", 0x03))  # lhu
+    a.sb("t1", 1, "s2")  # 0x4101: the ROM's 0x101
+    a.lbu("t5", 0x101, "zero")
+    a.sw("t1", 0x200, "s3")  # 0x0FFF_C300: the ROM's 0x300
+    a.lw("t6", 0x300, "zero")
+    # A store to the word of the very next instruction: the instruction runs unchanged
+    a.la("t0", "next")
+    a.sw("zero", 0, "t0")
+    a.label("next")
+    a.addi("s4", "zero", 0x5A)
+    a.lw("s5", 0, "t0")
+    # Region 2 (D-RAM until it went) and two other unassigned regions: stores ignored, 0 read
+    for base in (0x2000_0000, 0x2000_1FFC, 0x1000_0000, 0xF000_0000):
+        a.li("s6", base)
+        a.lw("t2", 0, "s6")
+        a.sw("t1", 0, "s6")
+        a.lw("t3", 0, "s6")
+        a.sb("t1", 1, "s6")
+        a.lbu("t4", 1, "s6")
+        a.sh("t1", 2, "s6")
+        a.lh("t5", 2, "s6")
+    _put_char(a, ord("K"), "wait")
+    a.label("done")
+    a.j("done")
+    return a.assemble()
+
+
 def programs() -> list:
     """All programs, in trace-id order (id = index + 1)."""
     progs = [Program(f"random_rv_{seed}", cycles=20_000, imem_words=random_rv(seed)) for seed in (1, 2, 3)]
@@ -875,11 +925,13 @@ def programs() -> list:
     progs.append(Program("s2_launch", cycles=S2_LAUNCH_CYCLES, imem_words=s2_launch()))
     progs.append(Program("s2_launch_hack", cycles=S2_LAUNCH_CYCLES, imem_words=s2_launch(hack=True)))
     # The window programs finish by cycle ~3,600 / ~4,000 (window waits included); xmem
-    # then takes timer interrupts in I-RAM until the end
+    # then takes timer interrupts in the ROM until the end
     progs.append(Program("xmem", cycles=6_500, imem_words=xmem()))
     progs.append(Program("random_rv_xmem_4", cycles=8_000, imem_words=random_rv(4, base=XMEM + 0x400)))
-    # The window's caches: done by cycle ~5,500, then spins in I-RAM
+    # The window's caches: done by cycle ~5,500, then spins in the ROM
     progs.append(Program("xcache", cycles=7_000, imem_words=xcache()))
+    # Stores to the ROM and to unassigned regions, ignored; done by cycle ~300
+    progs.append(Program("rom_stores", cycles=2_000, imem_words=rom_stores()))
     # The whole chain with the real second stage: the first stage boots it from the card,
     # its `run` starts the hello demo in the PSRAM, which prints a0-a2
     progs.append(

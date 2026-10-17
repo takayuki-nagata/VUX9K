@@ -24,7 +24,7 @@
 		/*
 		 * The PSRAM 0x8040_0000-0x806F_FFFF: .data (copied from the image at start-up),
 		 * .bss, stacks. Its top 64 KB is the first stage's data, which the first stage
-		 * sets up again when it starts. I-RAM (the first stage) and D-RAM are not used.
+		 * sets up again when it starts. The boot ROM (the first stage) is not used.
 		 */
 		sram0: memory@80400000 {
 			compatible = "mmio-sram";

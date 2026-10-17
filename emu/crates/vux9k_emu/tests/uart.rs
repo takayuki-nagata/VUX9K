@@ -138,7 +138,7 @@ const J_SELF: u32 = 0x0000_006F;
 fn load(words: &[u32]) -> Soc {
     let mut soc = Soc::new(Profile::Real);
     let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
-    soc.load_iram(0, &bytes);
+    soc.load_rom(0, &bytes);
     soc
 }
 

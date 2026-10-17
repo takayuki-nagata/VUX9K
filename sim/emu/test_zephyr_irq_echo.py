@@ -53,7 +53,7 @@ def start(echo_bin: bytes, how: str):
         soc, mark = run_from_card("IRQECHO.BIN")
         assert soc.xmem_word(XMEM_BASE) == int.from_bytes(echo_bin[:4], "little")
         stage1 = read_hex_words(f"{STAGE1_DIR}/firmware.hex")
-        assert all(soc.iram_word(4 * i) == w for i, w in enumerate(stage1))
+        assert all(soc.rom_word(4 * i) == w for i, w in enumerate(stage1))
     # ~0.8M cycles from the PSRAM (an estimate from the I-RAM build's instruction counts)
     wait_for(soc, b"irq_echo ready\n", timeout_cycles=10_000_000, start=mark)
     soc.run(1_000_000)  # past uart_irq_rx_enable

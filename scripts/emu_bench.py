@@ -40,8 +40,8 @@ sys.path.insert(0, os.path.join(REPO_ROOT, "sim", "integration"))
 from rv32_asm import Asm  # noqa: E402
 from vux9k import XMEM_BASE, Soc, mbr_sector  # noqa: E402
 
-# Memory sizes per profile (bytes), for the digest
-SIZES = {"real": (16 * 1024, 8 * 1024)}
+# The ROM's size per profile (bytes), for the digest
+SIZES = {"real": 16 * 1024}
 
 
 @dataclass
@@ -57,11 +57,12 @@ class Workload:
 
 
 def synthetic_words(iterations: int = 2_000_000) -> list[int]:
-    """ALU, D-RAM loads/stores and branches with interrupts enabled (MTIE; mtimecmp stays
-    at its reset maximum, so none is taken), a '.' every 1024 iterations, then DONE."""
+    """ALU, PSRAM loads/stores (through the data cache; the stores wait) and branches with
+    interrupts enabled (MTIE; mtimecmp stays at its reset maximum, so none is taken), a '.'
+    every 1024 iterations, then DONE."""
     a = Asm()
     a.li("s0", 0x4000_0000)  # UART
-    a.li("s1", 0x2000_0000)  # D-RAM
+    a.li("s1", 0x8000_1000)  # the PSRAM
     a.li("s2", iterations)
     a.li("s3", 0)
     a.li("a0", 12345)
@@ -108,13 +109,10 @@ def _read(path: str) -> bytes | None:
 
 
 def _preload(soc: Any, build: str) -> bool:
-    texts = []
-    for name in ["firmware.hex"] + [f"firmware_d{i}.hex" for i in range(4)]:
-        data = _read(os.path.join(build, "firmware", name))
-        if data is None:
-            return False
-        texts.append(data.decode())
-    soc.load_readmemh(*texts)
+    data = _read(os.path.join(build, "firmware", "firmware.hex"))
+    if data is None:
+        return False
+    soc.load_readmemh(data.decode())
     return True
 
 
@@ -169,7 +167,7 @@ WORKLOADS = [
 
 
 def digest(soc: Any, profile: str) -> str:
-    iram, dram = SIZES[profile]
+    rom = SIZES[profile]
     h = hashlib.sha256()
     state = (
         soc.cycle,
@@ -190,8 +188,7 @@ def digest(soc: Any, profile: str) -> str:
         h.update(soc.sd_image())
     except RuntimeError:
         h.update(b"no card")
-    h.update(b"".join(soc.iram_word(a).to_bytes(4, "little") for a in range(0, iram, 4)))
-    h.update(b"".join(soc.dram_word(i).to_bytes(4, "little") for i in range(dram // 4)))
+    h.update(b"".join(soc.rom_word(a).to_bytes(4, "little") for a in range(0, rom, 4)))
     return h.hexdigest()
 
 

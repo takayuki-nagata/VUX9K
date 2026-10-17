@@ -28,9 +28,9 @@ it would clash), caches it as `build/eqy/gold-<sha>/`, snapshots both sides into
 sides flattened below `<top>` (~6 min per top on 4 cores). Notes:
 - Because of the flattening, a refactor may change submodule ports or move logic
   between submodules; only `<top>`'s own ports have to match.
-- `soc_ram` is replaced by a ports-only stub on both sides (its `$readmemh` needs
-  `firmware.hex`; its RAMs are too big to prove usefully), so changes *inside*
-  `soc_ram` are not covered — and neither is a change to its *ports*: the stubs'
+- `soc_rom` is replaced by a ports-only stub on both sides (its `$readmemh` needs
+  `firmware.hex`; its array is too big to prove usefully), so changes *inside*
+  `soc_rom` are not covered — and neither is a change to its *ports*: the stubs'
   interfaces must match, so such a change is its own commit, verified by tests.
 - eqy pairs up gold/gate signals by name before proving anything. When a change
   renames or restructures too much, it fails at that stage ("conflicting matches
@@ -107,13 +107,15 @@ without them, +2.03 ns with `-nowidelut`, +4.78 ns with both.
   changes, while cosmetic edits (renames, comments) changed nothing — so a
   per-commit timing comparison was mostly noise. With it LUT counts track the
   RTL. Behavior-neutral.
-- `-no-rw-check` drops yosys' read/write collision emulation for block RAM: ~79
-  flops, 67 of them for `i_mem`, whose comparator took the combinational fetch
-  address (`pc_out`, i.e. `next_pc`) onto the critical path. The one collision
-  this SoC can produce is a store to the next instruction's I-RAM word (the
-  fetch reads that word in the store's MEM_WAIT cycle); its fetch is now
-  undefined, documented as unsupported in README ("Writing code into I-RAM").
-  RTL simulation still shows read-before-write, so no RTL test can see this.
+- `-no-rw-check` drops yosys' read/write collision emulation for block RAM. It was
+  measured on the writable I-RAM (~79 flops, 67 of them for its comparator, which took
+  the combinational fetch address `pc_out` onto the critical path). The boot ROM that
+  replaced it has no write port; the window's caches still need the flag: without it
+  yosys adds ~215 flops of read-first/transparency logic to `soc_icache`'s and
+  `soc_dcache`'s tag and word RAMs (synthesized 2026-10-17). A read colliding with a
+  write there is undefined on the board and harmless by design (their headers: the
+  next cycle misses). RTL simulation still shows read-before-write, so no RTL test can
+  see this.
 Don't drop either flag to "simplify" the flow; re-measure with `make timing`
 if you change them.
 

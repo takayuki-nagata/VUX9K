@@ -5,7 +5,7 @@
 The hello demo (firmware/hello, \\VUX9K\\APPS\\HELLO.BIN of make apps) on the emulator: the
 second stage's `run` starts it in place in the PSRAM, it prints a0-a2 (as the first stage
 handed them to the second stage, which hands them on), ignores keys but `r`, and on `r`
-soft-resets back to the first stage, which is still in I-RAM and boots the second stage
+soft-resets back to the first stage, which is still in the ROM and boots the second stage
 again.
 """
 
@@ -52,8 +52,8 @@ def test_prints_the_first_stages_handoff(sd_card, a0):
     s2_out = soc.uart_received()[:mark].decode()
     assert hello_regs(out) == handoff(s2_out) == (a0, FAT_LBA, STAGE1_VERSION)
     assert 0x8000_0000 <= soc.pc < 0x8000_1000
-    # The first stage is still in I-RAM
-    assert all(soc.iram_word(4 * i) == w for i, w in enumerate(S1_WORDS))
+    # The first stage is still in the ROM
+    assert all(soc.rom_word(4 * i) == w for i, w in enumerate(S1_WORDS))
 
 
 def test_r_soft_resets_to_the_first_stage():

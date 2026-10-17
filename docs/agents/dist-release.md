@@ -32,8 +32,8 @@ fields (`release_check.py`'s `FIELDS`, all required) and the release notes built
 - The distribution is for applications: the card's files as they go on it (`sd/VUX9K/`:
   `STAGE2.BIN`, the demos' v4 files in `APPS/`; the first stage is in the bitstream), the
   demos' raw images for the emulator (`demos/`: applications start there with
-  `--no-firmware --load IMAGE --mode riscv|hack`), and the first stage's memory images (the
-  `firmware*.hex` the bitstream bakes in, under the dist's `emu` directory) only so that the
+  `--no-firmware --load IMAGE --mode riscv|hack`), and the first stage's ROM image (the
+  `firmware.hex` the bitstream bakes in, under the dist's `emu` directory) only so that the
   emulator boots a card image as the board does (`--firmware emu/firmware --sd`); no SD
   images (`vux_tool.py mkfat` makes them, as `check_dist`'s card run does).
 - What applications may rely on is docs/APP_DEVELOPMENT.md, "Hardware revisions and

@@ -1,0 +1,36 @@
+// Copyright (c) 2026 Takayuki Nagata
+// SPDX-License-Identifier: MIT
+
+// The boot ROM: 16 KB (4096 words) at RV32 0x0000_0000, the first stage, read through two
+// ports: the instruction fetch (i_addr, pc_out) and the data port (d_addr, data_addr: loads
+// of region 0). Only bits [13:2] of each are decoded, so the 16 KB repeat. Both are
+// synchronous (one clock) and there is no write port, so yosys maps it onto eight
+// true-dual-port block RAMs (DPB, 4096 x 4 bits each) whose contents come only from the
+// bitstream.
+pub module soc_rom #(
+    param WORDS: u32 = 4096,
+) (
+    clk       : input  clock    ,
+    i_addr    : input  logic<32>,
+    i_data_out: output logic<32>,
+    d_addr    : input  logic<32>,
+    d_data_out: output logic<32>,
+) {
+    #[allow(initial_assign)] // preloaded by $readmemh, also at configuration time (see the initial block)
+    var mem: logic<32> [WORDS];
+
+    // Not simulation-only: synthesis reads this file too, which is how the first stage gets
+    // baked into the bitstream's block RAM (hence #[allow(initial_assign)] on the array).
+    // The bare file name resolves against the tool's cwd (docs/agents/layout.md, "`build/`").
+    initial {
+        $readmemh("firmware.hex", mem);
+    }
+
+    always_ff (clk) {
+        i_data_out = mem[i_addr[13:2]];
+    }
+
+    always_ff (clk) {
+        d_data_out = mem[d_addr[13:2]];
+    }
+}

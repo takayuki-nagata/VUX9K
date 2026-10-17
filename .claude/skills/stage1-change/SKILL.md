@@ -21,8 +21,8 @@ Read docs/agents/firmware.md first; the rows below are its rules in checklist fo
 - [ ] Second-stage commands or their output changed (`shell.rs`'s `HELP`/`CARD_CMDS`,
       `[ERR]`/`[PUT]`/`[RUN]`/`[INSTALL]` lines): `tools/vux_tool.py`'s `s2_cmd`/`put`/
       `run_app`/`install_stage2`, `scripts/test_hardware.py`, `sim/emu/test_stage2.py`,
-      `test_soc_hardware_flow.py`. The launcher writes I-RAM only after the CRC checked.
-- [ ] The first stage keeps its data in the PSRAM (`S1_RAM_BASE`), never D-RAM, and writes
+      `test_soc_hardware_flow.py`. The launcher writes outside the PSRAM only after the CRC checked.
+- [ ] The first stage keeps its data in the PSRAM (`S1_RAM_BASE`), never region 0 or 2 (the ROM, an unassigned region), and writes
       nothing to the card.
 - [ ] Code that runs from the PSRAM (the second stage): no calls or loops on per-byte
       paths; it fetches each word in ~35 cycles.

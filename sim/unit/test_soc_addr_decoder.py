@@ -4,7 +4,8 @@
 """soc_addr_decoder: the data-address map of README ("Memory & MMIO Register Map", "Address
 decoding and aliases"), in RV32 and Hack mode, against a model; at most one select is ever
 active. Hack's RAM (below 0x6000) is the wait-state window (xmem), which soc_top maps into
-Hack's D segment; Hack never selects ram."""
+Hack's D segment; Hack never selects rom. Region 0 is the boot ROM (rom), region 2 (D-RAM
+until it went) selects nothing."""
 
 import random
 
@@ -12,7 +13,7 @@ import cocotb
 from cocotb.triggers import Timer
 from unit_models import rand32
 
-SELECTS = ("ram", "uart", "timer", "sd", "gpio", "xmem")
+SELECTS = ("rom", "uart", "timer", "sd", "gpio", "xmem")
 
 
 def model(addr, hack):
@@ -24,8 +25,8 @@ def model(addr, hack):
             return "uart" if (a >> 2) & 3 == 0 else "gpio"
         return "xmem" if a < 0x6000 else None
     region, page = addr >> 28, (addr >> 12) & 0xF
-    if region in (0x0, 0x2):
-        return "ram"
+    if region == 0x0:
+        return "rom"
     if region == 0x4:
         return {0: "uart", 1: "timer", 2: "sd", 3: "gpio"}.get(page)
     if region == 0x8:  # the wait-state window

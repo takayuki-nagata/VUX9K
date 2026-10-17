@@ -42,15 +42,16 @@ impl Soc {
         self.inner.profile.describe()
     }
 
-    /// Load bytes into I-RAM at byte address `addr`.
-    fn load_iram(&mut self, addr: u32, data: &[u8]) {
-        self.inner.load_iram(addr, data);
+    /// Load bytes into the boot ROM at byte address `addr` (its contents, as a bitstream
+    /// holds them: the CPU can't write it).
+    fn load_rom(&mut self, addr: u32, data: &[u8]) {
+        self.inner.load_rom(addr, data);
     }
 
     /// Start an application image at `addr`, as the second stage's `run` does: `mode`
     /// "riscv" or "hack" (a Hack image is big-endian 16-bit instructions, as `hcc -r`
-    /// writes them). RV32: at 0 the image goes into I-RAM, as a loader that soft-resets
-    /// into it puts it; at a PSRAM address (0x8000_0000, where the board's RV32
+    /// writes them). RV32: at 0 the image goes into the ROM, in place of the first stage
+    /// (on the board, a bitstream with it as firmware.hex); at a PSRAM address (0x8000_0000, where the board's RV32
     /// applications are linked) it goes there and the CPU starts at `addr`. Hack: `addr`
     /// is the byte offset in Hack's instruction segment (the PSRAM at 0x8000_0000, 64 KB)
     /// and the CPU starts at 0. The CPU runs it in that ISA from the first fetch; call this
@@ -78,37 +79,20 @@ impl Soc {
             .map_err(PyValueError::new_err)
     }
 
-    /// Load 32-bit words into D-RAM from word 0.
-    fn load_dram_words(&mut self, words: Vec<u32>) {
-        self.inner.load_dram_words(&words);
+    /// soc_rom's power-on preload, from the text of firmware.hex.
+    fn load_readmemh(&mut self, rom: &str) -> PyResult<()> {
+        self.inner.load_readmemh(rom).map_err(PyValueError::new_err)
     }
 
-    /// soc_ram's power-on preload, from the text of firmware.hex and firmware_d0-3.hex.
-    fn load_readmemh(
-        &mut self,
-        iram: &str,
-        d0: &str,
-        d1: &str,
-        d2: &str,
-        d3: &str,
-    ) -> PyResult<()> {
-        self.inner
-            .load_readmemh(iram, [d0, d1, d2, d3])
-            .map_err(PyValueError::new_err)
-    }
-
-    /// Write 32-bit words into I-RAM from word index `start`.
+    /// Write 32-bit words into the ROM from word index `start`.
     #[pyo3(signature = (words, start = 0))]
-    fn load_iram_words(&mut self, words: Vec<u32>, start: u32) {
-        self.inner.load_iram_words(start, &words);
+    fn load_rom_words(&mut self, words: Vec<u32>, start: u32) {
+        self.inner.load_rom_words(start, &words);
     }
 
-    fn iram_word(&self, addr: u32) -> u32 {
-        self.inner.iram_word(addr)
-    }
-
-    fn dram_word(&self, index: u32) -> u32 {
-        self.inner.dram_word_index(index)
+    /// The ROM word at byte address `addr`.
+    fn rom_word(&self, addr: u32) -> u32 {
+        self.inner.rom_word(addr)
     }
 
     /// The PSRAM word at RV32 address `addr` (0 without a window, as in "isa-test").

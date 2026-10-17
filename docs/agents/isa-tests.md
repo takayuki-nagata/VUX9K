@@ -69,7 +69,7 @@ are easy to break without noticing:
   rv32ui-p-add ...` runs a subset; set `TRACE=1` in the environment for a
   per-cycle PC/instruction log in `build/riscv_tests/runs/<test>/sim.log`. Tests run
   in parallel (`--jobs`, default: CPUs); each has its own run directory.
-- **The tb's RAM has `soc_ram`'s timing: keep it.** Both ports read one cycle after
+- **The tb's RAM has `soc_rom`'s read timing: keep it.** Both ports read one cycle after
   the CPU presents the address, before that edge's write, and stores use `data_waddr`.
   Until 2026-10 it read combinationally at `pc_out`, which hid any fetch-address bug:
   with `pc_out` mutated to `pc_reg` (the address one cycle late) all 56 tests still

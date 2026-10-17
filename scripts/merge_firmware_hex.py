@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: MIT
 
 """
-Turn an I-RAM image (the first stage, hw_test) into the 4096-word (16 KB) hex file that
-soc_ram's $readmemh loads, the rest filled with NOPs.
+Turn a boot ROM image (the first stage, hw_test) into the 4096-word (16 KB) hex file that
+soc_rom's $readmemh loads, the rest filled with NOPs.
 """
 
 import struct

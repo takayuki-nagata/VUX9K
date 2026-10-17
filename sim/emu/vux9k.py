@@ -9,7 +9,7 @@ Helpers for tests on the Rust emulator (sim/emu/vux9k.py).
 This module puts it, the repo root (for tools.vux_tool) and sim/integration (for the
 pure-Python rv32_asm/hack_asm assemblers) on sys.path, and sets a SoC up the way
 sim/integration/soc_env.start_soc() sets up the RTL: firmware preloaded from the
-same firmware.hex/firmware_d0-3.hex, an SD card with the MBR signature in sector 0.
+same firmware.hex, an SD card with the MBR signature in sector 0.
 """
 
 import os
@@ -71,16 +71,13 @@ def read_hex_words(path) -> list[int]:
 
 
 def preload_firmware(soc, firmware_dir=FIRMWARE_DIR) -> None:
-    """soc_ram's power-on contents: firmware.hex and firmware_d0-3.hex of firmware_dir
-    (build/firmware/, what the bitstream holds)."""
-    texts = []
-    for name in ["firmware.hex"] + [f"firmware_d{i}.hex" for i in range(4)]:
-        path = os.path.join(firmware_dir, name)
-        if not os.path.exists(path):
-            raise FileNotFoundError(f"{path} missing; run `make firmware` first")
-        with open(path) as f:
-            texts.append(f.read())
-    soc.load_readmemh(*texts)
+    """soc_rom's power-on contents: firmware.hex of firmware_dir (build/firmware/, what the
+    bitstream holds)."""
+    path = os.path.join(firmware_dir, "firmware.hex")
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"{path} missing; run `make firmware` first")
+    with open(path) as f:
+        soc.load_readmemh(f.read())
 
 
 # Firmware coverage (make coverage-fw): with VUX9K_COV_DIR set, every SoC created
@@ -121,12 +118,12 @@ def start_soc(*, profile="real", sd_sectors=None, mbr=True, sd_card=None, card=T
     sd_sectors: {lba: bytes} on the card (after the MBR if mbr=True).
     sd_card: keyword arguments for Soc.sd_insert (sdhc, strict, faults).
     card: False leaves the socket empty.
-    imem_words: 32-bit words written over I-RAM from word 0 after the preload.
+    imem_words: 32-bit words written over the ROM from word 0 after the preload.
     """
     soc = new_soc(profile)
     preload_firmware(soc)
     if imem_words is not None:
-        soc.load_iram_words(list(imem_words))
+        soc.load_rom_words(list(imem_words))
     if card:
         soc.sd_insert(sd_image(sd_sectors or {}, mbr=mbr), **(sd_card or {}))
     return soc
@@ -135,7 +132,7 @@ def start_soc(*, profile="real", sd_sectors=None, mbr=True, sd_card=None, card=T
 def start_hack(words, **kw):
     """A SoC that starts a Hack program the way soc_env.start_hack() does on the RTL: its
     words (two instructions each, the first in the low half: hack_asm, scripts/bin2hex.py)
-    in Hack's I segment, lockstep_programs.hack_stub at I-RAM 0, which gives Hack in GPIO
+    in Hack's I segment, lockstep_programs.hack_stub at ROM word 0, which gives Hack in GPIO
     0x8 and soft-resets into it (the power-on reset starts RV32), and prints HACK_BACK when
     the program soft-resets back without a mode. kw goes to start_soc()."""
     soc = start_soc(imem_words=hack_stub(), **kw)

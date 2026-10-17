@@ -4,7 +4,7 @@
 """
 SoC memory map / MMIO peripheral verification in RISC-V mode (test_soc_rv32i.py).
 
-A small RV32I program (built with rv32_asm) is preloaded straight into I-RAM, so no
+A small RV32I program (built with rv32_asm) is preloaded straight into the boot ROM, so no
 SD card or boot firmware is involved. It checks the address decoder and peripherals
 from the CPU's side and reports over the UART: "F<code>" on the first failed check,
 "PASS" when all passed. See the check codes in mmio_program().
@@ -23,13 +23,12 @@ from soc_env import check_psram_pins, load_imem, start_soc
 UART = 0x4000_0000  # +0 data, +4 status {frame_err, overrun, tx_full, rx_empty}
 TIMER = 0x4000_1000  # +0/+4 mtime lo/hi, +8/+C mtimecmp lo/hi
 GPIO = 0x4000_3000  # +0 LEDs, +4 button, +C soft-reset magic
-DRAM = 0x2000_0000
+UNASSIGNED = 0x2000_0000  # region 2: D-RAM until it went, now reads 0 and ignores stores
 XMEM = 0x8000_0000  # wait-state window: the 8 MB PSRAM, repeating every 8 MB across region 8
 XMEM_BYTES = 0x80_0000
-RESET_MARKER_ADDR = DRAM + 0x200
-RESET_MARKER = 0xC0FFEE42
 GPIO_SOFT_RESET = 0x0000_A55A
-LED_PATTERN = 0x2A
+LED_CHECK = 0x15  # check 10's pattern
+LED_PATTERN = 0x2A  # set just before the soft reset: the second pass's marker
 
 
 def _putc_routine(a: Asm):
@@ -72,33 +71,37 @@ def _puts(a: Asm, text: str):
 
 def mmio_program() -> list[int]:
     a = Asm()
-    # Second pass after a GPIO soft reset: the D-RAM marker survives (only the CPU resets)
-    a.li("s0", RESET_MARKER_ADDR)
-    a.lw("t0", 0, "s0")
-    a.li("t1", RESET_MARKER)
+    # Second pass after a GPIO soft reset: the LED register, reset only at power-on, still
+    # holds LED_PATTERN (only the CPU resets; the PSRAM has no defined power-up contents to
+    # keep a marker in)
+    a.li("s5", GPIO)
+    a.lw("t0", 0, "s5")
+    a.li("t1", LED_PATTERN)
     a.beq("t0", "t1", "after_soft_reset")
 
-    # 1-3: D-RAM word/byte lanes and sub-word loads
-    a.li("s2", DRAM + 0x100)
+    # 1-3: region 2 (D-RAM until it went) is unassigned: a word and a byte stored, then
+    # every width reads 0
+    a.li("s2", UNASSIGNED + 0x100)
     a.li("t0", 0x11223344)
     a.sw("t0", 0, "s2")
     a.li("t0", 0xAA)
     a.sb("t0", 1, "s2")
     a.lw("t3", 0, "s2")
-    _expect(a, "t3", 0x1122AA44, 1)
+    _expect(a, "t3", 0, 1)
     a.lb("t3", 1, "s2")
-    _expect(a, "t3", 0xFFFFFFAA, 2)
+    _expect(a, "t3", 0, 2)
     a.lbu("t3", 2, "s2")
-    _expect(a, "t3", 0x22, 3)
+    _expect(a, "t3", 0, 3)
 
-    # 4-5: I-RAM through the data port (read a constant, write + read back)
+    # 4-5: the boot ROM through the data port: a constant reads back, a store to it is
+    # ignored
     a.la("s3", "table")
     a.lw("t3", 0, "s3")
     _expect(a, "t3", 0xDEADBEEF, 4)
     a.li("t0", 0x5A5A1234)
     a.sw("t0", 4, "s3")
     a.lw("t3", 4, "s3")
-    _expect(a, "t3", 0x5A5A1234, 5)
+    _expect(a, "t3", 0x600DC0DE, 5)
 
     # 6-7: unmapped addresses read as 0 (unused MMIO page, unmapped region)
     a.li("t0", 0x4000_4000)
@@ -168,11 +171,10 @@ def mmio_program() -> list[int]:
     a.sw("t0", 8, "s4")
 
     # 10-11: GPIO LED readback; button (held by the testbench) reads 1
-    a.li("s5", GPIO)
-    a.li("t0", LED_PATTERN)
+    a.li("t0", LED_CHECK)
     a.sw("t0", 0, "s5")
     a.lw("t3", 0, "s5")
-    _expect(a, "t3", LED_PATTERN, 10)
+    _expect(a, "t3", LED_CHECK, 10)
     a.lw("t3", 4, "s5")
     _expect(a, "t3", 1, 11)
 
@@ -189,25 +191,24 @@ def mmio_program() -> list[int]:
     a.andi("t1", "t1", 1)
     _expect(a, "t1", 1, 13)
 
-    # 15-17: aliasing, documented in README ("Address decoding and aliases"): D-RAM repeats
-    # every 8 KB across 0x2xxx_xxxx, and data reads of 0x0000_0000-0x0000_FFFF are I-RAM
-    # repeating every 16 KB
-    a.li("t0", DRAM + 0x2100)
-    a.li("t1", 0x0BADCAFE)
-    a.sw("t1", 0, "t0")
-    a.lw("t3", 0, "s2")  # s2 = DRAM + 0x100
-    _expect(a, "t3", 0x0BADCAFE, 15)
+    # 15-17: aliasing, documented in README ("Address decoding and aliases"): data reads
+    # of region 0 are the ROM repeating every 16 KB, up to its top (until D-RAM went, the
+    # region above 64 KB read D-RAM); region 2 reads 0 all over
+    a.li("t0", 0x0FFF_C000)
+    a.add("t0", "t0", "s3")  # s3 = &table
+    a.lw("t3", 0, "t0")
+    _expect(a, "t3", 0xDEADBEEF, 15)
     a.li("t0", 0x2400_0100)
     a.lw("t3", 0, "t0")
-    _expect(a, "t3", 0x0BADCAFE, 16)
+    _expect(a, "t3", 0, 16)
     a.li("t0", 0x4000)
-    a.add("t0", "t0", "s3")  # s3 = &table
+    a.add("t0", "t0", "s3")
     a.lw("t3", 0, "t0")
     _expect(a, "t3", 0xDEADBEEF, 17)
 
     # 14: GPIO soft reset restarts the CPU at 0 (continues at after_soft_reset)
-    a.li("t1", RESET_MARKER)
-    a.sw("t1", 0, "s0")
+    a.li("t1", LED_PATTERN)
+    a.sw("t1", 0, "s5")
     _puts(a, "S")
     a.li("t0", GPIO_SOFT_RESET)
     a.sw("t0", 0xC, "s5")
@@ -217,7 +218,6 @@ def mmio_program() -> list[int]:
     a.j("fail")
 
     a.label("after_soft_reset")
-    a.sw("zero", 0, "s0")
     _puts(a, "RPASS\n")
     a.label("halt_ok")
     a.j("halt_ok")
@@ -226,7 +226,7 @@ def mmio_program() -> list[int]:
     _fail_routine(a)
     a.label("table")
     a.word(0xDEADBEEF)
-    a.word(0)
+    a.word(0x600DC0DE)
     return a.assemble()
 
 
@@ -379,7 +379,7 @@ async def test_soc_uart_rx_interrupt(dut):
 def counters_program() -> list[int]:
     """cycle/instret/time CSRs and a writable mcycle; 'F<code>' or 'CPASS'."""
     a = Asm()
-    a.li("s0", DRAM + 0x100)
+    a.li("s0", XMEM + 0x300)
     a.li("s1", TIMER)
     # 1: instret counts retired instructions, loads/stores once each: the second csrr
     # sees the first csrr, sw, lw and 8 nops retired
@@ -441,7 +441,7 @@ async def test_soc_counters(dut):
 
 @cocotb.test()
 async def test_soc_mmio_map(dut):
-    """Address decoder, D-RAM lanes, I-RAM data port, timer, GPIO, UART RX and soft reset"""
+    """Address decoder, the unassigned region 2, the ROM's data port, timer, GPIO, UART RX and soft reset"""
     rv32_asm.selftest()
     program = mmio_program()
     ser, _ = await start_soc(dut, btn=0, during_reset=lambda soc: load_imem(soc, program))

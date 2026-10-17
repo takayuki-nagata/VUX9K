@@ -6,7 +6,7 @@ unified_cpu's wait states: instr_ready = 0 holds a FETCH, data_ready = 0 holds a
 MEM_WAIT (RV32 load/store, Hack M read) or a Hack M write (EXECUTE, HACK_WB), and nothing
 else may happen meanwhile.
 
-The harness drives the CPU cycle by cycle from a memory model with soc_ram's timing
+The harness drives the CPU cycle by cycle from a memory model with soc_rom's read timing
 (each port returns the word at the address the CPU presented in the previous cycle) and
 puts garbage on instr_in/data_in in every cycle whose ready is low, so a CPU that
 latched data before ready would compute wrong results. Most checks compare a run with

@@ -41,16 +41,15 @@ pub const GPIO_SOFT_RESET: usize = 0x4000_300C;
 pub const SOFT_RESET_KEY: u32 = 0x5A5A_A55A;
 
 // ----- Memories -------------------------------------------------------------------
-/// I-RAM: the first stage at power-on; a store there replaces it (whole words: no byte
-/// enables), and every soft reset into RV32 starts what is there.
-pub const IRAM_BASE: usize = 0x0000_0000;
-pub const IRAM_BYTES: usize = 16 * 1024;
-pub const DRAM_BASE: usize = 0x2000_0000;
-pub const DRAM_BYTES: usize = 8 * 1024;
+/// The boot ROM (soc_rom): the first stage, from the bitstream; power-on and every soft
+/// reset into RV32 start it. Read-only: a store there is ignored, as is one to an unassigned
+/// region (0x2000_0000, D-RAM until it went, is one).
+pub const ROM_BASE: usize = 0x0000_0000;
+pub const ROM_BYTES: usize = 16 * 1024;
 /// The wait-state window (soc_pkg::RV_REGION_XMEM, XMEM_WORDS): the 8 MB PSRAM, code and
-/// data, every access slower than I-RAM/D-RAM; its `XMEM_BYTES` repeat every 8 MB across
-/// 0x8xxx_xxxx (the PSRAM's register space is not reachable). Contents are undefined at
-/// power-up.
+/// data, the only RAM, every access that misses its caches slower than the ROM; its
+/// `XMEM_BYTES` repeat every 8 MB across 0x8xxx_xxxx (the PSRAM's register space is not
+/// reachable). Contents are undefined at power-up.
 pub const XMEM_BASE: usize = 0x8000_0000;
 pub const XMEM_BYTES: usize = 8 * 1024 * 1024;
 /// The second stage's window, the top 1 MB of the PSRAM: `\VUX9K\STAGE2.BIN` and a RAM

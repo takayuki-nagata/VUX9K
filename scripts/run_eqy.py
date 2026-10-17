@@ -17,9 +17,9 @@ records for them.
 Both sides are flattened below <top>, so a refactor may change submodule
 interfaces or move logic between submodules; only <top>'s own ports must match.
 
-soc_ram is always replaced by a ports-only black box on both sides: its
-$readmemh() initial block needs firmware.hex, and its RAM arrays are too large
-to prove anything about usefully. Changes inside soc_ram are therefore not
+soc_rom is always replaced by a ports-only black box on both sides: its
+$readmemh() initial block needs firmware.hex, and its 16 KB array is too large
+to prove anything about usefully. Changes inside soc_rom are therefore not
 checked; its ports must match.
 
 --gate-tie NAME=VALUE (make eqy EQY_GATE_TIE="NAME=VALUE ...") is for a refactor
@@ -49,7 +49,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 EQY_DIR = REPO_ROOT / "build" / "eqy"
 PACKAGE = Path("soc/cpu/rv32i_pkg.sv")  # always present; every *_pkg.sv is read before the modules
-BLACKBOX = {"soc_ram": Path("soc/soc_ram.sv")}
+BLACKBOX = {"soc_rom": Path("soc/soc_rom.sv")}
 # Generated trees compared: the SoC and the Veryl dependencies it declares (Veryl also
 # writes its standard library under dependencies/std, which the SoC doesn't use)
 RTL_DIRS = ("soc",) + tuple(

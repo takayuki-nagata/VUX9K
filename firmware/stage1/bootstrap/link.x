@@ -3,9 +3,8 @@
  * SPDX-License-Identifier: MIT
  */
 
-/* The first stage: code in I-RAM (the bitstream's boot ROM), data and stack in the
- * PSRAM below the second stage's window (fw_common::map::S1_RAM_BASE/BYTES). D-RAM is
- * not used: its preload must stay all zero (scripts/hw_smoke.py). */
+/* The first stage: code in the bitstream's boot ROM (read-only), data and stack in the
+ * PSRAM below the second stage's window (fw_common::map::S1_RAM_BASE/BYTES). */
 MEMORY
 {
   I_ROM (rx)  : ORIGIN = 0x00000000, LENGTH = 16K

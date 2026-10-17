@@ -19,7 +19,7 @@ mtime +0x0 / mtimecmp +0x8 layout is `timer_core`'s, so Zephyr's in-tree
   `vux9k.dts` with their unit addresses (`flash@80000000`, `memory@80400000`), not in
   the dtsi. The second stage's `run` loads such an image (a v4 file at `0x8000_0000`, `make
   apps`' `ZEPHYR.BIN`/`IRQECHO.BIN`/`BC.BIN`) in place and jumps to it (fw_common::launch's PSRAM
-  target), leaving the first stage in I-RAM: a Zephyr app never returns, but Button S1 (the
+  target), leaving the first stage in the ROM: a Zephyr app never returns, but Button S1 (the
   board's reset) starts the first stage and the boot again. The tests can't press it, so
   the board tests (`test_hardware.py` 13 and 14, `hw_irq_echo.py`) load the bitstream afterwards.
   A fetch or load there that misses the caches in front of the PSRAM, and every store, waits
@@ -45,7 +45,7 @@ staticlib. `make build-zephyr-demo` builds it for `vux9k` into `build/zephyr-dem
 (cargo output included). It is tested loaded straight into the PSRAM, on the emulator
 (`sim/emu/test_zephyr_demo.py`: `Soc.load_app(image, "riscv", 0x8000_0000)`, the CLI's
 default `--load-addr` for riscv) and the RTL (`sim-zephyr-demo-rtl`: `soc_env.preload_psram_app`
-writes the PSRAM word model and puts a jump to `0x8000_0000` at I-RAM 0, so Verilator RTL
+writes the PSRAM word model and puts a jump to `0x8000_0000` at ROM word 0, so Verilator RTL
 only), and as the board starts it, the second stage's `run VUX9K/APPS/ZEPHYR.BIN` from the
 card: on the emulator (the same test, same expectations) and on the netlist
 (`sim-zephyr-demo-gls`, test-slow: the prompt at ~12.8M cycles, the 13 KB load ~3.5M, then

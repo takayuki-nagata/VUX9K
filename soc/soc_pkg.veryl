@@ -22,8 +22,8 @@ pub package soc_pkg {
     const SD_CLK_DIV_MIN : u32 = 3;
 
     // RV32 data address map: region = addr[31:28], MMIO page = addr[15:12]
-    const RV_REGION_IRAM : logic<4> = 4'h0;
-    const RV_REGION_DRAM : logic<4> = 4'h2;
+    // (region 0: the boot ROM, soc_rom; region 2, D-RAM until it went, is unassigned)
+    const RV_REGION_ROM  : logic<4> = 4'h0;
     const RV_REGION_MMIO : logic<4> = 4'h4;
     const MMIO_PAGE_UART : logic<4> = 4'h0;
     const MMIO_PAGE_TIMER: logic<4> = 4'h1;

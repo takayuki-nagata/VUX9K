@@ -20,14 +20,14 @@ source tree exactly — `build/veryl/soc/cpu/*.sv`, `build/veryl/soc/uart/*.sv`,
 See the `Makefile`'s `BUILD_DIR`/`VERYL_OUT_DIR`/`FIRMWARE_BUILD_DIR`/`SYNTH_DIR`
 variables for the exact layout.
 
-**Exception:** `firmware.hex` and `firmware_d0-3.hex` also exist as symlinks at
+**Exception:** `firmware.hex` also exists as a symlink at
 the repo root, pointing into `build/firmware/`. This is required
-because `soc/soc_ram.veryl`'s `$readmemh("firmware.hex", ...)` calls use a bare
+because `soc/soc_rom.veryl`'s `$readmemh("firmware.hex", ...)` uses a bare
 filename resolved relative to whatever directory the invoking tool's process cwd
-is (yosys/nextpnr: repo root). cocotb runs don't use them: `sim/runners/sim_runner.py`
-puts the same symlinks into each test's own run directory, its cwd. `$readmemh` is **not**
+is (yosys/nextpnr: repo root). cocotb runs don't use it: `sim/runners/sim_runner.py`
+puts the same symlink into each test's own run directory, its cwd. `$readmemh` is **not**
 simulation-only, it's how the actual FPGA bitstream gets the boot firmware baked
-into BRAM at synthesis time. Don't remove these symlinks or "clean up" the
+into BRAM at synthesis time. Don't remove this symlink or "clean up" the
 duplication without also fixing the underlying `$readmemh` calls (out of scope
 for a build-layout change; would require re-verifying real hardware).
 

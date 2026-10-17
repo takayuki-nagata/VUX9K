@@ -33,7 +33,7 @@ Commands (paths with / or \\, . and .., 8.3 or long names):
   rmdir DIR        remove an empty directory
   mv SRC DST       move or rename a file (DST may be a directory)
   put NAME         receive a file over the UART (transfer v2) as NAME
-  run FILE         start a VUX9 v4 application (I-RAM ones replace the first stage)
+  run FILE         start a VUX9 v4 application (RV32 or Hack, in the PSRAM)
   info             card, free space, versions
   install [-u]     receive a second stage and install it as \\VUX9K\\STAGE2.BIN
                    (-u: unchecked, for tests)

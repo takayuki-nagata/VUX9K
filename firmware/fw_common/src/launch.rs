@@ -7,15 +7,15 @@
 //!
 //! | Target | Header | Start |
 //! |---|---|---|
-//! | `Psram` | `MODE_RISCV`, inside `XMEM_BASE..STAGE2_BASE` | loaded in place; D-RAM zeroed, `fence.i`, a jump to the entry with a0-a2 as the first stage hands them over |
+//! | `Psram` | `MODE_RISCV`, inside `XMEM_BASE..STAGE2_BASE` | loaded in place, `fence.i`, a jump to the entry with a0-a2 as the first stage hands them over |
 //! | `HackSeg` | `MODE_HACK`, a word-aligned `load_addr` inside `0..HACK_I_BYTES`: an offset in Hack's instruction segment | loaded in place (`HACK_I_BASE` + offset), Hack's data segment zeroed, `fence.i`, the Hack boot mode (`BOOT_MODE_VALID`), soft reset; it starts at 0 |
 //!
-//! RV32 runs from the PSRAM only: an RV32 file loading at 0 (I-RAM) is refused as out of
+//! RV32 runs from the PSRAM only: an RV32 file loading at 0 (the boot ROM) is refused as out of
 //! the window. The file loads through `staging` (addresses below `HACK_I_BYTES` into the
 //! PSRAM at `SCRATCH`, which is `HACK_I_BASE`, so a Hack payload lands in its segment;
 //! PSRAM addresses in place) with `LOAD_WINDOW`, which holds every target's window, and
 //! `plan` then decides from the checked header. Nothing outside the PSRAM is written
-//! before that: a refused file leaves the first stage in I-RAM.
+//! before that.
 
 use crate::boot::put_boot_error;
 use crate::fat::stage2::{BootError, Window};
@@ -33,8 +33,8 @@ pub const SCRATCH_BYTES: u32 = (map::STAGE2_BASE - map::XMEM_BASE) as u32;
 /// Every target's window together (`load_file` checks a header against it before `plan`
 /// picks the target): from 0 (Hack's offsets) to the second stage.
 pub const LOAD_WINDOW: Window = Window {
-    base: map::IRAM_BASE as u32,
-    len: (map::STAGE2_BASE - map::IRAM_BASE) as u32,
+    base: map::ROM_BASE as u32,
+    len: (map::STAGE2_BASE - map::ROM_BASE) as u32,
 };
 
 /// Where an application runs.

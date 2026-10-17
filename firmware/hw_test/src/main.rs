@@ -1,14 +1,16 @@
 // Copyright (c) 2026 Takayuki Nagata
 // SPDX-License-Identifier: MIT
 
-//! Board self-test (`make hw-smoke`): runs from block RAM in place of the first stage,
+//! Board self-test (`make hw-smoke`): runs from the boot ROM in place of the first stage,
 //! so it needs neither the SD card nor the boot chain. Each test folds 4096 results of
 //! one instruction pattern (xorshift32 operands) into a checksum and compares it with
 //! the value the emulator computes (which `make sim-lockstep` ties to the RTL); a
 //! bitstream whose timing fails on the board gets them wrong, even when STA passed.
 //! The `xmem` tests do the same for the wait-state window (`map::XMEM_BASE`, the 8 MB
 //! PSRAM): its address lines and the first and last few KB, every load/store width, code
-//! run from it, and the cycles each kind of access waits.
+//! run from it, and the cycles each kind of access waits. Its own data and stack are in the
+//! PSRAM too (link.x: where those tests don't write), so every test also runs through the
+//! data cache.
 //!
 //! Output, one short line each: `T<nn> <name> <checksum> PASS|FAIL`, then
 //! `RESULT PASS|FAIL <passed>/<total> <mask>` (hex; bit n-1 of the mask set = test n
@@ -195,7 +197,7 @@ fn t_raw(a: u32, b: u32) -> u32 {
 
 static mut BUF: [u32; 64] = [0; 64];
 
-/// D-RAM loads and stores of every width, with sign extension.
+/// Loads and stores of every width, with sign extension, on a buffer in the PSRAM.
 fn t_mem(a: u32, b: u32) -> u32 {
     let r: u32;
     unsafe {
@@ -342,9 +344,10 @@ fn t_xmem(seed: u32) -> u32 {
 
 /// Window loads and stores of every width: a byte and a halfword stored into a word
 /// with known contents (the window merges the lanes), read back as a word and by
-/// sign- and zero-extending loads.
+/// sign- and zero-extending loads. Words in the lower 4 MB: this program's data and stack
+/// are in the upper half.
 fn t_xmem_lanes(a: u32, b: u32) -> u32 {
-    let w = xmem_word((b >> 3) as usize & (XMEM_WORDS - 1)) as usize;
+    let w = xmem_word((b >> 3) as usize & (XMEM_WORDS / 2 - 1)) as usize;
     let lane = (b & 3) as usize;
     let half = (b & 2) as usize;
     unsafe {
@@ -395,8 +398,8 @@ global_asm!(
     "    xor a0, a0, t1",
     "    ret",
     "xmem_code_end:",
-    // the reference `ret` in I-RAM for t_xmem_time
-    "iram_ret:",
+    // the reference `ret` in the ROM for t_xmem_time
+    "rom_ret:",
     "    ret",
     ".option pop",
 );
@@ -405,7 +408,7 @@ extern "C" {
     static xmem_copy_start: u32;
     static xmem_code_start: u32;
     static xmem_code_end: u32;
-    fn iram_ret();
+    fn rom_ret();
 }
 
 /// Where t_xmem_exec puts its routine.
@@ -432,7 +435,7 @@ fn fence_i() {
     };
 }
 
-/// Code fetched from the window: the routine above copied there (data reads of I-RAM),
+/// Code fetched from the window: the routine above copied there (data reads of the ROM),
 /// `fence.i`, then folded over xorshift pairs like the instruction tests.
 fn t_xmem_exec(seed: u32) -> u32 {
     unsafe {
@@ -449,10 +452,8 @@ fn t_xmem_exec(seed: u32) -> u32 {
     checksum(seed, xmem_call)
 }
 
-static mut TIME_WORD: u32 = 0;
-
-/// Cycles window accesses add over the same access to D-RAM (a load or store) or I-RAM
-/// (the fetch of a `ret`), from `cycle` around each, 6 bits each: fetch miss << 24 |
+/// Cycles window accesses add over the same access to the ROM (a load, a store, which the
+/// ROM ignores, or the fetch of a `ret`), from `cycle` around each, 6 bits each: fetch miss << 24 |
 /// fetch hit << 18 | load miss << 12 | load hit << 6 | store. A miss is soc_pkg's
 /// XMEM_READ_LATENCY, a hit of the window's caches nothing, a store XMEM_WRITE_LATENCY.
 /// The misses are made sure of: storing the `ret` invalidates its instruction-cache line,
@@ -488,9 +489,9 @@ fn t_xmem_time(_: u32) -> u32 {
             "jalr ra, 0({rx})",
             "rdcycle {c8}",
             ".option pop",
-            d = in(reg) core::ptr::addr_of_mut!(TIME_WORD), x = in(reg) x,
+            d = in(reg) rom_ret as *const () as usize, x = in(reg) x,
             xo = in(reg) x.wrapping_byte_add(0x1000),
-            ri = in(reg) iram_ret as *const () as usize, rx = in(reg) xret, t = out(reg) _,
+            ri = in(reg) rom_ret as *const () as usize, rx = in(reg) xret, t = out(reg) _,
             c0 = out(reg) c0, c1 = out(reg) c1, c2 = out(reg) c2, c3 = out(reg) c3,
             c4 = out(reg) c4, c5 = out(reg) c5, c6 = out(reg) c6, c7 = out(reg) c7,
             c8 = out(reg) c8, out("ra") _)

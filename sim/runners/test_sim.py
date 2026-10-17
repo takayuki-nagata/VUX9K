@@ -46,7 +46,7 @@ UNIT = [
     ("soc_icache", "test_soc_icache"),
     ("soc_dcache", "test_soc_dcache"),
     ("sdcard_spi", "test_sdcard_spi"),
-    ("soc_ram", "test_soc_ram"),
+    ("soc_rom", "test_soc_rom"),
     ("tb_gowin_bram", "test_gowin_bram"),  # SP/SDPB cell models (no netlist uses them)
 ]
 

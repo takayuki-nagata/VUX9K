@@ -13,7 +13,7 @@
 // data_waits count the cycles the CPU actually waited, which the cocotb side checks.
 //
 // The program comes from `program.hex` in the simulator's cwd (a bare name, like
-// soc_ram's firmware.hex): run_riscv_tests.py links each test's image there, in
+// soc_rom's firmware.hex): run_riscv_tests.py links each test's image there, in
 // the test's own run directory.
 module tb_hex_runner (
     clk: input clock, // active-high edge
@@ -120,7 +120,7 @@ module tb_hex_runner (
         }
     }
 
-    // The bus timing of soc_ram (the real SoC): both ports read synchronously, one
+    // The bus timing of soc_rom (the real SoC): both ports read synchronously, one
     // cycle after the CPU presents the address, and a read sees the RAM before a write
     // on the same edge. pc_out is next_pc outside FETCH, so this checks that the CPU
     // asks for the right instruction a cycle early, which a combinational read would

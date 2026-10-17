@@ -37,7 +37,7 @@ def test_until_not_reached_fails():
 
 
 def test_hex_runs_as_rv32():
-    # --hex fills I-RAM, which starts RV32 (the ISA isn't guessed): the Hack demo's words garble
+    # --hex fills the ROM, which starts RV32 (the ISA isn't guessed): the Hack demo's words garble
     r = run(
         "--no-firmware", "--no-card", "--hex", "build/hack/firmware.hex", "--until", "(100%)!", "--cycles", "2000000"
     )
@@ -54,7 +54,7 @@ def test_hack_bin_with_mode():
 
 
 def test_load_without_mode_is_raw_words():
-    # Without --mode the file is little-endian words in I-RAM, run as RV32: a Hack .bin garbles
+    # Without --mode the file is little-endian words in the ROM, run as RV32: a Hack .bin garbles
     r = run(
         "--no-firmware", "--no-card", "--load", "build/hack/firmware.bin", "--until", "(100%)!", "--cycles", "2000000"
     )
@@ -63,7 +63,7 @@ def test_load_without_mode_is_raw_words():
 
 
 def where_am_i() -> bytes:
-    """An RV32 image that prints P when it runs from the PSRAM, I from I-RAM."""
+    """An RV32 image that prints P when it runs from the PSRAM, I from the ROM."""
     from rv32_asm import Asm  # on sys.path once vux9k is imported
 
     a = Asm()

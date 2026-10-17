@@ -47,10 +47,6 @@ REQUIRED = [
     "emu/vux9k-emu",
     "emu/vux9k_emu.abi3.so",
     "emu/firmware/firmware.hex",
-    "emu/firmware/firmware_d0.hex",
-    "emu/firmware/firmware_d1.hex",
-    "emu/firmware/firmware_d2.hex",
-    "emu/firmware/firmware_d3.hex",
     "zephyr/vux9k-zephyr-bsp.tar.gz",
 ]
 # The card's v4 files and the mode (vux_tool.MODE_*: 1 RV32, 0 Hack) and load address each carries
@@ -124,8 +120,7 @@ for name in ("STAGE2.BIN", "APPS/HELLO.BIN"):
     with open(f"sd/VUX9K/{name}", "rb") as f:
         files[f"VUX9K/{name}"] = f.read()
 soc = vux9k_emu.Soc("real")
-hexes = ["firmware.hex"] + [f"firmware_d{i}.hex" for i in range(4)]
-soc.load_readmemh(*(open(f"emu/firmware/{name}").read() for name in hexes))
+soc.load_readmemh(open("emu/firmware/firmware.hex").read())
 soc.sd_insert(vux_tool.build_fat32_image(files))
 assert soc.run_until_tx(b"s2> ", 40_000_000) is not None, soc.uart_received()
 soc.uart_send(b"run VUX9K/APPS/HELLO.BIN\r")

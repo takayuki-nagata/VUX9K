@@ -57,7 +57,7 @@ file at ~250 cycles a byte), and `run` loads at ~200-260 cycles a byte (the seco
 runs from the PSRAM, through its caches): the 13 KB Zephyr demo through it is ~19M cycles,
 minutes on the netlist, so it runs there only in `sim-zephyr-demo-gls` (`test_soc_zephyr_s2.py`, test-slow);
 the RTL runs the Zephyr demos preloaded into the PSRAM (`soc_env.preload_psram_app`: the word
-model's words and a jump at I-RAM 0, so Verilator RTL only). Cycle counts are the emulator's, which the
+model's words and a jump at ROM word 0, so Verilator RTL only). Cycle counts are the emulator's, which the
 lockstep holds to the RTL's; measure a new test there first (`s1_env.run_from_card` in `sim/emu/s1_env.py`).
 
 The SD and RAM-boot RTL tests (`sim-boot`, `sim-hw-flow`, `sim-sd-quirks`, the lockstep's

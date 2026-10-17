@@ -5,7 +5,7 @@
 //! `\VUX9K\APPS\HELLO.BIN`: the second stage's `run` starts it in place with a0-a2 as the
 //! first stage handed them over (a0 = SDHC, a1 = the FAT32 partition's LBA, a2 = the
 //! first stage's version). It prints them, then waits for `r`, on which it soft-resets
-//! back to the first stage (which is still in I-RAM: a PSRAM application doesn't replace
+//! back to the first stage (which is still in the ROM: a PSRAM application doesn't replace
 //! it); other keys are ignored. The tests (emulator, RTL, lockstep, board) check what it
 //! prints against the first stage's hand-over.
 
