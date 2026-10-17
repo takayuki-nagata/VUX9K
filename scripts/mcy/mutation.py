@@ -176,6 +176,32 @@ ACCEPTED: dict[str, dict[str, str]] = {
         "cnot1 B[7] ctrl 6 @ soc_icache.sv:122.13-127.16 soc_icache.sv:122.17-122.32": "the sweep counts in"
         " another order (bit 7 of the next index flipped with bit 6) and still clears every line once in"
         " 4096 cycles (counted out); test_reset_sweeps_valid_lines would see a skipped line",
+        # Drawn by the 4096-line netlist (the entries above came from the 1024-line one; their
+        # cells are still there, at the same lines, and may be drawn again)
+        "const1 Y[0] @ soc_icache.sv:122.17-122.23": "the `!swept` of the sweep counter's enable only: as"
+        " const0 A[0] above, the counter keeps counting after the sweep (while clear), read only before"
+        " swept",
+        "cnot1 Y[5] ctrl 1 @ soc_icache.sv:123.30-123.47": "the sweep counts in another order (bit 5 of the"
+        " next index flipped with its bit 1) and still clears every line once in 4096 cycles (counted out)",
+        "cnot1 Q[7] ctrl 4 sweep_idx[7] @ soc_icache.sv:114.5-132.8 soc_icache.sv:65.20-65.29": "the sweep"
+        " visits the lines in another order (index bit 7 read flipped with bit 4) and still clears every"
+        " line once in 4096 cycles (counted out). The hold path toggles only while the register holds"
+        " before swept with clear low: soc_top raises clear (!raw_rst) with rst_n, and the bench holds"
+        " only at index 0 (bit 4 = 0)",
+        "cnot1 Q[9] ctrl 6 sweep_idx[9] @ soc_icache.sv:114.5-132.8 soc_icache.sv:65.20-65.29": "as Q[7]"
+        " ctrl 4: another order (bit 9 read flipped with bit 6), every line once in 4096 cycles (counted"
+        " out)",
+        "const0 A[0] @ soc_icache.sv:128.38-128.48": "missing <= mem_sel: also set in the cycle after a miss"
+        " completes. That completion is a fill of line idx while rd_idx = idx (the CPU's pc_out is pc_reg"
+        " in FETCH; the bench reads the line ahead the same way), so conflict_q is 1 in that cycle and hit"
+        " is 0 either way; mem_sel, instr_ready and missing then follow as unmutated",
+        "const1 B[0] @ soc_icache.sv:128.27-128.48": "missing <= mem_sel, the same mutant as const0 A[0] at"
+        " 128.38-128.48",
+        "const1 B[0] @ soc_icache.sv:124.17-126.20 soc_icache.sv:124.21-124.42": "no change: the mux sets"
+        " swept from its B input, the constant 1, at index 4095",
+        "const1 A[3] @ soc_icache.sv:108.13-108.17 soc_icache.sv:108.9-110.12": "changes the word write's"
+        " address or data (both 12- and 32-bit muxes are x on A) when fill is 0, i.e. when nothing is"
+        " written",
     },
     "soc_dcache": {
         "inv Y[7] @ soc_dcache.sv:112.18-116.12 soc_dcache.sv:112.22-112.26": "sets bit 7 of the tag written"
