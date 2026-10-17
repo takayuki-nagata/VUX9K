@@ -69,6 +69,7 @@ class Bench:
         self.missing = False  # a load at the bridge stays a miss until it completes
         self.due = None  # cycle the pending bridge access completes
         self.cycle = 0
+        self.clocked = False
 
     def word(self, w):
         if w not in self.mem:
@@ -76,9 +77,15 @@ class Bench:
         return self.mem[w]
 
     async def reset(self):
+        """rst for a cycle (soc_top's rst_n): the registers reset, the RAMs keep their lines
+        until the next sweep."""
         d = self.dut
-        cocotb.start_soon(Clock(d.clk, 20, unit="ns").start())
+        if not self.clocked:
+            cocotb.start_soon(Clock(d.clk, 20, unit="ns").start())
+            self.clocked = True
         await FallingEdge(d.clk)
+        self.swept, self.sweep_idx, self.rd_idx_q, self.conflict_q, self.missing, self.due = (
+            False, 0, 0, False, False, None)  # fmt: skip
         d.rst.value = 0
         d.clear.value = 0
         self.drive()
@@ -91,7 +98,8 @@ class Bench:
         d = self.dut
         d.rd_idx.value = random.randrange(LINES) if rd_idx is None else rd_idx
         d.data_req.value = int(kind is not None)
-        d.data_sel.value = int(kind is not None and sel)
+        # Outside MEM_WAIT data_sel still decodes data_addr (in the window or not)
+        d.data_sel.value = int(sel) if kind is not None else random.getrandbits(1)
         d.data_addr.value = addr if kind is not None else random.getrandbits(21)
         d.data_we.value = int(kind == "store")
         d.data_wdata.value = wdata if kind == "store" else random.getrandbits(32)
@@ -194,7 +202,7 @@ class Bench:
                     else:
                         line = "fill_empty" if held is None else "fill_replace"
                 sample(kind, outcome, line, "match" if ahead else "mismatch")
-                return
+                return outcome
         raise AssertionError(f"{kind} of {word:06x} never completed")
 
 
@@ -254,4 +262,20 @@ async def test_random(dut):
         wstrb = random.choice((0xF, 0xF, 0x1, 0x2, 0x4, 0x8, 0x3, 0xC, random.randrange(1, 16)))
         await b.access(kind, random.choice(words), sel=random.random() < 0.9, wstrb=wstrb,
                        ahead=random.random() < 0.9, clear=random.randint(0, 1))  # fmt: skip
+    fcov.export()
+
+
+@cocotb.test(timeout_time=20, timeout_unit="ms")
+async def test_reset_sweeps_valid_lines(dut):
+    """rst over a cache whose every line is valid: the RAMs keep their contents, and the
+    next sweep must clear every one of them, whatever order it takes, so each load misses"""
+    b = Bench(dut, max_delay=2)
+    await b.reset()
+    words = [random.getrandbits(12) << 9 | ln for ln in range(LINES)]
+    for w in words:
+        assert await b.access("load", w) in ("miss", "sweep_wait")
+    assert len(b.tags) == LINES
+    await b.reset()
+    for w in random.sample(words, LINES):
+        assert await b.access("load", w) in ("miss", "sweep_wait"), f"{w:06x} hit after the sweep"
     fcov.export()

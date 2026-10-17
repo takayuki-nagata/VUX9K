@@ -160,6 +160,38 @@ ACCEPTED: dict[str, dict[str, str]] = {
         " and CSR writes mask mepc with 0xFFFF_FFFC. Equivalent from reset,"
         " beyond dprove's reach on the whole CPU",
     },
+    # The caches skip the equivalence check (NO_EQUIV): these were read in the mutated netlist
+    "soc_icache": {
+        "const1 B[5] @ soc_icache.sv:124.21-124.42": "no change: bit 5 of the constant 1023 is 1 already",
+        "const1 B[0] @ soc_icache.sv:101.13-101.19 soc_icache.sv:101.9-103.12": "no change: the tag write's"
+        " enable is `tag_we ? 1 : 0`, its B input 1 already",
+        "inv A[30] @ soc_icache.sv:108.13-108.17 soc_icache.sv:108.9-110.12": "changes the word write's data"
+        " when fill is 0, i.e. when nothing is written",
+        "cnot0 Y[7] ctrl 11 tag_wdata[7] @ soc_icache.sv:82.20-82.29 soc_icache.sv:85.13-85.19"
+        " soc_icache.sv:85.9-97.12": "sets bit 7 of a tag only when it is written invalid (bit 11 = 0):"
+        " an invalid line misses whatever its other bits",
+        "const0 A[0] @ soc_icache.sv:122.17-122.23": "the sweep counter keeps counting after the sweep (while"
+        " clear); sweep_idx is read only before swept, and rst zeroes both",
+        "cnot1 B[7] ctrl 6 @ soc_icache.sv:122.13-127.16 soc_icache.sv:122.17-122.32": "the sweep counts in"
+        " another order (bit 7 of the next index flipped with bit 6) and still clears every line once in"
+        " 1024 cycles (counted out); test_reset_sweeps_valid_lines would see a skipped line",
+    },
+    "soc_dcache": {
+        "inv Y[7] @ soc_dcache.sv:112.18-116.12 soc_dcache.sv:112.22-112.26": "sets bit 7 of the tag written"
+        " for a partial store miss, which writes it invalid (bit 12 = 0), and of a tag no branch writes",
+        "const1 A[10] @ soc_dcache.sv:112.18-116.12 soc_dcache.sv:112.22-112.26": "changes the tag value of"
+        " the branch that writes no tag (no access completing)",
+        "cnot1 B[8] ctrl 6 @ soc_dcache.sv:141.13-146.16 soc_dcache.sv:141.17-141.32": "the sweep counts in"
+        " another order and still clears every line once in 512 cycles (counted out)",
+        "cnot1 Q[6] ctrl 4 sweep_idx[6] @ soc_dcache.sv:133.5-151.8 soc_dcache.sv:63.20-63.29": "the sweep"
+        " visits the lines in another order (index bit 6 read flipped with bit 4; the register itself"
+        " holds) and still clears every line once in 512 cycles (counted out)",
+        "cnot1 B[0] ctrl 8 @ soc_dcache.sv:149.50-149.65": "changes conflict_q, which counts only for an"
+        " access in the cycle after a write: a write is a MEM_WAIT's last cycle or the sweep, the CPU's"
+        " next cycle is no data access, and after the sweep every line is invalid anyway",
+        "const1 B[0] @ soc_dcache.sv:149.27-149.65": "conflict_q after every write, whatever the index: counts"
+        " only for an access in the cycle after a write, which the CPU never makes (see the entry above)",
+    },
     "fifo_sync": {
         "const1 A[1] @ $auto$proc_dff.cc:proc_dff": "sets bit 1 of a memory word while rst is asserted. The"
         " memory has no reset: a word is read as the head only after it has been written, so only rdata of"

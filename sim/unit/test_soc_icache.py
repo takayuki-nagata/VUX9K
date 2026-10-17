@@ -53,6 +53,7 @@ class Bench:
         self.missing = False  # a miss at the bridge stays one until it completes
         self.due = None  # cycle the pending miss completes
         self.cycle = 0
+        self.clocked = False
 
     def word(self, w):
         if w not in self.mem:
@@ -60,9 +61,15 @@ class Bench:
         return self.mem[w]
 
     async def reset(self):
+        """rst for a cycle (soc_top's rst_n): the registers reset, the RAMs keep their lines
+        until the next sweep."""
         d = self.dut
-        cocotb.start_soon(Clock(d.clk, 20, unit="ns").start())
+        if not self.clocked:
+            cocotb.start_soon(Clock(d.clk, 20, unit="ns").start())
+            self.clocked = True
         await FallingEdge(d.clk)
+        self.swept, self.sweep_idx, self.rd_idx_q, self.conflict_q, self.missing, self.due = (
+            False, 0, 0, False, False, None)  # fmt: skip
         d.rst.value = 0
         d.clear.value = 0
         self.drive()
@@ -75,7 +82,8 @@ class Bench:
         d = self.dut
         d.rd_idx.value = random.randrange(LINES) if rd_idx is None else rd_idx
         d.fetch_req.value = int(fetch)
-        d.fetch_sel.value = int(fetch and sel)
+        # Outside FETCH fetch_sel still follows pc_reg (in the window or not), as in soc_top
+        d.fetch_sel.value = int(sel) if fetch else random.getrandbits(1)
         d.fetch_addr.value = addr if fetch else random.getrandbits(21)
         d.inv.value = int(inv)
         d.inv_idx.value = inv_idx if inv else random.randrange(LINES)
@@ -171,7 +179,7 @@ class Bench:
                     outcome = "hit" if hit else "miss"
                 fill = "none" if outcome != "miss" else ("empty" if filled is None else "replace")
                 sample(outcome, inv_kind, "match" if ahead else "mismatch", fill)
-                return
+                return outcome
         raise AssertionError(f"fetch of {word:06x} never completed")
 
 
@@ -226,4 +234,22 @@ async def test_random(dut):
         inv = random.choice(words) if random.random() < 0.25 else None
         await b.fetch(word, sel=random.random() < 0.9, inv=inv, ahead=random.random() < 0.9,
                       clear=random.randint(0, 1))  # fmt: skip
+    fcov.export()
+
+
+@cocotb.test(timeout_time=20, timeout_unit="ms")
+async def test_reset_sweeps_valid_lines(dut):
+    """rst over a cache whose every line is valid: the RAMs keep their contents, and the
+    next sweep must clear every one of them, whatever order it takes, so each fetch misses"""
+    b = Bench(dut, max_delay=2)
+    await b.reset()
+    await b.sweep()
+    words = [random.getrandbits(11) << 10 | ln for ln in range(LINES)]
+    for w in words:
+        assert await b.fetch(w) == "miss"
+    assert len(b.tags) == LINES
+    await b.reset()
+    await b.sweep()
+    for w in random.sample(words, LINES):
+        assert await b.fetch(w) == "miss", f"{w:06x} hit after the sweep"
     fcov.export()
