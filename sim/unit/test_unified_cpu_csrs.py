@@ -221,6 +221,52 @@ async def test_counters_write_and_read_back(dut):
     await expect_ok(dut, program(body), max_cycles=3000)
 
 
+def half_independence_checks(a, lo, hi):
+    """With a pattern in one half of the counter, the other half read twice an odd number
+    of cycles apart (an ALU or CSR instruction takes 2 cycles, a load 3): a bit of one half
+    that a bit of the other disturbs toggles while it counts or holds, so one of the two
+    reads shows it. Uses t0-t2, s4, t6."""
+    for n, h in enumerate((0, 0x5555_5555, 0xAAAA_AAAA)):
+        a.li("t0", h)
+        a.csrw(hi, "t0")
+        a.csrw(lo, "zero")
+        a.csrr("t1", lo)
+        a.lw("zero", 0, "zero")
+        a.csrr("t2", lo)
+        a.li("t6", COUNTER_SLACK)
+        a.bgeu("t1", "t6", "bad")
+        a.sub("t2", "t2", "t1")
+        if n == 0:
+            a.mv("s4", "t2")
+        else:
+            a.bne("t2", "s4", "bad")
+        a.csrr("t1", hi)
+        expect(a, "t1", h)
+    for v, h in ((0x5555_5555, 0xAAAA_AAAA), (0xAAAA_AAAA, 0x5555_5555)):  # no carry into hi
+        a.li("t0", v)
+        a.csrw(lo, "t0")
+        a.li("t0", h)
+        a.csrw(hi, "t0")
+        a.csrr("t1", hi)
+        expect(a, "t1", h)
+        a.lw("zero", 0, "zero")
+        a.csrr("t1", hi)
+        expect(a, "t1", h)
+
+
+@cocotb.test(timeout_time=1, timeout_unit="ms")
+async def test_counter_halves_independent(dut):
+    """mcycle/minstret: one half holds its value whatever the other half holds (mutants
+    that flipped minstret[12] with minstret[47], mcycle[34] with mcycle[18] survived the
+    tests above, which read each half only while the other was zero)"""
+
+    def body(a):
+        half_independence_checks(a, "mcycle", "mcycleh")
+        half_independence_checks(a, "minstret", "minstreth")
+
+    await expect_ok(dut, program(body), max_cycles=2000)
+
+
 async def soft_reset_at(dut, pc, pulses):
     """Pulse soft_rst for one cycle each time the CPU is at `pc`, `pulses` times"""
     for _ in range(pulses):

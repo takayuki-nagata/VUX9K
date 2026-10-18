@@ -483,11 +483,15 @@ HACK_WRITES = [
     (0x000A, "@10"),
     (0xFDF8, "AMD=M+1"),  # HACK_WB, A and then D: M[10] = A = D = 0x21
     (0xE308, "M=D"),  # M[0x21] = 0x21
-    (0x0012, "@18"),
+    (0x000B, "@11"),
+    (0xFC88, "M=M-1"),  # HACK_WB: M[11] = 0x5555_5554 (all 32 bits of a held M are written)
+    (0x000C, "@12"),
+    (0xFC88, "M=M-1"),  # HACK_WB: M[12] = 0xAAAA_AAA9
+    (0x0016, "@22"),
     (0xEA87, "0;JMP"),  # to itself
     (0x0000, "@0"),  # padding to a whole word, never reached
 ]
-HACK_WRITES_DATA = {5: 0x1234, 8: 0x10, 10: 0x20}
+HACK_WRITES_DATA = {5: 0x1234, 8: 0x10, 10: 0x20, 11: 0x5555_5555, 12: 0xAAAA_AAAA}
 HACK_WRITES_RESULT = [
     (6, 0x1234),
     (7, 0x1234),
@@ -499,6 +503,8 @@ HACK_WRITES_RESULT = [
     (0x1235, 0x1235),
     (10, 0x21),
     (0x21, 0x21),
+    (11, 0x5554),
+    (12, 0xAAA9),
 ]
 
 
@@ -517,6 +523,7 @@ async def test_stalled_hack_m_write(dut):
     base = await run(dut, imem, HACK_WRITES_DATA, hack=True)
     assert int(dut.active_mode.value) == 0, "positive control: not in Hack mode"
     assert [(a, d & 0xFFFF) for _, a, d, _ in base.writes] == HACK_WRITES_RESULT, base.writes
+    assert (base.dmem[11], base.dmem[12]) == (0x5555_5554, 0xAAAA_AAA9), "the upper half of M"
     for i, c in enumerate(base.trace):
         assert not c.mem_write or c.data_req, f"cycle {i}: a Hack M write without data_req"
     sample_access("hack_m_write", 0, False)

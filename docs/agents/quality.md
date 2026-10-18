@@ -42,7 +42,8 @@ Things that went wrong while building it, and must stay fixed:
 
 Reading the survivors (2026-10: at size 50, 20 for `unified_cpu`, none is open in any module;
 `unified_cpu` at size 100 then sampled other mutants and left 21 open: 20 closed by tests,
-one `ACCEPTED` as equivalent):
+one `ACCEPTED` as equivalent; after the waiting Hack M write, 3: 2 closed by tests, one
+`ACCEPTED`):
 - **A `unified_cpu` run measures only the CPU-level tests** (`test_sim.UNIT`'s `unified_cpu`
   entries) and the riscv-tests, never the submodules' own unit tests: a CSR, trap-unit or
   next-PC behavior that `test_rv32i_csrs.py` checks is still a survivor here until a program
@@ -72,7 +73,12 @@ one `ACCEPTED` as equivalent):
   reach (uart_rx's 434-clock timer, the count enumerated instead; a Hack-only register in
   `unified_cpu`) or differ only where the interface promises nothing (uart_rx's `data`
   without `rdy`, fifo_sync's `rdata` while empty), each with its reason; `summary.md` shows them apart from the open
-  ones and names entries no survivor matched any more. A survivor that is merely untested
+  ones and names entries no survivor matched any more. Their keys hold line numbers: an
+  edit above a cell moves it, and its entry never matches again. For each unmatched entry,
+  look for its cell in the generated `.sv` (a Yosys `write_rtlil` of the run's script shows
+  every cell's `src`): still there, it is just another draw; moved, re-key it after
+  checking that the reason still holds (the waiting M write made HACK_WB hold, which ended
+  one `unified_cpu` entry's reason: a test replaced it). A survivor that is merely untested
   gets a test, not an entry (the `cov:exclude` rule). `unified_cpu`'s riscv-tests run in a
   256 KB window: what the upper address and PC bits do is the unit tests' job
   (`test_unified_cpu.py`, `test_unified_cpu_traps.py`, `test_hack_cpu_ops.py`).
