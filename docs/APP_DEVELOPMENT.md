@@ -196,9 +196,10 @@ fetch that misses the 16 KB instruction cache, a load that misses the 2 KB data 
 every store wait ~35 cycles. A PSRAM application starts with `a0` = 1 on an SDHC card (else 0),
 `a1` = the FAT32 partition's first LBA, `a2` = the first stage's version, and the first stage
 in the ROM (a soft reset goes back to it); `sd/VUX9K/APPS/HELLO.BIN` and the Zephyr
-demos are. `run` checks the file's header before it writes anything, and refuses a file
-outside these windows with everything untouched; it then loads the payload into the PSRAM
-below the second stage while it computes the CRC, and starts nothing if the CRC differs.
+demos are. `run` checks the file's magic, mode and size before it writes anything; it then
+loads the payload into the PSRAM below the second stage while it computes the CRC, and starts
+nothing if the CRC differs or the load address is outside its ISA's window (so such a file
+has overwritten only the PSRAM below the second stage).
 RV32 runs from the PSRAM only: an RV32 file at load address 0 (`mkv4 --load-addr 0`, the
 read-only boot ROM) is refused; link it into the PSRAM and wrap it again.
 

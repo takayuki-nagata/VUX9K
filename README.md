@@ -293,7 +293,8 @@ and `..`, and 8.3 or long names, relative to the current directory:
 
 An error is one `[ERR] ...` line, and the prompt follows. `run` checks the file's header
 first, loads the payload into the PSRAM below the second stage while it computes the CRC,
-and starts it where its header says only once the CRC matches (`fw_common::launch`):
+and starts it where its header says only once the CRC matches and the load address suits
+the file's ISA (`fw_common::launch`):
 
 | Header | Where it runs | How it starts |
 |:---|:---|:---|
@@ -303,9 +304,10 @@ and starts it where its header says only once the CRC matches (`fw_common::launc
 RV32 runs from the PSRAM only: an RV32 file that loads at `0` (the boot ROM) is refused as
 outside the window. A PSRAM application that never returns (the Zephyr demos) leaves the first stage
 there, so Button S1 (the board's reset) starts the boot again. A file `run` refuses for its
-header (bad magic, a load address outside these windows, ...) leaves everything as it was;
-one that fails the CRC has overwritten only the PSRAM below the second stage, and nothing
-starts. An exception in a PSRAM application that set no trap vector of its own
+magic, mode or size, or for a load address beyond `0x806F_FFFF`, leaves everything as it was;
+one refused for its CRC, or for a load address that doesn't suit its ISA (RV32 at 0, a Hack
+offset that isn't word-aligned), has overwritten only the PSRAM below the second stage, and
+nothing starts. An exception in a PSRAM application that set no trap vector of its own
 is reported by the second stage (`[TRAP] ...`).
 
 ---
