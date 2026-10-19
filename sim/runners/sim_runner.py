@@ -68,7 +68,7 @@ RTL_SOURCES = (
 TB_SOC_TOP = SIM_DIR / "tb_soc_top.sv"
 # riscv-tests harness around unified_cpu (sim/tb_hex_runner.veryl), added only when it is the toplevel
 TB_HEX_RUNNER = VERYL_OUT_DIR / "sim" / "tb_hex_runner.sv"
-# Test wrapper for the SP/SDPB cell models (sim/tb_gowin_bram.veryl): cell models only, no RTL
+# Test wrapper for the SP/SDPB/DPX9B/SDPX9B cell models (sim/tb_gowin_bram.veryl): cell models only, no RTL
 TB_GOWIN_BRAM = VERYL_OUT_DIR / "sim" / "tb_gowin_bram.sv"
 # The word model's contract test (sim/tb_psram_contract.veryl): the PSRAM controller on the
 # pin-level W955D8MBYA model, next to sim/psram_word_model.veryl. Icarus only (the W955 model).

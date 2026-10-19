@@ -529,7 +529,7 @@ sim-hack-rtl: veryl build-hack
 sim-hack: sim-hack-emu sim-hack-pytest sim-hack-rtl
 
 # The real second stage booted from the card on the RTL: ls, run HELLO.BIN (PSRAM) and
-# HACK.BIN (its PSRAM segment, Hack; back to the first stage); ~54M cycles in two tests
+# HACK.BIN (its PSRAM segment, Hack; back to the first stage); ~14M + ~18M cycles in two tests
 sim-stage2: veryl firmware apps
 	@echo "=== Running the second stage from the card and its run on the RTL ==="
 	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_stage2]"
@@ -604,7 +604,6 @@ sim-sd-quirks: veryl firmware
 	@echo "=== Running SD Card Edge-Case Tests (strict / SDSC SD model, RTL) ==="
 	SIM=$(SIM_SOC) $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_sd_quirks]"
 
-# Full flashing flow on Icarus: 4-state coverage of the longest RTL run (~15 min; test-slow only)
 # Formal equivalence of the working tree's RTL against EQY_BASE (scripts/run_eqy.py), for
 # behavior-preserving refactors: `make eqy EQY_BASE=<commit> EQY_TOP=unified_cpu|soc_top`.
 # soc_rom is a black box on both sides. Not part of test-sim (it depends on the base commit).
@@ -632,7 +631,7 @@ mutation: veryl
 # GLS isn't measured. The merge also runs when a test fails; the target still fails then.
 COVERAGE_DIR := $(BUILD_DIR)/coverage
 
-coverage: veryl firmware build-hack
+coverage: veryl firmware build-hack apps
 	@echo "=== Measuring Verilator line/toggle coverage (RTL unit + SoC tests + riscv-tests) ==="
 	@rm -rf $(COVERAGE_DIR) && mkdir -p $(COVERAGE_DIR)
 	@rm -rf $(BUILD_DIR)/riscv_tests/runs-cov
@@ -643,6 +642,7 @@ coverage: veryl firmware build-hack
 	verilator_coverage --annotate $(COVERAGE_DIR)/annotated --annotate-min 1 $(COVERAGE_DIR)/merged.dat && \
 	echo "=== Annotated sources: $(COVERAGE_DIR)/annotated ===" && exit $$rc
 
+# Full flashing flow on Icarus: 4-state coverage of the longest RTL run (hours; test-slow only)
 sim-hw-flow-icarus: veryl firmware build-hack
 	@echo "=== Running SoC Top End-to-End Hardware Verification Flow (RTL, Icarus 4-state) ==="
 	SIM=icarus $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_hardware_flow]"

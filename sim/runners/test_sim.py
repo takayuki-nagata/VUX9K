@@ -47,7 +47,7 @@ UNIT = [
     ("soc_dcache", "test_soc_dcache"),
     ("sdcard_spi", "test_sdcard_spi"),
     ("soc_rom", "test_soc_rom"),
-    ("tb_gowin_bram", "test_gowin_bram"),  # SP/SDPB cell models (no netlist uses them)
+    ("tb_gowin_bram", "test_gowin_bram"),  # SP/SDPB/DPX9B/SDPX9B cell models
 ]
 
 # Gate-level: netlists from `make synth-units`

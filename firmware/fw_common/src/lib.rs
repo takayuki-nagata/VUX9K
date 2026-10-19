@@ -64,8 +64,8 @@ const CRC_NIBBLES: [u32; 16] = {
 };
 
 /// CRC-32 as above, a nibble at a time from a 64-byte table: the second stage's
-/// (feature `fat-full`). It runs from the PSRAM, where every instruction fetch waits ~35
-/// cycles, and the bitwise loop took ~1,800 cycles a byte of every file it loaded.
+/// (feature `fat-full`). From the PSRAM before its caches, every fetch waiting ~35 cycles,
+/// the bitwise loop took ~1,800 cycles a byte of every file it loaded.
 #[cfg(feature = "fat-full")]
 pub fn crc32_update(data: &[u8], mut crc: u32) -> u32 {
     for &b in data {
