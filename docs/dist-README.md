@@ -33,7 +33,7 @@ openFPGALoader -b tangnano9k bitstream/pack.fs
 pip install -r tools/requirements.txt
 python3 tools/vux_tool.py install-stage2 sd/VUX9K/STAGE2.BIN   # unless the card has it (makes VUX9K\)
 python3 tools/vux_tool.py sd-info          # the card and STAGE2.BIN, as the first stage sees them
-python3 tools/vux_tool.py monitor          # the second stage's s2> prompt: help, ls, mkdir VUX9K/APPS ...
+python3 tools/vux_tool.py monitor          # sd-info left s1>: b boots the second stage (s2>): help, ls, mkdir VUX9K/APPS ...
 python3 tools/vux_tool.py put sd/VUX9K/APPS/HELLO.BIN VUX9K/APPS/HELLO.BIN
 python3 tools/vux_tool.py run-app VUX9K/APPS/HELLO.BIN
 ```

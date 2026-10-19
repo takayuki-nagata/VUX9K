@@ -7,7 +7,7 @@ application, test it on the emulator, then run it on the board.
 
 Everything referred to here is in the release archive (`vux9k-<version>-linux-x86_64.tar.gz`);
 paths are relative to its top directory. `MANIFEST.json` there names the commit it was
-built from, the first stage's version and the tool versions it was built with.
+built from, the first and second stages' versions and the tool versions it was built with.
 
 Contents:
 1. [Preparing the board](#1-preparing-the-board)
@@ -46,8 +46,9 @@ the PSRAM and starts it. A terminal on the board's serial port (115200 bps, 8N1)
 first stage's banner, then the second stage's `s2>` prompt; `help` lists its commands.
 Holding button S2 while the board starts keeps the first stage at its own `s1>` prompt.
 
-**microSD card.** The card needs one FAT32 partition (as most cards up to 32 GB come; an
-SDXC card formatted exFAT must be reformatted as FAT32), a directory `VUX9K` in its root,
+**microSD card.** The card needs a FAT32 partition as the first entry of an MBR partition
+table (as most cards up to 32 GB come; an SDXC card formatted exFAT must be reformatted as
+FAT32; GPT and cards without a partition table are refused), a directory `VUX9K` in its root,
 and in it the second stage, `STAGE2.BIN`, with the applications in `VUX9K\APPS\`. Copy
 `sd/VUX9K/` there with a PC, or leave the card in the board and install the second stage
 over the serial port (section 2: `install-stage2` makes the directory), then `put` the
@@ -89,7 +90,7 @@ python3 tools/vux_tool.py run-app VUX9K/APPS/HELLO.BIN
 | `HELLO.BIN` | prints the first stage's a0-a2; `r` goes back to the first stage | the PSRAM at `0x8000_0000` |
 | `ZEPHYR.BIN` | the Zephyr Rust demo | the PSRAM at `0x8000_0000` (it never returns: S1 goes back to the first stage) |
 | `IRQECHO.BIN` | Zephyr's interrupt-driven UART echo | the PSRAM at `0x8000_0000` |
-| `BC.BIN` | [bc_clone_rs](https://github.com/takayuki-nagata/bc_clone_rs), an arbitrary-precision calculator (`bc`) on Zephyr: self-tests, then its `bc> ` prompt. ~260 KB: on the board `put` takes ~29 s, `run`'s load ~3 s, and bc reaches its prompt ~4 s later | the PSRAM at `0x8000_0000` (it never returns, like `ZEPHYR.BIN`) |
+| `BC.BIN` | [bc_clone_rs](https://github.com/takayuki-nagata/bc_clone_rs), an arbitrary-precision calculator (`bc`) on Zephyr: self-tests, then its `bc> ` prompt. ~260 KB: on the board `put` takes ~29 s, `run`'s load ~3 s, and bc reaches its prompt ~3 s later | the PSRAM at `0x8000_0000` (it never returns, like `ZEPHYR.BIN`) |
 | `HACK.BIN` | the Hack C demo | Hack's segments in the PSRAM, in Hack mode; at its end it soft-resets back to the first stage |
 
 `demos/` holds the Zephyr and Hack demos' raw images for the emulator (section 4).
@@ -141,7 +142,7 @@ image copies to its RAM at startup.
   (`CONFIG_UART_INTERRUPT_DRIVEN`): RX on the machine external interrupt, TX refilled
   from a kernel timer since the UART has no TX interrupt (`vux9k-zephyr-bsp/README.md`,
   "UART"; `vux9k-zephyr-bsp/irq_echo/` is an example). The system timer is the SoC timer
-  (`mtime`, 18 ticks per microsecond); both boards run the kernel tickless at 1000
+  (`mtime`, 18 ticks per microsecond); the board runs the kernel tickless at 1000
   ticks/s, so timeouts have 1 ms resolution.
 
 ### Hack (C)
@@ -195,11 +196,11 @@ fetch that misses the 16 KB instruction cache, a load that misses the 2 KB data 
 every store wait ~35 cycles. A PSRAM application starts with `a0` = 1 on an SDHC card (else 0),
 `a1` = the FAT32 partition's first LBA, `a2` = the first stage's version, and the first stage
 in the ROM (a soft reset goes back to it); `sd/VUX9K/APPS/HELLO.BIN` and the Zephyr
-demos are. `run` checks the file's header and CRC before it writes anything, and refuses a
-file outside these windows with the first stage untouched. RV32 runs from the PSRAM only:
-the second stage v3 refuses an RV32 file at load address 0 (`mkv4 --load-addr 0`, the
-I-RAM target of earlier second stages; 0 is the read-only boot ROM now); link it into the
-PSRAM and wrap it again.
+demos are. `run` checks the file's header before it writes anything, and refuses a file
+outside these windows with everything untouched; it then loads the payload into the PSRAM
+below the second stage while it computes the CRC, and starts nothing if the CRC differs.
+RV32 runs from the PSRAM only: an RV32 file at load address 0 (`mkv4 --load-addr 0`, the
+read-only boot ROM) is refused; link it into the PSRAM and wrap it again.
 
 ## 4. Testing on the emulator
 
@@ -225,7 +226,11 @@ PSRAM.
 - `--until TEXT` stops with exit status 0 once the output contains `TEXT`, and
   `--cycles N` stops after N cycles (exit status 1 if `--until` hasn't matched): together a
   test for scripts. Interactive runs keep to 18 MHz; `--speed 0` runs as fast as possible.
-- `--trace FILE` logs every executed instruction.
+  A run with neither `--stdio` nor `--tcp` stops after 100M cycles unless `--cycles` says
+  otherwise.
+- `--sd IMAGE` puts a card image in the socket (`--sd-write-back` writes the card's changes
+  back to `IMAGE` on exit; `--sdsc` makes it an SDSC card; `--no-card` leaves the socket empty).
+- `--trace FILE` logs every executed instruction; `vux9k-emu --help` lists the rest.
 
 Started this way, an application finds its image at its load address, the CPU in the ISA
 of `--mode` starting there, the other memories zeroed, and an empty SD card (a card image can be given with `--sd
@@ -303,8 +308,8 @@ prompt in a terminal (`monitor`). Every application (Zephyr, `HELLO.BIN`, Hack o
 the first stage in the ROM: button S1 or a soft reset starts the boot again, as below. What
 applies to anything that runs there:
 
-Writing `0x5A5A_A55A` to `0x4000_300C` resets the CPU only, like S1, and starts the first
-stage again, which boots the card. A Hack program writes `0x0000_A55A` to `0x600C` instead,
+Writing `0x5A5A_A55A` to `0x4000_300C` resets the CPU only (S1, the board's reset, resets the
+whole SoC) and starts the first stage again, which boots the card. A Hack program writes `0x0000_A55A` to `0x600C` instead,
 formed by addition such as `0x255A + 0x4000 + 0x4000` (an `@n` holds at most `0x7FFF`), and
 without writing `0x6008` first: a soft reset without a mode starts RV32, the first stage (the
 Hack demo ends this way).

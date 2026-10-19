@@ -44,7 +44,7 @@ interrupt-driven API (`uart_irq_*`, `uart_fifo_*`). The SoC raises the machine e
 interrupt (cause 11) while the 32-byte RX FIFO holds data; it is level-triggered and has
 no enable bit in the UART, so `uart_irq_rx_disable()` masks it in `mie`. The UART has no
 TX interrupt: `uart_irq_tx_enable()` calls the callback at once, and a kernel timer calls
-it again every 700 us (rounded up to a tick, 1 ms at the boards' 1000 ticks/s) while TX
+it again every 700 us (rounded up to a tick, 1 ms at the board's 1000 ticks/s) while TX
 stays enabled, which keeps up with 115200 baud. A lower `CONFIG_SYS_CLOCK_TICKS_PER_SEC`
 slows it down: one 32-byte refill per tick. `uart_irq_tx_complete()`
 is not supported (the status register has no "transmitter empty" bit), nor are error

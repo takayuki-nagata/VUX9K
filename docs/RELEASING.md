@@ -7,9 +7,10 @@ its evidence: `release.yml` publishes only if the tag's `pack.fs sha256` matches
 artifact of the tagged commit. Nothing is rebuilt for the release, so it doesn't matter
 whether a rebuild would reproduce the same bits.
 
-Versions are tags `vMAJOR.MINOR.PATCH`. They are independent of the first stage's own
-`STAGE1_VERSION` (bump that when the first stage changes; the second stage gets it, and
-`MANIFEST.json` records it) and of the VUX9 header version (the file format).
+Versions are tags `vMAJOR.MINOR.PATCH`. They are independent of the stages' own versions,
+`STAGE1_VERSION` and `STAGE2_VERSION` (bump each when its stage changes; the second stage gets
+the first's in a2, `STAGE2.BIN`'s header carries the second's, and `MANIFEST.json` records
+both), and of the VUX9 header version (the file format).
 A patch release keeps applications and SD cards working; a release that breaks them,
 including one for a later hardware revision, raises the minor or major version and says
 so in its tag message (docs/APP_DEVELOPMENT.md, "Hardware revisions and compatibility").
