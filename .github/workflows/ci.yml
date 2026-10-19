@@ -154,6 +154,18 @@ jobs:
           export PATH=$PWD/.venv/bin:$HOME/.cargo/bin:$HOME/.local/bin:$HOME/.local/msp430-gcc/bin:$HOME/.local/zephyr-sdk-0.16.8/riscv64-zephyr-elf/bin:$PATH
           make test-slow
 
+      # A Rust coverage minimum that fails here but not elsewhere is read from these (lcov per line)
+      - name: Upload the Coverage Reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ github.sha }}
+          path: |
+            build/coverage/rust/summary.md
+            build/coverage/rust/report/
+          retention-days: 14
+          if-no-files-found: ignore
+
       - name: Run Static Timing Analysis (STA & Physical Timing Closure)
         run: |
           export PATH=$PWD/.venv/bin:$HOME/.cargo/bin:$HOME/.local/bin:$HOME/.local/msp430-gcc/bin:$HOME/.local/zephyr-sdk-0.16.8/riscv64-zephyr-elf/bin:$PATH

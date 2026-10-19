@@ -250,6 +250,9 @@ RUST_COV_EMU_TARGET = $(CURDIR)/$(RUST_COV_DIR)/emu-target
 # (assigned first: `eval "$(...)"` alone would hide a failing show-env and run uninstrumented)
 RUST_COV_EMU_ENV = export CARGO_TARGET_DIR=$(RUST_COV_EMU_TARGET) PYO3_PYTHON=$$(command -v $(PYTHON)) && \
 	cov_env=$$(cd emu && $(CARGO) llvm-cov show-env --sh --release) && eval "$$cov_env"
+# fw_common unoptimized: the test profile inherits dev's opt-level "z", whose line counts change
+# with the codegen split (CARGO_INCREMENTAL=0, as on the Actions runner, lost 22 lines)
+RUST_COV_FW_ENV = CARGO_PROFILE_TEST_OPT_LEVEL=0
 # Checked before the (long) prerequisites below
 coverage-rust-tool:
 	@$(CARGO) llvm-cov --version >/dev/null 2>&1 || \
@@ -267,7 +270,7 @@ coverage-rust: coverage-rust-tool firmware hwtest build-hack build-zephyr build-
 	$(RUST_COV_EMU_ENV) && cd emu && \
 		$(CARGO) llvm-cov report --release --json --summary-only --output-path $(RUST_COV_REPORT)/emu.json && \
 		$(CARGO) llvm-cov report --release --lcov --output-path $(RUST_COV_REPORT)/emu.info
-	cd firmware && export CARGO_TARGET_DIR=$(CURDIR)/$(RUST_COV_DIR)/fw-target && \
+	cd firmware && export CARGO_TARGET_DIR=$(CURDIR)/$(RUST_COV_DIR)/fw-target $(RUST_COV_FW_ENV) && \
 		$(CARGO) llvm-cov test -p fw_common --target $(HOST_TARGET) --features fat-full \
 			--json --summary-only --output-path $(RUST_COV_REPORT)/fw_common.json && \
 		$(CARGO) llvm-cov report -p fw_common --target $(HOST_TARGET) --lcov --output-path $(RUST_COV_REPORT)/fw_common.info

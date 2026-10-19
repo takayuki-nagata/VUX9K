@@ -129,6 +129,11 @@ their own target dirs under `build/coverage/rust/`, so the normal builds are unt
   run. Raise a minimum when coverage rises; never lower one.
 - The `[rust]` minimums are floors measured on CI's toolchain; when a run reports more,
   raise them.
+- `fw_common` is built unoptimized for it (`RUST_COV_FW_ENV`). The test profile inherits the
+  firmware's `opt-level = "z"`, and under it the line counts followed the codegen split: the
+  Actions runner's `CARGO_INCREMENTAL=0` lost 22 lines (98.3% against 99.9% elsewhere, 2026-10)
+  that every test still ran. A minimum that fails only on one machine is such a difference
+  first; the failing run uploads `build/coverage/rust/` as `coverage-<sha>`.
 - Run on its own, the target still needs Verilator and the Zephyr builds: `sim-lockstep`
   (the RTL trace that `sim/emu/test_lockstep.py` replays) is a prerequisite; a missing
   trace file fails the run. Programs marked `slow` skip ("not in the trace"; one in the
