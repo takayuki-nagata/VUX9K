@@ -9,7 +9,7 @@ Rules and background: docs/agents/rtl-workflow.md, "Step 3 commit rule" (read it
 
 1. The commit must be a refactor only: no cycle-visible change, no `soc_rom` port change
    (stubbed on both sides: such changes are their own, tested commit), nothing in `soc_rom`.
-2. Commit it, then run both tops against the parent (remote CI; ~6 min each on 4 cores):
+2. Commit it, then run both tops against the parent (remote CI; ~6 min each on 4 cores before the caches, `soc_top` longer since):
    `make eqy EQY_BASE=<parent-sha> EQY_TOP=unified_cpu` and `... EQY_TOP=soc_top`.
 3. Also run the quick checks that eqy can't replace: `make check-rtl-syntax lint-rtl`
    (eqy reads both sides with Yosys, so Yosys-vs-simulator differences stay invisible:

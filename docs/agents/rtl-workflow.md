@@ -25,7 +25,8 @@ Mixing them loses the ability to tell which half caused a regression.
 directory *outside* the repo (Veryl scans the whole project root, so a copy inside
 it would clash), caches it as `build/eqy/gold-<sha>/`, snapshots both sides into
 `build/eqy/<top>/` and runs Yosys `eqy` (sby/bitwuzla, `memory_map`), with both
-sides flattened below `<top>` (~6 min per top on 4 cores). Notes:
+sides flattened below `<top>` (~6 min per top on 4 cores, measured before the window's
+caches joined `soc_top`). Notes:
 - Because of the flattening, a refactor may change submodule ports or move logic
   between submodules; only `<top>`'s own ports have to match.
 - `soc_rom` is replaced by a ports-only stub on both sides (its `$readmemh` needs

@@ -33,13 +33,15 @@ eqy can't see this (zero-delay models, and both sides of eqy come from Yosys). S
   flashing a new bitstream. If you change `hw_test`'s tests, take the new checksums
   from the emulator (`sim/emu/test_hw_test.py` prints them on failure).
 - **`CLK_HZ` has copies that must change with it**, all but one written out by hand: the emulator (`uart::BIT`, `sdspi::HALF_PERIOD`/`CLK_HZ`, the CLI's real-time
-  pacing), `fw_common::map` (`TICKS_PER_*`, `SD_DIV_INIT`), `fw_drivers` (`timer.rs`: ticks per us/ms and `ms_ticks`'s shifts, which a compile-time
-  assert holds to `TICKS_PER_MS`), the first stage's banner, `fw_drivers::sdcard`'s 10 us CS
-  delay, Zephyr
+  pacing), `fw_common::map` (`TICKS_PER_*`, `SD_DIV_INIT`), `fw_drivers` (`timer.rs`: `ms_ticks`'s shifts, which a compile-time
+  assert holds to `TICKS_PER_MS`; its delays and `fw_drivers::sdcard`'s 10 us CS delay follow
+  `map::TICKS_PER_*`), the first stage's banner, Zephyr
   (`timebase-frequency`/`clock-frequency` in `vux9k-common.dtsi`,
   `SYS_CLOCK_HW_CYCLES_PER_SEC`), and the test constants (`tb_soc_top.sv`'s half period,
   `soc_env.py`, `virtual_serial.py`, `lockstep_programs.UART_BIT`, `sim/emu/vux9k.py`,
-  `test_sdcard_spi.CLK_DIV_HALF`, `test_sd_transcripts.SLOW_HZ`/`FAST_HZ`, `stage1`'s `AUTOBOOT_MS` window). The PSRAM controller takes `soc_pkg::CLK_HZ` as a parameter, so
+  `test_sdcard_spi.CLK_DIV_HALF`, `test_sd_transcripts.SLOW_HZ`/`FAST_HZ`, `test_psram_contract.CLK_HZ`,
+  the tests' waits for `stage1`'s `AUTOBOOT_MS` window in cycles), and the docs' Python example
+  (`check_dist.PY_EXAMPLE`'s `18e6`, docs/APP_DEVELOPMENT.md). The PSRAM controller takes `soc_pkg::CLK_HZ` as a parameter, so
   its cycle counts change with the clock too: `soc_pkg`'s `XMEM_READ_LATENCY`/
   `XMEM_WRITE_LATENCY` and `PSRAM_INIT_CYCLES` (and the assumption that the power-up ends
   inside the POR), with their copies in the wait-state window's row of sync-points.md (the

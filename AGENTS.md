@@ -23,7 +23,7 @@ firmware/               Cargo workspace (virtual manifest)
   hw_test/              Board self-test in place of the first stage (make hw-smoke)
 hack_demo/              Standalone Hack 16-bit C/asm demo app (toolchain self-test)
 zephyr_workspace/       Zephyr west module: board/SoC/driver/dts support for "vux9k"
-  app/                  Zephyr Rust demo (C glue + rust_demo staticlib; see "Zephyr" below)
+  app/                  Zephyr Rust demo (C glue + rust_demo staticlib; docs/agents/zephyr.md)
   irq_echo/             Zephyr interrupt-driven UART echo (C), the driver's IRQ API test
 sim/                    cocotb/pytest RTL testbenches
   unit/                 cocotb unit tests (single RTL module each)
@@ -31,7 +31,7 @@ sim/                    cocotb/pytest RTL testbenches
   emu/                  pytest tests on the Rust emulator + vux9k.py helpers
   sd_transcripts/       SD exchanges both card models must reproduce
 emu/                    Rust emulator (core, CLI vux9k-emu, pyo3 module vux9k_emu)
-coverage/               thresholds.toml (make coverage-fw, coverage-rust)
+coverage/               thresholds.toml (make coverage-fw, coverage-fcov, coverage-rust)
 scripts/                Build/CI plumbing only (elf2bin.py, run_riscv_tests.py, ...)
 tools/                  End-user CLI: vux_tool.py (UART flashing/diagnostics/monitor)
 vendor/                 submodules bc_clone_rs and psram_controller (Veryl path dependency `psram`); riscv-tests (fetched on demand)
@@ -89,8 +89,8 @@ except the root `firmware.hex` symlink described below
 | Tier | What | When |
 |---|---|---|
 | `make check`, `check-rtl-syntax`, `lint-rtl` | static checks | every change (seconds) |
-| `make test-sim` | everything in CI per push: unit RTL + GLS, ISA (riscv-tests, ACT4) RTL/GLS/emu and RTL with bus waits, emulator, firmware host tests + size + FAT images (`test-fat`), coverage-fw/fcov/rust, lockstep, SoC fast/mmio/boot/hack/sd-quirks/hw-flow, Zephyr demo RTL, GLS fast | before merging |
-| `make test-slow` | GLS RAM-boot/install flow, Icarus full flow, long lockstep, the PSRAM controller on its pin model (SoC window on Icarus RTL, controller netlist), unit tests with a new random seed | nightly; by hand after touching the flashing/SD chain (sync-points.md) |
+| `make test-sim` | the simulations CI runs per push (CI then adds `make sta` and `make dist check-dist`): unit RTL + GLS, the PSRAM contract, ISA (riscv-tests, ACT4) RTL/GLS/emu and RTL with bus waits, emulator, firmware host tests + size + FAT images (`test-fat`), coverage-fw/fcov/rust, lockstep, SoC fast (Verilator and Icarus)/mmio/boot/hack/sd-quirks/hw-flow/stage2, Zephyr demo and irq_echo RTL, GLS fast | before merging |
+| `make test-slow` | GLS RAM-boot/install flow, Icarus full flow, long lockstep, the Zephyr demo through the second stage on GLS, the board suite on the emulator, the PSRAM controller on its pin model (SoC window on Icarus RTL, controller netlist), unit tests with a new random seed | nightly; by hand after touching the flashing/SD chain (sync-points.md) |
 | `make sta`, `make timing`, `make eqy` | timing; RTL refactor proof | RTL changes |
 | `make hw-smoke`, `make test-hw`, `test-hw-dist` | the board | after RTL changes, before flashing or releasing |
 | `make mutation`, `make coverage` | test quality | by hand (quality.md) |

@@ -84,6 +84,6 @@ def test_runs_from_the_psram(demo_bin, how):
     assert "[Rust Task] Task iteration 5 completed [OK]" in out
     assert "VUX9K Stage" not in out  # nothing of the first or second stage after the start
     # k_msleep runs on the machine timer at 18 MHz: 100 ms of mtime, plus a tick (1 ms at
-    # the boards' 1000 ticks/s) and rounding, as from I-RAM (from the uncached PSRAM it read
-    # 104); at 100 ticks/s it reads 110 or more
+    # the board's 1000 ticks/s) and rounding (from the uncached PSRAM it read 104); at 100
+    # ticks/s it reads 110 or more
     assert 100 <= k_msleep_100(out) <= 102, out

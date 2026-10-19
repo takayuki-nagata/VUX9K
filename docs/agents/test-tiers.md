@@ -16,8 +16,11 @@ What `test-sim` and `test-slow` cover, and which long tests to run by hand for w
 ## Test tiers: what `test-sim` does and doesn't cover
 
 `make test-sim` (every push/PR in CI) runs the firmware's host tests (`test-fw-host`, and
-`test-fat`: the FAT32 images rebuilt with dosfstools/mtools, which CI installs), the unit suites (RTL + GLS), `test-isa`
-(+ `test-isa-gls`, `test-isa-waits`), and the SoC tests: `sim-soc-fast` (+ `-icarus`), `sim-soc-mmio`,
+`test-fat`: the FAT32 images rebuilt with dosfstools/mtools, which CI installs), the emulator's
+tests (`emu-test`, `test-emu`, `test-isa-emu`, `test-act4-emu`), the coverage checks
+(`coverage-fw`, `coverage-fcov`, `coverage-rust`), `sim-lockstep`, the unit suites (RTL + GLS)
+and `sim-psram-contract`, `test-isa` and `test-act4` (+ `test-isa-gls`, `test-act4-gls`,
+`test-isa-waits`), and the SoC tests: `sim-soc-fast` (+ `-icarus`), `sim-soc-mmio`,
 `sim-boot` (the first stage's prompt), `sim-hack-rtl`, `sim-sd-quirks`, `sim-hw-flow` (RTL RAM
 boot and install flow), `sim-stage2` (below), `sim-zephyr-demo-rtl`, `sim-zephyr-irq-echo-rtl` and `sim-soc-gls-fast`. `make test-slow` (CI nightly + manual `workflow_dispatch`) adds
 `sim-gls-hw-flow`, `sim-hw-flow-icarus`, `sim-lockstep-slow` (with `s2_run_hello`, the real
@@ -25,8 +28,10 @@ second stage booted from the card running the hello demo: ~20M cycles, ~5M instr
 `sim-zephyr-demo-gls` (below), `sim-hw-suite-emu` (the board suite against the emulator,
 below), `sim-psram-icarus` (below) and
 `sim-unit-random` (the unit tests with the date as random seed). Until 2026-09 the flashing flow ran in
-no tier at all (25–35 min RTL / many hours GLS on Icarus); on Verilator it's ~16 s
-RTL / ~3–6 min GLS, which is what made it affordable per PR.
+no tier at all (25–35 min RTL / many hours GLS on Icarus); on Verilator it was ~16 s RTL /
+~3–6 min GLS, which made it affordable per PR. Since it RAM-boots the 35 KB second stage
+(~54M cycles) it takes far longer: on a 2-vCPU machine (2026-10-18) ~11 min RTL, ~3 h GLS
+(test-slow) and ~4.5 h on Icarus (test-slow).
 
 `sim-psram-icarus` runs the real PSRAM controller on the IP's pin-level W955D8MBYA model where
 `test-sim` doesn't: `test_soc_rv32i` on Icarus RTL (the window checks 18–22 through the real
@@ -62,7 +67,8 @@ lockstep holds to the RTL's; measure a new test there first (`s1_env.run_from_ca
 
 The SD and RAM-boot RTL tests (`sim-boot`, `sim-hw-flow`, `sim-sd-quirks`, the lockstep's
 `s1_*`) wait at least the first stage's key window (100 ms, 1.8M cycles) when they let it
-boot; Icarus (`sim-soc-fast-icarus`, `sim-hw-flow-icarus`) runs ~19k cycles/s.
+boot; Icarus (`sim-soc-fast-icarus`, `sim-hw-flow-icarus`) ran ~19k cycles/s in 2026-09;
+`sim-hw-flow-icarus` took ~4.5 h on the 2-vCPU machine above.
 
 Also run `sim-gls-hw-flow` (not in `test-sim`) explicitly whenever you touch:
 - transfer v2 (`fw_common::upload`, `vux_tool.send_upload_v2`), the first stage's RAM

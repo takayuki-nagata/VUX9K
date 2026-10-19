@@ -136,5 +136,5 @@ their own target dirs under `build/coverage/rust/`, so the normal builds are unt
   first; the failing run uploads `build/coverage/rust/` as `coverage-<sha>`.
 - Run on its own, the target still needs Verilator and the Zephyr builds: `sim-lockstep`
   (the RTL trace that `sim/emu/test_lockstep.py` replays) is a prerequisite; a missing
-  trace file fails the run. Programs marked `slow` skip ("not in the trace"; one in the
-  default set); that is expected.
+  trace file fails the run. Programs marked `slow` skip ("not in the trace"; two in the
+  default set, `s1_cli` and `s2_run_hello`); that is expected.

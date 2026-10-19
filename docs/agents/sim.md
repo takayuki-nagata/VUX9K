@@ -13,8 +13,8 @@ Read before adding or changing tests under `sim/` or the runner. Index and the r
 single RTL module, cocotb tests against the full `soc_top`, and pytest tests against
 the Rust emulator. The split tracks *which helper a test needs*: `sdcard_model.py`/
 `virtual_serial.py`/`soc_env.py` are for `sim/integration/` (cocotb), `vux9k.py` for
-`sim/emu/`. Pure-Python helpers both sides share (`rv32_asm.py`, `sdcard_protocol.py`,
-`lockstep_programs.py`) live in `sim/integration/`; `sim/emu/vux9k.py` puts that
+`sim/emu/`. Pure-Python helpers both sides share (`rv32_asm.py`, `hack_asm.py`,
+`sdcard_protocol.py`, `lockstep_programs.py`, `irq_echo_pace.py`) live in `sim/integration/`; `sim/emu/vux9k.py` puts that
 directory on `sys.path`. `sim/runners/` holds the pytest entry point that builds and
 runs all cocotb tests (see below).
 `gowin_cells_sim.veryl`, `tb_soc_top.sv`, `tb_hex_runner.veryl`, `tb_gowin_bram.veryl`,
@@ -40,7 +40,7 @@ runs all cocotb tests (see below).
 
 Every cocotb test module is one parametrized case in `sim/runners/test_sim.py`
 (`test_unit`, `test_unit_gls`, `test_soc`, `test_soc_gls`, keyed by module
-name); the root `Makefile`'s `sim-*` targets just select node IDs, e.g.
+name; the PSRAM contract test has its own `test_psram_contract`/`_gls`, below); the root `Makefile`'s `sim-*` targets just select node IDs, e.g.
 `pytest -s "sim/runners/test_sim.py::test_soc[test_soc_fast]"`. `SIM=icarus|verilator`
 selects the simulator (the Makefile sets it per target from `SIM_UNIT`/`SIM_SOC`, see
 the Verilator section below). `sim/runners/sim_runner.py` owns the source lists and
@@ -196,15 +196,19 @@ All SoC tests are on `soc_env`/`tb_soc_top`; keep new ones there too.
 
 `make` runs short tests on Icarus (`SIM_UNIT`, compile time dominates; also
 `test-isa`) and the long SoC/GLS runs on Verilator (`SIM_SOC`): `sim-soc-fast`,
-`sim-hw-flow`, `sim-soc-gls-fast`, `sim-gls-hw-flow`, `test-isa-gls`. Measured 2026-09 (wall time incl. compile):
-hw-flow RTL 860 s (Icarus) -> ~30 s; gls-fast ~1,050 s -> ~33 s. Verilator needs
+`sim-hw-flow`, `sim-soc-gls-fast`, `sim-gls-hw-flow`, `test-isa-gls`, and every other target
+with `SIM=$(SIM_SOC)` (`sim-boot`, `sim-soc-mmio`, `sim-hack-rtl`, `sim-sd-quirks`,
+`sim-stage2`, the Zephyr SoC tests, `test-act4-gls`); `sim-lockstep` forces Verilator.
+Measured 2026-09, before the two-stage boot (wall time incl. compile): hw-flow RTL 860 s
+(Icarus) -> ~30 s; gls-fast ~1,050 s -> ~33 s. The flows are longer now (test-tiers.md). Verilator needs
 `perl`; on a host without it, run Verilator from a container or toolbox that has it.
 - **Don't let cocotb's `--public-flat-rw` back in.** cocotb's Verilator runner
   adds it unconditionally; it makes every signal VPI-visible and blocks most of
   Verilator's optimization — on the gate-level netlist it was ~18x slower to
   simulate and ~5x slower to compile. `sim_runner.py` strips it and generates a
   `public.vlt` exposing only the toplevel's own signals, plus `SOC_RTL_PUBLIC`
-  (`soc_top.*`, `unified_cpu.pc_out`, `soc_rom.mem`) for RTL SoC builds. **A test
+  (`soc_top.*`, `unified_cpu.pc_out`, `soc_rom.mem`, `rv32i_regfile.registers`, and the
+  word model's `mem`/`init_count`) for RTL SoC builds. **A test
   that starts touching another internal signal fails on Verilator with "no such
   attribute" until you add it to `SOC_RTL_PUBLIC`** (Icarus sees everything, so
   it won't catch this).

@@ -28,7 +28,7 @@ is (yosys/nextpnr: repo root). cocotb runs don't use it: `sim/runners/sim_runner
 puts the same symlink into each test's own run directory, its cwd. `$readmemh` is **not**
 simulation-only, it's how the actual FPGA bitstream gets the boot firmware baked
 into BRAM at synthesis time. Don't remove this symlink or "clean up" the
-duplication without also fixing the underlying `$readmemh` calls (out of scope
+duplication without also fixing the underlying `$readmemh` call (out of scope
 for a build-layout change; would require re-verifying real hardware).
 
 ## Veryl module resolution is directory-agnostic
@@ -61,10 +61,13 @@ make sim-unit         # broadest RTL path coverage (30 unit test modules)
 make test-isa
 make build-hack        # hack_demo/
 make sim-hack-rtl
-make sim-hw-flow         # full UART/SD chain; longest real interaction (Verilator, ~16 s)
-make synth-top          # yosys must resolve build/veryl/soc/{cpu,uart}/*.sv
+make sim-psram-contract  # sim/psram_word_model.veryl and tb_psram_contract.veryl at sim/'s top
+make sim-hw-flow         # full UART/SD chain; longest real interaction (Verilator, minutes)
+make synth-top          # yosys must resolve build/veryl/soc/{cpu,uart}/*.sv and dependencies/psram/rtl/*.sv
 make build-zephyr-demo   # Zephyr Rust demo for the real board (needs Zephyr)
 make build-zephyr-irq-echo  # Zephyr interrupt-driven UART echo for the real board
+make apps                # the card's v4 files (build/firmware/apps/)
+make sim-stage2          # the real second stage from the card, with those apps
 python3 scripts/check_no_absolute_paths.py
 git status                # confirm no stray untracked build output
 ```

@@ -32,8 +32,8 @@ size, 35 KB, which a RAM boot sends at ~1550 cycles a byte on the RTL).
 relative to `firmware/`, e.g. `-Tstage1/bootstrap/link.x`, **not**
 `-Tbootstrap/link.x`. Getting this wrong produces `rust-lld: error: cannot find
 linker script` with no indication of *why* the cwd changed. All members' output
-binaries land in the single shared `firmware/target/riscv32i-unknown-none-elf/
-release/`.
+binaries land in the single shared `firmware/target/riscv32i-unknown-none-elf/`:
+`release/`, and `coverage/` (the second stage, and `coverage-fw`'s builds).
 
 ## Firmware rules (the stages, `fw_common`, `fw_drivers`)
 
@@ -62,7 +62,9 @@ release/`.
   don't hard-code it.
 - **Raise `STAGE2_VERSION` with every second-stage change** (`firmware/stage2/src/main.rs`):
   the Makefile's `mkv4 --version` reads it from there into `STAGE2.BIN`'s header, the
-  banner (`VUX9K Stage 2 (vN)`) and `info` show it, and `sim/emu/s1_env.py` reads it.
+  banner (`VUX9K Stage 2 (vN)`) and `info` show it, `sim/emu/s1_env.py` and
+  `sim/integration/soc_env.py` read it, `make dist` puts it in MANIFEST.json
+  (`stage2_version`) and `check_dist.py` holds `STAGE2.BIN`'s header to it.
 - **The second stage is a line prompt** (`s2> `, echo and backspace; `fw_common::shell`):
   the commands are `firmware/stage2/src/shell.rs`'s `HELP` and `CARD_CMDS`, an error is one
   `[ERR] ` line, `put`/`install` speak transfer v2 after their line, `install`'s result is
@@ -75,7 +77,7 @@ release/`.
   `plan` then picks the target from the checked header (RV32 in `XMEM_BASE..STAGE2_BASE`:
   the PSRAM, a jump with a0-a2 as the first stage hands them over; Hack: a word-aligned
   offset in its 64 KB instruction segment, so staging put it where it runs; RV32 anywhere
-  else, at 0 too, is out of the window: the I-RAM RV32 target went with the second stage v3),
+  else, at 0 too, is out of the window),
   and only then does the second stage start it: for Hack the last word's bytes past the
   payload 0, Hack's data segment (`HACK_D_BASE`, `HACK_D_WORDS`) zeroed, `fence.i`,
   `GPIO_BOOT_MODE` and the soft reset (Hack starts at 0; its soft reset without a mode goes
@@ -180,5 +182,5 @@ demo's assembly, checked instruction by instruction against the binary. Output:
 - Raise a threshold when coverage rises; never lower one to get a run through.
 - The Hack demo in CI is assembled from the committed `hack_demo/src/main.asm` (`hcc`
   isn't installed there). After changing `main.c`, regenerate it with `hcc -S`.
-- Not measured yet: the host crates (emulator core, `fw_common` on its own) — that needs
-  cargo-llvm-cov in the CI image.
+- The host crates (the emulator, `fw_common` on its own) are `make coverage-rust`'s
+  (quality.md, "Rust coverage: `make coverage-rust` (cargo-llvm-cov, in test-sim)").
