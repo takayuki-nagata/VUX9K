@@ -175,4 +175,4 @@ def test_suite_on_the_emulator(tmp_path):
         emu.kill()
         emu.wait()
     assert r.returncode == 0, r.stdout[-3000:]
-    assert "Score       : 13/13" in r.stdout and "(and 2 skipped)" in r.stdout, r.stdout[-2000:]
+    assert "Score       : 13/13" in r.stdout and "(and 3 skipped)" in r.stdout, r.stdout[-2000:]
