@@ -31,7 +31,7 @@ FLASH_BYTES = 4 * 1024 * 1024
 # are the PSRAM's waits, which the emulator adds in one step, so a bound costs little when hit
 BOOT_CYCLES = 2_000_000_000
 LINE_CYCLES = 500_000_000
-# The second stage loads ~200 cycles a byte (s1_env.RUN_LOAD_CYCLES): ~35M for ~170 KB
+# The second stage loads ~200 cycles a byte (s1_env.RUN_LOAD_CYCLES): ~53M for ~267 KB
 RUN_LOAD_CYCLES = 100_000_000
 
 MEASURED: dict[str, tuple[int, int, dict[str, int]]] = {}

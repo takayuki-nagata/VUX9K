@@ -9,7 +9,7 @@ files' hashes. Source: https://github.com/takayuki-nagata/VUX9K
 |---|---|
 | `bitstream/pack.fs` | FPGA bitstream (the first stage of the two-stage boot is inside) |
 | `sd/VUX9K/STAGE2.BIN` | The second stage, file manager and application launcher: copy it to the microSD card's FAT32 partition as `VUX9K\STAGE2.BIN`, or install it over the serial port (`vux_tool.py install-stage2`) |
-| `sd/VUX9K/APPS/` | The demos as v4 files for the card's `VUX9K\APPS\`, started by the second stage's `run`: `HELLO.BIN`, `ZEPHYR.BIN`, `IRQECHO.BIN`, `BC.BIN`, `MPY.BIN` (Zephyr; `BC.BIN` is the bc calculator, ~260 KB, `MPY.BIN` MicroPython's REPL, ~174 KB) in the PSRAM, `HACK.BIN` (Hack) in Hack's segments in the PSRAM |
+| `sd/VUX9K/APPS/` | The demos as v4 files for the card's `VUX9K\APPS\`, started by the second stage's `run`: `HELLO.BIN`, `ZEPHYR.BIN`, `IRQECHO.BIN`, `BC.BIN`, `MPY.BIN` (Zephyr; `BC.BIN` is the bc calculator, ~260 KB, `MPY.BIN` MicroPython's REPL, ~267 KB) in the PSRAM, `HACK.BIN` (Hack) in Hack's segments in the PSRAM |
 | `demos/` | Zephyr demo (RV32) and Hack demo images, for the emulator's `--load` |
 | `tools/vux_tool.py` | Talks to the boot stages over the serial port: card report, RAM boot, installing the second stage, putting files on the card and starting applications; makes v4 files and FAT32 card images |
 | `tools/70-vux9k-board.rules` | udev rule that keeps ModemManager off the board (docs/APP_DEVELOPMENT.md, section 1) |

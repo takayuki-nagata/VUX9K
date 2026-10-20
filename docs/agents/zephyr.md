@@ -73,12 +73,20 @@ this repository: `make micropython-src` downloads `micropython-<MICROPY_VERSION>
 (the Makefile pins the version and its sha256; ~160 MB with `lib/`'s submodules), checks it
 and unpacks it into `vendor/micropython-<version>/` (gitignored, like `vendor/riscv-tests`;
 CI caches it under the sha256). To move to a new release, change both and read the port's
-`prj_minimal.conf` and `README.md` (which Zephyr releases it supports) again. Things that
+`prj.conf`, `mpconfigport.h` and `README.md` (which Zephyr releases it supports) again. Things that
 aren't obvious:
 - **The configuration is ours**: `zephyr_workspace/micropython/prj.conf` replaces the port's
-  (`-DCONF_FILE`), based on its `prj_minimal.conf` (so `mpconfigport_minimal.h`: integers
-  are `long long`, not arbitrary precision). It drops `CONFIG_FPU`, which an rv32i SoC can't
-  select, and a heap of 64 KB.
+  (`-DCONF_FILE`), based on its full `prj.conf` less networking, watchdog, FPU (an rv32i SoC
+  can't select it) and reboot, with a 64 KB heap. Not `prj_minimal.conf`: its
+  `mpconfigport_minimal.h` has no `time` module and `long long` integers.
+- **The configuration header is ours too**: `mpconfigport_vux9k.h` includes the port's
+  `mpconfigport.h` and turns the `zsensor` module off, which names sensor attributes Zephyr
+  v3.7 doesn't have (the port's CI builds against v4.4, although its README lists v3.7).
+  `build-micropython` passes it as `CONFIG_MICROPY_CONFIGFILE` on the command line (an
+  absolute path), and builds from scratch when a file in `zephyr_workspace/micropython/` is
+  newer than the build's `.config`: MicroPython's module scan re-reads only changed sources,
+  so a kept build still registered `zsensor` (an undefined reference at the link). After
+  changing the Makefile's flags for it, remove `build/micropython/` by hand.
 - **Console: the UART console's input hook, not the console subsystem.** With
   `prj_minimal.conf`'s `CONSOLE_SUBSYS` the port reads through a tty, which sees Ctrl-C only
   when the REPL asks for a character: `while True: pass` could not be stopped. Without it the
@@ -92,12 +100,14 @@ aren't obvious:
   vendor tree changes), compiles no `lib/` component (`make_dist.py`'s license note says so;
   check again when the configuration grows), and has no RV32M or F instructions.
 
-`make apps` makes it `MPY.BIN` (~174 KB). `sim/emu/test_zephyr_micropython.py` loads it
-into the PSRAM and types at the REPL (an expression, `long long`, a function, an exception,
+`make apps` makes it `MPY.BIN` (~267 KB). `sim/emu/test_zephyr_micropython.py` loads it
+into the PSRAM and types at the REPL (an expression, `2**100`, a function, an exception,
 `time.sleep_ms(100)` against `ticks_ms`, Ctrl-C stopping a loop), starts it once through the
-second stage's `run` from a card, and prints cycles like bc's test: ~0.4M cycles (22 ms) from
-its start to the first `>>> `, 0.4-0.6M a short line (mostly the echo's UART time), and
-~48M from power-on through both stages and `run`'s load to its start. On the board,
+second stage's `run` from a card, and prints cycles like bc's test: ~0.48M cycles (26 ms)
+from its start to the first `>>> `, 0.5-0.8M a short line, and ~66M from power-on through
+both stages and `run`'s load to its start. The interpreter runs at ~10 cycles an instruction
+from the PSRAM, so a few thousand bytecodes take milliseconds: the sleep test takes the
+interpreter's own time (the same line with `sleep_ms(0)`) off before it checks the 100 ms. On the board,
 `test_hardware.py` 15 puts and runs it and types three lines, printing `[TIME]` lines.
 
 ## Zephyr: the interrupt-driven UART

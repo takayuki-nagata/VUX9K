@@ -116,13 +116,13 @@ BC_RUN_TIMEOUT = 120.0
 BC_BOOT_TIMEOUT = 300.0
 BC_LINE_TIMEOUT = 120.0
 # MicroPython's Zephyr port (sim/emu/test_zephyr_micropython.py): the banner, then lines
-# typed at the REPL with what they print. ~170 KB: put ~19 s, load ~2 s, start under 1 s
-# (the emulator's cycles); bounds with room, the board's times printed as [TIME]
+# typed at the REPL with what they print. ~267 KB: put ~30 s, load ~3 s, start under 0.1 s
+# (the emulator's cycles), as long as bc's; bounds with room, the board's times printed as [TIME]
 MPY_BANNER = "MicroPython v1.29.0"
 MPY_PROMPT = ">>> "
 MPY_REPL = (("1+2", "\r\n3\r\n"), ("2**100", "1267650600228229401496703205376"), ("1 // 0", "ZeroDivisionError"))
-MPY_PUT_TIMEOUT = 60.0
-MPY_RUN_TIMEOUT = 60.0
+MPY_PUT_TIMEOUT = 90.0
+MPY_RUN_TIMEOUT = 120.0
 MPY_BOOT_TIMEOUT = 60.0
 MPY_LINE_TIMEOUT = 30.0
 # Versions the suite installs, apart from what a release ships
