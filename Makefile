@@ -383,8 +383,8 @@ MICROPY_DIR = vendor/micropython-$(MICROPY_VERSION)
 MICROPY_STAMP = $(MICROPY_DIR)/.vux9k-fetched-$(MICROPY_SHA256)
 # bc_clone_py (the bc calculator in Python, frozen into MPY.BIN): a commit's GitHub archive,
 # at the path zephyr_workspace/micropython/manifest.py names
-BC_PY_COMMIT = f521e4e5e6791d08e175b6df67e7b5a90d36c06e
-BC_PY_SHA256 = bdb5453fe7d5b73de46eaa30adc1151692ad2e49061b124f5926313248e7bde9
+BC_PY_COMMIT = 74e6286344d735683a829dbe7d2d73750b246222
+BC_PY_SHA256 = a573c3208b4e9f4157fbb9d06706dd13d5d2d18bf93ad238053c302d0a3afee7
 BC_PY_URL = https://codeload.github.com/takayuki-nagata/bc_clone_py/tar.gz/$(BC_PY_COMMIT)
 BC_PY_DIR = vendor/bc_clone_py
 BC_PY_STAMP = $(BC_PY_DIR)/.vux9k-fetched-$(BC_PY_COMMIT)
