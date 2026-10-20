@@ -360,49 +360,73 @@ build-zephyr-irq-echo:
 	@echo "=== Building the Zephyr interrupt-driven UART echo (vux9k) ==="
 	$(call west_build,vux9k,zephyr_workspace/irq_echo,$(ZEPHYR_IRQ_ECHO_BUILD_DIR),)
 
-# MicroPython's release tarball (lib/'s submodules included), fetched on demand into vendor/
-# (gitignored, like vendor/riscv-tests): not in the repository, no submodule. Checked against
-# its sha256 (named in the stamp, so a new sum fetches again), unpacked beside the target and
-# moved into place, so a failed fetch leaves no tree; curl gives up on a stalled download.
+# Upstream sources fetched on demand into vendor/ (gitignored, like vendor/riscv-tests): not in
+# the repository, no submodule. fetch_archive URL,SHA256,DIR,STAMP: checked against the sha256,
+# unpacked beside DIR and moved into place, so a failed fetch leaves no tree; curl gives up on a
+# stalled download. The stamp names the pin, so a new one fetches again.
+define fetch_archive
+	@mkdir -p $(BUILD_DIR)/downloads
+	curl -fsSL --retry 3 --connect-timeout 30 --max-time 900 -o $(BUILD_DIR)/downloads/$(notdir $(3)).part $(1)
+	echo "$(2)  $(BUILD_DIR)/downloads/$(notdir $(3)).part" | sha256sum -c -
+	rm -rf $(3) $(3).part && mkdir -p $(3).part
+	tar -xf $(BUILD_DIR)/downloads/$(notdir $(3)).part -C $(3).part --strip-components=1
+	touch $(3).part/$(notdir $(4))
+	mv $(3).part $(3)
+	rm -f $(BUILD_DIR)/downloads/$(notdir $(3)).part
+endef
+
+# MicroPython's release tarball (lib/'s submodules included)
 MICROPY_VERSION = 1.29.0
 MICROPY_SHA256 = d925a7c664e79a2bdf3dfcb285ba5e2237041cc35a0bd4ee573b6c5711efeca0
 MICROPY_URL = https://github.com/micropython/micropython/releases/download/v$(MICROPY_VERSION)/micropython-$(MICROPY_VERSION).tar.xz
 MICROPY_DIR = vendor/micropython-$(MICROPY_VERSION)
-MICROPY_TARBALL = $(BUILD_DIR)/downloads/micropython-$(MICROPY_VERSION).tar.xz
 MICROPY_STAMP = $(MICROPY_DIR)/.vux9k-fetched-$(MICROPY_SHA256)
-micropython-src: $(MICROPY_STAMP)
+# bc_clone_py (the bc calculator in Python, frozen into MPY.BIN): a commit's GitHub archive,
+# at the path zephyr_workspace/micropython/manifest.py names
+BC_PY_COMMIT = f521e4e5e6791d08e175b6df67e7b5a90d36c06e
+BC_PY_SHA256 = bdb5453fe7d5b73de46eaa30adc1151692ad2e49061b124f5926313248e7bde9
+BC_PY_URL = https://codeload.github.com/takayuki-nagata/bc_clone_py/tar.gz/$(BC_PY_COMMIT)
+BC_PY_DIR = vendor/bc_clone_py
+BC_PY_STAMP = $(BC_PY_DIR)/.vux9k-fetched-$(BC_PY_COMMIT)
+micropython-src: $(MICROPY_STAMP) $(BC_PY_STAMP)
 
 $(MICROPY_STAMP):
-	@mkdir -p $(dir $(MICROPY_TARBALL))
-	curl -fsSL --retry 3 --connect-timeout 30 --max-time 900 -o $(MICROPY_TARBALL).part $(MICROPY_URL)
-	echo "$(MICROPY_SHA256)  $(MICROPY_TARBALL).part" | sha256sum -c -
-	rm -rf $(MICROPY_DIR) $(MICROPY_DIR).part && mkdir -p $(MICROPY_DIR).part
-	tar -xJf $(MICROPY_TARBALL).part -C $(MICROPY_DIR).part --strip-components=1
-	touch $(MICROPY_DIR).part/$(notdir $(MICROPY_STAMP))
-	mv $(MICROPY_DIR).part $(MICROPY_DIR)
-	rm -f $(MICROPY_TARBALL).part
+	$(call fetch_archive,$(MICROPY_URL),$(MICROPY_SHA256),$(MICROPY_DIR),$(MICROPY_STAMP))
+
+$(BC_PY_STAMP):
+	$(call fetch_archive,$(BC_PY_URL),$(BC_PY_SHA256),$(BC_PY_DIR),$(BC_PY_STAMP))
+
+# mpy-cross (compiles the frozen modules) built into build/ from the same tree: MicroPython's
+# CMake would build it inside the vendor tree
+MPY_CROSS = $(BUILD_DIR)/mpy-cross/mpy-cross
+$(MPY_CROSS): $(MICROPY_STAMP)
+	$(MAKE) -C $(MICROPY_DIR)/mpy-cross BUILD=$(CURDIR)/$(BUILD_DIR)/mpy-cross
 
 # MicroPython's Zephyr port (the REPL on the board's UART) for the real board, linked into the
-# PSRAM like the demos (make apps' MPY.BIN), with this repository's prj.conf in place of the port's
-# and its configuration header around the port's (an absolute path, so given here, not in prj.conf)
+# PSRAM like the demos (make apps' MPY.BIN), with this repository's prj.conf in place of the port's,
+# its configuration header around the port's and its manifest of frozen modules (bc_clone_py),
+# both absolute paths, so given here, not in prj.conf
 MICROPY_BUILD_DIR ?= $(BUILD_DIR)/micropython
 # The banner's version and date: without them py/makeversionhdr.py takes `git describe` of the
 # tree it sits in, which is this repository's (its commit and -dirty in the image), and today
 build-micropython: export MICROPY_GIT_TAG = v$(MICROPY_VERSION)
 build-micropython: export SOURCE_DATE_EPOCH = $(shell git log -1 --format=%ct)
+build-micropython: export MICROPY_MPYCROSS = $(CURDIR)/$(MPY_CROSS)
 # A configuration change starts the build again from scratch: MicroPython's scan for its
 # modules re-reads only the sources newer than its output, so a module the new configuration
 # turns off would stay registered (an undefined reference at the link). The sources are
 # fetched only where Zephyr is, so that a build without it (MPY.BIN left out) needs no network.
 build-micropython:
 	@echo "=== Building MicroPython $(MICROPY_VERSION) (Zephyr port, vux9k) ==="
-	@if [ -d "$(ZEPHYR_BASE)" ] && [ -d "$(ZEPHYR_SDK_INSTALL_DIR)" ]; then $(MAKE) --no-print-directory micropython-src; fi
+	@if [ -d "$(ZEPHYR_BASE)" ] && [ -d "$(ZEPHYR_SDK_INSTALL_DIR)" ]; then \
+		$(MAKE) --no-print-directory micropython-src $(MPY_CROSS); fi
 	@if [ -f $(MICROPY_BUILD_DIR)/zephyr/.config ] && \
 		[ -n "$$(find zephyr_workspace/micropython -newer $(MICROPY_BUILD_DIR)/zephyr/.config)" ]; then \
 		echo "zephyr_workspace/micropython/ changed: building MicroPython from scratch"; \
 		rm -rf $(MICROPY_BUILD_DIR); fi
 	$(call west_build,vux9k,$(MICROPY_DIR)/ports/zephyr,$(MICROPY_BUILD_DIR),-DCONF_FILE=$(CURDIR)/zephyr_workspace/micropython/prj.conf \
-		-DCONFIG_MICROPY_CONFIGFILE=\"$(CURDIR)/zephyr_workspace/micropython/mpconfigport_vux9k.h\")
+		-DCONFIG_MICROPY_CONFIGFILE=\"$(CURDIR)/zephyr_workspace/micropython/mpconfigport_vux9k.h\" \
+		-DCONFIG_MICROPY_FROZEN_MANIFEST=\"$(CURDIR)/zephyr_workspace/micropython/manifest.py\")
 
 # ===== Hack 16-bit Toolchain & Firmware =====
 

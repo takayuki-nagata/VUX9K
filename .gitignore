@@ -25,8 +25,10 @@ zephyr_workspace/**/*.bin
 # riscv-tests (+ its env submodule), fetched at a pinned commit on demand by scripts/run_riscv_tests.py
 vendor/riscv-tests/
 
-# MicroPython's release tarball, unpacked on demand by `make micropython-src`
+# MicroPython's release tarball and bc_clone_py, unpacked on demand by `make micropython-src`
 vendor/micropython-*/
+vendor/bc_clone_py/
+vendor/bc_clone_py.part/
 
 # Simulation stray artifacts (non-standard names cocotb/Icarus occasionally leave behind)
 sim/soc_top
