@@ -169,6 +169,31 @@ def send_paced(soc, data: bytes, chunk: int = 16, drain_cycles: int = 50_000_000
         raise RuntimeError("UART RX overrun: the program didn't keep up with the host")
 
 
+class Meter:
+    """Cycles, minstret and the caches' counts from now on, recorded into measured[label] by
+    done() as (cycles, retired instructions, the caches' counts)."""
+
+    def __init__(self, soc, measured: dict[str, tuple[int, int, dict[str, int]]]):
+        self.soc, self.measured = soc, measured
+        self.cycle, self.instret, self.stats = soc.cycle, soc.instret, soc.cache_stats
+
+    def done(self, label: str) -> None:
+        now = self.soc.cache_stats
+        stats = {k: now[k] - self.stats[k] for k in now}
+        self.measured[label] = (self.soc.cycle - self.cycle, self.soc.instret - self.instret, stats)
+
+
+def hit_rates(stats: dict[str, int]) -> str:
+    """The fetches' and loads' hit rates in a Meter's window, and its stores."""
+
+    def rate(hits: int, misses: int) -> str:
+        return f"{100 * hits / max(hits + misses, 1):5.1f}%"
+
+    i = rate(stats["fetch_hits"], stats["fetch_misses"])
+    d = rate(stats["load_hits"], stats["load_misses"])
+    return f"I {i} D {d} stores {stats['stores']:,}"
+
+
 def press_button(soc, hold_ms: float = 25, after_ms: float = 15) -> None:
     """Press S2 for hold_ms and release it, then run after_ms (like test_soc_fast)."""
     soc.set_button(True)

@@ -21,7 +21,7 @@ import os
 
 import pytest
 from s1_env import STAGE2_BASE, app, run_from_card
-from vux9k import REPO_ROOT, XMEM_BASE, new_soc, send_paced, wait_for
+from vux9k import REPO_ROOT, XMEM_BASE, Meter, hit_rates, new_soc, send_paced, wait_for
 
 ZEPHYR_BIN = os.path.join(REPO_ROOT, "build", "zephyr", "zephyr", "zephyr.bin")
 SELF_TESTS = [
@@ -54,30 +54,6 @@ BC_RUN_LOAD_CYCLES = 200_000_000
 MEASURED: dict[str, tuple[int, int, dict[str, int]]] = {}
 
 
-class Meter:
-    """Cycles, minstret and the caches' counts from now on, recorded under a label by done()."""
-
-    def __init__(self, soc):
-        self.soc = soc
-        self.cycle, self.instret, self.stats = soc.cycle, soc.instret, soc.cache_stats
-
-    def done(self, label: str) -> None:
-        now = self.soc.cache_stats
-        stats = {k: now[k] - self.stats[k] for k in now}
-        MEASURED[label] = (self.soc.cycle - self.cycle, self.soc.instret - self.instret, stats)
-
-
-def hit_rates(stats: dict[str, int]) -> str:
-    """The fetches' and loads' hit rates in the window, and its stores."""
-
-    def rate(hits: int, misses: int) -> str:
-        return f"{100 * hits / max(hits + misses, 1):5.1f}%"
-
-    i = rate(stats["fetch_hits"], stats["fetch_misses"])
-    d = rate(stats["load_hits"], stats["load_misses"])
-    return f"I {i} D {d} stores {stats['stores']:,}"
-
-
 @pytest.fixture(scope="module")
 def bc_bin():
     if not os.path.exists(ZEPHYR_BIN):
@@ -90,7 +66,7 @@ def bc_bin():
 def bc(bc_bin):
     soc = new_soc()
     soc.load_app(bc_bin, "riscv", XMEM_BASE)
-    meter = Meter(soc)
+    meter = Meter(soc, MEASURED)
     boot = wait_for(soc, b"bc> ", timeout_cycles=BOOT_CYCLES)
     meter.done("boot: start to the first bc> (load_app)")
     return soc, boot
@@ -100,7 +76,7 @@ def repl(soc, line: str) -> str:
     """One line typed at bc's prompt; its output up to the next prompt. Measured from the
     first byte sent (the line's own UART time, ~1,560 cycles a byte, included)."""
     start = len(soc.uart_received())
-    meter = Meter(soc)
+    meter = Meter(soc, MEASURED)
     send_paced(soc, line.encode() + b"\r")  # Enter, as a terminal sends it
     out = wait_for(soc, b"bc> ", timeout_cycles=LINE_CYCLES, start=start)
     meter.done(f"line: {line}")
@@ -139,7 +115,7 @@ def test_runs_from_the_card(bc_bin):
     run_line = soc.uart_received()[:mark].decode(errors="replace")
     assert "PSRAM, starting at 0x80000000" in run_line, run_line[-400:]
     assert soc.xmem_word(XMEM_BASE) == int.from_bytes(bc_bin[:4], "little")
-    meter = Meter(soc)
+    meter = Meter(soc, MEASURED)
     out = wait_for(soc, b"bc> ", timeout_cycles=BOOT_CYCLES, start=mark)
     meter.done("boot: start to the first bc> (second stage's run)")
     assert "ALL ZEPHYR BC_CORE TESTS PASSED (100%)!" in out
