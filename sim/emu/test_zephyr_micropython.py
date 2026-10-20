@@ -6,8 +6,9 @@ MicroPython's Zephyr port (make build-micropython, board vux9k) on the emulator'
 profile. Like the demos it is linked into the PSRAM (the image at 0x8000_0000; its RAM from
 0x8040_0000). Loaded into the PSRAM directly (Soc.load_app(image, "riscv", XMEM_BASE)): the
 banner, then lines typed at the REPL (arbitrary-precision integers, the time module), and
-Ctrl-C stopping a running loop. And once as the board starts it, from the card: the second
-stage's `run VUX9K/APPS/MPY.BIN` (make apps).
+Ctrl-C stopping a running loop; then bc_clone_py, frozen into the image: its self-test (each
+case timed) and its own REPL, typed at as a terminal does. And once as the board starts it, from
+the card: the second stage's `run VUX9K/APPS/MPY.BIN` (make apps).
 
 As in test_zephyr_bc.py, the cycles, retired instructions and the caches' hit rates to the
 first prompt, for the second stage's load and for each line are recorded and printed by
@@ -31,6 +32,9 @@ FLASH_BYTES = 4 * 1024 * 1024
 # are the PSRAM's waits, which the emulator adds in one step, so a bound costs little when hit
 BOOT_CYCLES = 2_000_000_000
 LINE_CYCLES = 500_000_000
+# bc_clone_py's self-test: one case (a line of its report) at most, the most a report has
+BC_CASE_CYCLES = 4_000_000_000
+BC_REPORT_LINES = 40
 # The second stage loads ~200 cycles a byte (s1_env.RUN_LOAD_CYCLES): ~53M for ~267 KB
 RUN_LOAD_CYCLES = 100_000_000
 
@@ -120,6 +124,49 @@ def test_ctrl_c_stops_a_loop(mpy):
     out = wait_for(soc, PROMPT, timeout_cycles=LINE_CYCLES, start=start)
     assert "KeyboardInterrupt" in out, out
     assert "\r\n7\r\n" in repl(soc, "3+4")  # and the REPL goes on
+
+
+def test_bc_selftest(mpy):
+    """bc_clone_py's self-test (bc_selftest.run(), frozen): every case passes. Each case is
+    timed from the end of the previous report line to its own."""
+    soc = mpy[0]
+    send_paced(soc, b"import bc_selftest; bc_selftest.run()\r")
+    pos = len(soc.uart_received())
+    meter = Meter(soc, MEASURED)
+    report = []
+    for _ in range(BC_REPORT_LINES):
+        line = wait_for(soc, b"\n", timeout_cycles=BC_CASE_CYCLES, start=pos).strip()
+        pos = len(soc.uart_received())
+        report.append(line)
+        if line.endswith("[PASS]") or line.endswith("[FAIL]"):
+            meter.done(f"bc case: {line.rsplit(' ... ', 1)[0]}")
+            meter = Meter(soc, MEASURED)
+        if "SELF-TESTS" in line:
+            break
+    out = wait_for(soc, PROMPT, timeout_cycles=LINE_CYCLES, start=pos)
+    text = "\n".join(report)
+    assert "ALL BC SELF-TESTS PASSED" in text and "[FAIL]" not in text, text
+    assert "True" in out, out
+
+
+def test_bc_repl(mpy):
+    """bc_clone_py's REPL (bc_clone.repl(mathlib=True)), lines ended with Enter as a terminal
+    sends it ("\r"); `quit` returns to MicroPython's prompt."""
+    soc = mpy[0]
+    send_paced(soc, b"import bc_clone; bc_clone.repl(mathlib=True)\r")
+    for line, want in (
+        ("2^100", "1267650600228229401496703205376"),
+        ("scale=6; 22/7", "3.142857"),
+        ("4*a(1)", "3.14159265358979323844"),
+    ):
+        start = len(soc.uart_received())
+        meter = Meter(soc, MEASURED)
+        send_paced(soc, line.encode() + b"\r")
+        wait_for(soc, want.encode(), timeout_cycles=LINE_CYCLES, start=start)
+        meter.done(f"bc line: {line}")
+    start = len(soc.uart_received())
+    send_paced(soc, b"quit\r")
+    wait_for(soc, PROMPT, timeout_cycles=LINE_CYCLES, start=start)
 
 
 def test_runs_from_the_card(mpy_bin):
