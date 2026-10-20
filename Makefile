@@ -387,8 +387,15 @@ MICROPY_BUILD_DIR ?= $(BUILD_DIR)/micropython
 # The banner's version: without it py/makeversionhdr.py takes `git describe` of the tree it
 # sits in, which is this repository's (its commit and -dirty in the image)
 build-micropython: export MICROPY_GIT_TAG = v$(MICROPY_VERSION)
+# A configuration change starts the build again from scratch: MicroPython's scan for its
+# modules re-reads only the sources newer than its output, so a module the new configuration
+# turns off would stay registered (an undefined reference at the link)
 build-micropython: micropython-src
 	@echo "=== Building MicroPython $(MICROPY_VERSION) (Zephyr port, vux9k) ==="
+	@if [ -f $(MICROPY_BUILD_DIR)/zephyr/.config ] && \
+		[ -n "$$(find zephyr_workspace/micropython -newer $(MICROPY_BUILD_DIR)/zephyr/.config)" ]; then \
+		echo "zephyr_workspace/micropython/ changed: building MicroPython from scratch"; \
+		rm -rf $(MICROPY_BUILD_DIR); fi
 	$(call west_build,vux9k,$(MICROPY_DIR)/ports/zephyr,$(MICROPY_BUILD_DIR),-DCONF_FILE=$(CURDIR)/zephyr_workspace/micropython/prj.conf \
 		-DCONFIG_MICROPY_CONFIGFILE=\"$(CURDIR)/zephyr_workspace/micropython/mpconfigport_vux9k.h\")
 
