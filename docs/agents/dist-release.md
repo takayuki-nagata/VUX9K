@@ -26,7 +26,8 @@ fields (`release_check.py`'s `FIELDS`, all required) and the release notes built
 (`release_check.py notes`) live in that script, not in the workflow. Keep in sync:
 - The dist's contents live in `make_dist.py`'s `FILES` (plus what it writes itself: the
   Zephyr BSP, `BSP_ARCHIVE`, and `THIRD_PARTY_LICENSES.txt` from `LINKED_CRATES`, so a new
-  binary that links registry crates gets an entry there), `check_dist.py`'s `REQUIRED` (and
+  binary that links registry crates gets an entry there, and MicroPython's `LICENSE` from the
+  tree `--micropython-dir` names, the one `MPY.BIN` was built from), `check_dist.py`'s `REQUIRED` (and
   `CARD_FILES`, the v4 files' mode and load address) and docs/APP_DEVELOPMENT.md; the docs'
   Python examples are `check_dist.PY_EXAMPLE` and `PY_CARD_EXAMPLE`, verbatim.
 - MANIFEST's tool pins are parsed from `ci.yml`; `make_dist.py` fails if a pattern stops

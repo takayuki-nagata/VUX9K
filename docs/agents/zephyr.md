@@ -18,7 +18,7 @@ mtime +0x0 / mtimecmp +0x8 layout is `timer_core`'s, so Zephyr's in-tree
   first stage's data, which the first stage sets up again at every start). The nodes are in
   `vux9k.dts` with their unit addresses (`flash@80000000`, `memory@80400000`), not in
   the dtsi. The second stage's `run` loads such an image (a v4 file at `0x8000_0000`, `make
-  apps`' `ZEPHYR.BIN`/`IRQECHO.BIN`/`BC.BIN`) in place and jumps to it (fw_common::launch's PSRAM
+  apps`' `ZEPHYR.BIN`/`IRQECHO.BIN`/`BC.BIN`/`MPY.BIN`) in place and jumps to it (fw_common::launch's PSRAM
   target), leaving the first stage in the ROM: a Zephyr app never returns, but Button S1 (the
   board's reset) starts the first stage and the boot again. The tests can't press it, so
   the board tests (`test_hardware.py` 13 to 15, `hw_irq_echo.py`) load the bitstream afterwards.

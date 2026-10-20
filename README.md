@@ -90,7 +90,7 @@ The RTL modules in this repository were originally authored in VHDL-2008 and hav
 - **Arbitrary-Precision Math Engine & REPL (`vendor/bc_clone_rs`)**: Submodule from [`takayuki-nagata/bc_clone_rs`](https://github.com/takayuki-nagata/bc_clone_rs)
   - Embedded `bc_core` arbitrary-precision arithmetic engine with 10/10 math test suite running atop Zephyr RTOS. At about 260 KB it runs on the board from the PSRAM (`make build-zephyr`, `\VUX9K\APPS\BC.BIN` started by the second stage's `run`), through the caches in front of it: about 3 s from its start to the first `bc> ` (51M cycles on the emulator, which the RTL matches cycle for cycle).
 - **MicroPython (`make build-micropython`)**: [MicroPython](https://micropython.org)'s Zephyr port, from its release tarball (fetched into `vendor/`, not part of this repository)
-  - Its REPL on the board's UART, run from the PSRAM like bc (`\VUX9K\APPS\MPY.BIN`, ~267 KB): about 26 ms from its start to the first `>>> `; Ctrl-C stops a running program. The port's full configuration less networking and sensors: arbitrary-precision integers, `time`, a 64 KB heap.
+  - Its REPL on the board's UART, run from the PSRAM like bc (`\VUX9K\APPS\MPY.BIN`, ~267 KB): about 26 ms from its start to the first `>>> ` (0.48M cycles on the emulator, which the RTL matches cycle for cycle); Ctrl-C stops a running program. The port's full configuration less networking and sensors: arbitrary-precision integers, `time`, a 64 KB heap.
 - **Hack Toolchain & C Firmware (`hack_demo`)**: Powered by [`takayuki-nagata/hack_tools`](https://github.com/takayuki-nagata/hack_tools) (`has` assembler & `m2h` transpiler)
   - 16-bit C and Hack assembly firmware testing recursive arithmetic, Fibonacci, array manipulations, and MMIO UART output.
 
@@ -515,7 +515,7 @@ Short tests run on Icarus, long SoC/GLS runs on Verilator (`SIM_UNIT` / `SIM_SOC
 | **Real Hardware, Release Tree** | `make test-hw-dist DIST=<dir>` | ~10 min | The same 16 tests with a `make dist` tree's bitstream, second stage and demos, nothing rebuilt: how a release candidate is tested ([`docs/RELEASING.md`](docs/RELEASING.md)) |
 | **Board UART Interrupts** | `make test-hw-irq-echo` | ~20 sec | The interrupt-driven UART echo on the board (`scripts/hw_irq_echo.py`): put on the card as `\VUX9K\APPS\IRQECHO.BIN` and started by the running second stage's `run`, five 256-byte lines sent in paced 16-byte chunks (`--chunk 0` sends them back to back), then the bitstream loaded into SRAM again from `build/synth/pack.fs`; `make test-hw-irq-echo-dist DIST=<dir>` takes both from a `make dist` tree |
 
-### Real Hardware Test Suite (15 Automated Checks)
+### Real Hardware Test Suite (16 Automated Checks)
 `scripts/test_hardware.py` needs a FAT32 card in the board (it stays there: the suite sets
 it up itself). It writes only in `\VUX9K\`, which the second stage's `install` makes if it
 is missing: test versions of `STAGE2.BIN`, `\VUX9K\TEST\` (removed again), the demos in

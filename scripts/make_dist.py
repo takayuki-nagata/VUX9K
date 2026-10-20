@@ -220,7 +220,7 @@ def third_party_licenses(out_path, micropython_dir):
             if apache_text is None and "apache" in name.lower() and text.lstrip().startswith("Apache License"):
                 apache_text = (f"{p['name']} {p['version']}", name)
             out += ["", "=" * 78, f"{p['name']} {p['version']}: {name}", "=" * 78, "", text]
-    with open(os.path.join(micropython_dir, "LICENSE")) as f:
+    with open(os.path.join(REPO_ROOT, micropython_dir, "LICENSE")) as f:
         out += ["", "=" * 78, f"{os.path.basename(micropython_dir)}: LICENSE", "=" * 78, "", f.read().rstrip()]
     if unshipped:
         if apache_text is None:

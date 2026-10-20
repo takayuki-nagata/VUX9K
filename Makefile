@@ -362,21 +362,23 @@ build-zephyr-irq-echo:
 
 # MicroPython's release tarball (lib/'s submodules included), fetched on demand into vendor/
 # (gitignored, like vendor/riscv-tests): not in the repository, no submodule. Checked against
-# its sha256, unpacked beside the target and moved into place, so a failed fetch leaves no tree.
+# its sha256 (named in the stamp, so a new sum fetches again), unpacked beside the target and
+# moved into place, so a failed fetch leaves no tree; curl gives up on a stalled download.
 MICROPY_VERSION = 1.29.0
 MICROPY_SHA256 = d925a7c664e79a2bdf3dfcb285ba5e2237041cc35a0bd4ee573b6c5711efeca0
 MICROPY_URL = https://github.com/micropython/micropython/releases/download/v$(MICROPY_VERSION)/micropython-$(MICROPY_VERSION).tar.xz
 MICROPY_DIR = vendor/micropython-$(MICROPY_VERSION)
 MICROPY_TARBALL = $(BUILD_DIR)/downloads/micropython-$(MICROPY_VERSION).tar.xz
-micropython-src: $(MICROPY_DIR)/.vux9k-fetched
+MICROPY_STAMP = $(MICROPY_DIR)/.vux9k-fetched-$(MICROPY_SHA256)
+micropython-src: $(MICROPY_STAMP)
 
-$(MICROPY_DIR)/.vux9k-fetched:
+$(MICROPY_STAMP):
 	@mkdir -p $(dir $(MICROPY_TARBALL))
-	curl -fsSL -o $(MICROPY_TARBALL).part $(MICROPY_URL)
+	curl -fsSL --retry 3 --connect-timeout 30 --max-time 900 -o $(MICROPY_TARBALL).part $(MICROPY_URL)
 	echo "$(MICROPY_SHA256)  $(MICROPY_TARBALL).part" | sha256sum -c -
 	rm -rf $(MICROPY_DIR) $(MICROPY_DIR).part && mkdir -p $(MICROPY_DIR).part
 	tar -xJf $(MICROPY_TARBALL).part -C $(MICROPY_DIR).part --strip-components=1
-	touch $(MICROPY_DIR).part/.vux9k-fetched
+	touch $(MICROPY_DIR).part/$(notdir $(MICROPY_STAMP))
 	mv $(MICROPY_DIR).part $(MICROPY_DIR)
 	rm -f $(MICROPY_TARBALL).part
 
@@ -384,14 +386,17 @@ $(MICROPY_DIR)/.vux9k-fetched:
 # PSRAM like the demos (make apps' MPY.BIN), with this repository's prj.conf in place of the port's
 # and its configuration header around the port's (an absolute path, so given here, not in prj.conf)
 MICROPY_BUILD_DIR ?= $(BUILD_DIR)/micropython
-# The banner's version: without it py/makeversionhdr.py takes `git describe` of the tree it
-# sits in, which is this repository's (its commit and -dirty in the image)
+# The banner's version and date: without them py/makeversionhdr.py takes `git describe` of the
+# tree it sits in, which is this repository's (its commit and -dirty in the image), and today
 build-micropython: export MICROPY_GIT_TAG = v$(MICROPY_VERSION)
+build-micropython: export SOURCE_DATE_EPOCH = $(shell git log -1 --format=%ct)
 # A configuration change starts the build again from scratch: MicroPython's scan for its
 # modules re-reads only the sources newer than its output, so a module the new configuration
-# turns off would stay registered (an undefined reference at the link)
-build-micropython: micropython-src
+# turns off would stay registered (an undefined reference at the link). The sources are
+# fetched only where Zephyr is, so that a build without it (MPY.BIN left out) needs no network.
+build-micropython:
 	@echo "=== Building MicroPython $(MICROPY_VERSION) (Zephyr port, vux9k) ==="
+	@if [ -d "$(ZEPHYR_BASE)" ] && [ -d "$(ZEPHYR_SDK_INSTALL_DIR)" ]; then $(MAKE) --no-print-directory micropython-src; fi
 	@if [ -f $(MICROPY_BUILD_DIR)/zephyr/.config ] && \
 		[ -n "$$(find zephyr_workspace/micropython -newer $(MICROPY_BUILD_DIR)/zephyr/.config)" ]; then \
 		echo "zephyr_workspace/micropython/ changed: building MicroPython from scratch"; \
