@@ -5,8 +5,9 @@
 MicroPython's Zephyr port (make build-micropython, board vux9k) on the emulator's real
 profile. Like the demos it is linked into the PSRAM (the image at 0x8000_0000; its RAM from
 0x8040_0000). Loaded into the PSRAM directly (Soc.load_app(image, "riscv", XMEM_BASE)): the
-banner, then lines typed at the REPL, and Ctrl-C stopping a running loop. And once as the
-board starts it, from the card: the second stage's `run VUX9K/APPS/MPY.BIN` (make apps).
+banner, then lines typed at the REPL (arbitrary-precision integers, the time module), and
+Ctrl-C stopping a running loop. And once as the board starts it, from the card: the second
+stage's `run VUX9K/APPS/MPY.BIN` (make apps).
 
 As in test_zephyr_bc.py, the cycles, retired instructions and the caches' hit rates to the
 first prompt, for the second stage's load and for each line are recorded and printed by
@@ -77,9 +78,8 @@ def test_repl_expression(mpy):
     assert "\r\n3\r\n" in repl(mpy[0], "1+2")
 
 
-def test_repl_long_long(mpy):
-    # The minimal config's integers are long long (prj.conf), not arbitrary precision
-    assert "4611686018427387904" in repl(mpy[0], "2**62")
+def test_repl_big_int(mpy):
+    assert "1267650600228229401496703205376" in repl(mpy[0], "2**100")
 
 
 def test_repl_function(mpy):

@@ -120,7 +120,7 @@ BC_LINE_TIMEOUT = 120.0
 # (the emulator's cycles); bounds with room, the board's times printed as [TIME]
 MPY_BANNER = "MicroPython v1.29.0"
 MPY_PROMPT = ">>> "
-MPY_REPL = (("1+2", "\r\n3\r\n"), ("2**62", "4611686018427387904"), ("1 // 0", "ZeroDivisionError"))
+MPY_REPL = (("1+2", "\r\n3\r\n"), ("2**100", "1267650600228229401496703205376"), ("1 // 0", "ZeroDivisionError"))
 MPY_PUT_TIMEOUT = 60.0
 MPY_RUN_TIMEOUT = 60.0
 MPY_BOOT_TIMEOUT = 60.0
