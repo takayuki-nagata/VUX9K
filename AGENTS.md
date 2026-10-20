@@ -34,7 +34,7 @@ emu/                    Rust emulator (core, CLI vux9k-emu, pyo3 module vux9k_em
 coverage/               thresholds.toml (make coverage-fw, coverage-fcov, coverage-rust)
 scripts/                Build/CI plumbing only (elf2bin.py, run_riscv_tests.py, ...)
 tools/                  End-user CLI: vux_tool.py (UART flashing/diagnostics/monitor)
-vendor/                 submodules bc_clone_rs and psram_controller (Veryl path dependency `psram`); riscv-tests (fetched on demand)
+vendor/                 submodules bc_clone_rs and psram_controller (Veryl path dependency `psram`); riscv-tests, MicroPython (fetched on demand)
 docs/agents/            Topic guides for agents (this file indexes them)
 build/                  ALL generated/build output (gitignored) — see below
 ```

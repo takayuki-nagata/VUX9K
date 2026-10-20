@@ -21,7 +21,7 @@ mtime +0x0 / mtimecmp +0x8 layout is `timer_core`'s, so Zephyr's in-tree
   apps`' `ZEPHYR.BIN`/`IRQECHO.BIN`/`BC.BIN`) in place and jumps to it (fw_common::launch's PSRAM
   target), leaving the first stage in the ROM: a Zephyr app never returns, but Button S1 (the
   board's reset) starts the first stage and the boot again. The tests can't press it, so
-  the board tests (`test_hardware.py` 13 and 14, `hw_irq_echo.py`) load the bitstream afterwards.
+  the board tests (`test_hardware.py` 13 to 15, `hw_irq_echo.py`) load the bitstream afterwards.
   A fetch or load there that misses the caches in front of the PSRAM, and every store, waits
   ~35 cycles, so a cycle budget depends on how the code and data fall into the caches.
 
@@ -65,6 +65,40 @@ Two traps found while bringing Zephyr up on the RTL (the old Python emulator hid
   the bug was the Makefile overwriting it with an older `scripts/elf2bin.py` that
   dropped such segments. Use `zephyr.bin` as `west build` writes it (byte-identical to
   elf2bin's output when checked, 2026-09); elf2bin is for the firmware.
+
+## Zephyr: MicroPython
+
+MicroPython's Zephyr port is built for `vux9k` from its release tarball, never from code in
+this repository: `make micropython-src` downloads `micropython-<MICROPY_VERSION>.tar.xz`
+(the Makefile pins the version and its sha256; ~160 MB with `lib/`'s submodules), checks it
+and unpacks it into `vendor/micropython-<version>/` (gitignored, like `vendor/riscv-tests`;
+CI caches it under the sha256). To move to a new release, change both and read the port's
+`prj_minimal.conf` and `README.md` (which Zephyr releases it supports) again. Things that
+aren't obvious:
+- **The configuration is ours**: `zephyr_workspace/micropython/prj.conf` replaces the port's
+  (`-DCONF_FILE`), based on its `prj_minimal.conf` (so `mpconfigport_minimal.h`: integers
+  are `long long`, not arbitrary precision). It drops `CONFIG_FPU`, which an rv32i SoC can't
+  select, and a heap of 64 KB.
+- **Console: the UART console's input hook, not the console subsystem.** With
+  `prj_minimal.conf`'s `CONSOLE_SUBSYS` the port reads through a tty, which sees Ctrl-C only
+  when the REPL asks for a character: `while True: pass` could not be stopped. Without it the
+  port's `src/zephyr_getchar.c` takes each byte in the RX interrupt (Ctrl-C raises
+  `KeyboardInterrupt` at once) and output is `uart_poll_out`, so the driver's emulated TX
+  interrupt (the k_timer below) isn't used.
+- **The banner's version is `MICROPY_GIT_TAG`** (`build-micropython` exports it):
+  otherwise `py/makeversionhdr.py` runs `git describe` in the unpacked tree, finds this
+  repository around it, and the image says `MicroPython <our commit>-dirty`.
+- The build writes only into `build/micropython/` (checked 2026-10-20: nothing in the
+  vendor tree changes), compiles no `lib/` component (`make_dist.py`'s license note says so;
+  check again when the configuration grows), and has no RV32M or F instructions.
+
+`make apps` makes it `MPY.BIN` (~174 KB). `sim/emu/test_zephyr_micropython.py` loads it
+into the PSRAM and types at the REPL (an expression, `long long`, a function, an exception,
+`time.sleep_ms(100)` against `ticks_ms`, Ctrl-C stopping a loop), starts it once through the
+second stage's `run` from a card, and prints cycles like bc's test: ~0.4M cycles (22 ms) from
+its start to the first `>>> `, 0.4-0.6M a short line (mostly the echo's UART time), and
+~48M from power-on through both stages and `run`'s load to its start. On the board,
+`test_hardware.py` 15 puts and runs it and types three lines, printing `[TIME]` lines.
 
 ## Zephyr: the interrupt-driven UART
 

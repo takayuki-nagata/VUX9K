@@ -82,7 +82,7 @@ def template(dist, version="vX.Y.Z"):
 
 TEMPLATE_HELP = """\
 Fill in, from the board (docs/RELEASING.md, step 2):
-  test-hw          `make test-hw-dist DIST=<this dist>`, e.g. 15/15 PASS
+  test-hw          `make test-hw-dist DIST=<this dist>`, e.g. 16/16 PASS
   hw-smoke         `make timing hw-smoke` at this commit, e.g. 5/5 seeds 15/15
   compatibility    whether the previous release's applications and SD cards still work;
                    if not, why the minor or major version went up

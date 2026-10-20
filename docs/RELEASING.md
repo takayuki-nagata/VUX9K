@@ -35,7 +35,7 @@ git switch --detach $SHA && make timing hw-smoke
 ```
 
 `test-hw-dist` loads the candidate's `pack.fs` and runs the hardware suite with its
-second stage and demos (15 tests; it loads `pack.fs` again after each demo that never returns); nothing
+second stage and demos (16 tests; it loads `pack.fs` again after each demo that never returns); nothing
 is rebuilt (the card stays in the board and must be FAT32). `make test-hw-irq-echo-dist
 DIST=build/candidate/dist` runs the interrupt-driven UART echo through the second stage with
 the candidate's `IRQECHO.BIN`, then loads its `pack.fs` again. `hw-smoke` runs `hw_test` on every seed of a

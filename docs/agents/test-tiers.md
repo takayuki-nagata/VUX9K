@@ -92,7 +92,7 @@ None of these run in CI; they need the board. The host setup they check is in
 clock-and-board.md, "Board UART output that is noise: ModemManager and the bridge's shared baud rate".
 - `make hw-smoke` (after `make timing`): `hw_test` on every routed seed's placement. After
   RTL changes, before flashing.
-- `make test-hw`: the two-stage boot suite (`scripts/test_hardware.py`, 15 tests) on a local
+- `make test-hw`: the two-stage boot suite (`scripts/test_hardware.py`, 16 tests) on a local
   build; `make test-hw-dist DIST=<dir>` the same on a `make dist` tree, the first stage's
   version and the demos (`sd/VUX9K/APPS/`) from it. The card stays in the board and must be
   FAT32; `install` makes `\VUX9K\`, and the suite writes only there (versions 9001-9003,
@@ -100,13 +100,13 @@ clock-and-board.md, "Board UART output that is noise: ModemManager and the bridg
   test). Besides the boot chain it runs the second stage's file commands and the demos
   through `put`/`run`: `HELLO.BIN` (PSRAM) and `HACK.BIN` (its PSRAM segment), which both
   soft-reset back to the first stage and its autoboot of the second stage, then, last,
-  `ZEPHYR.BIN` and `BC.BIN`
+  `ZEPHYR.BIN`, `BC.BIN` and `MPY.BIN`
   (in the PSRAM; they leave the first stage, but only the reset button would start it; bc's
-  put, load and start take minutes and print their wall-clock times), each followed
+  put, load and start take minutes and print their wall-clock times, as MicroPython's do), each followed
   by a load of `pack.fs` into SRAM with openFPGALoader (never `--reset`: that loads the
   flash's bitstream); then it installs the second stage under test again. Without
-  `ZEPHYR.BIN`/`BC.BIN` (no Zephyr) tests 13 and 14 are skipped. It runs against the
-  emulator too, where the two bitstream-load tests are skipped: `vux9k-emu --tcp
+  `ZEPHYR.BIN`/`BC.BIN`/`MPY.BIN` (no Zephyr) tests 13 to 15 are skipped. It runs against the
+  emulator too, where the three bitstream-load tests are skipped: `vux9k-emu --tcp
   PORT --sd <mkfat image>` and `--port socket://127.0.0.1:PORT` (~3 min at the board's speed;
   `make sim-hw-suite-emu`, in test-slow, runs it: its timeouts are wall-clock, so a loaded
   host could fail it in `test-sim`; run it by hand after changing the second stage's commands

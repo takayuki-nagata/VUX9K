@@ -89,6 +89,8 @@ The RTL modules in this repository were originally authored in VHDL-2008 and hav
   - Parameterized baud rate clock timer (18.0 MHz -> 115200 bps), 8N1 serial framing, and dual 32-entry synchronous TX/RX FIFOs.
 - **Arbitrary-Precision Math Engine & REPL (`vendor/bc_clone_rs`)**: Submodule from [`takayuki-nagata/bc_clone_rs`](https://github.com/takayuki-nagata/bc_clone_rs)
   - Embedded `bc_core` arbitrary-precision arithmetic engine with 10/10 math test suite running atop Zephyr RTOS. At about 260 KB it runs on the board from the PSRAM (`make build-zephyr`, `\VUX9K\APPS\BC.BIN` started by the second stage's `run`), through the caches in front of it: about 3 s from its start to the first `bc> ` (51M cycles on the emulator, which the RTL matches cycle for cycle).
+- **MicroPython (`make build-micropython`)**: [MicroPython](https://micropython.org)'s Zephyr port, from its release tarball (fetched into `vendor/`, not part of this repository)
+  - Its REPL on the board's UART, run from the PSRAM like bc (`\VUX9K\APPS\MPY.BIN`, ~174 KB): about 22 ms from its start to the first `>>> `; Ctrl-C stops a running program. The minimal configuration: `long long` integers, a 64 KB heap.
 - **Hack Toolchain & C Firmware (`hack_demo`)**: Powered by [`takayuki-nagata/hack_tools`](https://github.com/takayuki-nagata/hack_tools) (`has` assembler & `m2h` transpiler)
   - 16-bit C and Hack assembly firmware testing recursive arithmetic, Fibonacci, array manipulations, and MMIO UART output.
 
@@ -357,7 +359,9 @@ second stage's `run` loads its applications there and jumps to them, the first s
 in the ROM). `make build-zephyr-demo` builds the Rust demo
 (`zephyr_workspace/app/`, Zephyr + a Rust staticlib) for it; `make
 build-zephyr` builds bc_clone_rs for it too (`make apps`' `BC.BIN`, ~260 KB: the second
-stage's load takes about 3 s, and bc reaches its prompt about 3 s later on the board, as the emulator's cycles at 18 MHz say). `make build-zephyr-irq-echo` builds
+stage's load takes about 3 s, and bc reaches its prompt about 3 s later on the board, as the emulator's cycles at 18 MHz say). `make build-micropython` builds MicroPython's port for it
+(`make apps`' `MPY.BIN`, ~174 KB; `zephyr_workspace/micropython/prj.conf`, the sources
+downloaded by `make micropython-src`). `make build-zephyr-irq-echo` builds
 `zephyr_workspace/irq_echo/`, an echo through the UART driver's interrupt-driven API
 (RX on the machine external interrupt; see `zephyr_workspace/README.md`, "UART").
 
@@ -410,7 +414,7 @@ reference: they pin every tool version CI builds and tests with.
 make firmware
 
 # 1a. Build the demos as v4 files for the card (build/firmware/apps/*.BIN;
-#     HACK.BIN needs the Hack toolchain; ZEPHYR.BIN, BC.BIN and IRQECHO.BIN need Zephyr)
+#     HACK.BIN needs the Hack toolchain; ZEPHYR.BIN, BC.BIN, IRQECHO.BIN and MPY.BIN need Zephyr)
 make apps
 
 # 2. Synthesize Veryl SoC RTL -> GW1NR-9 Bitstream (build/synth/pack.fs)
@@ -507,8 +511,8 @@ Short tests run on Icarus, long SoC/GLS runs on Verilator (`SIM_UNIT` / `SIM_SOC
 | **Zephyr Demo** | `make sim-zephyr-demo-rtl` | a few min | The Zephyr Rust demo preloaded into the PSRAM on the RTL, started by a jump from the ROM |
 | **Zephyr UART Interrupts** | `make sim-zephyr-irq-echo-rtl` | a few min | The interrupt-driven UART echo preloaded into the PSRAM on the RTL: a 64-byte line, longer than both FIFOs, sent in paced chunks and back to back, comes back whole with no overrun; sent while the app starts, before it enables RX, it overflows the RX FIFO and the app reports the overrun |
 | **Static Timing (STA)**| `make sta` | ~15 sec | Exhaustive post-PnR timing analysis, Fmax verification, and critical path breakdown (`build/synth/soc_sta.json`) |
-| **Real Hardware** | `make test-hw` | ~10 min | The two-stage boot, the second stage's file commands and the demos it starts, on the Tang Nano 9K with a FAT32 card via `scripts/test_hardware.py` (15 tests; bc's put, load and start take most of the time) |
-| **Real Hardware, Release Tree** | `make test-hw-dist DIST=<dir>` | ~10 min | The same 15 tests with a `make dist` tree's bitstream, second stage and demos, nothing rebuilt: how a release candidate is tested ([`docs/RELEASING.md`](docs/RELEASING.md)) |
+| **Real Hardware** | `make test-hw` | ~10 min | The two-stage boot, the second stage's file commands and the demos it starts, on the Tang Nano 9K with a FAT32 card via `scripts/test_hardware.py` (16 tests; bc's put, load and start take most of the time) |
+| **Real Hardware, Release Tree** | `make test-hw-dist DIST=<dir>` | ~10 min | The same 16 tests with a `make dist` tree's bitstream, second stage and demos, nothing rebuilt: how a release candidate is tested ([`docs/RELEASING.md`](docs/RELEASING.md)) |
 | **Board UART Interrupts** | `make test-hw-irq-echo` | ~20 sec | The interrupt-driven UART echo on the board (`scripts/hw_irq_echo.py`): put on the card as `\VUX9K\APPS\IRQECHO.BIN` and started by the running second stage's `run`, five 256-byte lines sent in paced 16-byte chunks (`--chunk 0` sends them back to back), then the bitstream loaded into SRAM again from `build/synth/pack.fs`; `make test-hw-irq-echo-dist DIST=<dir>` takes both from a `make dist` tree |
 
 ### Real Hardware Test Suite (15 Automated Checks)
@@ -531,10 +535,11 @@ stage under test as `STAGE2.BIN` and `STAGE2.OLD`:
 12. **`HACK.BIN` in its PSRAM segment** (Hack mode): the Hack demo's report, all `[PASS]`; at its end it soft-resets without a mode back to the first stage, whose banner follows, and that boots the second stage under test from the card again
 13. **`ZEPHYR.BIN` in the PSRAM**: the Zephyr demo's tasks finish and `k_msleep(100)` takes 100-102 ms (a tick and rounding; 100 ticks/s would take 110 or more); then the bitstream is loaded into SRAM again (openFPGALoader with the suite's `pack.fs`, as `make prog-sram`; not `--reset`, which loads the flash's bitstream) and the first stage's banner checked (the demo never returns, and only Button S1 would start the first stage again). Skipped, saying so, when the build has no `ZEPHYR.BIN` (no Zephyr)
 14. **`BC.BIN` in the PSRAM**: bc_clone_rs on Zephyr (~260 KB; `put` and `run` with longer timeouts): its self-tests pass and it prompts `bc> `; then `2^32` and a `define` at that prompt, and the bitstream again. The wall-clock time of each step is printed (`[TIME]` lines). Skipped, saying so, when the build has no `BC.BIN` (no Zephyr)
-15. **Install the second stage under test again**, after the loads, and boot it: what the suite leaves on the card and in the FPGA
+15. **`MPY.BIN` in the PSRAM**: MicroPython's banner and `>>> `, then `1+2`, `2**62` and `1 // 0` (a `ZeroDivisionError`) at its REPL, and the bitstream again, with `[TIME]` lines. Skipped, saying so, when the build has no `MPY.BIN` (no Zephyr)
+16. **Install the second stage under test again**, after the loads, and boot it: what the suite leaves on the card and in the FPGA
 
 > [!NOTE]
-> Before the tests, it warns when other full/low-speed USB devices share the board's USB hub, which makes the board's USB-UART bridge drop output, and it refuses to start while ModemManager could probe the board (see "Host setup" above and `docs/APP_DEVELOPMENT.md`). It runs against the emulator as well: `vux9k-emu --tcp PORT --sd <mkfat image>` and `--port socket://127.0.0.1:PORT` (~3 min; tests 13 and 14 are skipped there, since the emulator has no bitstream to load; `VUX9K_HW_SUITE_EMU=1 pytest sim/emu/test_hw_dist.py` does this run). `--no-reload` skips them on the board, `--loader` names the openFPGALoader (the Makefile passes `OPENFPGALOADER`).
+> Before the tests, it warns when other full/low-speed USB devices share the board's USB hub, which makes the board's USB-UART bridge drop output, and it refuses to start while ModemManager could probe the board (see "Host setup" above and `docs/APP_DEVELOPMENT.md`). It runs against the emulator as well: `vux9k-emu --tcp PORT --sd <mkfat image>` and `--port socket://127.0.0.1:PORT` (~3 min; tests 13 to 15 are skipped there, since the emulator has no bitstream to load; `VUX9K_HW_SUITE_EMU=1 pytest sim/emu/test_hw_dist.py` does this run). `--no-reload` skips them on the board, `--loader` names the openFPGALoader (the Makefile passes `OPENFPGALOADER`).
 
 ### Board Smoke Test of Routed Seeds (`make hw-smoke`)
 
@@ -623,7 +628,7 @@ VUX9K/
 │   ├── riscv_tests/, act4/         # riscv-tests and riscv-arch-test (ACT4) configuration
 │   └── mcy/                        # mutation testing (mcy) driver
 ├── tools/                          # End-user CLI: vux_tool.py (v4 files, FAT32 images, RAM boot, install, monitor); 70-vux9k-board.rules (udev, ModemManager)
-├── vendor/                         # bc_clone_rs and psram_controller (git submodules); riscv-tests (fetched on demand by run_riscv_tests.py, gitignored)
+├── vendor/                         # bc_clone_rs and psram_controller (git submodules); riscv-tests (fetched on demand by run_riscv_tests.py) and MicroPython (by make micropython-src), gitignored
 └── build/                          # Unified build output (gitignored) - every generated artifact lands here
     ├── veryl/                      # veryl build --out-dir output: generated .sv/.map for soc/, soc/cpu/, soc/uart/, sim/
     ├── firmware/                   # firmware.bin/.hex (the first stage), stage2/STAGE2.BIN, apps/ (make apps' v4 files), hw_test/
