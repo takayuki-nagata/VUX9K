@@ -93,11 +93,20 @@ def test_repl_exception(mpy):
 
 
 def test_repl_time(mpy):
-    """time.sleep_ms on the kernel's clock (the SoC timer, 1000 ticks/s): 100 ms as measured
-    with ticks_ms, within a tick and the line's own work."""
-    out = repl(mpy[0], "import time; t = time.ticks_ms(); time.sleep_ms(100); time.ticks_diff(time.ticks_ms(), t)")
-    elapsed = int(out.splitlines()[-2])  # the value's line, before the next prompt's
-    assert 100 <= elapsed <= 103, out
+    """time.sleep_ms(100) on the kernel's clock (the SoC timer, 1000 ticks/s): k_poll for 100
+    ms, a tick and rounding over it. The interpreter's own time around it is measured first
+    with the same line less the sleep (a few ms: a few thousand instructions at ~10 cycles
+    each from the PSRAM) and taken off; 100 ticks/s would read 110 or more."""
+    soc = mpy[0]
+    repl(soc, "import time")
+
+    def elapsed(sleep: str) -> int:
+        out = repl(soc, f"t = time.ticks_ms(); {sleep}time.ticks_diff(time.ticks_ms(), t)")
+        return int(out.splitlines()[-2])  # the value's line, before the next prompt's
+
+    overhead = elapsed("time.sleep_ms(0); ")
+    slept = elapsed("time.sleep_ms(100); ")
+    assert 100 <= slept - overhead <= 102, (slept, overhead)
 
 
 def test_ctrl_c_stops_a_loop(mpy):
