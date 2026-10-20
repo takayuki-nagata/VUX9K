@@ -122,6 +122,18 @@ jobs:
           uv tool run west init ~/zephyrproject -m https://github.com/zephyrproject-rtos/zephyr --mr v3.7.2
           cd ~/zephyrproject && uv tool run west update -n -o=--depth=1
 
+      # MicroPython's release tarball, unpacked by `make micropython-src` into vendor/ (~160 MB
+      # download); keyed on the Makefile's pinned sha256, so the version lives there only
+      - name: MicroPython source pin
+        id: micropython-pin
+        run: echo "sha256=$(sed -n 's/^MICROPY_SHA256 = //p' Makefile)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache MicroPython source
+        uses: actions/cache@v4
+        with:
+          path: vendor/micropython-*/
+          key: ${{ runner.os }}-micropython-${{ steps.micropython-pin.outputs.sha256 }}
+
       - name: Setup Python Virtualenv & Dependencies
         run: |
           uv python install 3.13

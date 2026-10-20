@@ -41,6 +41,7 @@ FILES = {
     "sd/VUX9K/APPS/ZEPHYR.BIN": "build/firmware/apps/ZEPHYR.BIN",
     "sd/VUX9K/APPS/IRQECHO.BIN": "build/firmware/apps/IRQECHO.BIN",
     "sd/VUX9K/APPS/BC.BIN": "build/firmware/apps/BC.BIN",
+    "sd/VUX9K/APPS/MPY.BIN": "build/firmware/apps/MPY.BIN",
     "sd/VUX9K/APPS/HACK.BIN": "build/firmware/apps/HACK.BIN",
     "demos/zephyr-demo.bin": "build/zephyr-demo/zephyr/zephyr.bin",
     "demos/hack-demo.bin": "build/hack/firmware.bin",
@@ -182,19 +183,21 @@ def offers_apache(expr):
     return "Apache-2.0" in (a.strip(" ()") for a in re.split(r"\s+OR\s+|/", expr or ""))
 
 
-def third_party_licenses(out_path):
+def third_party_licenses(out_path, micropython_dir):
     """License texts of the crates linked into the emulator binaries and bc (normal deps,
-    no proc-macros)."""
+    no proc-macros), and MicroPython's (from the tree it was built from)."""
     out = [
         "Third-party software in this distribution",
         "",
-        "demos/zephyr-demo.bin and sd/VUX9K/APPS/ZEPHYR.BIN, IRQECHO.BIN and BC.BIN contain",
+        "demos/zephyr-demo.bin and sd/VUX9K/APPS/ZEPHYR.BIN, IRQECHO.BIN, BC.BIN and MPY.BIN contain",
         "the Zephyr RTOS (https://zephyrproject.org), licensed under the Apache License 2.0;",
         "its text is the LICENSE file in zephyr/vux9k-zephyr-bsp.tar.gz. The Zephyr demo's",
         "Rust part, sd/VUX9K/STAGE2.BIN and sd/VUX9K/APPS/HELLO.BIN are built with Rust's",
         "core library (MIT OR Apache-2.0, https://github.com/rust-lang/rust). BC.BIN's Rust",
         "part is bc_clone_rs (MIT, the same author), built with Rust's core and alloc",
-        "libraries and the crates listed below.",
+        "libraries and the crates listed below. MPY.BIN's Python part is",
+        f"{os.path.basename(micropython_dir)} (MIT, https://micropython.org; its port to",
+        "Zephyr, built with no lib/ component), whose LICENSE file is below.",
     ]
     linked: dict[str, dict] = {}
     for binary, (manifest, platform, flags, crate) in LINKED_CRATES.items():
@@ -217,6 +220,8 @@ def third_party_licenses(out_path):
             if apache_text is None and "apache" in name.lower() and text.lstrip().startswith("Apache License"):
                 apache_text = (f"{p['name']} {p['version']}", name)
             out += ["", "=" * 78, f"{p['name']} {p['version']}: {name}", "=" * 78, "", text]
+    with open(os.path.join(micropython_dir, "LICENSE")) as f:
+        out += ["", "=" * 78, f"{os.path.basename(micropython_dir)}: LICENSE", "=" * 78, "", f.read().rstrip()]
     if unshipped:
         if apache_text is None:
             names = ", ".join(f"{p['name']} {p['version']}" for p in unshipped)
@@ -235,6 +240,7 @@ def third_party_licenses(out_path):
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--out", default=os.path.join(REPO_ROOT, "build", "dist"))
+    p.add_argument("--micropython-dir", required=True, help="the MicroPython tree MPY.BIN was built from")
     args = p.parse_args()
 
     missing = [src for src in FILES.values() if not os.path.isfile(os.path.join(REPO_ROOT, src))]
@@ -258,7 +264,7 @@ def main():
 
     commit_time = int(git("log", "-1", "--format=%ct"))
     bsp_archive(os.path.join(args.out, BSP_ARCHIVE), commit_time)
-    third_party_licenses(os.path.join(args.out, "THIRD_PARTY_LICENSES.txt"))
+    third_party_licenses(os.path.join(args.out, "THIRD_PARTY_LICENSES.txt"), args.micropython_dir)
 
     with open(os.path.join(REPO_ROOT, "build", "synth", "pnr_seed.json")) as f:
         pnr = json.load(f)

@@ -39,7 +39,7 @@ HACK_BUILD_DIR := $(BUILD_DIR)/hack
 ZEPHYR_BUILD_DIR ?= $(BUILD_DIR)/zephyr
 SYNTH_DIR := $(BUILD_DIR)/synth
 
-.PHONY: all hello apps sim-stage2 sim-zephyr-demo-gls sim-hw-suite-emu lint-rtl check-rtl-syntax coverage-fcov mutation act4-elfs test-act4 test-act4-gls test-act4-emu test-isa-waits emu emu-py emu-test emu-bench test-isa-emu test-emu test-fw-host test-fat firmware-size coverage-fw coverage-rust coverage-rust-tool sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hw-dist test-hw-irq-echo test-hw-irq-echo-dist dist check-dist test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware hwtest hw-smoke sim-unit sim-psram-contract sim-psram-icarus sim-unit-random sim-boot sim-soc sim test-isa test-isa-gls zephyr-bc-lib build-zephyr build-zephyr-demo build-zephyr-irq-echo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-irq-echo-rtl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
+.PHONY: all hello apps micropython-src build-micropython sim-stage2 sim-zephyr-demo-gls sim-hw-suite-emu lint-rtl check-rtl-syntax coverage-fcov mutation act4-elfs test-act4 test-act4-gls test-act4-emu test-isa-waits emu emu-py emu-test emu-bench test-isa-emu test-emu test-fw-host test-fat firmware-size coverage-fw coverage-rust coverage-rust-tool sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hw-dist test-hw-irq-echo test-hw-irq-echo-dist dist check-dist test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware hwtest hw-smoke sim-unit sim-psram-contract sim-psram-icarus sim-unit-random sim-boot sim-soc sim test-isa test-isa-gls zephyr-bc-lib build-zephyr build-zephyr-demo build-zephyr-irq-echo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-irq-echo-rtl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
 
 all: test-ci
 
@@ -151,8 +151,9 @@ firmware: $(FIRMWARE_BUILD_DIR)/firmware.hex $(STAGE2_DIR)/STAGE2.BIN
 #   ZEPHYR.BIN   the Zephyr Rust demo, RV32 linked at the PSRAM's start (board vux9k): in place
 #   IRQECHO.BIN  the Zephyr interrupt-driven UART echo, RV32 at the PSRAM's start: in place
 #   BC.BIN       bc_clone_rs on Zephyr (~260 KB), RV32 at the PSRAM's start: in place
+#   MPY.BIN      MicroPython's Zephyr port (its REPL), RV32 at the PSRAM's start: in place
 #   HACK.BIN     the Hack demo, Hack at 0: an offset in its segment in the PSRAM (soft-resets back to the first stage)
-# Without Zephyr (its builds skip) ZEPHYR.BIN, IRQECHO.BIN and BC.BIN are left out, saying so.
+# Without Zephyr (its builds skip) ZEPHYR.BIN, IRQECHO.BIN, BC.BIN and MPY.BIN are left out, saying so.
 APPS_DIR = $(FIRMWARE_BUILD_DIR)/apps
 # The PSRAM's start, where RV32 applications are linked (the Zephyr board vux9k's flash)
 HELLO_BASE = 0x80000000
@@ -174,11 +175,12 @@ $(APPS_DIR)/HELLO.BIN: $(HELLO_SRCS) tools/vux_tool.py
 
 hello: $(APPS_DIR)/HELLO.BIN
 
-apps: $(APPS_DIR)/HELLO.BIN build-hack build-zephyr-demo build-zephyr-irq-echo build-zephyr
+apps: $(APPS_DIR)/HELLO.BIN build-hack build-zephyr-demo build-zephyr-irq-echo build-zephyr build-micropython
 	$(call app_v4,$(HACK_BUILD_DIR)/firmware.bin,HACK.BIN,hack,Hack demo,required,0)
 	$(call app_v4,$(ZEPHYR_DEMO_BUILD_DIR)/zephyr/zephyr.bin,ZEPHYR.BIN,riscv,Zephyr Rust demo,,$(HELLO_BASE))
 	$(call app_v4,$(ZEPHYR_IRQ_ECHO_BUILD_DIR)/zephyr/zephyr.bin,IRQECHO.BIN,riscv,Zephyr irq_echo,,$(HELLO_BASE))
 	$(call app_v4,$(ZEPHYR_BUILD_DIR)/zephyr/zephyr.bin,BC.BIN,riscv,bc_clone_rs,,$(HELLO_BASE))
+	$(call app_v4,$(MICROPY_BUILD_DIR)/zephyr/zephyr.bin,MPY.BIN,riscv,MicroPython,,$(HELLO_BASE))
 
 # Board self-test (firmware/hw_test), a ROM image in place of the first stage for
 # `make hw-smoke`
@@ -358,6 +360,33 @@ build-zephyr-irq-echo:
 	@echo "=== Building the Zephyr interrupt-driven UART echo (vux9k) ==="
 	$(call west_build,vux9k,zephyr_workspace/irq_echo,$(ZEPHYR_IRQ_ECHO_BUILD_DIR),)
 
+# MicroPython's release tarball (lib/'s submodules included), fetched on demand into vendor/
+# (gitignored, like vendor/riscv-tests): not in the repository, no submodule. Checked against
+# its sha256, unpacked beside the target and moved into place, so a failed fetch leaves no tree.
+MICROPY_VERSION = 1.29.0
+MICROPY_SHA256 = d925a7c664e79a2bdf3dfcb285ba5e2237041cc35a0bd4ee573b6c5711efeca0
+MICROPY_URL = https://github.com/micropython/micropython/releases/download/v$(MICROPY_VERSION)/micropython-$(MICROPY_VERSION).tar.xz
+MICROPY_DIR = vendor/micropython-$(MICROPY_VERSION)
+MICROPY_TARBALL = $(BUILD_DIR)/downloads/micropython-$(MICROPY_VERSION).tar.xz
+micropython-src: $(MICROPY_DIR)/.vux9k-fetched
+
+$(MICROPY_DIR)/.vux9k-fetched:
+	@mkdir -p $(dir $(MICROPY_TARBALL))
+	curl -fsSL -o $(MICROPY_TARBALL).part $(MICROPY_URL)
+	echo "$(MICROPY_SHA256)  $(MICROPY_TARBALL).part" | sha256sum -c -
+	rm -rf $(MICROPY_DIR) $(MICROPY_DIR).part && mkdir -p $(MICROPY_DIR).part
+	tar -xJf $(MICROPY_TARBALL).part -C $(MICROPY_DIR).part --strip-components=1
+	touch $(MICROPY_DIR).part/.vux9k-fetched
+	mv $(MICROPY_DIR).part $(MICROPY_DIR)
+	rm -f $(MICROPY_TARBALL).part
+
+# MicroPython's Zephyr port (the REPL on the board's UART) for the real board, linked into the
+# PSRAM like the demos (make apps' MPY.BIN), with this repository's prj.conf in place of the port's
+MICROPY_BUILD_DIR ?= $(BUILD_DIR)/micropython
+build-micropython: micropython-src
+	@echo "=== Building MicroPython $(MICROPY_VERSION) (Zephyr port, vux9k) ==="
+	$(call west_build,vux9k,$(MICROPY_DIR)/ports/zephyr,$(MICROPY_BUILD_DIR),-DCONF_FILE=$(CURDIR)/zephyr_workspace/micropython/prj.conf)
+
 # ===== Hack 16-bit Toolchain & Firmware =====
 
 MSP430_GCC_URL ?= https://dr-download.ti.com/software-development/ide-configuration-compiler-or-debugger/MD-LlCjWuAbzH/9.3.1.2/msp430-gcc-9.3.1.11_linux64.tar.bz2
@@ -437,7 +466,7 @@ sim-lockstep-slow: veryl firmware build-hack hello emu-py
 	LOCKSTEP_SEEDS=$(LOCKSTEP_SEEDS) LOCKSTEP_SLOW=1 SIM=verilator $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_lockstep]"
 	LOCKSTEP_SEEDS=$(LOCKSTEP_SEEDS) LOCKSTEP_SLOW=1 LOCKSTEP_TRACE=$(LOCKSTEP_TRACE_FILE) $(PYTHON) -m pytest sim/emu/test_lockstep.py
 
-test-emu: emu-py firmware hwtest build-hack build-zephyr build-zephyr-demo build-zephyr-irq-echo apps
+test-emu: emu-py firmware hwtest build-hack build-zephyr build-zephyr-demo build-zephyr-irq-echo build-micropython apps
 	@echo "=== Running firmware and demo tests on the emulator ==="
 	$(PYTHON) -m pytest sim/emu
 
@@ -731,7 +760,7 @@ prog-flash: $(SYNTH_DIR)/pack.fs
 
 # Every push/PR (CI). Long SoC runs are on Verilator (SIM_SOC); timings: docs/agents/sim.md,
 # "Verilator".
-test-sim: check lint-rtl emu-test test-isa-emu firmware test-fw-host test-fat firmware-size build-zephyr-demo build-zephyr-irq-echo zephyr-bc-lib build-hack test-emu coverage-fw sim-lockstep build-zephyr emu-bench sim-unit sim-psram-contract coverage-fcov test-isa test-act4 test-act4-emu test-isa-waits coverage-rust sim-gls-unit test-isa-gls test-act4-gls sim-soc-fast sim-soc-fast-icarus sim-soc-mmio sim-boot sim-hack-rtl sim-sd-quirks sim-hw-flow sim-stage2 sim-zephyr-demo-rtl sim-zephyr-irq-echo-rtl synth-top sim-soc-gls-fast
+test-sim: check lint-rtl emu-test test-isa-emu firmware test-fw-host test-fat firmware-size build-zephyr-demo build-zephyr-irq-echo zephyr-bc-lib build-micropython build-hack test-emu coverage-fw sim-lockstep build-zephyr emu-bench sim-unit sim-psram-contract coverage-fcov test-isa test-act4 test-act4-emu test-isa-waits coverage-rust sim-gls-unit test-isa-gls test-act4-gls sim-soc-fast sim-soc-fast-icarus sim-soc-mmio sim-boot sim-hack-rtl sim-sd-quirks sim-hw-flow sim-stage2 sim-zephyr-demo-rtl sim-zephyr-irq-echo-rtl synth-top sim-soc-gls-fast
 	@echo "========================================================================"
 	@echo "  [SIM] ALL RTL, GLS NETLIST, ISA & SOC SIMULATION TESTS PASSED!        "
 	@echo "========================================================================"
@@ -764,8 +793,8 @@ test-hw: firmware apps build-hw prog-sram
 
 # The application-developer distribution (docs/APP_DEVELOPMENT.md) in build/dist/;
 # check-dist runs its demos on its own emulator, away from the repository
-dist: bitstream firmware emu-py build-hack build-zephyr-demo build-zephyr apps
-	$(PYTHON) scripts/make_dist.py --out $(BUILD_DIR)/dist
+dist: bitstream firmware emu-py build-hack build-zephyr-demo build-zephyr build-micropython apps
+	$(PYTHON) scripts/make_dist.py --out $(BUILD_DIR)/dist --micropython-dir $(MICROPY_DIR)
 
 check-dist:
 	$(PYTHON) scripts/check_dist.py $(BUILD_DIR)/dist

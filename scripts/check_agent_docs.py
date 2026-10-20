@@ -31,7 +31,7 @@ RULES = ROOT / ".claude" / "rules"
 PATH_EXT = re.compile(r"\.(py|veryl|sv|rs|md|toml|yml|yaml|ld|S|h|vlt|cst|x|sh|tsv)$")
 # Paths the guides name on purpose although a fresh checkout doesn't have them: fetched on
 # demand (riscv-tests), or local files the guides tell readers about
-NOT_TRACKED = ("vendor/riscv-tests", "firmware/target/", "firmware.hex")
+NOT_TRACKED = ("vendor/riscv-tests", "vendor/micropython-", "firmware/target/", "firmware.hex")
 # In code a citation names the guide with its directory; inside the guides the file name is enough
 CITATION_CODE = re.compile(r"docs/agents/([a-z0-9-]+\.md),\s*\"([^\"]+)\"")
 CITATION_GUIDE = re.compile(r"(?<![\w/])([a-z0-9-]+\.md),\s*\"([^\"]+)\"")
