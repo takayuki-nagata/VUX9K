@@ -183,9 +183,9 @@ def offers_apache(expr):
     return "Apache-2.0" in (a.strip(" ()") for a in re.split(r"\s+OR\s+|/", expr or ""))
 
 
-def third_party_licenses(out_path, micropython_dir):
+def third_party_licenses(out_path, micropython_dir, bc_clone_py_dir):
     """License texts of the crates linked into the emulator binaries and bc (normal deps,
-    no proc-macros), and MicroPython's (from the tree it was built from)."""
+    no proc-macros), and MicroPython's and bc_clone_py's (from the trees MPY.BIN was built from)."""
     out = [
         "Third-party software in this distribution",
         "",
@@ -197,7 +197,9 @@ def third_party_licenses(out_path, micropython_dir):
         "part is bc_clone_rs (MIT, the same author), built with Rust's core and alloc",
         "libraries and the crates listed below. MPY.BIN's Python part is",
         f"{os.path.basename(micropython_dir)} (MIT, https://micropython.org; its port to",
-        "Zephyr, built with no lib/ component), whose LICENSE file is below.",
+        "Zephyr, built with no lib/ component), whose LICENSE file is below; its frozen modules",
+        "are bc_clone_py (MIT, the same author; https://github.com/takayuki-nagata/bc_clone_py),",
+        "whose LICENSE file is below too.",
     ]
     linked: dict[str, dict] = {}
     for binary, (manifest, platform, flags, crate) in LINKED_CRATES.items():
@@ -222,6 +224,8 @@ def third_party_licenses(out_path, micropython_dir):
             out += ["", "=" * 78, f"{p['name']} {p['version']}: {name}", "=" * 78, "", text]
     with open(os.path.join(REPO_ROOT, micropython_dir, "LICENSE")) as f:
         out += ["", "=" * 78, f"{os.path.basename(micropython_dir)}: LICENSE", "=" * 78, "", f.read().rstrip()]
+    with open(os.path.join(REPO_ROOT, bc_clone_py_dir, "LICENSE")) as f:
+        out += ["", "=" * 78, "bc_clone_py: LICENSE", "=" * 78, "", f.read().rstrip()]
     if unshipped:
         if apache_text is None:
             names = ", ".join(f"{p['name']} {p['version']}" for p in unshipped)
@@ -241,6 +245,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--out", default=os.path.join(REPO_ROOT, "build", "dist"))
     p.add_argument("--micropython-dir", required=True, help="the MicroPython tree MPY.BIN was built from")
+    p.add_argument("--bc-clone-py-dir", required=True, help="the bc_clone_py tree frozen into MPY.BIN")
     args = p.parse_args()
 
     missing = [src for src in FILES.values() if not os.path.isfile(os.path.join(REPO_ROOT, src))]
@@ -264,7 +269,7 @@ def main():
 
     commit_time = int(git("log", "-1", "--format=%ct"))
     bsp_archive(os.path.join(args.out, BSP_ARCHIVE), commit_time)
-    third_party_licenses(os.path.join(args.out, "THIRD_PARTY_LICENSES.txt"), args.micropython_dir)
+    third_party_licenses(os.path.join(args.out, "THIRD_PARTY_LICENSES.txt"), args.micropython_dir, args.bc_clone_py_dir)
 
     with open(os.path.join(REPO_ROOT, "build", "synth", "pnr_seed.json")) as f:
         pnr = json.load(f)

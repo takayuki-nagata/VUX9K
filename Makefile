@@ -835,7 +835,7 @@ test-hw: firmware apps build-hw prog-sram
 # The application-developer distribution (docs/APP_DEVELOPMENT.md) in build/dist/;
 # check-dist runs its demos on its own emulator, away from the repository
 dist: bitstream firmware emu-py build-hack build-zephyr-demo build-zephyr build-micropython apps
-	$(PYTHON) scripts/make_dist.py --out $(BUILD_DIR)/dist --micropython-dir $(MICROPY_DIR)
+	$(PYTHON) scripts/make_dist.py --out $(BUILD_DIR)/dist --micropython-dir $(MICROPY_DIR) --bc-clone-py-dir $(BC_PY_DIR)
 
 check-dist:
 	$(PYTHON) scripts/check_dist.py $(BUILD_DIR)/dist

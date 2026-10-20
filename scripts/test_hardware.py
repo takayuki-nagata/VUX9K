@@ -116,8 +116,8 @@ BC_RUN_TIMEOUT = 120.0
 BC_BOOT_TIMEOUT = 300.0
 BC_LINE_TIMEOUT = 120.0
 # MicroPython's Zephyr port (sim/emu/test_zephyr_micropython.py): the banner, then lines
-# typed at the REPL with what they print. ~267 KB: put ~30 s, load ~3 s, start under 0.1 s
-# (the emulator's cycles), as long as bc's; bounds with room, the board's times printed as [TIME]
+# typed at the REPL with what they print. ~357 KB: put ~40 s, load ~4 s, start under 0.1 s
+# (the emulator's cycles); bounds with room, the board's times printed as [TIME]
 MPY_BANNER = "MicroPython v1.29.0"
 MPY_PROMPT = ">>> "
 MPY_REPL = (("1+2", "\r\n3\r\n"), ("2**100", "1267650600228229401496703205376"), ("1 // 0", "ZeroDivisionError"))
@@ -125,6 +125,12 @@ MPY_PUT_TIMEOUT = 90.0
 MPY_RUN_TIMEOUT = 120.0
 MPY_BOOT_TIMEOUT = 60.0
 MPY_LINE_TIMEOUT = 30.0
+# bc_clone_py, frozen into MPY.BIN: its self-test (~470M cycles, ~26 s on the emulator), then a
+# line at its REPL and `quit` back to MicroPython's prompt
+BC_PY_SELFTEST = "import bc_selftest; bc_selftest.run()"
+BC_PY_PASSED = "ALL BC SELF-TESTS PASSED"
+BC_PY_SELFTEST_TIMEOUT = 120.0
+BC_PY_REPL = ("import bc_clone; bc_clone.repl(mathlib=True)", "scale=20; 4*a(1)", "3.14159265358979323844")
 # Versions the suite installs, apart from what a release ships
 TEST_VERSIONS = (9001, 9002, 9003)
 
@@ -682,7 +688,32 @@ def run_hardware_test_suite(port="auto", baud=115200, loader=None, reload=True):
                 print(f"  [TIME] {line!r} to the next {MPY_PROMPT!r} {time.monotonic() - t0:.1f} s")
                 if not got or want not in reply:
                     return False, fail_msg(f"{line!r}: no {want!r} and prompt.", reply)
-            return True, "MicroPython's banner, and three lines at its REPL"
+
+            def send_line(text):
+                """A line and Enter in 16-byte chunks, as typed: some are longer than the RX FIFO"""
+                data = text.encode() + b"\r"
+                for i in range(0, len(data), 16):
+                    ser.write(data[i : i + 16])
+                    ser.flush()
+                    time.sleep(0.02)
+
+            t0 = time.monotonic()
+            send_line(BC_PY_SELFTEST)
+            got, reply = vux_tool.read_until(ser, (MPY_PROMPT,), BC_PY_SELFTEST_TIMEOUT)
+            print(f"  [TIME] bc_clone_py's self-test {time.monotonic() - t0:.1f} s")
+            if not got or BC_PY_PASSED not in reply or "[FAIL]" in reply:
+                return False, fail_msg(f"bc_clone_py's self-test: no {BC_PY_PASSED!r}.", reply)
+            start, line, want = BC_PY_REPL
+            send_line(start)
+            send_line(line)
+            t0 = time.monotonic()
+            got, reply = vux_tool.read_until(ser, (want,), MPY_LINE_TIMEOUT)
+            print(f"  [TIME] bc's {line!r} {time.monotonic() - t0:.1f} s")
+            send_line("quit")
+            back, after = vux_tool.read_until(ser, (MPY_PROMPT,), MPY_LINE_TIMEOUT)
+            if not got or not back or "error" in (reply + after).lower():
+                return False, fail_msg(f"bc's {line!r}: no {want!r}, or no way back to the prompt.", reply + after)
+            return True, "MicroPython's banner, three lines at its REPL, bc_clone_py's self-test and REPL"
 
         name = "15. MPY.BIN in the PSRAM, then the bitstream loaded again"
         if apps["MPY.BIN"] is None:
