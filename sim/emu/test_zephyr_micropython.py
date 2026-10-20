@@ -35,7 +35,7 @@ LINE_CYCLES = 500_000_000
 # bc_clone_py's self-test: one case (a line of its report) at most, the most a report has
 BC_CASE_CYCLES = 4_000_000_000
 BC_REPORT_LINES = 40
-# The second stage loads ~200 cycles a byte (s1_env.RUN_LOAD_CYCLES): ~53M for ~267 KB
+# The second stage loads ~200 cycles a byte (s1_env.RUN_LOAD_CYCLES): ~70M for ~357 KB
 RUN_LOAD_CYCLES = 100_000_000
 
 MEASURED: dict[str, tuple[int, int, dict[str, int]]] = {}

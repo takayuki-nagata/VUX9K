@@ -77,7 +77,9 @@ CI caches it under the sha256). To move to a new release, change both and read t
 aren't obvious:
 - **The configuration is ours**: `zephyr_workspace/micropython/prj.conf` replaces the port's
   (`-DCONF_FILE`), based on its full `prj.conf` less networking, watchdog, FPU (an rv32i SoC
-  can't select it) and reboot, with a 64 KB heap. Not `prj_minimal.conf`: its
+  can't select it) and reboot, plus the extra features (f-strings, `re`; bc_clone_py needs
+  them), a 256 KB heap and a 16 KB main stack (bc_clone_py's parser and evaluator recurse on
+  it). Not `prj_minimal.conf`: its
   `mpconfigport_minimal.h` has no `time` module and `long long` integers.
 - **The configuration header is ours too**: `mpconfigport_vux9k.h` includes the port's
   `mpconfigport.h` and turns the `zsensor` module off, which names sensor attributes Zephyr
@@ -96,19 +98,31 @@ aren't obvious:
 - **The banner's version is `MICROPY_GIT_TAG`** (`build-micropython` exports it):
   otherwise `py/makeversionhdr.py` runs `git describe` in the unpacked tree, finds this
   repository around it, and the image says `MicroPython <our commit>-dirty`.
-- The build writes only into `build/micropython/` (checked 2026-10-20: nothing in the
-  vendor tree changes), compiles no `lib/` component (`make_dist.py`'s license note says so;
+- **bc_clone_py is frozen in**: `make micropython-src` also fetches a pinned commit of it
+  (`BC_PY_COMMIT`, its GitHub archive and sha256) into `vendor/bc_clone_py`, and
+  `zephyr_workspace/micropython/manifest.py` (`CONFIG_MICROPY_FROZEN_MANIFEST`, on the command
+  line like the header) freezes its five modules. It is upstream: a change goes to its
+  repository (its `micropython` branch made it run here: `input()` for its REPL, since
+  `sys.stdin.readline()` on this console neither echoes nor ends a line at a terminal's
+  `\r`; no `sys.stdout.flush()`, which this port's stdout lacks) and comes back as a new pin.
+  mpy-cross, which compiles the frozen modules, is built into `build/mpy-cross/`
+  (`MICROPY_MPYCROSS`); MicroPython's CMake would build it inside the vendor tree.
+- The build writes only into `build/` (checked 2026-10-20: nothing in the vendor tree
+  changes), compiles no `lib/` component (`make_dist.py`'s license note says so;
   check again when the configuration grows), and has no RV32M or F instructions.
 
-`make apps` makes it `MPY.BIN` (~267 KB). `sim/emu/test_zephyr_micropython.py` loads it
+`make apps` makes it `MPY.BIN` (~357 KB). `sim/emu/test_zephyr_micropython.py` loads it
 into the PSRAM and types at the REPL (an expression, `2**100`, a function, an exception,
-`time.sleep_ms(100)` against `ticks_ms`, Ctrl-C stopping a loop), starts it once through the
-second stage's `run` from a card, and prints cycles like bc's test: ~0.48M cycles (26 ms)
-from its start to the first `>>> `, 0.5-0.8M a short line, and ~66M from power-on through
-both stages and `run`'s load to its start. The interpreter runs at ~10 cycles an instruction
+`time.sleep_ms(100)` against `ticks_ms`, Ctrl-C stopping a loop), runs bc_clone_py's
+self-test (each case timed; ~470M cycles in all, 10-64M a case, its heap peaking at ~36 KB)
+and types at its REPL as a terminal does (`\r`; no error may show), starts it once through
+the second stage's `run` from a card, and prints cycles like bc's test: ~0.73M cycles (40 ms)
+from its start to the first `>>> `, 0.5-0.8M a short line, ~9M (0.5 s) a bc line, and ~83M
+from power-on through both stages and `run`'s load to its start. The interpreter runs at ~10 cycles an instruction
 from the PSRAM, so a few thousand bytecodes take milliseconds: the sleep test takes the
 interpreter's own time (the same line with `sleep_ms(0)`) off before it checks the 100 ms. On the board,
-`test_hardware.py` 15 puts and runs it and types three lines, printing `[TIME]` lines.
+`test_hardware.py` 15 puts and runs it, types three lines, runs bc_clone_py's self-test and a
+line at its REPL, printing `[TIME]` lines.
 
 ## Zephyr: the interrupt-driven UART
 

@@ -90,7 +90,8 @@ The RTL modules in this repository were originally authored in VHDL-2008 and hav
 - **Arbitrary-Precision Math Engine & REPL (`vendor/bc_clone_rs`)**: Submodule from [`takayuki-nagata/bc_clone_rs`](https://github.com/takayuki-nagata/bc_clone_rs)
   - Embedded `bc_core` arbitrary-precision arithmetic engine with 10/10 math test suite running atop Zephyr RTOS. At about 260 KB it runs on the board from the PSRAM (`make build-zephyr`, `\VUX9K\APPS\BC.BIN` started by the second stage's `run`), through the caches in front of it: about 3 s from its start to the first `bc> ` (51M cycles on the emulator, which the RTL matches cycle for cycle).
 - **MicroPython (`make build-micropython`)**: [MicroPython](https://micropython.org)'s Zephyr port, from its release tarball (fetched into `vendor/`, not part of this repository)
-  - Its REPL on the board's UART, run from the PSRAM like bc (`\VUX9K\APPS\MPY.BIN`, ~267 KB): about 26 ms from its start to the first `>>> ` (0.48M cycles on the emulator, which the RTL matches cycle for cycle); Ctrl-C stops a running program. The port's full configuration less networking and sensors: arbitrary-precision integers, `time`, a 64 KB heap.
+  - Its REPL on the board's UART, run from the PSRAM like bc (`\VUX9K\APPS\MPY.BIN`, ~357 KB): about 40 ms from its start to the first `>>> ` (0.73M cycles on the emulator, which the RTL matches cycle for cycle); Ctrl-C stops a running program. The port's full configuration less networking and sensors: arbitrary-precision integers, `time`, f-strings, a 256 KB heap.
+  - [bc_clone_py](https://github.com/takayuki-nagata/bc_clone_py), the bc calculator in pure Python, frozen into the image (fetched like MicroPython, at a pinned commit): `import bc_clone; bc_clone.repl(mathlib=True)` (`quit` returns to `>>> `), `import bc_selftest; bc_selftest.run()` (16 cases, ~26 s on the emulator at 18 MHz). A bc line takes about 0.5 s.
 - **Hack Toolchain & C Firmware (`hack_demo`)**: Powered by [`takayuki-nagata/hack_tools`](https://github.com/takayuki-nagata/hack_tools) (`has` assembler & `m2h` transpiler)
   - 16-bit C and Hack assembly firmware testing recursive arithmetic, Fibonacci, array manipulations, and MMIO UART output.
 
@@ -360,7 +361,7 @@ in the ROM). `make build-zephyr-demo` builds the Rust demo
 (`zephyr_workspace/app/`, Zephyr + a Rust staticlib) for it; `make
 build-zephyr` builds bc_clone_rs for it too (`make apps`' `BC.BIN`, ~260 KB: the second
 stage's load takes about 3 s, and bc reaches its prompt about 3 s later on the board, as the emulator's cycles at 18 MHz say). `make build-micropython` builds MicroPython's port for it
-(`make apps`' `MPY.BIN`, ~267 KB; `zephyr_workspace/micropython/`, the sources
+(`make apps`' `MPY.BIN`, ~357 KB with bc_clone_py frozen in; `zephyr_workspace/micropython/`, the sources
 downloaded by `make micropython-src`). `make build-zephyr-irq-echo` builds
 `zephyr_workspace/irq_echo/`, an echo through the UART driver's interrupt-driven API
 (RX on the machine external interrupt; see `zephyr_workspace/README.md`, "UART").
@@ -535,7 +536,7 @@ stage under test as `STAGE2.BIN` and `STAGE2.OLD`:
 12. **`HACK.BIN` in its PSRAM segment** (Hack mode): the Hack demo's report, all `[PASS]`; at its end it soft-resets without a mode back to the first stage, whose banner follows, and that boots the second stage under test from the card again
 13. **`ZEPHYR.BIN` in the PSRAM**: the Zephyr demo's tasks finish and `k_msleep(100)` takes 100-102 ms (a tick and rounding; 100 ticks/s would take 110 or more); then the bitstream is loaded into SRAM again (openFPGALoader with the suite's `pack.fs`, as `make prog-sram`; not `--reset`, which loads the flash's bitstream) and the first stage's banner checked (the demo never returns, and only Button S1 would start the first stage again). Skipped, saying so, when the build has no `ZEPHYR.BIN` (no Zephyr)
 14. **`BC.BIN` in the PSRAM**: bc_clone_rs on Zephyr (~260 KB; `put` and `run` with longer timeouts): its self-tests pass and it prompts `bc> `; then `2^32` and a `define` at that prompt, and the bitstream again. The wall-clock time of each step is printed (`[TIME]` lines). Skipped, saying so, when the build has no `BC.BIN` (no Zephyr)
-15. **`MPY.BIN` in the PSRAM**: MicroPython's banner and `>>> `, then `1+2`, `2**100` and `1 // 0` (a `ZeroDivisionError`) at its REPL, and the bitstream again, with `[TIME]` lines. Skipped, saying so, when the build has no `MPY.BIN` (no Zephyr)
+15. **`MPY.BIN` in the PSRAM**: MicroPython's banner and `>>> `, then `1+2`, `2**100` and `1 // 0` (a `ZeroDivisionError`) at its REPL, bc_clone_py's self-test (all 16 cases pass) and `4*a(1)` at its REPL, `quit` back to `>>> `, and the bitstream again, with `[TIME]` lines. Skipped, saying so, when the build has no `MPY.BIN` (no Zephyr)
 16. **Install the second stage under test again**, after the loads, and boot it: what the suite leaves on the card and in the FPGA
 
 > [!NOTE]
@@ -628,7 +629,7 @@ VUX9K/
 │   ├── riscv_tests/, act4/         # riscv-tests and riscv-arch-test (ACT4) configuration
 │   └── mcy/                        # mutation testing (mcy) driver
 ├── tools/                          # End-user CLI: vux_tool.py (v4 files, FAT32 images, RAM boot, install, monitor); 70-vux9k-board.rules (udev, ModemManager)
-├── vendor/                         # bc_clone_rs and psram_controller (git submodules); riscv-tests (fetched on demand by run_riscv_tests.py) and MicroPython (by make micropython-src), gitignored
+├── vendor/                         # bc_clone_rs and psram_controller (git submodules); riscv-tests (fetched on demand by run_riscv_tests.py) MicroPython and bc_clone_py (by make micropython-src), gitignored
 └── build/                          # Unified build output (gitignored) - every generated artifact lands here
     ├── veryl/                      # veryl build --out-dir output: generated .sv/.map for soc/, soc/cpu/, soc/uart/, sim/
     ├── firmware/                   # firmware.bin/.hex (the first stage), stage2/STAGE2.BIN, apps/ (make apps' v4 files), hw_test/
