@@ -39,6 +39,8 @@ BC_REPORT_LINES = 40
 RUN_LOAD_CYCLES = 100_000_000
 
 MEASURED: dict[str, tuple[int, int, dict[str, int]]] = {}
+# bc_clone_py's self-test report as received (its heap line included), printed with the cycles
+BC_REPORT: list[str] = []
 
 
 @pytest.fixture(scope="module")
@@ -110,7 +112,9 @@ def test_repl_time(mpy):
 
     overhead = elapsed("time.sleep_ms(0); ")
     slept = elapsed("time.sleep_ms(100); ")
-    assert 100 <= slept - overhead <= 102, (slept, overhead)
+    # A tick's rounding, both lines' ticks_ms to the ms, and a collection of the 256 KB heap in
+    # either line (measured 105 - 2 with bc_clone_py frozen in)
+    assert 100 <= slept - overhead <= 105, (slept, overhead)
 
 
 def test_ctrl_c_stops_a_loop(mpy):
@@ -138,6 +142,7 @@ def test_bc_selftest(mpy):
         line = wait_for(soc, b"\n", timeout_cycles=BC_CASE_CYCLES, start=pos).strip()
         pos = len(soc.uart_received())
         report.append(line)
+        BC_REPORT.append(line)
         if line.endswith("[PASS]") or line.endswith("[FAIL]"):
             meter.done(f"bc case: {line.rsplit(' ... ', 1)[0]}")
             meter = Meter(soc, MEASURED)
@@ -153,11 +158,12 @@ def test_bc_repl(mpy):
     """bc_clone_py's REPL (bc_clone.repl(mathlib=True)), lines ended with Enter as a terminal
     sends it ("\r"); `quit` returns to MicroPython's prompt."""
     soc = mpy[0]
+    session = len(soc.uart_received())
     send_paced(soc, b"import bc_clone; bc_clone.repl(mathlib=True)\r")
     for line, want in (
         ("2^100", "1267650600228229401496703205376"),
         ("scale=6; 22/7", "3.142857"),
-        ("4*a(1)", "3.14159265358979323844"),
+        ("scale=20; 4*a(1)", "3.14159265358979323844"),  # scale stays from the line before
     ):
         start = len(soc.uart_received())
         meter = Meter(soc, MEASURED)
@@ -167,6 +173,8 @@ def test_bc_repl(mpy):
     start = len(soc.uart_received())
     send_paced(soc, b"quit\r")
     wait_for(soc, PROMPT, timeout_cycles=LINE_CYCLES, start=start)
+    text = soc.uart_received()[session:].decode(errors="replace")
+    assert "error" not in text.lower(), text
 
 
 def test_runs_from_the_card(mpy_bin):
@@ -194,3 +202,5 @@ def test_record_measurements(record_property, capsys):
             cpi = cycles / max(instret, 1)
             print(f"  {label:<56} {cycles:>15,} cycles {instret:>13,} instret  CPI {cpi:.1f}  {hit_rates(stats)}")
             record_property(label, f"{cycles} cycles, {instret} instret, {hit_rates(stats)}")
+        for line in BC_REPORT:
+            print(f"  bc_selftest: {line}")
