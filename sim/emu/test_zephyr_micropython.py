@@ -32,8 +32,9 @@ FLASH_BYTES = 4 * 1024 * 1024
 # are the PSRAM's waits, which the emulator adds in one step, so a bound costs little when hit
 BOOT_CYCLES = 2_000_000_000
 LINE_CYCLES = 500_000_000
-# bc_clone_py's self-test: one case (a line of its report) at most, the most a report has
-BC_CASE_CYCLES = 4_000_000_000
+# bc_clone_py's self-test: the wait for each line of its report (its slowest case, recursive
+# f(20), measured ~64M cycles), and the most lines a report has
+BC_CASE_CYCLES = 500_000_000
 BC_REPORT_LINES = 40
 # The second stage loads ~200 cycles a byte (s1_env.RUN_LOAD_CYCLES): ~70M for ~357 KB
 RUN_LOAD_CYCLES = 100_000_000
@@ -104,17 +105,16 @@ def test_repl_time(mpy):
     with the same line less the sleep (a few ms: a few thousand instructions at ~10 cycles
     each from the PSRAM) and taken off; 100 ticks/s would read 110 or more."""
     soc = mpy[0]
-    repl(soc, "import time")
+    repl(soc, "import gc, time")
 
     def elapsed(sleep: str) -> int:
-        out = repl(soc, f"t = time.ticks_ms(); {sleep}time.ticks_diff(time.ticks_ms(), t)")
+        # A collection first, so that none falls between the two ticks_ms of either line
+        out = repl(soc, f"gc.collect(); t = time.ticks_ms(); {sleep}time.ticks_diff(time.ticks_ms(), t)")
         return int(out.splitlines()[-2])  # the value's line, before the next prompt's
 
     overhead = elapsed("time.sleep_ms(0); ")
     slept = elapsed("time.sleep_ms(100); ")
-    # A tick's rounding, both lines' ticks_ms to the ms, and a collection of the 256 KB heap in
-    # either line (measured 105 - 2 with bc_clone_py frozen in)
-    assert 100 <= slept - overhead <= 105, (slept, overhead)
+    assert 100 <= slept - overhead <= 102, (slept, overhead)
 
 
 def test_ctrl_c_stops_a_loop(mpy):
@@ -163,7 +163,7 @@ def test_bc_repl(mpy):
     for line, want in (
         ("2^100", "1267650600228229401496703205376"),
         ("scale=6; 22/7", "3.142857"),
-        ("scale=20; 4*a(1)", "3.14159265358979323844"),  # scale stays from the line before
+        ("scale=20; 4*a(1)", "3.14159265358979323844"),  # bc keeps the scale a line sets
     ):
         start = len(soc.uart_received())
         meter = Meter(soc, MEASURED)

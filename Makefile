@@ -398,9 +398,10 @@ $(BC_PY_STAMP):
 
 # mpy-cross (compiles the frozen modules) built into build/ from the same tree: MicroPython's
 # CMake would build it inside the vendor tree
-MPY_CROSS = $(BUILD_DIR)/mpy-cross/mpy-cross
+# (one directory per version: a new tree's sources are older than the last build's objects)
+MPY_CROSS = $(BUILD_DIR)/mpy-cross-$(MICROPY_VERSION)/mpy-cross
 $(MPY_CROSS): $(MICROPY_STAMP)
-	$(MAKE) -C $(MICROPY_DIR)/mpy-cross BUILD=$(CURDIR)/$(BUILD_DIR)/mpy-cross
+	$(MAKE) -C $(MICROPY_DIR)/mpy-cross BUILD=$(CURDIR)/$(dir $(MPY_CROSS))
 
 # MicroPython's Zephyr port (the REPL on the board's UART) for the real board, linked into the
 # PSRAM like the demos (make apps' MPY.BIN), with this repository's prj.conf in place of the port's,
@@ -414,15 +415,17 @@ build-micropython: export SOURCE_DATE_EPOCH = $(shell git log -1 --format=%ct)
 build-micropython: export MICROPY_MPYCROSS = $(CURDIR)/$(MPY_CROSS)
 # A configuration change starts the build again from scratch: MicroPython's scan for its
 # modules re-reads only the sources newer than its output, so a module the new configuration
-# turns off would stay registered (an undefined reference at the link). The sources are
+# turns off would stay registered (an undefined reference at the link). So does a new pin of
+# bc_clone_py or MicroPython (their stamps are touched at the fetch): the archive keeps its
+# files' commit times, and the frozen modules are recompiled only when newer. The sources are
 # fetched only where Zephyr is, so that a build without it (MPY.BIN left out) needs no network.
 build-micropython:
 	@echo "=== Building MicroPython $(MICROPY_VERSION) (Zephyr port, vux9k) ==="
 	@if [ -d "$(ZEPHYR_BASE)" ] && [ -d "$(ZEPHYR_SDK_INSTALL_DIR)" ]; then \
 		$(MAKE) --no-print-directory micropython-src $(MPY_CROSS); fi
 	@if [ -f $(MICROPY_BUILD_DIR)/zephyr/.config ] && \
-		[ -n "$$(find zephyr_workspace/micropython -newer $(MICROPY_BUILD_DIR)/zephyr/.config)" ]; then \
-		echo "zephyr_workspace/micropython/ changed: building MicroPython from scratch"; \
+		[ -n "$$(find zephyr_workspace/micropython $(MICROPY_STAMP) $(BC_PY_STAMP) -newer $(MICROPY_BUILD_DIR)/zephyr/.config 2>/dev/null)" ]; then \
+		echo "zephyr_workspace/micropython/ or a pin changed: building MicroPython from scratch"; \
 		rm -rf $(MICROPY_BUILD_DIR); fi
 	$(call west_build,vux9k,$(MICROPY_DIR)/ports/zephyr,$(MICROPY_BUILD_DIR),-DCONF_FILE=$(CURDIR)/zephyr_workspace/micropython/prj.conf \
 		-DCONFIG_MICROPY_CONFIGFILE=\"$(CURDIR)/zephyr_workspace/micropython/mpconfigport_vux9k.h\" \

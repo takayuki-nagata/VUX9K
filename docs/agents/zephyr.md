@@ -99,14 +99,18 @@ aren't obvious:
   otherwise `py/makeversionhdr.py` runs `git describe` in the unpacked tree, finds this
   repository around it, and the image says `MicroPython <our commit>-dirty`.
 - **bc_clone_py is frozen in**: `make micropython-src` also fetches a pinned commit of it
-  (`BC_PY_COMMIT`, its GitHub archive and sha256) into `vendor/bc_clone_py`, and
+  (`BC_PY_COMMIT`, its GitHub archive and sha256: GitHub's generated archives have changed
+  bytes before, so a sha256 failure on an unchanged pin means re-taking the sum; CI caches the
+  tree) into `vendor/bc_clone_py`, and
   `zephyr_workspace/micropython/manifest.py` (`CONFIG_MICROPY_FROZEN_MANIFEST`, on the command
   line like the header) freezes its five modules. It is upstream: a change goes to its
   repository (its `micropython` branch made it run here: `input()` for its REPL, since
   `sys.stdin.readline()` on this console neither echoes nor ends a line at a terminal's
   `\r`; no `sys.stdout.flush()`, which this port's stdout lacks) and comes back as a new pin.
   mpy-cross, which compiles the frozen modules, is built into `build/mpy-cross/`
-  (`MICROPY_MPYCROSS`); MicroPython's CMake would build it inside the vendor tree.
+  (`MICROPY_MPYCROSS`, one directory per version); MicroPython's CMake would build it inside
+  the vendor tree. A new pin rebuilds MPY.BIN from scratch: the archive keeps its files' commit
+  times, and the frozen modules are recompiled only when newer than the last build's.
 - The build writes only into `build/` (checked 2026-10-20: nothing in the vendor tree
   changes), compiles no `lib/` component (`make_dist.py`'s license note says so;
   check again when the configuration grows), and has no RV32M or F instructions.
