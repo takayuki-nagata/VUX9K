@@ -383,6 +383,9 @@ $(MICROPY_DIR)/.vux9k-fetched:
 # MicroPython's Zephyr port (the REPL on the board's UART) for the real board, linked into the
 # PSRAM like the demos (make apps' MPY.BIN), with this repository's prj.conf in place of the port's
 MICROPY_BUILD_DIR ?= $(BUILD_DIR)/micropython
+# The banner's version: without it py/makeversionhdr.py takes `git describe` of the tree it
+# sits in, which is this repository's (its commit and -dirty in the image)
+build-micropython: export MICROPY_GIT_TAG = v$(MICROPY_VERSION)
 build-micropython: micropython-src
 	@echo "=== Building MicroPython $(MICROPY_VERSION) (Zephyr port, vux9k) ==="
 	$(call west_build,vux9k,$(MICROPY_DIR)/ports/zephyr,$(MICROPY_BUILD_DIR),-DCONF_FILE=$(CURDIR)/zephyr_workspace/micropython/prj.conf)

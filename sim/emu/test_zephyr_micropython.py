@@ -96,7 +96,7 @@ def test_repl_time(mpy):
     """time.sleep_ms on the kernel's clock (the SoC timer, 1000 ticks/s): 100 ms as measured
     with ticks_ms, within a tick and the line's own work."""
     out = repl(mpy[0], "import time; t = time.ticks_ms(); time.sleep_ms(100); time.ticks_diff(time.ticks_ms(), t)")
-    elapsed = int(out.rstrip().splitlines()[-1])
+    elapsed = int(out.splitlines()[-2])  # the value's line, before the next prompt's
     assert 100 <= elapsed <= 103, out
 
 
