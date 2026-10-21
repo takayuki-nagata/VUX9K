@@ -208,9 +208,11 @@ jobs:
 
       - name: Check Submodule Cleanliness
         run: |
-          if [ -n "$(git status --porcelain vendor/bc_clone_rs)" ]; then
-            echo "Error: vendor/bc_clone_rs contains unexpected modifications!"
-            git status --porcelain vendor/bc_clone_rs
-            exit 1
-          fi
-          echo "Submodule vendor/bc_clone_rs is 100% clean."
+          for sub in vendor/bc_clone_rs vendor/psram_controller; do
+            if [ -n "$(git status --porcelain $sub)" ]; then
+              echo "Error: $sub contains unexpected modifications!"
+              git status --porcelain $sub
+              exit 1
+            fi
+            echo "Submodule $sub is 100% clean."
+          done

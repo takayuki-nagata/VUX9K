@@ -10,10 +10,12 @@ build/
 # resolves it relative to each tool's process cwd (and the D-RAM preloads' links of older trees)
 firmware*.hex
 
-# Veryl toolchain internal cache & fetched dependency sources (not build output)
+# Veryl toolchain internal cache & fetched dependency sources (not build output). The root's
+# lock only: the submodules track their own, which a pattern without the slash would hide from
+# tools that read .gitignore below the root (rsync's filter rules)
 .build/
 dependencies/
-Veryl.lock
+/Veryl.lock
 
 # Cargo build output (Rust crates keep their own target/ dirs, not consolidated into build/)
 target/
