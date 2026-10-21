@@ -9,7 +9,7 @@ For the two-stage boot on the Tang Nano 9K and its emulator:
 - VUX9 v4 files (mkv4) and FAT32 card images (mkfat),
 - the first stage's prompt: card report (sd-info), RAM boot of a second stage (run),
   and installing a second stage as \\VUX9K\\STAGE2.BIN (install-stage2),
-- the second stage's prompt: files on the card (ls, put) and starting an application
+- the second stage's prompt: files on the card (ls, mkdir, put) and starting an application
   (run-app),
 - transfer v2 (send_upload_v2) and the functions the tests use.
 """
@@ -907,6 +907,15 @@ def cmd_ls(args):
         ser.close()
 
 
+def cmd_mkdir(args):
+    ser = open_port(args.port, baudrate=args.baud)
+    try:
+        enter_s2(ser)
+        print(s2_cmd(ser, f"mkdir {args.path}", timeout=30.0), end="")
+    finally:
+        ser.close()
+
+
 def cmd_put(args):
     data = _read_file(args.file)
     ser = open_port(args.port, baudrate=args.baud)
@@ -976,6 +985,8 @@ def main():
     sub_inst.add_argument("file", help="v4 file (it is RAM-booted, then installs itself)")
     sub_ls = subparsers.add_parser("ls", help="List a directory on the card (second stage's ls)")
     sub_ls.add_argument("path", nargs="?", default="", help="Directory or file (default: the root)")
+    sub_mkdir = subparsers.add_parser("mkdir", help="Make a directory on the card (second stage's mkdir)")
+    sub_mkdir.add_argument("path", help="Directory (8.3 names, e.g. VUX9K/APPS)")
     sub_put = subparsers.add_parser("put", help="Write a file to the card (second stage's put)")
     sub_put.add_argument("file", help="File to send")
     sub_put.add_argument("path", help="Where on the card (8.3 names, e.g. VUX9K/APPS/HELLO.BIN)")
@@ -1012,6 +1023,8 @@ def main():
         cmd_install_stage2(args)
     elif args.command == "ls":
         cmd_ls(args)
+    elif args.command == "mkdir":
+        cmd_mkdir(args)
     elif args.command == "put":
         cmd_put(args)
     elif args.command == "run-app":

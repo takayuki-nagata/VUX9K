@@ -41,6 +41,7 @@ FIELDS = [
     ("second stage version", "stage2_version"),
     ("test-hw", None),
     ("hw-smoke", None),
+    ("test-hw-upgrade", None),
     ("compatibility", None),
 ]
 
@@ -54,15 +55,20 @@ def sha256(path):
         return hashlib.sha256(f.read()).hexdigest()
 
 
-def load_dist(dist):
-    with open(os.path.join(dist, "MANIFEST.json")) as f:
-        m = json.load(f)
+def check_sums(dist):
+    """Every file SHA256SUMS lists has its hash (any release's dist, older ones too)."""
     with open(os.path.join(dist, "SHA256SUMS")) as f:
         for line in f:
             if line.strip():
                 digest, rel = line.rstrip("\n").split("  ", 1)
                 if sha256(os.path.join(dist, rel)) != digest:
                     raise Mismatch(f"{rel} doesn't match SHA256SUMS")
+
+
+def load_dist(dist):
+    with open(os.path.join(dist, "MANIFEST.json")) as f:
+        m = json.load(f)
+    check_sums(dist)
     b = m["bitstream"]
     return m, {
         "git_sha": m["git_sha"],
@@ -86,6 +92,8 @@ TEMPLATE_HELP = """\
 Fill in, from the board (docs/RELEASING.md, step 2):
   test-hw          `make test-hw-dist DIST=<this dist>`, e.g. 16/16 PASS
   hw-smoke         `make timing hw-smoke` at this commit, e.g. 5/5 seeds 15/15
+  test-hw-upgrade  `make test-hw-upgrade DIST=<this dist>` (the previous release's bitstream,
+                   then this one), e.g. 2/2 PASS from v0.2.0
   compatibility    whether the previous release's applications and SD cards still work;
                    if not, why the minor or major version went up
 and replace the last line with the release notes in Markdown.

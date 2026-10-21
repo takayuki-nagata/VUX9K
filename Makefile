@@ -39,7 +39,7 @@ HACK_BUILD_DIR := $(BUILD_DIR)/hack
 ZEPHYR_BUILD_DIR ?= $(BUILD_DIR)/zephyr
 SYNTH_DIR := $(BUILD_DIR)/synth
 
-.PHONY: all hello apps micropython-src build-micropython sim-stage2 sim-zephyr-demo-gls sim-hw-suite-emu lint-rtl check-rtl-syntax coverage-fcov mutation act4-elfs test-act4 test-act4-gls test-act4-emu test-isa-waits emu emu-py emu-test emu-bench test-isa-emu test-emu test-fw-host test-fat firmware-size coverage-fw coverage-rust coverage-rust-tool sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hw-dist test-hw-irq-echo test-hw-irq-echo-dist dist check-dist test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware hwtest hw-smoke sim-unit sim-psram-contract sim-psram-icarus sim-unit-random sim-boot sim-soc sim test-isa test-isa-gls zephyr-bc-lib build-zephyr build-zephyr-demo build-zephyr-irq-echo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-irq-echo-rtl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
+.PHONY: all hello apps micropython-src prev-release build-micropython sim-stage2 sim-zephyr-demo-gls sim-hw-suite-emu lint-rtl check-rtl-syntax coverage-fcov mutation act4-elfs test-act4 test-act4-gls test-act4-emu test-isa-waits emu emu-py emu-test emu-bench test-isa-emu test-emu test-fw-host test-fat firmware-size coverage-fw coverage-rust coverage-rust-tool sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hw-dist test-hw-irq-echo test-hw-irq-echo-dist test-hw-upgrade dist check-dist test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware hwtest hw-smoke sim-unit sim-psram-contract sim-psram-icarus sim-unit-random sim-boot sim-soc sim test-isa test-isa-gls zephyr-bc-lib build-zephyr build-zephyr-demo build-zephyr-irq-echo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-irq-echo-rtl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
 
 all: test-ci
 
@@ -396,6 +396,18 @@ $(MICROPY_STAMP):
 $(BC_PY_STAMP):
 	$(call fetch_archive,$(BC_PY_URL),$(BC_PY_SHA256),$(BC_PY_DIR),$(BC_PY_STAMP))
 
+# The previous release's archive, as GitHub publishes it, for the upgrade tests from it
+# (sim/emu/test_upgrade.py, test-hw-upgrade); a build input, so in build/
+PREV_RELEASE = v0.2.0
+PREV_SHA256 = f71675fe99981d5861d04de33d9e719940bf22a0b1f2915d0e3ff2df05ef0ecd
+PREV_URL = https://github.com/takayuki-nagata/VUX9K/releases/download/$(PREV_RELEASE)/vux9k-$(PREV_RELEASE)-linux-x86_64.tar.gz
+PREV_DIR = $(BUILD_DIR)/previous/vux9k-$(PREV_RELEASE)
+PREV_STAMP = $(PREV_DIR)/.vux9k-fetched-$(PREV_SHA256)
+prev-release: $(PREV_STAMP)
+
+$(PREV_STAMP):
+	$(call fetch_archive,$(PREV_URL),$(PREV_SHA256),$(PREV_DIR),$(PREV_STAMP))
+
 # mpy-cross (compiles the frozen modules) built into build/ from the same tree: MicroPython's
 # CMake would build it inside the vendor tree
 # (one directory per version: a new tree's sources are older than the last build's objects)
@@ -510,7 +522,7 @@ sim-lockstep-slow: veryl firmware build-hack hello emu-py
 	LOCKSTEP_SEEDS=$(LOCKSTEP_SEEDS) LOCKSTEP_SLOW=1 SIM=verilator $(PYTEST_SIM) "$(SIM_TESTS)::test_soc[test_soc_lockstep]"
 	LOCKSTEP_SEEDS=$(LOCKSTEP_SEEDS) LOCKSTEP_SLOW=1 LOCKSTEP_TRACE=$(LOCKSTEP_TRACE_FILE) $(PYTHON) -m pytest sim/emu/test_lockstep.py
 
-test-emu: emu-py firmware hwtest build-hack build-zephyr build-zephyr-demo build-zephyr-irq-echo build-micropython apps
+test-emu: emu-py firmware hwtest build-hack build-zephyr build-zephyr-demo build-zephyr-irq-echo build-micropython apps prev-release
 	@echo "=== Running firmware and demo tests on the emulator ==="
 	$(PYTHON) -m pytest sim/emu
 
@@ -849,6 +861,12 @@ DIST ?= $(BUILD_DIR)/dist
 test-hw-dist:
 	$(OPENFPGALOADER) -b tangnano9k $(DIST)/bitstream/pack.fs
 	$(PYTHON) scripts/test_hardware.py --dist $(DIST) --loader $(OPENFPGALOADER)
+
+# The upgrade from the previous release on the board, its bitstream half (the card half is
+# sim/emu/test_upgrade.py): the previous release's pack.fs, then the candidate's (DIST), both
+# into SRAM; the card is not written
+test-hw-upgrade: prev-release
+	$(PYTHON) scripts/test_hw_upgrade.py --old $(PREV_DIR) --new $(DIST) --loader $(OPENFPGALOADER)
 
 # The interrupt-driven UART echo on the board: put on the card and started by the second
 # stage that is running (bitstream and card as test-hw left them), then the bitstream loaded
