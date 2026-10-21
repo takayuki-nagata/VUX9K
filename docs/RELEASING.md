@@ -62,7 +62,9 @@ git push origin vX.Y.Z
 
 The message is three parts separated by blank lines: the version, the fields (one
 `key: value` per line), and the release notes in Markdown (`--cleanup=verbatim` keeps
-their `#` headings, which git would otherwise strip as comments). Fill in every `<fill in>`:
+their `#` headings, which git would otherwise strip as comments). The template takes the
+commit, the `pack.fs` hash, the seed and both stages' versions from the dist, and `verify`
+checks the hash and the versions against it again. Fill in every `<fill in>`:
 - `test-hw` and `hw-smoke`: the board results of step 2.
 - `compatibility`: whether the previous release's applications and SD cards keep working;
   if they don't, why the minor or major version went up.

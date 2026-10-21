@@ -38,6 +38,7 @@ FIELDS = [
     ("pack.fs sha256", "pack_sha256"),
     ("pnr seed", "seed"),
     ("first stage version", "stage1_version"),
+    ("second stage version", "stage2_version"),
     ("test-hw", None),
     ("hw-smoke", None),
     ("compatibility", None),
@@ -68,6 +69,7 @@ def load_dist(dist):
         "pack_sha256": sha256(os.path.join(dist, b["file"])),
         "seed": f"{b['pnr_seed']} (STA slack {b['sta_slack_ns']:+.3f} ns at {b['sta_target_mhz']} MHz)",
         "stage1_version": str(m["stage1_version"]),
+        "stage2_version": str(m["stage2_version"]),
     }
 
 
@@ -143,6 +145,8 @@ def verify(dist, message, commit, allow_dirty=False):
             raise Mismatch(f"tag message: '{key}' is missing or not filled in")
         if key == "commit" and not commit.startswith(value):
             raise Mismatch(f"tag message names commit {value}, the tag points to {commit}")
+        if key.endswith("stage version") and value != facts[dict(FIELDS)[key]]:
+            raise Mismatch(f"tag message: {key} {value}, the dist's is {facts[dict(FIELDS)[key]]}")
         if key == "pack.fs sha256" and value != facts["pack_sha256"]:
             raise Mismatch(
                 f"pack.fs is {facts['pack_sha256']}, the tag message says {value}: "
@@ -181,6 +185,10 @@ def selftest(dist):
         (template(dist).replace(FILL, "selftest"), "unfilled release notes"),
         (filled.replace("\n\n" + body, ""), "no release notes"),
         (filled.replace("hw-smoke: selftest\n", ""), "a missing hw-smoke"),
+        (
+            filled.replace(f"second stage version: {facts['stage2_version']}\n", "second stage version: 0\n"),
+            "a second stage version other than the dist's",
+        ),
         (filled.replace("compatibility: selftest", f"compatibility: {FILL}"), "an unfilled compatibility"),
         (filled.replace("test-hw: selftest\n", ""), "test-hw only in the notes"),
         (filled.replace("v0.0.0-selftest\n\n", "v0.0.0-selftest\n"), "no blank line after the version"),
