@@ -60,16 +60,19 @@ def old_boot_manager(ser, version):
     return out
 
 
-def new_stages(ser, s1_version):
+def new_stages(ser, versions):
     """The candidate's first stage, soft-reset from its prompt, boots the card's second stage
-    on its own. Returns the text."""
+    on its own: the candidate's, as test-hw-dist leaves it (a stale STAGE2.BIN fails).
+    Returns the text."""
+    s1_version, s2_version = versions
     vux_tool.enter_s1(ser, timeout=30.0)
     ser.write(b"r")
     ser.flush()
     got, out = vux_tool.read_until(ser, (vux_tool.S2_PROMPT,), 30.0)
     want = f"VUX9K Stage 1 (v{s1_version})"
-    if not got or want not in out or "VUX9K Stage 2 (v" not in out:
-        raise TimeoutError(fail_msg(f"No {want!r} booting the second stage to {vux_tool.S2_PROMPT!r}.", out))
+    want2 = f"VUX9K Stage 2 (v{s2_version})"
+    if not got or want not in out or want2 not in out:
+        raise TimeoutError(fail_msg(f"No {want!r} booting {want2!r} to {vux_tool.S2_PROMPT!r}.", out))
     return out
 
 
@@ -85,7 +88,8 @@ def main():
     for dist in (args.old, args.new):
         release_check.check_sums(dist)
     bm_version = manifest(args.old)["boot_manager_version"]
-    s1_version = manifest(args.new)["stage1_version"]
+    new = manifest(args.new)
+    versions = (new["stage1_version"], new["stage2_version"])
     loader = find_loader(args.loader)
     if not loader:
         sys.exit("no openFPGALoader (--loader)")
@@ -102,7 +106,7 @@ def main():
     ok = True
     for name, dist, check, version in (
         ("1. The previous release's bitstream: its Boot Manager", args.old, old_boot_manager, bm_version),
-        ("2. The candidate's bitstream: its first stage boots the second stage", args.new, new_stages, s1_version),
+        ("2. The candidate's bitstream: its first stage boots the second stage", args.new, new_stages, versions),
     ):
         try:
             ser = load(loader, dist, args.port, args.baud)

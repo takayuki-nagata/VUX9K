@@ -77,8 +77,8 @@ The second stage is a file manager and launcher (`help` lists its commands; the 
 `rmdir`, `mv`, `put` (a file over the serial port), `run`, `info`, `install`, `reset`. It
 reads FAT32 with 8.3 and long names (long names read only); what it writes gets 8.3 names.
 `sd/VUX9K/APPS/` holds the demos as v4 files for the card; copy the directory to
-`\VUX9K\APPS\` (or `put` them there; `put` needs the directory, which `mkdir` makes, at the prompt or as `vux_tool.py mkdir VUX9K/APPS`) and
-start one with `run`:
+`\VUX9K\APPS\` (or `put` them there; `put` needs the directory, which `mkdir` makes, at the
+prompt or as `vux_tool.py mkdir VUX9K/APPS`) and start one with `run`:
 
 ```sh
 python3 tools/vux_tool.py put sd/VUX9K/APPS/HELLO.BIN VUX9K/APPS/HELLO.BIN
@@ -98,9 +98,10 @@ python3 tools/vux_tool.py run-app VUX9K/APPS/HELLO.BIN
 
 **Upgrading from v0.2.x.** v0.2.x kept applications and a Boot Manager in slots between the
 card's partition table and its first partition; this release reads only the FAT32 partition
-and ignores them, and leaves them as they are. A v0.2.x card works as it is (its first
-partition is FAT32 and starts after the slots). Write the new bitstream to the flash, then
-install the second stage and the applications over the serial port:
+and ignores them, and leaves them as they are. A v0.2.x card whose first partition is FAT32
+works as it is; one with exFAT or FAT16 there (v0.2.x took any) must be formatted FAT32 as
+above. Write the new bitstream to the flash, then install the second stage and the
+applications over the serial port:
 
 ```sh
 openFPGALoader -b tangnano9k -f bitstream/pack.fs

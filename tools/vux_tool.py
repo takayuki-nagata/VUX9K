@@ -1011,6 +1011,14 @@ def main():
     hint = modemmanager_hint(tty) if tty and "://" not in tty else ""
     if hint:
         print(f"Warning: {hint}", file=sys.stderr)
+    try:
+        _dispatch(args)
+    except S2Error as e:
+        # The second stage's [ERR] line (a directory that exists, a file it won't run)
+        sys.exit(str(e))
+
+
+def _dispatch(args):
     if args.command == "reset":
         cmd_reset(args)
     elif args.command == "monitor":

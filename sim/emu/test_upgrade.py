@@ -95,8 +95,8 @@ def test_upgrade_from_the_previous_release(prev, monkeypatch, capsys, tmp_path):
     tool("mkdir", "VUX9K/APPS")
     for name in ("HELLO.BIN", "HACK.BIN"):
         (tmp_path / name).write_bytes(app(name))
-        assert "[PUT] OK" in tool("put", str(tmp_path / name), f"VUX9K/APPS/{name}")
 
+    assert "[PUT] OK" in tool("put", str(tmp_path / "HELLO.BIN"), "VUX9K/APPS/HELLO.BIN")
     mark = len(soc.uart_received())
     assert "[RUN] " in tool("run-app", "VUX9K/APPS/HELLO.BIN")
     out = wait_for(soc, LAST_LINE, BOOT_CYCLES, start=mark)
@@ -104,6 +104,8 @@ def test_upgrade_from_the_previous_release(prev, monkeypatch, capsys, tmp_path):
     soc.uart_send(b"r")  # back to the first stage, which boots the installed second stage
     wait_for(soc, S2_PROMPT, S2_BOOT_CYCLES, start=len(soc.uart_received()))
 
+    # Beyond the doc's steps: a Hack application too, in its segments
+    assert "[PUT] OK" in tool("put", str(tmp_path / "HACK.BIN"), "VUX9K/APPS/HACK.BIN")
     mark = len(soc.uart_received())
     assert "[RUN] " in tool("run-app", "VUX9K/APPS/HACK.BIN")
     out = wait_for(soc, HACK_DONE, BOOT_CYCLES, start=mark)
@@ -114,7 +116,10 @@ def test_upgrade_from_the_previous_release(prev, monkeypatch, capsys, tmp_path):
     raw, _ = prev.build_vux9_image(os.path.join(PREV_DIR, "demos", "zephyr-demo.bin"), slot=1, mode="riscv")
     (tmp_path / "OLD.BIN").write_bytes(raw)
     tool("put", str(tmp_path / "OLD.BIN"), "VUX9K/APPS/OLD.BIN")
-    with pytest.raises(vux_tool.S2Error, match="not a VUX9 v4 file"):
+    with pytest.raises(SystemExit, match="not a VUX9 v4 file"):
         tool("run-app", "VUX9K/APPS/OLD.BIN")
+    # The doc's mkdir again, on a card that has the directory: an error, not a traceback
+    with pytest.raises(SystemExit, match=r"\[ERR\]"):
+        tool("mkdir", "VUX9K/APPS")
 
     assert soc.sd_image()[512 : FAT_LBA * 512] == slots, "the slots and the gap were written"

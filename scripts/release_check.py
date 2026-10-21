@@ -194,6 +194,10 @@ def selftest(dist):
         (filled.replace("\n\n" + body, ""), "no release notes"),
         (filled.replace("hw-smoke: selftest\n", ""), "a missing hw-smoke"),
         (
+            filled.replace(f"first stage version: {facts['stage1_version']}\n", "first stage version: 0\n"),
+            "a first stage version other than the dist's",
+        ),
+        (
             filled.replace(f"second stage version: {facts['stage2_version']}\n", "second stage version: 0\n"),
             "a second stage version other than the dist's",
         ),
