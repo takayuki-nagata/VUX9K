@@ -5,6 +5,7 @@ paths:
   - "sim/integration/**"
   - "tools/vux_tool.py"
   - "scripts/test_hardware.py"
+  - "scripts/test_hw_upgrade.py"
   - "firmware/stage1/**"
   - "firmware/stage2/**"
 ---
@@ -115,5 +116,12 @@ clock-and-board.md, "Board UART output that is noise: ModemManager and the bridg
   the card and started by the running second stage, then the bitstream loaded again
   (`build/synth/pack.fs`). After `test-hw-dist`, run `make test-hw-irq-echo-dist DIST=<dir>`
   instead: it takes `IRQECHO.BIN` and `pack.fs` from the tree. Given only `--bin`, the script
-  once left the board on a weeks-old local `pack.fs` after a dist run. The
-  upgrade test from the previous release went with the Boot Manager's slots.
+  once left the board on a weeks-old local `pack.fs` after a dist run.
+- `make test-hw-upgrade DIST=<dir>` (`scripts/test_hw_upgrade.py`): the previous release's
+  `pack.fs` (`make prev-release`: `PREV_RELEASE`, v0.2.0, fetched into `build/previous/`) into
+  SRAM, its Boot Manager's banner and `vux>`, then the tree's `pack.fs`, its first stage
+  booting the card's second stage; no card writes. Not `r` at `vux>`: the Resident Loader then
+  starts slot 0, which a FAT32 card from mkfs doesn't have (it stops at `[RL] Slot 0`). The
+  card half is `sim/emu/test_upgrade.py` in `test-emu`: v0.2.0's slots written by its own tool
+  in front of a FAT32 partition, then docs/APP_DEVELOPMENT.md's upgrade steps with this tree's
+  `vux_tool` (~40 s).

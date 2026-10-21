@@ -33,18 +33,16 @@ openFPGALoader -b tangnano9k bitstream/pack.fs
 pip install -r tools/requirements.txt
 python3 tools/vux_tool.py install-stage2 sd/VUX9K/STAGE2.BIN   # unless the card has it (makes VUX9K\)
 python3 tools/vux_tool.py sd-info          # the card and STAGE2.BIN, as the first stage sees them
-python3 tools/vux_tool.py monitor          # sd-info left s1>: b boots the second stage (s2>): help, ls, mkdir VUX9K/APPS ...
+python3 tools/vux_tool.py monitor          # sd-info left s1>: b boots the second stage (s2>): help, ls, ...
+python3 tools/vux_tool.py mkdir VUX9K/APPS # unless the card has it
 python3 tools/vux_tool.py put sd/VUX9K/APPS/HELLO.BIN VUX9K/APPS/HELLO.BIN
 python3 tools/vux_tool.py run-app VUX9K/APPS/HELLO.BIN
 ```
 
-(`put` needs the directory: on a card without `VUX9K\APPS\`, type `mkdir VUX9K/APPS` at
-the `s2>` prompt first.)
-
 Upgrading a board from v0.2.x: write this `bitstream/pack.fs` to the flash
-(`openFPGALoader -b tangnano9k -f bitstream/pack.fs`) and prepare the card as above. The
-v0.2.x slots on the card are no longer read. Section 2 of `docs/APP_DEVELOPMENT.md` has
-the details.
+(`openFPGALoader -b tangnano9k -f bitstream/pack.fs`) and prepare the card as above; a v0.2.x
+card works as it is, and its slots are left alone, no longer read. Applications built for
+v0.2.x must be rebuilt. Section 2 of `docs/APP_DEVELOPMENT.md` has the steps.
 
 On the emulator:
 

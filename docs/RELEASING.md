@@ -31,6 +31,7 @@ tar -xzf build/candidate/vux9k-dist.tar.gz -C build/candidate    # -> build/cand
 ```sh
 make test-hw-dist DIST=build/candidate/dist
 make test-hw-irq-echo-dist DIST=build/candidate/dist
+make test-hw-upgrade DIST=build/candidate/dist
 git switch --detach $SHA && make timing hw-smoke
 ```
 
@@ -44,11 +45,13 @@ suite. The candidate's seed is one of them (`MANIFEST.json`); if the local `pack
 the same SHA-256 as the candidate's, hw-smoke tested exactly its placement (note it in
 the tag).
 
-The way up from the previous release was tested with its slots (`make test-hw-upgrade`)
-until the two-stage boot replaced them, which v0.2.x cards can't follow. The move from
-v0.2.x to the two-stage boot gets its own board test before the release that brings it;
-until then, describe the steps (new bitstream, FAT32 card with `VUX9K\STAGE2.BIN`) in the
-release notes.
+`test-hw-upgrade` is the upgrade from the previous release (the Makefile's `PREV_RELEASE`,
+which `make prev-release` fetches from GitHub and checks), its bitstream half: the previous
+release's `pack.fs` into SRAM and its Boot Manager at its prompt, then the candidate's, whose
+first stage boots the card's second stage; it doesn't write the card. The card half, a card as
+v0.2.x left it through docs/APP_DEVELOPMENT.md's "Upgrading from v0.2.x" steps, is the
+emulator's `sim/emu/test_upgrade.py`, which CI runs. (Until v0.2.x the way up was tested with
+the slots on the board, which the two-stage boot replaced.)
 
 ## 3. Tag
 
@@ -65,7 +68,7 @@ The message is three parts separated by blank lines: the version, the fields (on
 their `#` headings, which git would otherwise strip as comments). The template takes the
 commit, the `pack.fs` hash, the seed and both stages' versions from the dist, and `verify`
 checks the hash and the versions against it again. Fill in every `<fill in>`:
-- `test-hw` and `hw-smoke`: the board results of step 2.
+- `test-hw`, `hw-smoke` and `test-hw-upgrade`: the board results of step 2.
 - `compatibility`: whether the previous release's applications and SD cards keep working;
   if they don't, why the minor or major version went up.
 - The release notes: what changed since the previous release, how to upgrade, and any

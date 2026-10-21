@@ -91,7 +91,7 @@ The RTL modules in this repository were originally authored in VHDL-2008 and hav
   - Embedded `bc_core` arbitrary-precision arithmetic engine with 10/10 math test suite running atop Zephyr RTOS. At about 260 KB it runs on the board from the PSRAM (`make build-zephyr`, `\VUX9K\APPS\BC.BIN` started by the second stage's `run`), through the caches in front of it: about 3 s from its start to the first `bc> ` (51M cycles on the emulator, which the RTL matches cycle for cycle).
 - **MicroPython (`make build-micropython`)**: [MicroPython](https://micropython.org)'s Zephyr port, from its release tarball (fetched into `vendor/`, not part of this repository)
   - Its REPL on the board's UART, run from the PSRAM like bc (`\VUX9K\APPS\MPY.BIN`, ~357 KB): about 40 ms from its start to the first `>>> ` (0.73M cycles on the emulator, which the RTL matches cycle for cycle); Ctrl-C stops a running program. The port's full configuration less networking and sensors: arbitrary-precision integers, `time`, f-strings, a 256 KB heap.
-  - [bc_clone_py](https://github.com/takayuki-nagata/bc_clone_py), the bc calculator in pure Python, frozen into the image (fetched like MicroPython, at a pinned commit): `import bc_clone; bc_clone.repl(mathlib=True)` (`quit` returns to `>>> `), `import bc_selftest; bc_selftest.run()` (16 cases, ~26 s on the emulator at 18 MHz). A bc line takes about 0.5 s (~9M cycles on the emulator).
+  - [bc_clone_py](https://github.com/takayuki-nagata/bc_clone_py), the bc calculator in pure Python, frozen into the image (fetched like MicroPython, at a pinned commit): `import bc_clone; bc_clone.repl(mathlib=True)` (`quit` returns to `>>> `), `import bc_selftest; bc_selftest.run()` (16 cases, ~26 s on the board). A bc line takes about 0.5 s (~9M cycles on the emulator; `4*a(1)` at scale 20 took 1.6 s on the board).
 - **Hack Toolchain & C Firmware (`hack_demo`)**: Powered by [`takayuki-nagata/hack_tools`](https://github.com/takayuki-nagata/hack_tools) (`has` assembler & `m2h` transpiler)
   - 16-bit C and Hack assembly firmware testing recursive arithmetic, Fibonacci, array manipulations, and MMIO UART output.
 
@@ -238,8 +238,10 @@ python3 tools/vux_tool.py run build/firmware/stage2/STAGE2.BIN
 python3 tools/vux_tool.py mkv4 build/firmware/stage2/stage2.bin STAGE2.BIN --load-addr 0x80700000
 python3 tools/vux_tool.py mkv4 --mode hack --name "Hack demo" build/hack/firmware.bin HACK.BIN
 
-# 4a. Through the second stage: list the card, put a file on it, start an application
+# 4a. Through the second stage: list the card, make a directory, put a file on it, start an
+#     application
 python3 tools/vux_tool.py ls VUX9K
+python3 tools/vux_tool.py mkdir VUX9K/APPS
 python3 tools/vux_tool.py put HACK.BIN VUX9K/APPS/HACK.BIN
 python3 tools/vux_tool.py run-app VUX9K/APPS/HACK.BIN
 

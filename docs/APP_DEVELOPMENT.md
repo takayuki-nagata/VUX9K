@@ -77,7 +77,7 @@ The second stage is a file manager and launcher (`help` lists its commands; the 
 `rmdir`, `mv`, `put` (a file over the serial port), `run`, `info`, `install`, `reset`. It
 reads FAT32 with 8.3 and long names (long names read only); what it writes gets 8.3 names.
 `sd/VUX9K/APPS/` holds the demos as v4 files for the card; copy the directory to
-`\VUX9K\APPS\` (or `put` them there; `put` needs the directory, which `mkdir` makes) and
+`\VUX9K\APPS\` (or `put` them there; `put` needs the directory, which `mkdir` makes, at the prompt or as `vux_tool.py mkdir VUX9K/APPS`) and
 start one with `run`:
 
 ```sh
@@ -91,15 +91,29 @@ python3 tools/vux_tool.py run-app VUX9K/APPS/HELLO.BIN
 | `ZEPHYR.BIN` | the Zephyr Rust demo | the PSRAM at `0x8000_0000` (it never returns: S1 goes back to the first stage) |
 | `IRQECHO.BIN` | Zephyr's interrupt-driven UART echo | the PSRAM at `0x8000_0000` |
 | `BC.BIN` | [bc_clone_rs](https://github.com/takayuki-nagata/bc_clone_rs), an arbitrary-precision calculator (`bc`) on Zephyr: self-tests, then its `bc> ` prompt. ~260 KB: on the board `put` takes ~29 s, `run`'s load ~3 s, and bc reaches its prompt ~3 s later | the PSRAM at `0x8000_0000` (it never returns, like `ZEPHYR.BIN`) |
-| `MPY.BIN` | [MicroPython](https://micropython.org) 1.29.0's Zephyr port: its banner, then the `>>> ` prompt on the UART (Ctrl-C stops a running program; arbitrary-precision integers, `time`, f-strings, a 256 KB heap), with [bc_clone_py](https://github.com/takayuki-nagata/bc_clone_py) frozen in: `import bc_clone; bc_clone.repl(mathlib=True)` is bc (`quit` returns to `>>> `), `import bc_selftest; bc_selftest.run()` its self-test. ~357 KB: `put` should take ~40 s at 115200 baud and `run`'s load ~4 s (as bc's: the emulator's cycles at 18 MHz) | the PSRAM at `0x8000_0000` (it never returns, like `ZEPHYR.BIN`) |
+| `MPY.BIN` | [MicroPython](https://micropython.org) 1.29.0's Zephyr port: its banner, then the `>>> ` prompt on the UART (Ctrl-C stops a running program; arbitrary-precision integers, `time`, f-strings, a 256 KB heap), with [bc_clone_py](https://github.com/takayuki-nagata/bc_clone_py) frozen in: `import bc_clone; bc_clone.repl(mathlib=True)` is bc (`quit` returns to `>>> `), `import bc_selftest; bc_selftest.run()` its self-test. ~357 KB: on the board `put` takes ~39 s, `run`'s load ~4 s, the self-test ~26 s, and a bc line from a fraction of a second (`4*a(1)` at scale 20: ~1.6 s) | the PSRAM at `0x8000_0000` (it never returns, like `ZEPHYR.BIN`) |
 | `HACK.BIN` | the Hack C demo | Hack's segments in the PSRAM, in Hack mode; at its end it soft-resets back to the first stage |
 
 `demos/` holds the Zephyr and Hack demos' raw images for the emulator (section 4).
 
 **Upgrading from v0.2.x.** v0.2.x kept applications and a Boot Manager in slots between the
 card's partition table and its first partition; this release reads only the FAT32 partition
-and ignores them. Write the new bitstream to the flash (section 1), prepare the card as above
-and rebuild applications (section 3).
+and ignores them, and leaves them as they are. A v0.2.x card works as it is (its first
+partition is FAT32 and starts after the slots). Write the new bitstream to the flash, then
+install the second stage and the applications over the serial port:
+
+```sh
+openFPGALoader -b tangnano9k -f bitstream/pack.fs
+python3 tools/vux_tool.py sd-info                                 # no STAGE2.BIN yet
+python3 tools/vux_tool.py install-stage2 sd/VUX9K/STAGE2.BIN
+python3 tools/vux_tool.py mkdir VUX9K/APPS
+python3 tools/vux_tool.py put sd/VUX9K/APPS/HELLO.BIN VUX9K/APPS/HELLO.BIN
+python3 tools/vux_tool.py run-app VUX9K/APPS/HELLO.BIN
+```
+
+(or copy `sd/VUX9K/` to the card with a PC). Applications built for v0.2.x don't run: they
+ran from the block RAM, and their slot images are v3 files, which `run` refuses ("not a VUX9
+v4 file"). Rebuild them for the PSRAM (section 3).
 
 ## 3. Building an application
 

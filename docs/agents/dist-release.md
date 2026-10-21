@@ -19,9 +19,10 @@ from the repo and runs the demos with the shipped emulator and Python module, th
 `release_check.py selftest`. CI runs both after `make sta` and, on pushes, uploads the tree
 as `vux9k-dist-<sha>`. `release.yml` publishes that artifact for an annotated `v*` tag only
 if the tag message's `pack.fs sha256` matches it (docs/RELEASING.md): tag the commit whose
-CI artifact was tested on the board, never a local build. (The way up from the previous
-release was tested with its slots until the two-stage boot replaced them; the move from
-v0.2 to the two-stage boot gets its own test before that release.) The tag message's
+CI artifact was tested on the board, never a local build. The upgrade from the previous
+release (`PREV_RELEASE`, v0.2.0) is tested on the board (`test-hw-upgrade`, the bitstreams) and
+on the emulator (`sim/emu/test_upgrade.py`, a v0.2.x card through docs/APP_DEVELOPMENT.md's
+"Upgrading from v0.2.x" steps, command by command: change the two together). The tag message's
 fields (`release_check.py`'s `FIELDS`, all required) and the release notes built from it
 (`release_check.py notes`) live in that script, not in the workflow. Keep in sync:
 - The dist's contents live in `make_dist.py`'s `FILES` (plus what it writes itself: the
