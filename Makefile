@@ -127,7 +127,7 @@ STAGE2_SRCS = $(wildcard firmware/stage2/src/*.rs firmware/stage2/bootstrap/*) f
 $(FIRMWARE_BUILD_DIR)/firmware.hex: $(FIRMWARE_SRCS)
 	@mkdir -p $(FIRMWARE_BUILD_DIR)
 	cd firmware/stage1 && $(CARGO) build --release
-	$(PYTHON) scripts/elf2bin.py firmware/target/riscv32i-unknown-none-elf/release/stage1 $(FIRMWARE_BUILD_DIR)/firmware.bin
+	$(PYTHON) scripts/elf2bin.py firmware/target/riscv32im-unknown-none-elf/release/stage1 $(FIRMWARE_BUILD_DIR)/firmware.bin
 	$(PYTHON) scripts/merge_firmware_hex.py $(FIRMWARE_BUILD_DIR)/firmware.bin $(FIRMWARE_BUILD_DIR)/firmware.hex
 	@# soc_rom.veryl's $$readmemh() resolves this bare filename relative to each tool's own
 	@# process cwd. yosys/nextpnr run from the repo root, so they need this symlink (not cp, to stay
@@ -139,7 +139,7 @@ $(FIRMWARE_BUILD_DIR)/firmware.hex: $(FIRMWARE_SRCS)
 $(STAGE2_DIR)/STAGE2.BIN: $(STAGE2_SRCS) tools/vux_tool.py
 	@mkdir -p $(STAGE2_DIR)
 	cd firmware/stage2 && $(CARGO) build --profile coverage
-	$(PYTHON) scripts/elf2bin.py --base $(STAGE2_BASE) firmware/target/riscv32i-unknown-none-elf/coverage/stage2 $(STAGE2_DIR)/stage2.bin
+	$(PYTHON) scripts/elf2bin.py --base $(STAGE2_BASE) firmware/target/riscv32im-unknown-none-elf/coverage/stage2 $(STAGE2_DIR)/stage2.bin
 	@[ -n "$(STAGE2_VERSION)" ] || { echo "STAGE2_VERSION not found in firmware/stage2/src/main.rs"; exit 1; }
 	$(PYTHON) tools/vux_tool.py mkv4 --load-addr $(STAGE2_BASE) --version $(STAGE2_VERSION) --name "VUX9K stage 2" $(STAGE2_DIR)/stage2.bin $@
 
@@ -170,7 +170,7 @@ endef
 $(APPS_DIR)/HELLO.BIN: $(HELLO_SRCS) tools/vux_tool.py
 	@mkdir -p $(APPS_DIR)
 	cd firmware/hello && $(CARGO) build --release
-	$(PYTHON) scripts/elf2bin.py --base $(HELLO_BASE) firmware/target/riscv32i-unknown-none-elf/release/hello $(APPS_DIR)/hello.bin
+	$(PYTHON) scripts/elf2bin.py --base $(HELLO_BASE) firmware/target/riscv32im-unknown-none-elf/release/hello $(APPS_DIR)/hello.bin
 	$(PYTHON) tools/vux_tool.py mkv4 --load-addr $(HELLO_BASE) --name "VUX9K hello" $(APPS_DIR)/hello.bin $@
 
 hello: $(APPS_DIR)/HELLO.BIN
@@ -191,7 +191,7 @@ HWTEST_SRCS = $(wildcard firmware/hw_test/src/*) firmware/hw_test/Cargo.toml fir
 $(HWTEST_DIR)/hw_test.hex: $(HWTEST_SRCS)
 	@mkdir -p $(HWTEST_DIR)
 	cd firmware/hw_test && $(CARGO) build --release
-	$(PYTHON) scripts/elf2bin.py firmware/target/riscv32i-unknown-none-elf/release/hw_test $(HWTEST_DIR)/hw_test.bin
+	$(PYTHON) scripts/elf2bin.py firmware/target/riscv32im-unknown-none-elf/release/hw_test $(HWTEST_DIR)/hw_test.bin
 	$(PYTHON) scripts/merge_firmware_hex.py $(HWTEST_DIR)/hw_test.bin $(HWTEST_DIR)/hw_test.hex
 
 hwtest: $(HWTEST_DIR)/hw_test.hex
@@ -205,7 +205,7 @@ hw-smoke: hwtest firmware
 # Line coverage of the firmware and demos from the emulator tests (sim/emu): see
 # scripts/coverage_fw.py. Minimums in coverage/thresholds.toml; report in build/coverage/fw/
 FW_COV_DIR = $(BUILD_DIR)/coverage/fw
-FW_TARGET = firmware/target/riscv32i-unknown-none-elf
+FW_TARGET = firmware/target/riscv32im-unknown-none-elf
 coverage-fw: emu-py firmware build-hack build-zephyr-demo build-zephyr apps
 	rm -rf $(FW_COV_DIR) && mkdir -p $(FW_COV_DIR)
 	cd firmware/stage1 && $(CARGO) build --profile coverage
@@ -325,7 +325,7 @@ submodule-sync:
 	git submodule update --init --recursive
 
 zephyr-bc-lib:
-	cd vendor/bc_clone_rs/crates/bc_zephyr && $(CARGO) build --release --target riscv32i-unknown-none-elf --no-default-features
+	cd vendor/bc_clone_rs/crates/bc_zephyr && $(CARGO) build --release --target riscv32im-unknown-none-elf --no-default-features
 
 # west build <board> <app dir> <build dir> [extra cmake args]; skipped without Zephyr
 define west_build
@@ -346,7 +346,7 @@ endef
 # bc (~260 KB) for the real board, linked into the PSRAM like the demos (make apps' BC.BIN)
 build-zephyr:
 	@echo "=== Building Zephyr bc_clone_rs Application (vux9k) ==="
-	$(call west_build,vux9k,$(BC_APP_DIR),$(ZEPHYR_BUILD_DIR),-DRUST_TARGET=riscv32i-unknown-none-elf)
+	$(call west_build,vux9k,$(BC_APP_DIR),$(ZEPHYR_BUILD_DIR),-DRUST_TARGET=riscv32im-unknown-none-elf)
 
 # The Rust demo on Zephyr for the real board, linked into the PSRAM (zephyr_workspace/boards)
 ZEPHYR_DEMO_BUILD_DIR ?= $(BUILD_DIR)/zephyr-demo
@@ -425,9 +425,10 @@ MICROPY_BUILD_DIR ?= $(BUILD_DIR)/micropython
 build-micropython: export MICROPY_GIT_TAG = v$(MICROPY_VERSION)
 build-micropython: export SOURCE_DATE_EPOCH = $(shell git log -1 --format=%ct)
 build-micropython: export MICROPY_MPYCROSS = $(CURDIR)/$(MPY_CROSS)
-# A configuration change starts the build again from scratch: MicroPython's scan for its
-# modules re-reads only the sources newer than its output, so a module the new configuration
-# turns off would stay registered (an undefined reference at the link). So does a new pin of
+# A configuration change (ours, or the board's and SoC's: their ISA) starts the build again
+# from scratch: MicroPython's scan for its modules re-reads only the sources newer than its
+# output, so a module the new configuration turns off would stay registered (an undefined
+# reference at the link). So does a new pin of
 # bc_clone_py or MicroPython (their stamps are touched at the fetch): the archive keeps its
 # files' commit times, and the frozen modules are recompiled only when newer. The sources are
 # fetched only where Zephyr is, so that a build without it (MPY.BIN left out) needs no network.
@@ -436,8 +437,8 @@ build-micropython:
 	@if [ -d "$(ZEPHYR_BASE)" ] && [ -d "$(ZEPHYR_SDK_INSTALL_DIR)" ]; then \
 		$(MAKE) --no-print-directory micropython-src $(MPY_CROSS); fi
 	@if [ -f $(MICROPY_BUILD_DIR)/zephyr/.config ] && \
-		[ -n "$$(find zephyr_workspace/micropython $(MICROPY_STAMP) $(BC_PY_STAMP) -newer $(MICROPY_BUILD_DIR)/zephyr/.config 2>/dev/null)" ]; then \
-		echo "zephyr_workspace/micropython/ or a pin changed: building MicroPython from scratch"; \
+		[ -n "$$(find zephyr_workspace/micropython zephyr_workspace/soc zephyr_workspace/boards $(MICROPY_STAMP) $(BC_PY_STAMP) -newer $(MICROPY_BUILD_DIR)/zephyr/.config 2>/dev/null)" ]; then \
+		echo "zephyr_workspace/{micropython,soc,boards}/ or a pin changed: building MicroPython from scratch"; \
 		rm -rf $(MICROPY_BUILD_DIR); fi
 	$(call west_build,vux9k,$(MICROPY_DIR)/ports/zephyr,$(MICROPY_BUILD_DIR),-DCONF_FILE=$(CURDIR)/zephyr_workspace/micropython/prj.conf \
 		-DCONFIG_MICROPY_CONFIGFILE=\"$(CURDIR)/zephyr_workspace/micropython/mpconfigport_vux9k.h\" \

@@ -9,10 +9,10 @@
 extern crate std;
 use std::vec::Vec;
 
+use fw_common::crc32_update;
 use fw_common::fmt::Sink;
 use fw_common::header::{ImageHeader, HEADER_LEN};
 use fw_common::upload::{upload_v2, Host, UploadSink};
-use fw_common::{crc32_update, mul_u32};
 
 fn hex(s: &str) -> Vec<u8> {
     (0..s.len())
@@ -146,20 +146,6 @@ fn crc32_matches_zlib() {
         .fold(0xFFFF_FFFF, |c, ch| crc32_update(ch, c))
         ^ 0xFFFF_FFFF;
     assert_eq!(chunked, crc(&data));
-}
-
-#[test]
-fn multiplies() {
-    for (a, b) in [
-        (0, 5),
-        (5, 0),
-        (27, 1000),
-        (27_000, 5000),
-        (0xFFFF_FFFF, 3),
-        (123_457, 98_765),
-    ] {
-        assert_eq!(mul_u32(a, b), a.wrapping_mul(b), "{a} * {b}");
-    }
 }
 
 #[test]

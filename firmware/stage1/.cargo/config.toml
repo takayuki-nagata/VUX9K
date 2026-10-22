@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: MIT
 
 [build]
-target = "riscv32i-unknown-none-elf"
+target = "riscv32im-unknown-none-elf"
 
-[target.riscv32i-unknown-none-elf]
+[target.riscv32im-unknown-none-elf]
 rustflags = [
     "-C", "link-arg=-Tstage1/bootstrap/link.x",
 ]

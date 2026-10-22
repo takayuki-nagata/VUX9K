@@ -27,6 +27,8 @@ from s1_env import (  # noqa: E402
     S2_PROMPT,
     STAGE1_DIR,
     STAGE1_VERSION,
+    STAGE2_BASE,
+    STAGE2_RAW,
     STAGE2_VERSION,
     boot_s2,
     card,
@@ -36,7 +38,17 @@ from s1_env import (  # noqa: E402
     stage2,
     start,
 )
-from vux9k import REPO_ROOT, UART_BIT, EmuClock, EmuSerial, ms, read_hex_words, vux_tool, wait_for  # noqa: E402
+from vux9k import (  # noqa: E402
+    REPO_ROOT,
+    UART_BIT,
+    EmuClock,
+    EmuSerial,
+    ms,
+    new_soc,
+    read_hex_words,
+    vux_tool,
+    wait_for,
+)
 
 S2 = "VUX9K/STAGE2.BIN"
 HACK_BIN = os.path.join(REPO_ROOT, "build", "hack", "firmware.bin")
@@ -135,6 +147,26 @@ def test_banner_handoff_and_help():
     assert s2_cmd(soc, "") == ""
     assert s2_cmd(soc, "   ") == ""
     assert err(s2_cmd(soc, "frobnicate")) == "unknown command (help lists them)"
+
+
+@pytest.mark.parametrize("m_ext", [True, False])
+def test_needs_rv32m(m_ext):
+    """The second stage is RV32IM: on a CPU without M (a v0.3.x bitstream; the emulator's
+    m_ext off) it says so before main and stops, with M it starts. It is started where it
+    runs, as the first stage hands over (this first stage is RV32IM too, and the old one
+    comes with the old bitstream)."""
+    soc = new_soc()
+    soc.m_ext = m_ext
+    with open(STAGE2_RAW, "rb") as f:
+        soc.load_app(f.read(), "riscv", STAGE2_BASE)
+    out = wait_for(soc, b"\n" if m_ext else b"Stopped.\n", timeout_cycles=2_000_000, start=1)
+    if m_ext:
+        assert out.startswith("VUX9K Stage 2 (v"), out
+        return
+    assert out == "VUX9K Stage 2 needs a CPU with RV32M: program the v0.4.0 bitstream or later. Stopped.\n", out
+    soc.run(ms(1))
+    assert STAGE2_BASE <= soc.pc < STAGE2_BASE + 0x100, f"{soc.pc:#x}"
+    assert soc.uart_received() == b"\n" + out.encode()
 
 
 @pytest.mark.parametrize(

@@ -1,7 +1,7 @@
 # Developing applications for VUX9K
 
 This guide is for writing applications that run on a Tang Nano 9K with the VUX9K
-bitstream: RV32I applications on Zephyr (in C or Rust) and Hack applications in C. It
+bitstream: RV32IM applications on Zephyr (in C or Rust) and Hack applications in C. It
 follows the usual path: put the bitstream and a demo on the board, build your own
 application, test it on the emulator, then run it on the board.
 
@@ -118,7 +118,7 @@ v4 file"). Rebuild them for the PSRAM (section 3).
 
 ## 3. Building an application
 
-The CPU is RV32I with Zicsr and Zifencei, machine mode only, at 18 MHz, with a 16 KB boot
+The CPU is RV32IM with Zicsr and Zifencei, machine mode only, at 18 MHz, with a 16 KB boot
 ROM (the first stage, read-only) and 8 MB of PSRAM, its only RAM. The Zephyr board `vux9k`
 links applications into the PSRAM: the image runs in place from `0x8000_0000` (4 MB, where
 the second stage's `run` loads it), its RAM is the 3 MB from `0x8040_0000`. In the PSRAM, a
@@ -151,7 +151,7 @@ image copies to its RAM at startup.
 - **Rust:** `vux9k-zephyr-bsp/app/` is a template: a Zephyr application whose logic is a
   Rust `no_std` staticlib (`app/rust_demo`), called from `app/src/main.c` through small
   C wrappers for Zephyr's API. It needs Rust (`pins.rust`) with the target
-  `riscv32i-unknown-none-elf` (`rustup target add riscv32i-unknown-none-elf`). Its
+  `riscv32im-unknown-none-elf` (`rustup target add riscv32im-unknown-none-elf`). Its
   `prj.conf` keeps it small (minimal libc, `printk` without `printf`, small stacks; 13 KB).
 - The board `vux9k` enforces its 4 MB / 3 MB at link time.
 - The console is the SoC's UART. Its driver also has the interrupt-driven API

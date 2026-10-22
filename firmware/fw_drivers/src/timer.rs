@@ -12,8 +12,8 @@ pub struct Timer;
 // ms_ticks's shifts are TICKS_PER_MS (18 MHz): change them with the clock
 const _: () = assert!((1 << 14) + (1 << 10) + (1 << 9) + (1 << 6) + (1 << 4) == map::TICKS_PER_MS);
 
-/// `ms` in mtime ticks, by shifts: RV32I has no multiply, and fw_common::mul_u32's loop
-/// is too slow for a receive loop running from the PSRAM.
+/// `ms` in mtime ticks, by shifts: a few cycles where a `mul` takes 35, in a receive loop
+/// running from the PSRAM.
 #[inline(always)]
 pub fn ms_ticks(ms: u32) -> u32 {
     (ms << 14) + (ms << 10) + (ms << 9) + (ms << 6) + (ms << 4)

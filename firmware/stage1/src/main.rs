@@ -29,7 +29,7 @@ use fw_drivers::uart::Uart;
 
 /// Raise it with every change of the first stage: the second stage gets it in a2, and
 /// the tests read it from here.
-const STAGE1_VERSION: u32 = 1;
+const STAGE1_VERSION: u32 = 2;
 /// After the banner, a key within this keeps the first stage at its prompt (as S2 held
 /// does): vux_tool.py sends keys until the prompt answers.
 const AUTOBOOT_MS: u32 = 100;

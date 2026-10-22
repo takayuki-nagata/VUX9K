@@ -385,7 +385,7 @@ The install steps of [`.github/workflows/ci.yml`](.github/workflows/ci.yml) are 
 reference: they pin every tool version CI builds and tests with.
 
 1. **Rust Toolchain**: [rustup](https://rustup.rs/); `firmware/rust-toolchain.toml` pins
-   the firmware's toolchain with the `riscv32i-unknown-none-elf` target and `llvm-tools`
+   the firmware's toolchain with the `riscv32im-unknown-none-elf` target and `llvm-tools`
    (rustup installs it on first use).
    ```bash
    cargo install cargo-llvm-cov --version 0.9.1 --locked   # make coverage-rust
@@ -557,7 +557,8 @@ stay exactly those of the seed; the SD card and the boot chain are not involved.
 branches, dependent sub/branch loops, back-to-back dependencies, loads/stores of every
 width, all registers) and four on the PSRAM (its 21 address lines walking one and zero,
 the hidden register space, the first and last 2 KB written and read back twice, its 8 MB
-aliases, byte/halfword lanes, code copied there and run, the cycles each access waits) against the values the emulator computes, one line each, then
+aliases, byte/halfword lanes, code copied there and run, the cycles each access waits) and
+one of RV32M's eight operations, against the values the emulator computes, one line each, then
 `RESULT PASS|FAIL <passed>/<total> <failure mask>`, repeated every 2 s: the host's
 USB-UART bridge drops output when another full-speed device shares its USB hub
 (see `docs/APP_DEVELOPMENT.md`), and the repeated line alone carries the verdict. Its LEDs: 0x01 from the first instruction, the test number while

@@ -1,6 +1,6 @@
 # VUX9K release
 
-The VUX9K dual-ISA (RV32I and Hack) SoC for the Sipeed Tang Nano 9K: the bitstream, the
+The VUX9K dual-ISA (RV32IM and Hack) SoC for the Sipeed Tang Nano 9K: the bitstream, the
 tools to put applications on the board, the Zephyr board support, and the emulator.
 `MANIFEST.json` names the source commit and the tool versions; `SHA256SUMS` lists the
 files' hashes. Source: https://github.com/takayuki-nagata/VUX9K

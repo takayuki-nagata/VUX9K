@@ -5,11 +5,11 @@ config SOC_VUX9K
 	bool
 	select RISCV
 	select RISCV_ISA_RV32I
+	select RISCV_ISA_EXT_M
 	select RISCV_ISA_EXT_ZICSR
 	# FENCE.I exists (rv32ui-p-fence_i passes). Declaring it also matters for the
-	# build: the Zephyr SDK has a libgcc multilib for rv32i_zicsr_zifencei but not
-	# for rv32i_zicsr, where GCC silently links a default libgcc that uses RV32M
-	# (__udivdi3 -> divu: an illegal instruction on this CPU)
+	# build: GCC links the libgcc multilib of the exact -march, and one that the Zephyr
+	# SDK doesn't have falls back to a default one built for other extensions
 	select RISCV_ISA_EXT_ZIFENCEI
 	select RISCV_PRIVILEGED
 	select INCLUDE_RESET_VECTOR

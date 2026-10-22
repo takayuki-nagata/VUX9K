@@ -14,7 +14,12 @@
 use core::arch::global_asm;
 use core::panic::PanicInfo;
 
-global_asm!(include_str!("../bootstrap/start.s"));
+global_asm!(
+    include_str!("../bootstrap/start.s"),
+    UART_DATA = const fw_common::map::UART_DATA,
+    UART_STATUS = const fw_common::map::UART_STATUS,
+    UART_TX_FULL = const fw_common::map::UART_TX_FULL,
+);
 
 mod cmds;
 mod launch;
@@ -26,7 +31,7 @@ use fw_drivers::uart::Uart;
 /// Raise it with every change of the second stage: its v4 header carries it (the
 /// Makefile's mkv4 reads it from here), `info` and the banner show it, and the tests
 /// read it from here.
-const STAGE2_VERSION: u32 = 6;
+const STAGE2_VERSION: u32 = 7;
 
 #[no_mangle]
 pub extern "C" fn main(a0: u32, a1: u32, a2: u32) -> ! {

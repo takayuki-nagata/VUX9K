@@ -134,7 +134,7 @@ LINKED_CRATES = {
     "emu/vux9k_emu.abi3.so": ("emu/Cargo.toml", "x86_64-unknown-linux-gnu", [], "vux9k_emu_py"),
     "sd/VUX9K/APPS/BC.BIN": (
         "vendor/bc_clone_rs/Cargo.toml",
-        "riscv32i-unknown-none-elf",
+        "riscv32im-unknown-none-elf",
         ["--no-default-features"],
         "bc_zephyr",
     ),

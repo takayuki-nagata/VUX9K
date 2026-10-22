@@ -50,7 +50,7 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.95.0"
-          targets: riscv32i-unknown-none-elf
+          targets: riscv32im-unknown-none-elf
           components: llvm-tools-preview
 
       - name: Cache Veryl Binary

@@ -54,9 +54,11 @@ the demo). Its `prj.conf` size settings, from the 14 KB I-RAM board it was first
 linked for, keep it small and so quick to load.
 
 Two traps found while bringing Zephyr up on the RTL (the old Python emulator hid both):
-- **The SoC must select Zifencei.** The Zephyr SDK has no libgcc multilib for
-  `rv32i_zicsr`; GCC silently links a default one built with RV32M, and the first
-  64-bit division (`__udivdi3` -> `divu`) is an illegal instruction.
+- **The SoC must select Zifencei.** GCC links the libgcc multilib of the exact `-march`;
+  the Zephyr SDK had none for `rv32i_zicsr`, so GCC silently linked a default one built with
+  RV32M, and on the CPU before RV32M the first 64-bit division (`__udivdi3` -> `divu`) was
+  an illegal instruction. The SoC is `rv32im_zicsr_zifencei` now (`RISCV_ISA_EXT_M`, the
+  dtsi's `riscv,isa`); keep the march one the SDK has a multilib for.
 - **XIP `.data` must be in the image.** An XIP image's `.data` runs in its RAM but loads
   from the image (both in the PSRAM now; D-RAM and I-RAM on the first board); the image
   must carry it at its load address, or Zephyr's startup
@@ -76,7 +78,7 @@ CI caches it under the sha256). To move to a new release, change both and read t
 `prj.conf`, `mpconfigport.h` and `README.md` (which Zephyr releases it supports) again. Things that
 aren't obvious:
 - **The configuration is ours**: `zephyr_workspace/micropython/prj.conf` replaces the port's
-  (`-DCONF_FILE`), based on its full `prj.conf` less networking, watchdog, FPU (an rv32i SoC
+  (`-DCONF_FILE`), based on its full `prj.conf` less networking, watchdog, FPU (an rv32im SoC
   can't select it) and reboot, plus the extra features (f-strings, `re`; bc_clone_py needs
   them), a 256 KB heap and a 16 KB main stack (bc_clone_py's parser and evaluator recurse on
   it). Not `prj_minimal.conf`: its
@@ -113,7 +115,7 @@ aren't obvious:
   times, and the frozen modules are recompiled only when newer than the last build's.
 - The build writes only into `build/` (checked 2026-10-20: nothing in the vendor tree
   changes), compiles no `lib/` component (`make_dist.py`'s license note says so;
-  check again when the configuration grows), and has no RV32M or F instructions.
+  check again when the configuration grows), and has no F instructions (RV32M since the SoC selects it).
 
 `make apps` makes it `MPY.BIN` (~357 KB). `sim/emu/test_zephyr_micropython.py` loads it
 into the PSRAM and types at the REPL (an expression, `2**100`, a function, an exception,

@@ -55,7 +55,7 @@ fn set_leds(pattern: u8) {
 
 fn delay_ms(ms: u32) {
     let start = unsafe { read_volatile(MTIME_LOW) };
-    let ticks = fw_common::mul_u32(ms, TICKS_PER_MS);
+    let ticks = ms * TICKS_PER_MS;
     while unsafe { read_volatile(MTIME_LOW) }.wrapping_sub(start) < ticks {}
 }
 
@@ -254,6 +254,22 @@ fn t_regs(a: u32, b: u32) -> u32 {
             out("t6") _)
     };
     r
+}
+
+/// RV32M: all eight operations on the pair (the unit takes a fixed 32 steps, so random
+/// operands reach its whole datapath)
+fn t_muldiv(a: u32, b: u32) -> u32 {
+    let (r0, r1, r2, r3, r4, r5, r6, r7): (u32, u32, u32, u32, u32, u32, u32, u32);
+    unsafe {
+        asm!("mul {r0}, {a}, {b}", "mulh {r1}, {a}, {b}", "mulhsu {r2}, {a}, {b}", "mulhu {r3}, {a}, {b}",
+             "div {r4}, {a}, {b}", "divu {r5}, {a}, {b}", "rem {r6}, {a}, {b}", "remu {r7}, {a}, {b}",
+             r0 = out(reg) r0, r1 = out(reg) r1, r2 = out(reg) r2, r3 = out(reg) r3,
+             r4 = out(reg) r4, r5 = out(reg) r5, r6 = out(reg) r6, r7 = out(reg) r7,
+             a = in(reg) a, b = in(reg) b)
+    };
+    [r0, r1, r2, r3, r4, r5, r6, r7]
+        .iter()
+        .fold(0, |acc, &x| acc.rotate_left(4) ^ x)
 }
 
 const XMEM_WORDS: usize = map::XMEM_BYTES / 4;
@@ -517,7 +533,7 @@ enum Test {
 use Test::{Once, Pairs};
 
 /// (name, test, checksum the emulator computes)
-const TESTS: [(&str, Test, u32); 15] = [
+const TESTS: [(&str, Test, u32); 16] = [
     ("add", Pairs(t_add), 0xC02B_9A30),
     ("sub", Pairs(t_sub), 0x1C9E_5AB3),
     ("logic", Pairs(t_logic), 0x0F9E_3961),
@@ -533,6 +549,7 @@ const TESTS: [(&str, Test, u32); 15] = [
     ("xmem_lanes", Pairs(t_xmem_lanes), 0x4490_6ED7),
     ("xmem_exec", Once(t_xmem_exec), 0x9273_B7CB),
     ("xmem_time", Once(t_xmem_time), 0x2302_3022),
+    ("muldiv", Pairs(t_muldiv), 0x2FD0_20AB),
 ];
 
 #[no_mangle]

@@ -32,7 +32,7 @@ size, 35 KB, which a RAM boot sends at ~1550 cycles a byte on the RTL).
 relative to `firmware/`, e.g. `-Tstage1/bootstrap/link.x`, **not**
 `-Tbootstrap/link.x`. Getting this wrong produces `rust-lld: error: cannot find
 linker script` with no indication of *why* the cwd changed. All members' output
-binaries land in the single shared `firmware/target/riscv32i-unknown-none-elf/`:
+binaries land in the single shared `firmware/target/riscv32im-unknown-none-elf/`:
 `release/`, and `coverage/` (the second stage, and `coverage-fw`'s builds).
 
 ## Firmware rules (the stages, `fw_common`, `fw_drivers`)
@@ -65,6 +65,12 @@ binaries land in the single shared `firmware/target/riscv32i-unknown-none-elf/`:
   banner (`VUX9K Stage 2 (vN)`) and `info` show it, `sim/emu/s1_env.py` and
   `sim/integration/soc_env.py` read it, `make dist` puts it in MANIFEST.json
   (`stage2_version`) and `check_dist.py` holds `STAGE2.BIN`'s header to it.
+- **Everything is built for `riscv32im-unknown-none-elf`**, so it runs only on a bitstream
+  with RV32M (v0.4.0 on). The first stage comes with its bitstream; the second stage can
+  meet an older one (a card updated before the flash), so `start.s` reads `misa` before
+  `main` and, without M, prints that it needs the newer bitstream and stops: that check is
+  assembly, so it can't contain an M instruction itself (the emulator's `m_ext = False`
+  tests it, `sim/emu/test_stage2.py`).
 - **The second stage is a line prompt** (`s2> `, echo and backspace; `fw_common::shell`):
   the commands are `firmware/stage2/src/shell.rs`'s `HELP` and `CARD_CMDS`, an error is one
   `[ERR] ` line, `put`/`install` speak transfer v2 after their line, `install`'s result is
@@ -90,9 +96,10 @@ binaries land in the single shared `firmware/target/riscv32i-unknown-none-elf/`:
   `build/firmware/firmware.hex` is unchanged after any `fw_common` change.
 - **Code in the PSRAM can be slow**: a fetch that misses the 16 KB instruction cache, a load
   that misses the 2 KB data cache and every store wait ~35 cycles. Before the caches, the
-  second stage's transfer loop lost UART bytes at 115200 baud until the
-  receive stopped calling `mul_u32` for its timeout on every byte (`fw_drivers`'
-  `Uart::read_byte_timeout` returns a byte that is there at once; `ms_ticks` shifts).
+  second stage's transfer loop lost UART bytes at 115200 baud until the receive stopped
+  calling a shift-and-add multiply (`mul_u32`, gone with RV32M) for its timeout on every
+  byte (`fw_drivers`' `Uart::read_byte_timeout` returns a byte that is there at once;
+  `ms_ticks` shifts, where a `mul` takes 35 cycles).
   Keep per-byte paths of code that runs from the PSRAM free of loops and calls.
 - **A program started after the first stage's output may find the UART's TX FIFO full**:
   wait for `UART_TX_FULL` to clear before each byte (a store to a full FIFO is dropped).

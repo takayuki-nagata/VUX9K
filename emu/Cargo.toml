@@ -1,5 +1,5 @@
 # VUX9K instruction-set emulator: a host-only workspace, separate from firmware/
-# (which builds only for riscv32i-unknown-none-elf). Build output goes to
+# (which builds only for riscv32im-unknown-none-elf). Build output goes to
 # build/emu/target (CARGO_TARGET_DIR, see the Makefile).
 [workspace]
 resolver = "2"
