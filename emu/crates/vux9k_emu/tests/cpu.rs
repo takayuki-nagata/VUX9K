@@ -749,3 +749,58 @@ fn xmem_loads_hit_the_dcache_by_its_rules() {
     let st = soc.caches.stats;
     assert_eq!((st.load_hits, st.load_misses, st.stores), (4, 4, 3));
 }
+
+#[test]
+fn rv32m_results_and_cycles() {
+    // x1 = -7, x2 = 2, x3 = 0; each M instruction takes FETCH, EXECUTE and MULDIV_WAIT
+    use vux9k_emu::soc::MULDIV_WAIT_CYCLES;
+    let cases: [(u32, u32, u32); 10] = [
+        (0, 2, (-14i32) as u32), // mul
+        (1, 2, u32::MAX),        // mulh: -14 >> 32
+        (2, 2, u32::MAX),        // mulhsu
+        (3, 2, 1),               // mulhu: 0xFFFF_FFF9 * 2 >> 32
+        (4, 2, (-3i32) as u32),  // div rounds toward zero
+        (5, 2, 0x7FFF_FFFC),     // divu
+        (6, 2, (-1i32) as u32),  // rem takes the dividend's sign
+        (4, 3, u32::MAX),        // div by zero: all ones
+        (6, 3, (-7i32) as u32),  // rem by zero: the dividend
+        (7, 3, (-7i32) as u32),  // remu by zero
+    ];
+    for (f3, rs2, want) in cases {
+        let mut soc = load(
+            Profile::Real,
+            &[addi(1, 0, -7), addi(2, 0, 2), r(1, rs2, 1, f3, 4)],
+        );
+        run_n(&mut soc, 2);
+        let r = soc.step();
+        assert_eq!(soc.regs[4], want, "funct3 {f3}, rs2 x{rs2}");
+        assert_eq!(r.cycles, 2 + MULDIV_WAIT_CYCLES);
+        assert_eq!((soc.pc, soc.csr.minstret), (12, 3));
+    }
+    // The signed overflow: -2^31 / -1
+    let mut soc = load(
+        Profile::Real,
+        &[
+            lui(1, 0x80000),
+            addi(2, 0, -1),
+            r(1, 2, 1, 4, 4),
+            r(1, 2, 1, 6, 5),
+        ],
+    );
+    run_n(&mut soc, 4);
+    assert_eq!((soc.regs[4], soc.regs[5]), (0x8000_0000, 0));
+}
+
+#[test]
+fn rv32m_off_traps_and_misa_says_so() {
+    let misa = csr(2, 5, 0x301, 0); // csrr x5, misa
+    let mut soc = load(Profile::Real, &[misa, r(1, 2, 1, 0, 4)]);
+    run_n(&mut soc, 2);
+    assert_eq!(soc.regs[5], 0x4000_1100, "RV32, I, M");
+    assert_eq!(soc.csr.mcause, 0, "mul is legal");
+    let mut soc = load(Profile::Real, &[misa, r(1, 2, 1, 0, 4)]);
+    soc.m_ext = false;
+    run_n(&mut soc, 2);
+    assert_eq!(soc.regs[5], 0x4000_0100, "no M");
+    assert_eq!((soc.csr.mcause, soc.csr.mtval), (2, r(1, 2, 1, 0, 4)));
+}

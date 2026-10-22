@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Takayuki Nagata
 # SPDX-License-Identifier: MIT
 
-"""RV32I ISA test harness: riscv-tests (rv32ui/rv32mi, env/p) on sim/tb_hex_runner.veryl.
+"""RV32IM ISA test harness: riscv-tests (rv32ui/rv32um/rv32mi, env/p) on sim/tb_hex_runner.veryl.
 
 Each test is self-checking: riscv-tests' env/p writes 1 to `tohost` on PASS, or
 (failing TESTNUM << 1) | 1 on FAIL. scripts/riscv_tests/link.ld places `tohost` at
@@ -76,7 +76,7 @@ RISCV_TESTS_COMMIT = "793a5ff2d99a6d9fbd91e84c34b9a0437e313b88"
 RISCV_TEST_ENV_REPO = "https://github.com/riscv/riscv-test-env.git"
 RISCV_TEST_ENV_COMMIT = "6de71edb142be36319e380ce782c3d1830c65d68"
 
-SUITES = ("rv32ui", "rv32mi")
+SUITES = ("rv32ui", "rv32um", "rv32mi")
 # Every rv32ui test finishes in well under 100k cycles; the cap only bounds hangs.
 # The ACT4 tests are longer (a branch test checks 400+ cases); main() sets their cap.
 MAX_CYCLES = 200000
@@ -188,7 +188,7 @@ def build_hex(src, name):
     hexf = os.path.join(BUILD_DIR, f"{name}.hex")
     cmd = [
         GCC_BIN,
-        "-march=rv32i_zicsr_zifencei",
+        "-march=rv32im_zicsr_zifencei",
         "-mabi=ilp32",
         "-static",
         "-mcmodel=medany",
@@ -243,7 +243,7 @@ def build_act4_selftest():
     config = os.path.join(ACT4_HARNESS_DIR, "vux9k")
     elf = os.path.join(BUILD_DIR, "act4", "selftest_fail.elf")
     os.makedirs(os.path.dirname(elf), exist_ok=True)
-    cmd = [GCC_BIN, "-march=rv32i_zicsr_zifencei", "-mabi=ilp32", "-static", "-nostdlib", "-nostartfiles"]
+    cmd = [GCC_BIN, "-march=rv32im_zicsr_zifencei", "-mabi=ilp32", "-static", "-nostdlib", "-nostartfiles"]
     cmd += ["-I", config, "-T", os.path.join(config, "link.ld"), src, "-o", elf]
     code, _, err = run_cmd(cmd)
     if code != 0:

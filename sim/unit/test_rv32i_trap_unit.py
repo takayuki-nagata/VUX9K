@@ -40,7 +40,7 @@ def illegal(w):
     if op == OP_IMM:
         return f7 != 0 if f3 == 1 else f7 not in (0, 0x20) if f3 == 5 else False
     if op == OP:
-        return not (f7 == 0 or (f7 == 0x20 and f3 in (0, 5)))
+        return not (f7 in (0, 1) or (f7 == 0x20 and f3 in (0, 5)))  # 1: RV32M
     if op == FENCE:
         return f3 not in (0, 1)
     if op == SYSTEM:
@@ -84,7 +84,7 @@ def random_instr():
     if r < 0.3:
         return random.getrandbits(32)
     op = random.choice(OPCODES)
-    f7 = random.choice((0, 0x20, random.getrandbits(7)))
+    f7 = random.choice((0, 1, 0x20, random.getrandbits(7)))  # 1: RV32M with OP
     return f7 << 25 | random.getrandbits(18) << 7 | op
 
 
@@ -126,14 +126,23 @@ def _csr_access(s):
     return ("ro_" if csr >> 10 == 3 else "rw_") + ("write" if writes else "read")
 
 
+def _rv32m(s):
+    """An executed RV32M instruction (OP, funct7 = 1): legal, or beaten by an interrupt."""
+    w = s["instr"]
+    if not s["exec"] or w & 0x7F != OP or w >> 25 != 1:
+        return None
+    return "irq" if s["irq"] else "legal"
+
+
 # Every trap cause and the cases without one, an interrupt beating an illegal instruction,
-# and every kind of CSR access
+# every kind of CSR access, and RV32M taken as legal
 @fcov.point(
     "trap.outcome",
     (0, 2, 3, 4, 6, 11, 0x8000_0003, 0x8000_0007, 0x8000_000B, "irq_over_illegal", "mret", "none"),
     xf=_outcome,
 )
 @fcov.point("trap.csr_access", ("unlisted", "rw_read", "rw_write", "ro_read", "ro_write"), xf=_csr_access)
+@fcov.point("trap.rv32m", ("legal", "irq"), xf=_rv32m)
 def sample(s):
     pass
 

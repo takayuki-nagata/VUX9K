@@ -78,7 +78,8 @@ pub module rv32i_trap_unit (
                     default: is_illegal = 1'b0;
                 }
             }
-            rv32i_pkg::Opcode::R_TYPE: is_illegal = !(funct7 == 7'b000_0000
+            // RV32I, and RV32M's funct7 = 1 with any funct3
+            rv32i_pkg::Opcode::R_TYPE: is_illegal = !(funct7 == 7'b000_0000 || funct7 == 7'b000_0001
                 || (funct7 == 7'b010_0000 && (funct3 == 3'b000 || funct3 == 3'b101)));
             rv32i_pkg::Opcode::FENCE : is_illegal = funct3[2:1] != 2'b00; // FENCE / FENCE.I (no-ops)
             rv32i_pkg::Opcode::SYSTEM: {

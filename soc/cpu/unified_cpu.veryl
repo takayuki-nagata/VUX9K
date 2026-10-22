@@ -46,6 +46,7 @@ pub module unified_cpu #(
         MEM_WAIT,
         HACK_WB,
         HACK_WR_D, // second write-back cycle of a Hack AD=/AMD= instruction (writes D)
+        MULDIV_WAIT, // an RV32M instruction until rv32m_muldiv is done (writes rd then)
     }
 
     var state        : CpuState    ;
@@ -142,6 +143,12 @@ pub module unified_cpu #(
     var rv_op          : rv32i_pkg::Opcode    ;
     var rv_f3          : rv32i_pkg::Funct3    ;
     var rv_alu_op      : rv32i_pkg::AluOp     ; // ALU operation of OP / OP-IMM
+
+    // RV32M: an OP with funct7 = 1, run by rv32m_muldiv from EXECUTE through MULDIV_WAIT
+    var rv_muldiv: logic    ;
+    var md_start : logic    ;
+    var md_done  : logic    ;
+    var md_result: logic<32>;
 
     assign active_mode = is_riscv_mode;
     assign fetch_req   = state == CpuState::FETCH;
@@ -382,7 +389,11 @@ pub module unified_cpu #(
             }
 
             // Writeback
-            if state == CpuState::MEM_WAIT {
+            if state == CpuState::MULDIV_WAIT {
+                rf_rd_addr = rv_rd;
+                rf_we      = md_done;
+                rf_wr_data = md_result;
+            } else if state == CpuState::MEM_WAIT {
                 if r_load_we && data_ready {
                     rf_rd_addr = r_load_rd;
                     rf_we      = 1'b1;
@@ -397,7 +408,8 @@ pub module unified_cpu #(
                 case rv_op {
                     rv32i_pkg::Opcode::R_TYPE, rv32i_pkg::Opcode::I_TYPE, rv32i_pkg::Opcode::LUI,
                     rv32i_pkg::Opcode::AUIPC: {
-                        rf_we      = if (state == CpuState::EXECUTE) ? 1'b1 : 1'b0;
+                        // RV32M writes rd in MULDIV_WAIT, not here
+                        rf_we      = if (state == CpuState::EXECUTE && !rv_muldiv) ? 1'b1 : 1'b0;
                         rf_wr_data = alu_result;
                     }
                     rv32i_pkg::Opcode::JAL, rv32i_pkg::Opcode::JALR: {
@@ -455,11 +467,27 @@ pub module unified_cpu #(
         trap_return: trap_return   ,
     );
     assign csr_access = exec_rv && rv_op == rv32i_pkg::Opcode::SYSTEM && !trap_entry;
+
+    // Multiply/divide: started by the instruction's EXECUTE (unless it traps), done after a
+    // fixed number of cycles
+    assign rv_muldiv = rv_op == rv32i_pkg::Opcode::R_TYPE && rv_funct7 == 7'b000_0001;
+    assign md_start  = exec_rv && rv_muldiv && !trap_entry;
+    inst muldiv: rv32m_muldiv (
+        clk   : clk        ,
+        rst   : rst        ,
+        start : md_start   ,
+        funct3: rv_funct3  ,
+        a     : rf_rs1_data,
+        b     : rf_rs2_data,
+        done  : md_done    ,
+        result: md_result  ,
+    );
     // An RV32 instruction retires when it completes without trapping: in EXECUTE, or
-    // in the completing MEM_WAIT cycle for loads and stores (minstret)
+    // in the completing MEM_WAIT cycle for loads and stores, or MULDIV_WAIT's for RV32M
+    // (minstret)
     let rv_mem_op: logic = rv_op == rv32i_pkg::Opcode::LOAD || rv_op == rv32i_pkg::Opcode::STORE;
-    assign rv_retire = (exec_rv && !trap_entry && !rv_mem_op)
-        || (is_riscv_mode && state == CpuState::MEM_WAIT && data_ready);
+    assign rv_retire = (exec_rv && !trap_entry && !rv_mem_op && !rv_muldiv)
+        || (is_riscv_mode && state == CpuState::MEM_WAIT && data_ready) || (state == CpuState::MULDIV_WAIT && md_done);
 
     // Next PC (both ISAs), with the branch/jump conditions it depends on
     inst pc_select: next_pc_unit (
@@ -550,6 +578,11 @@ pub module unified_cpu #(
                         r_hack_mem_we = 1'b0;
                         pc_reg        = next_pc;
                         state         = CpuState::FETCH;
+                    } else if is_riscv_mode && rv_muldiv {
+                        r_store_we    = 1'b0;
+                        r_load_we     = 1'b0;
+                        r_hack_mem_we = 1'b0;
+                        state         = CpuState::MULDIV_WAIT;
                     } else if is_riscv_mode && rv_op == rv32i_pkg::Opcode::LOAD {
                         // 1 cycle wait for the synchronous memory read
                         r_store_addr    = rv_mem_addr;
@@ -624,6 +657,12 @@ pub module unified_cpu #(
                 }
                 CpuState::HACK_WR_D: {
                     state = CpuState::FETCH;
+                }
+                CpuState::MULDIV_WAIT: {
+                    if md_done {
+                        pc_reg = pc_plus_4_reg;
+                        state  = CpuState::FETCH;
+                    }
                 }
                 default: {
                     state = CpuState::FETCH;

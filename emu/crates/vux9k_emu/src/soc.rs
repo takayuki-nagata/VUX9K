@@ -19,7 +19,7 @@
 //!
 //! Timing: `cycle` counts SoC clocks (18 MHz) since reset release. An instruction starts
 //! with its FETCH cycle; `Soc::step` executes one instruction and advances `cycle` by
-//! its cost (RV: 2, +1 MEM_WAIT for loads/stores; Hack: 2, +2 (MEM_WAIT, HACK_WB) when the
+//! its cost (RV: 2, +1 MEM_WAIT for loads/stores, +`MULDIV_WAIT_CYCLES` for RV32M; Hack: 2, +2 (MEM_WAIT, HACK_WB) when the
 //! comp reads M, +1 (HACK_WR_D) when it writes both A and D). A trap costs 2 (it is taken
 //! in EXECUTE).
 //! Window accesses wait on top of that: a fetch from the window that misses the
@@ -83,6 +83,10 @@ pub enum Isa {
     Hack,
 }
 
+/// Cycles an RV32M instruction spends in MULDIV_WAIT after its EXECUTE: rv32m_muldiv's 32
+/// steps and its done cycle, the same for every operation and operand.
+pub const MULDIV_WAIT_CYCLES: u32 = 33;
+
 /// Where the board starts an application image when no load address is given (the CLI's
 /// `--load-addr`, the Python `load_app`): RV32 applications are linked at the PSRAM's
 /// start; a Hack image goes to the start of its segment (offset 0). The isa-test profile,
@@ -138,6 +142,9 @@ pub struct Soc {
     pub periph: Periph,
     /// true: RV32I, false: Hack (unified_cpu's is_riscv_mode).
     pub riscv_mode: bool,
+    /// The CPU has RV32M (true, the default). false models the CPU before it (the v0.3.x
+    /// bitstreams): misa without M, and the M instructions illegal. Kept across resets.
+    pub m_ext: bool,
     /// Instructions executed (retired or trapped), for statistics.
     pub steps: u64,
     /// The boot ROM at 0 (Real: 16 KB, the CPU can't write it); IsaTest: the flat RAM.
@@ -212,8 +219,8 @@ const OP_REG: u32 = 0x33;
 const OP_FENCE: u32 = 0x0F;
 const OP_SYSTEM: u32 = 0x73;
 
-/// rv32i_trap_unit's `is_illegal` for an RV32 instruction word.
-fn rv_illegal(i: u32) -> bool {
+/// rv32i_trap_unit's `is_illegal` for an RV32 instruction word (`m_ext`: RV32M is legal).
+fn rv_illegal(i: u32, m_ext: bool) -> bool {
     let f3 = funct3(i);
     let f7 = funct7(i);
     match i & 0x7F {
@@ -227,7 +234,7 @@ fn rv_illegal(i: u32) -> bool {
             5 => f7 != 0 && f7 != 0x20,
             _ => false,
         },
-        OP_REG => !(f7 == 0 || (f7 == 0x20 && (f3 == 0 || f3 == 5))),
+        OP_REG => !(f7 == 0 || (m_ext && f7 == 1) || (f7 == 0x20 && (f3 == 0 || f3 == 5))),
         OP_FENCE => f3 >> 1 != 0,
         OP_SYSTEM => {
             if f3 == 0 {
@@ -242,6 +249,24 @@ fn rv_illegal(i: u32) -> bool {
     }
 }
 
+/// An RV32M instruction's rd (funct3: MUL, MULH, MULHSU, MULHU, DIV, DIVU, REM, REMU), the
+/// spec's results for division by zero and the signed overflow included.
+fn muldiv(f3: u32, a: u32, b: u32) -> u32 {
+    let (sa, sb) = (a as i32 as i64, b as i32 as i64);
+    match f3 {
+        0 => a.wrapping_mul(b),
+        1 => ((sa * sb) >> 32) as u32,
+        2 => ((sa * b as i64) >> 32) as u32,
+        3 => ((a as u64 * b as u64) >> 32) as u32,
+        4 | 5 if b == 0 => u32::MAX,
+        4 => (a as i32).wrapping_div(b as i32) as u32,
+        5 => a / b,
+        _ if b == 0 => a,
+        6 => (a as i32).wrapping_rem(b as i32) as u32,
+        _ => a % b,
+    }
+}
+
 impl Soc {
     pub fn new(profile: Profile) -> Soc {
         let rom_words = profile.rom_bytes() / 4;
@@ -253,6 +278,7 @@ impl Soc {
             csr: Csrs::default(),
             periph: Periph::default(),
             riscv_mode: true,
+            m_ext: true,
             steps: 0,
             rom: vec![0; rom_words],
             xmem: vec![0; profile.xmem_bytes() / 4],
@@ -693,7 +719,7 @@ impl Soc {
         if let Some(cause) = irq {
             return self.take_trap(cause, 0, r);
         }
-        if rv_illegal(i) {
+        if rv_illegal(i, self.m_ext) {
             return self.take_trap(2, i, r);
         }
         let x1 = self.regs[rs1(i)];
@@ -701,6 +727,12 @@ impl Soc {
         r.cycles = 2;
         let mut retired = true;
         match op {
+            OP_REG if funct7(i) == 1 => {
+                // RV32M (rv32m_muldiv): rd is written in MULDIV_WAIT's last cycle
+                r.cycles = 2 + MULDIV_WAIT_CYCLES;
+                let v = muldiv(f3, x1, self.regs[rs2(i)]);
+                self.write_rd(rd(i), v, r);
+            }
             OP_IMM | OP_REG => {
                 let b = if op == OP_IMM {
                     imm_i(i)
@@ -846,7 +878,10 @@ impl Soc {
         // The instruction reads the counters in its EXECUTE cycle, one after FETCH
         let mut at_execute = self.csr.clone();
         at_execute.mcycle = at_execute.mcycle.wrapping_add(1);
-        let old = at_execute.read(addr, self.mip(), self.mtime().wrapping_add(1));
+        let mut old = at_execute.read(addr, self.mip(), self.mtime().wrapping_add(1));
+        if addr == csr::MISA && !self.m_ext {
+            old &= !csr::MISA_M;
+        }
         let src = if f3 & 4 != 0 {
             rs1(i) as u32
         } else {

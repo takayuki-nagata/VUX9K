@@ -156,6 +156,12 @@ class Asm:
     def sub(self, rd, rs1, rs2):
         self._emit(r_type(0x20, rs2, rs1, 0, rd))
 
+    # RV32M: funct7 = 1, funct3 in MUL_OPS' order
+    MUL_OPS = ("mul", "mulh", "mulhsu", "mulhu", "div", "divu", "rem", "remu")
+
+    def muldiv(self, name, rd, rs1, rs2):
+        self._emit(r_type(1, rs2, rs1, self.MUL_OPS.index(name), rd))
+
     def lw(self, rd, imm, rs1):
         self._emit(i_type(imm, rs1, 2, rd, 0x03))
 

@@ -75,7 +75,7 @@ pub module rv32i_csrs (
     always_comb {
         case csr_addr {
             12'h300         : read_val = mstatus | 32'h0000_1800; // MPP = M
-            12'h301         : read_val = 32'h4000_0100;
+            12'h301         : read_val = 32'h4000_1100; // RV32, I and M
             12'h304         : read_val = mie;
             12'h305         : read_val = mtvec;
             12'h340         : read_val = mscratch;

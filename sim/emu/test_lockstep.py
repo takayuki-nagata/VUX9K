@@ -34,7 +34,8 @@ Instr = namedtuple("Instr", "cycle riscv pc regs writes trap")
 # Longest instruction in cycles: a Hack AMD=M+1 (FETCH, EXECUTE, MEM_WAIT, HACK_WB,
 # HACK_WR_D) whose fetch and M read miss the caches (two waits of soc_pkg::XMEM_READ_LATENCY)
 # and whose M write waits XMEM_WRITE_LATENCY; longer than any RV32 one (a window load fetched
-# from the window: 3 + 2 * XMEM_WAIT), with room to spare
+# from the window: 3 + 2 * XMEM_WAIT; an RV32M instruction fetched from the window: 35 +
+# XMEM_WAIT), with room to spare
 LONGEST = 5 + 2 * XMEM_WAIT + XMEM_WRITE_WAIT + 7
 
 

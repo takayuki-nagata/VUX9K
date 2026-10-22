@@ -56,11 +56,12 @@ def _csr_read(rd, csr):
     return (csr << 20) | (2 << 12) | (rd << 7) | 0x73  # csrrs rd, csr, x0
 
 
-# --- constrained-random RV32I ----------------------------------------------------------
+# --- constrained-random RV32IM ---------------------------------------------------------
 # x2 (sp) = base for loads/stores (RV_DATA in the window by default), x30 = timer base, x31 = loop
 # counter; the rest are random. No traps: aligned accesses only, branches only forward or
-# counted loops.
+# counted loops. An R-type is RV32M (funct7 = 1) a third of the time.
 _R_OPS = [(0, 0), (0x20, 0), (0, 1), (0, 2), (0, 3), (0, 4), (0, 5), (0x20, 5), (0, 6), (0, 7)]
+_M_OPS = [(1, f3) for f3 in range(8)]
 _I_OPS = [0, 2, 3, 4, 6, 7]  # addi slti sltiu xori ori andi
 _DEST = [f"x{i}" for i in range(1, 30) if i != 2]
 
@@ -80,7 +81,7 @@ def random_rv(seed: int, blocks: int = 300, base: int = 0) -> list:
     def alu():
         k = rnd.randrange(5)
         if k == 0:
-            f7, f3 = rnd.choice(_R_OPS)
+            f7, f3 = rnd.choice(_M_OPS if rnd.random() < 1 / 3 else _R_OPS)
             a.word(r_type(f7, reg(), reg(), f3, reg()))
         elif k == 1:
             a.word(i_type(rnd.randrange(-2048, 2048), reg(), rnd.choice(_I_OPS), reg(), 0x13))
@@ -175,6 +176,9 @@ XMEM_USED += [(HACK_STUB_FLAG - XMEM, HACK_STUB_FLAG - XMEM + 4)]
 RV_DATA = XMEM + 0x5_0000
 XMEM_ASIDE = XMEM + 0x6_0000
 XMEM_USED += [(RV_DATA - XMEM - 0x200, RV_DATA - XMEM + 0x200), (XMEM_ASIDE - XMEM + 0x40, XMEM_ASIDE - XMEM + 0x44)]
+# muldiv's routine in the window (its M instructions fetched from there)
+MULDIV_CODE = XMEM + 0x3000
+XMEM_USED += [(MULDIV_CODE - XMEM, MULDIV_CODE - XMEM + 0x100)]
 
 
 def _soft_reset_key(a, gpio: str):
@@ -855,6 +859,60 @@ def s2_hello_card() -> dict:
     return _card_sectors(files)
 
 
+# Operand pairs where RV32M's results change behavior: signs, rounding toward zero, the
+# signed overflow, division by zero, the largest products
+MULDIV_PAIRS = [
+    (7, 2),
+    (-7, 2),
+    (7, -2),
+    (-7, -2),
+    (-(1 << 31), -1),
+    (-(1 << 31), 1),
+    (-7, 0),
+    (5, 0),
+    (-1, -1),
+    ((1 << 31) - 1, (1 << 31) - 1),
+    (-(1 << 31), -(1 << 31)),
+]
+MULDIV_CYCLES = 9_000  # done by ~7,300 ('M'), then spins in the ROM
+
+
+def muldiv() -> tuple:
+    """RV32M: every operation on MULDIV_PAIRS (a0, a1 -> a2); rd = rs1 and rd = rs2; minstret
+    and mcycle read right after one; then a routine in the window (MULDIV_CODE), whose M
+    instructions miss the instruction cache, returns, and 'M' is printed. Returns the ROM's
+    words and the routine's (Program.xmem)."""
+    a = Asm()
+    a.li("s1", 0x4000_0000)  # UART
+    for x, y in MULDIV_PAIRS:
+        a.li("a0", x)
+        a.li("a1", y)
+        for op in Asm.MUL_OPS:
+            a.muldiv(op, "a2", "a0", "a1")
+    a.li("a0", -12345)
+    a.li("a1", 77)
+    a.muldiv("mul", "a0", "a0", "a1")  # rd = rs1: the operands were taken at the start
+    a.muldiv("rem", "a1", "a0", "a1")  # rd = rs2
+    a.muldiv("divu", "a3", "a0", "a1")
+    a.csrrs("t0", "minstret", "zero")
+    a.csrrs("t1", "mcycle", "zero")
+    a.muldiv("mulhu", "zero", "a0", "a1")  # rd = x0: no write
+    a.li("t2", MULDIV_CODE)
+    a.jalr("ra", "t2", 0)
+    _put_char(a, ord("M"), "wait")
+    a.label("halt")
+    a.j("halt")
+    r = Asm(origin=MULDIV_CODE)
+    r.li("a0", 0x1234_5678)
+    r.li("a1", -3)
+    for op in Asm.MUL_OPS:
+        r.muldiv(op, "a2", "a0", "a1")
+    r.jalr("zero", "ra", 0)
+    code = r.assemble()
+    assert len(code) * 4 <= 0x100
+    return a.assemble(), struct.pack(f"<{len(code)}I", *code)
+
+
 def rom_stores() -> list:
     """Stores the SoC ignores, read back: to the ROM (region 0; sw, sh, sb, at the word of
     the next instruction too, which then runs as it was) and to the unassigned regions 2
@@ -941,6 +999,8 @@ def programs() -> list:
     progs.append(Program("xcache", cycles=7_000, imem_words=xcache()))
     # Stores to the ROM and to unassigned regions, ignored; done by cycle ~300
     progs.append(Program("rom_stores", cycles=2_000, imem_words=rom_stores()))
+    md_rom, md_code = muldiv()
+    progs.append(Program("muldiv", cycles=MULDIV_CYCLES, imem_words=md_rom, xmem=[(MULDIV_CODE, md_code)]))
     # Hack gives RV32 (0x101) for its soft reset: back in hack_stub as RV32 (HACK_BACK)
     progs.append(
         Program(

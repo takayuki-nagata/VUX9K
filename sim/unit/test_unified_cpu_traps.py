@@ -20,16 +20,20 @@ HANDLER = 0x200
 MAX_CYCLES = 400
 
 
-async def run_program(dut, words, *, irq_after=None, irq_lines=("timer_irq_in",), max_cycles=MAX_CYCLES, stores=None):
+async def run_program(
+    dut, words, *, irq_after=None, irq_lines=("timer_irq_in",), max_cycles=MAX_CYCLES, stores=None, start_clock=True
+):
     """Serve `words` (a list from address 0, or {address: word}) as instruction memory
     (pc_out -> instr_in) and reset the CPU.
 
     Returns (PCs seen, one per cycle; whether mem_write was ever asserted).
     irq_after: raise the irq_lines inputs (default timer_irq_in) after that many cycles.
     stores: a list that gets (data_waddr, data_out, mem_byte_we) of every cycle with mem_write.
+    start_clock: False when the test already runs the clock (several programs in one test).
     """
     mem = words if isinstance(words, dict) else {i * 4: w for i, w in enumerate(words)}
-    cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start())
+    if start_clock:
+        cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start())
     for sig, val in (
         ("soft_rst", 0),
         ("data_in", 0),
@@ -484,8 +488,8 @@ async def test_trap_and_mret_at_high_addresses(dut):
 
 @cocotb.test()
 async def test_r_type_extension_is_illegal(dut):
-    """An R-type word with a funct7 RV32I doesn't use (MUL, from the M extension) is illegal, mtval = the word"""
-    word = (0x01 << 25) | (7 << 20) | (6 << 15) | (0 << 12) | (5 << 7) | 0x33  # mul t0, t1, t2
+    """An R-type word with a funct7 neither RV32I nor RV32M uses (2) is illegal, mtval = the word"""
+    word = (0x02 << 25) | (7 << 20) | (6 << 15) | (0 << 12) | (5 << 7) | 0x33  # "add t0, t1, t2" with funct7 2
 
     def body(a):
         a.label("insn")

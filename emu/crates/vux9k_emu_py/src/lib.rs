@@ -321,6 +321,18 @@ impl Soc {
         self.inner.riscv_mode
     }
 
+    /// The CPU has RV32M (default True). False models the CPU before it (the v0.3.x
+    /// bitstreams): misa without M, the M instructions illegal. Kept across reset().
+    #[getter]
+    fn m_ext(&self) -> bool {
+        self.inner.m_ext
+    }
+
+    #[setter]
+    fn set_m_ext(&mut self, on: bool) {
+        self.inner.m_ext = on;
+    }
+
     #[getter]
     fn mcause(&self) -> u32 {
         self.inner.csr.mcause

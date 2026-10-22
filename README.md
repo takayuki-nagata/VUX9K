@@ -6,15 +6,15 @@
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue)](#license)
 <br>
 [![HDL: Veryl](https://img.shields.io/badge/HDL-Veryl-orange)](https://github.com/veryl-lang/veryl)
-[![ISA: RISC-V RV32I](https://img.shields.io/badge/ISA-RISC--V%20RV32I-283272?logo=riscv)](https://riscv.org/)
+[![ISA: RISC-V RV32IM](https://img.shields.io/badge/ISA-RISC--V%20RV32IM-283272?logo=riscv)](https://riscv.org/)
 [![ISA: Nand2Tetris Hack](https://img.shields.io/badge/ISA-Nand2Tetris%20Hack-555555)](https://www.nand2tetris.org/)
 [![board: Tang Nano 9K](https://img.shields.io/badge/board-Tang%20Nano%209K%20%28GW1NR--9%29-blue)](https://wiki.sipeed.com/hardware/en/tang/Tang-Nano-9K/Nano-9K.html)
 [![RTOS: Zephyr](https://img.shields.io/badge/RTOS-Zephyr-7929d2?logo=zephyrproject)](https://www.zephyrproject.org/)
 [![firmware: Rust](https://img.shields.io/badge/firmware-Rust-b7410e?logo=rust)](https://www.rust-lang.org/)
 
-**VUX9K** (Veryl Unified eXecution on Tang Nano 9K) is an open-source **Dual-ISA (RISC-V RV32I & Nand2Tetris Hack 16-bit) System-on-Chip (SoC)** written 100% in **[Veryl](https://github.com/veryl-lang/veryl)** targeting the **Sipeed Tang Nano 9K** FPGA board (Gowin GW1NR-9).
+**VUX9K** (Veryl Unified eXecution on Tang Nano 9K) is an open-source **Dual-ISA (RISC-V RV32IM & Nand2Tetris Hack 16-bit) System-on-Chip (SoC)** written 100% in **[Veryl](https://github.com/veryl-lang/veryl)** targeting the **Sipeed Tang Nano 9K** FPGA board (Gowin GW1NR-9).
 
-The SoC features a multi-cycle Unified CPU core capable of seamlessly executing both standard **32-bit RISC-V RV32I** instructions and **16-bit Nand2Tetris Hack** machine code, integrated with a hardware MicroSD SPI master (3 MHz after card init), full-duplex UART with a receive interrupt, 64-bit CLINT timer, GPIO, 8 MB of PSRAM, and a **two-stage boot**: a bare-metal Rust first stage in the bitstream loads the second stage, `\VUX9K\STAGE2.BIN`, from the MicroSD card's FAT32 partition into the PSRAM.
+The SoC features a multi-cycle Unified CPU core capable of seamlessly executing both standard **32-bit RISC-V RV32IM** instructions and **16-bit Nand2Tetris Hack** machine code, integrated with a hardware MicroSD SPI master (3 MHz after card init), full-duplex UART with a receive interrupt, 64-bit CLINT timer, GPIO, 8 MB of PSRAM, and a **two-stage boot**: a bare-metal Rust first stage in the bitstream loads the second stage, `\VUX9K\STAGE2.BIN`, from the MicroSD card's FAT32 partition into the PSRAM.
 
 Around it: **Zephyr RTOS** board support for the real board (C or Rust applications, an interrupt-driven UART driver), a **cycle-accurate Rust emulator** checked instruction by instruction, cycle counts included, against the RTL, and [releases](https://github.com/takayuki-nagata/VUX9K/releases) with everything needed to write applications without building the SoC ([`docs/APP_DEVELOPMENT.md`](docs/APP_DEVELOPMENT.md)).
 
@@ -84,7 +84,7 @@ bitstream works; test it on the board.
 The RTL modules in this repository were originally authored in VHDL-2008 and have been fully ported to modern Veryl:
 
 - **CPU Core (`unified_cpu`)**: Ported from [`takayuki-nagata/hack_cpu`](https://github.com/takayuki-nagata/hack_cpu)
-  - Unified datapath supporting both **RISC-V RV32I** (32-bit) and **Nand2Tetris Hack** (16-bit) execution; the ISA is chosen at each soft reset (RV32I from power-on).
+  - Unified datapath supporting both **RISC-V RV32IM** (32-bit) and **Nand2Tetris Hack** (16-bit) execution; the ISA is chosen at each soft reset (RV32 from power-on). Multiply and divide (`rv32m_muldiv`) take one bit per cycle: every M instruction takes 35 cycles, whatever its operands.
 - **UART Controller (`uart_controller`)**: Ported from [`takayuki-nagata/uart_controller`](https://github.com/takayuki-nagata/uart_controller)
   - Parameterized baud rate clock timer (18.0 MHz -> 115200 bps), 8N1 serial framing, and dual 32-entry synchronous TX/RX FIFOs.
 - **Arbitrary-Precision Math Engine & REPL (`vendor/bc_clone_rs`)**: Submodule from [`takayuki-nagata/bc_clone_rs`](https://github.com/takayuki-nagata/bc_clone_rs)
@@ -121,7 +121,7 @@ The CPU is machine-mode only. Accessing any CSR not listed here raises an illega
 | CSRs | Notes |
 |:---|:---|
 | `mstatus` (`0x300`), `mie` (`0x304`), `mtvec` (`0x305`), `mscratch` (`0x340`), `mepc` (`0x341`), `mcause` (`0x342`), `mtval` (`0x343`) | `mstatus` keeps only MIE/MPIE (MPP reads as M); `mie` only MSIE/MTIE/MEIE; `mtvec` is direct mode only |
-| `misa` (`0x301`), `mip` (`0x344`) | Read-only in practice: writes are ignored |
+| `misa` (`0x301`), `mip` (`0x344`) | Read-only in practice: writes are ignored. `misa` reads `0x4000_1100` (RV32, I and M; `0x4000_0100`, without M, before v0.4) |
 | `mcycle`/`mcycleh`, `minstret`/`minstreth` (`0xB00`/`0xB80`/`0xB02`/`0xB82`) | 64-bit, writable; `minstret` counts RV32 instructions that complete without trapping |
 | `cycle`, `time`, `instret` and their `h` halves (`0xC00`-`0xC02`, `0xC80`-`0xC82`) | Read-only; `time` is the timer's `mtime` |
 | `mvendorid`, `marchid`, `mimpid`, `mhartid`, `mconfigptr` (`0xF11`-`0xF15`), `mstatush` (`0x310`), `tselect`/`tdata1`-`tdata3` (`0x7A0`-`0x7A3`) | Read 0 (no debug triggers); writes to `mstatush` and the trigger registers are ignored |
@@ -484,9 +484,9 @@ Short tests run on Icarus, long SoC/GLS runs on Verilator (`SIM_UNIT` / `SIM_SOC
 
 | Level | Command | Typical Time | Verification Scope |
 |:---|:---|:---|:---|
-| **RTL Unit Tests** | `make sim-unit` | ~1 min | 30 cocotb modules: CPU (ALU, decoder, regfile, CSRs, LSU, next-PC, trap unit, Hack translator and ops, RV32I smoke, branches, trap path, CSRs through the CPU, bus wait states), UART, timer, GPIO, SD SPI master, address decoder, boot ROM, the PSRAM window's bus bridge and its instruction and data caches, and the SP/SDPB/DPX9B/SDPX9B block-RAM cell models. Each has boundary-value and random tests against a Python model (fixed seed; *slow*: `sim-unit-random`, a new seed each day) |
+| **RTL Unit Tests** | `make sim-unit` | ~1 min | 32 cocotb modules: CPU (ALU, decoder, regfile, CSRs, LSU, next-PC, trap unit, multiply/divide, Hack translator and ops, RV32I smoke, branches, trap path, CSRs and RV32M through the CPU, bus wait states), UART, timer, GPIO, SD SPI master, address decoder, boot ROM, the PSRAM window's bus bridge and its instruction and data caches, and the SP/SDPB/DPX9B/SDPX9B block-RAM cell models. Each has boundary-value and random tests against a Python model (fixed seed; *slow*: `sim-unit-random`, a new seed each day) |
 | **PSRAM Word Model** | `make sim-psram-contract` | ~1 min | `sim/psram_word_model.veryl` (the PSRAM controller without pins, for Verilator SoC runs) side by side with the real controller on the pin-level W955D8MBYA model (Icarus only): same power-up length (`soc_pkg::PSRAM_INIT_CYCLES`), same response cycle and read data for random requests, no protocol/timing error in the PSRAM model |
-| **ISA Tests** | `make test-isa` | ~20 sec | riscv-tests `rv32ui`/`rv32mi` on `tb_hex_runner`, whose RAM has the SoC's synchronous timing (56 pass; 2 known gaps, hardware misaligned access and PMP, tracked as expected failures in `scripts/run_riscv_tests.py`) |
+| **ISA Tests** | `make test-isa` | ~20 sec | riscv-tests `rv32ui`/`rv32um`/`rv32mi` on `tb_hex_runner`, whose RAM has the SoC's synchronous timing (64 pass; 2 known gaps, hardware misaligned access and PMP, tracked as expected failures in `scripts/run_riscv_tests.py`) |
 | **GLS ISA Tests** | `make test-isa-gls` | ~1.5 min | The same riscv-tests on the gate-level `unified_cpu` netlist |
 | **ACT4 Tests** | `make test-act4` (`-gls`, `-emu`) | ~2 min each | riscv-arch-test 4.1.0: self-checking tests whose expected values the Sail reference model computed for this CPU's configuration (`scripts/act4/`), on RTL, netlist and emulator (73 pass; 4 known differences from the Sail configuration, tracked in `scripts/run_riscv_tests.py`). `make act4-elfs` generates them with the upstream image (docker or podman) |
 | **ISA Tests with Waits** | `make test-isa-waits` | ~4 min | riscv-tests and ACT4 on `tb_hex_runner` with pseudo-random wait cycles on the instruction and data buses (the CPU's stall logic) |
@@ -510,7 +510,7 @@ Short tests run on Icarus, long SoC/GLS runs on Verilator (`SIM_UNIT` / `SIM_SOC
 | **Firmware Host Tests** | `make test-fw-host` / `firmware-size` | ~5 sec | `firmware/fw_common` on the host (FAT32, v4 header, transfer v2, RAM boot); first stage ≤ 16 KB |
 | **Firmware Coverage** | `make coverage-fw` | ~40 sec | Source-line coverage of the firmware and demos from the emulator tests, against `coverage/thresholds.toml` (report in `build/coverage/fw/`) |
 | **Rust Coverage** | `make coverage-rust` | a few min | Line coverage of the emulator (its cargo tests and the Python-driven emulator runs) and `fw_common` (host tests) with cargo-llvm-cov, against `coverage/thresholds.toml` (report in `build/coverage/rust/`) |
-| **RTL ↔ Emulator Lockstep** | `make sim-lockstep` | ~40 sec | Random RV32I, traps/interrupts, the PSRAM window, Hack demo and the first stage booting a card on RTL and emulator, compared cycle by cycle (*slow*: `sim-lockstep-slow`, more programs) |
+| **RTL ↔ Emulator Lockstep** | `make sim-lockstep` | ~40 sec | Random RV32IM, traps/interrupts, the PSRAM window, Hack demo and the first stage booting a card on RTL and emulator, compared cycle by cycle (*slow*: `sim-lockstep-slow`, more programs) |
 | **Zephyr Demo** | `make sim-zephyr-demo-rtl` | a few min | The Zephyr Rust demo preloaded into the PSRAM on the RTL, started by a jump from the ROM |
 | **Zephyr UART Interrupts** | `make sim-zephyr-irq-echo-rtl` | a few min | The interrupt-driven UART echo preloaded into the PSRAM on the RTL: a 64-byte line, longer than both FIFOs, sent in paced chunks and back to back, comes back whole with no overrun; sent while the app starts, before it enables RX, it overflows the RX FIFO and the app reports the overrun |
 | **Static Timing (STA)**| `make sta` | ~15 sec | Exhaustive post-PnR timing analysis, Fmax verification, and critical path breakdown (`build/synth/soc_sta.json`) |

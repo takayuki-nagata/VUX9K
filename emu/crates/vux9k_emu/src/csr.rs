@@ -25,7 +25,9 @@ pub const CYCLEH: u16 = 0xC80;
 pub const TIMEH: u16 = 0xC81;
 pub const INSTRETH: u16 = 0xC82;
 
-pub const MISA_VALUE: u32 = 0x4000_0100; // RV32, I
+pub const MISA_VALUE: u32 = 0x4000_1100; // RV32, I, M
+/// misa's M bit (clear on a CPU without RV32M, `Soc::m_ext`).
+pub const MISA_M: u32 = 1 << 12;
 pub const MSTATUS_MIE: u32 = 1 << 3;
 pub const MSTATUS_MPIE: u32 = 1 << 7;
 const MSTATUS_MPP_M: u32 = 0x1800; // reads as M, never stored

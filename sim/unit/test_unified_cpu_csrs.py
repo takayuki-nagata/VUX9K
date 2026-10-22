@@ -72,7 +72,7 @@ def check_reset_values(a):
             a.csrr("t0", csr)
             expect(a, "t0", ones)
     a.word(MISA_READ)  # csrr t0, misa
-    expect(a, "t0", 0x4000_0100)
+    expect(a, "t0", 0x4000_1100)  # RV32, I, M
 
 
 @cocotb.test()

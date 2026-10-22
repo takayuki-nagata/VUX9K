@@ -527,12 +527,12 @@ test-emu: emu-py firmware hwtest build-hack build-zephyr build-zephyr-demo build
 	$(PYTHON) -m pytest sim/emu
 
 test-isa: veryl
-	@echo "=== Running riscv-tests (rv32ui/rv32mi) on tb_hex_runner ==="
+	@echo "=== Running riscv-tests (rv32ui/rv32um/rv32mi) on tb_hex_runner ==="
 	SIM=$(SIM_UNIT) $(PYTHON) scripts/run_riscv_tests.py
 
 # Same tests on the gate-level unified_cpu netlist: catches what Yosys reads differently
 test-isa-gls: veryl synth-units
-	@echo "=== Running riscv-tests (rv32ui/rv32mi) on the unified_cpu netlist (GLS) ==="
+	@echo "=== Running riscv-tests (rv32ui/rv32um/rv32mi) on the unified_cpu netlist (GLS) ==="
 	SIM=$(SIM_SOC) $(PYTHON) scripts/run_riscv_tests.py --gls
 
 # riscv-arch-test's ACT4 tests (self-checking, Sail's results built in): generated with the

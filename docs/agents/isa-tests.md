@@ -13,7 +13,7 @@ Read before changing the CPU's ISA behavior or CSRs, `tb_hex_runner`, or the ISA
 
 ## `make test-isa`: riscv-tests on `tb_hex_runner`
 
-`scripts/run_riscv_tests.py` builds riscv-tests (`rv32ui`/`rv32mi`, `env/p`, both
+`scripts/run_riscv_tests.py` builds riscv-tests (`rv32ui`/`rv32um`/`rv32mi`, `env/p`, both
 pinned and fetched into `vendor/riscv-tests/`) and runs each on
 `sim/tb_hex_runner.veryl`. It replaced a riscv-arch-test (ACT4) harness that could
 never fail: its halt address (`0x1000`) sat *inside* the test code, so every test
@@ -62,6 +62,11 @@ are easy to break without noticing:
   (`mhpmevent3`-`31`, `mhpmcounter3`-`31`(h)), which the ACT4 tests' boot code writes
   unguarded. Before adding a CSR access to firmware, add the CSR to both
   `csr_exists` and `rv32i_csrs`.
+- **RV32M is `rv32m_muldiv`, one bit per cycle, with a fixed latency** (README: 35 cycles an
+  instruction, whatever the operands; the emulator's `MULDIV_WAIT_CYCLES`). `misa` says M
+  (`0x4000_1100`); the emulator's `m_ext = False` (Python `Soc.m_ext`) is the CPU before it,
+  for testing software against the v0.3.x bitstreams. riscv-tests' `rv32um` and ACT4's `M`
+  run on every backend; both build with `-march=rv32im_zicsr_zifencei`.
 - **The tb is split: hardware in Veryl, stimulus in cocotb.** `sim/tb_hex_runner.veryl`
   holds the RAM (preloaded from `program.hex` in the cwd), the CPU and the `tohost`
   latch; `scripts/riscv_tests/hex_runner.py` drives clock/reset, waits for the latch

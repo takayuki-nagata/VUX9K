@@ -205,6 +205,29 @@ def test_hack_runs_from_its_segments():
     assert soc.regs[2] == 0
 
 
+def test_m_ext_switch():
+    """m_ext False is the CPU without RV32M (the v0.3.x bitstreams): misa without M, mul illegal."""
+    a = Asm()
+    a.word((0x301 << 20) | (2 << 12) | (5 << 7) | 0x73)  # csrr t0, misa
+    a.li("a0", 6)
+    a.li("a1", 7)
+    a.muldiv("mul", "a2", "a0", "a1")
+    image = b"".join(w.to_bytes(4, "little") for w in a.assemble())
+    soc = Soc("real")
+    assert soc.m_ext
+    soc.load_app(image, "riscv", 0)
+    for _ in range(4):
+        soc.step()
+    assert (soc.regs[5], soc.regs[12], soc.mcause) == (0x4000_1100, 42, 0)
+    soc.m_ext = False
+    soc.reset()
+    assert not soc.m_ext, "kept across reset()"
+    soc.load_app(image, "riscv", 0)
+    for _ in range(4):
+        soc.step()
+    assert (soc.regs[5], soc.regs[12], soc.mcause) == (0x4000_0100, 0, 2)
+
+
 def test_load_app_into_the_psram():
     a = Asm(XMEM_BASE)
     a.auipc("a0", 0)

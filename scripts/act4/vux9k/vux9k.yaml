@@ -10,9 +10,11 @@ $schema: config_schema.json#
 kind: architecture configuration
 type: fully configured
 name: vux9k
-description: VUX9K unified_cpu, RV32I M-mode only
+description: VUX9K unified_cpu, RV32IM M-mode only
 implemented_extensions:
   - { name: I, version: "= 2.1" }
+  - { name: M, version: "= 2.0" }
+  - { name: Zmmul, version: "= 1.0" } # required by M
   - { name: Zicsr, version: "= 2.0" }
   - { name: Zicntr, version: "= 2.0" }
   - { name: Zifencei, version: "= 2.0" }
@@ -23,8 +25,9 @@ params:
   PHYS_ADDR_WIDTH: 32
   M_MODE_ENDIANNESS: little
 
-  # misa reads RV32I; writes are ignored
+  # misa reads RV32IM; writes are ignored
   MISA_CSR_IMPLEMENTED: true
+  MUTABLE_MISA_M: false
 
   TRAP_ON_ECALL_FROM_M: true
   TRAP_ON_EBREAK: true
