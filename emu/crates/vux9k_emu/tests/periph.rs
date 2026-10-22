@@ -140,6 +140,31 @@ fn soft_reset_without_mode_starts_rv32() {
 }
 
 #[test]
+fn soft_reset_with_rv32_mode_from_hack_starts_rv32() {
+    // Hack gives RV32 (valid | 1) in 0x6008, then the key: @0x101, D=A, @0x6008, M=D,
+    // @0x255A, D=A, @0x4000, D=D+A, @0x4000, D=D+A, @0x600C, M=D
+    let hack: Vec<u8> = [
+        0x0101_u16, 0xEC10, 0x6008, 0xE308, 0x255A, 0xEC10, 0x4000, 0xE090, 0x4000, 0xE090, 0x600C,
+        0xE308,
+    ]
+    .iter()
+    .flat_map(|i| i.to_be_bytes())
+    .collect();
+    let mut soc = load(&[addi(6, 0, 1)]);
+    soc.load_app(&hack, Isa::Hack).unwrap();
+    for _ in 0..12 {
+        soc.step();
+    }
+    assert_eq!(soc.pc, 0);
+    assert!(
+        soc.riscv_mode,
+        "register 0x8 selected RV32 for this soft reset"
+    );
+    soc.step(); // ROM word 0, as RV32
+    assert_eq!(soc.regs[6], 1);
+}
+
+#[test]
 fn leds_and_button() {
     let mut soc = load(&[
         lui(1, 0x40003),

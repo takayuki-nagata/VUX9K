@@ -96,10 +96,10 @@ def test_mode_riscv_loads_at_the_load_address(tmp_path, args, where):
 
 def test_mode_rejects_an_image_too_big_for_the_board(tmp_path):
     big = tmp_path / "big.bin"
-    big.write_bytes(b"\x13\x00\x00\x00" * (14 * 1024 // 4 + 1))
+    big.write_bytes(b"\x13\x00\x00\x00" * (16 * 1024 // 4 + 1))
     r = run("--no-firmware", "--load", str(big), "--mode", "riscv", "--load-addr", "0")
     assert r.returncode != 0
-    assert b"fits on the board" in r.stderr
+    assert b"fits in the boot ROM" in r.stderr
     # The PSRAM takes it
     r = run("--no-firmware", "--load", str(big), "--mode", "riscv", "--cycles", "1000")
     assert r.returncode == 0, r.stderr

@@ -83,10 +83,17 @@ pub enum Isa {
     Hack,
 }
 
-/// Largest RV32 application image put into the ROM in place of the first stage (`load_app`;
-/// the 14 KB of the second stage's I-RAM RV32 target up to v2, before the ROM; RV32
-/// applications on the board run from the PSRAM). A Hack image may fill its segment (`HACK_I_BYTES`).
-pub const MAX_APP_BYTES: usize = 14 * 1024;
+/// Where the board starts an application image when no load address is given (the CLI's
+/// `--load-addr`, the Python `load_app`): RV32 applications are linked at the PSRAM's
+/// start; a Hack image goes to the start of its segment (offset 0). The isa-test profile,
+/// which has no PSRAM, loads RV32 at 0.
+pub fn default_load_addr(profile: Profile, isa: Isa) -> u32 {
+    if profile == Profile::Real && isa == Isa::Rv32 {
+        XMEM_BASE
+    } else {
+        0
+    }
+}
 
 /// Why `Soc::run` returned.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -302,8 +309,8 @@ impl Soc {
 
     /// Start an application image the way a loader that soft-resets into it does, the
     /// CPU in `isa` from the first fetch (the loader's GPIO 0x8 write before its soft
-    /// reset). RV32: little-endian words at address 0 (the ROM, in place of the first stage;
-    /// on the board that takes a bitstream with it as firmware.hex). Hack: big-endian 16-bit
+    /// reset). RV32: little-endian words at address 0 (the ROM, in place of the first stage,
+    /// up to the ROM's size; on the board that takes a bitstream with it as firmware.hex). Hack: big-endian 16-bit
     /// instructions, two per word with the first in the low half (as vux_tool.py packs
     /// them), at the start of Hack's instruction segment (`load_app_at` with offset 0).
     /// Call it after `reset`, which starts RV32 again.
@@ -311,9 +318,10 @@ impl Soc {
         if isa == Isa::Hack {
             return self.load_hack(bytes, 0);
         }
-        if bytes.is_empty() || bytes.len() > MAX_APP_BYTES {
+        let max = self.profile.rom_bytes();
+        if bytes.is_empty() || bytes.len() > max {
             return Err(format!(
-                "application image of {} bytes: must be 1 to {MAX_APP_BYTES} bytes (what fits on the board)",
+                "application image of {} bytes: must be 1 to {max} bytes (what fits in the boot ROM)",
                 bytes.len()
             ));
         }

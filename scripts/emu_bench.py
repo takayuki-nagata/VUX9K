@@ -118,7 +118,7 @@ def _preload(soc: Any, build: str) -> bool:
 
 def setup_synthetic(iterations: int) -> Callable[[Any, str], bool]:
     def setup(soc: Any, build: str) -> bool:
-        soc.load_app(b"".join(w.to_bytes(4, "little") for w in synthetic_words(iterations)), "riscv")
+        soc.load_app(b"".join(w.to_bytes(4, "little") for w in synthetic_words(iterations)), "riscv", 0)
         return True
 
     return setup

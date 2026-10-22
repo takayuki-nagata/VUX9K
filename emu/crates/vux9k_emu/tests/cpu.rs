@@ -443,11 +443,12 @@ fn load_app_rejects_what_the_board_cannot_load() {
         .unwrap_err()
         .contains("even length"));
     assert!(soc.load_app(&[], Isa::Rv32).is_err());
-    assert!(soc.load_app(&vec![0x13; 14 * 1024], Isa::Rv32).is_ok());
+    // RV32 at 0: the 16 KB boot ROM
+    assert!(soc.load_app(&vec![0x13; 16 * 1024], Isa::Rv32).is_ok());
     assert!(soc
-        .load_app(&vec![0x13; 14 * 1024 + 4], Isa::Rv32)
+        .load_app(&vec![0x13; 16 * 1024 + 4], Isa::Rv32)
         .unwrap_err()
-        .contains("fits on the board"));
+        .contains("fits in the boot ROM"));
     // Hack: its 64 KB segment, at a word
     assert!(soc.load_app(&vec![0; 64 * 1024], Isa::Hack).is_ok());
     for (len, at) in [(64 * 1024 + 2, 0), (64 * 1024 - 4, 8), (2, 2), (0, 0)] {
@@ -463,12 +464,12 @@ fn load_app_rejects_what_the_board_cannot_load() {
 #[test]
 fn load_app_at_the_psram_runs_rv32_in_place() {
     use vux9k_emu::soc::{XMEM_BASE, XMEM_READ_LATENCY};
-    // Bigger than the ROM: the 14 KB limit is the ROM's only
+    // Bigger than the ROM: the 16 KB limit is the ROM's only
     let mut prog: Vec<u8> = [addi(1, 0, 5), addi(1, 1, 1)]
         .iter()
         .flat_map(|w| w.to_le_bytes())
         .collect();
-    prog.resize(16 * 1024, 0);
+    prog.resize(16 * 1024 + 4, 0);
     let at = XMEM_BASE + 0x100;
     let mut soc = Soc::new(Profile::Real);
     soc.load_app_at(&prog, Isa::Rv32, at).unwrap();

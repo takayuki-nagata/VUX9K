@@ -24,7 +24,7 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 
 use vux9k_emu::sdcard::SdCard;
-use vux9k_emu::soc::XMEM_BASE;
+use vux9k_emu::soc::default_load_addr;
 use vux9k_emu::{hexfile, Isa, Profile, Soc, Stop};
 
 const USAGE: &str = "\
@@ -38,7 +38,7 @@ usage: vux9k-emu [options]
                       16-bit instructions, as hcc -r writes them), started in that ISA
                       at its load address
   --load-addr ADDR    with --mode: the image's load address, as in its v4 header.
-                      riscv: 0 (the ROM; max 14 KB) or the PSRAM (0x80000000..), also
+                      riscv: 0 (the ROM; max 16 KB) or the PSRAM (0x80000000..), also
                       the entry; default 0x80000000 on real (where the vux9k Zephyr
                       board links), else 0. hack: the offset in Hack's 64 KB
                       instruction segment (word-aligned; default 0); it starts at 0
@@ -170,17 +170,6 @@ fn parse_addr(text: &str) -> Result<u32, String> {
         None => t.parse(),
     }
     .map_err(|e| format!("--load-addr {text:?}: {e}"))
-}
-
-/// `--load-addr`'s default: where the board starts such an image (RV32 applications are
-/// linked at the PSRAM's start; a Hack image goes to the start of its segment, offset 0).
-/// The isa-test profile, which has no PSRAM, keeps 0.
-fn default_load_addr(profile: Profile, isa: Isa) -> u32 {
-    if profile == Profile::Real && isa == Isa::Rv32 {
-        XMEM_BASE
-    } else {
-        0
-    }
 }
 
 fn read_text(path: &str) -> Result<String, String> {

@@ -234,7 +234,7 @@ emu/vux9k-emu --no-firmware --load app.bin --mode hack --stdio
 it: an RV32 image in the PSRAM at `0x8000_0000` (where the board `vux9k` links), a Hack image
 at the start of Hack's instruction segment (also in the PSRAM, at `0x8000_0000`). `--load-addr ADDR` gives the load address of an image
 linked elsewhere (as `mkv4 --load-addr`): an RV32 image at 0 goes into the boot ROM in place
-of the first stage, at most 14 KB. That is the emulator's own direct load (on the board it
+of the first stage, at most 16 KB (the ROM's size). That is the emulator's own direct load (on the board it
 would take a bitstream with it in the ROM): the second stage starts RV32 files only in the
 PSRAM.
 
@@ -301,8 +301,8 @@ assert soc.run_until_tx(b"for the first stage.\n", 20_000_000) is not None, soc.
 print(soc.uart_received().decode().splitlines()[-2])
 ```
 
-Useful methods of `Soc`: `load_app(image, mode, addr=0)` (`mode` `"riscv"` or `"hack"`,
-as `--load --mode`; `addr` as `--load-addr`, but 0 by default), `load_readmemh(rom)` (the boot ROM's image, as `--firmware`),
+Useful methods of `Soc`: `load_app(image, mode, addr)` (`mode` `"riscv"` or `"hack"`,
+as `--load --mode`; `addr` as `--load-addr`, with the same default), `load_readmemh(rom)` (the boot ROM's image, as `--firmware`),
 `sd_insert(image)` (a card, as `--sd`), `reset()` (power-on reset; load the image again after it),
 `run(max_cycles)`,
 `run_until_tx(needle, max_cycles)` (returns the output position after `needle`, or

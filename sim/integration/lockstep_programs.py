@@ -535,11 +535,13 @@ def traps() -> list:
     return a.assemble()
 
 
-def hack_soft_reset(key_by_addition: bool = True) -> list:
+def hack_soft_reset(key_by_addition: bool = True, mode_rv32: bool = False) -> list:
     """Hack (for its I segment, started by hack_stub): print 'R', store the soft-reset key to
     GPIO 0x600C, spin. Hack registers are 32 bits wide, so 0x255A + 0x4000 + 0x4000 is
     0x0000_A55A, a key the GPIO accepts: with no mode given the CPU restarts at 0 in RV32,
-    where hack_stub prints HACK_BACK; 0xFFFF_A55A from !0x5AA5 is not."""
+    where hack_stub prints HACK_BACK; 0xFFFF_A55A from !0x5AA5 is not. mode_rv32: first give
+    RV32 (0x101) in GPIO 0x6008 and read it back, so the restart in RV32 takes the given
+    mode rather than the default."""
     import hack_asm
 
     a = hack_asm.Asm()
@@ -547,6 +549,12 @@ def hack_soft_reset(key_by_addition: bool = True) -> list:
     a.c("D=A")
     a.at(0x6000)  # UART data
     a.c("M=D")
+    if mode_rv32:
+        a.at(0x101)  # valid, RV32
+        a.c("D=A")
+        a.at(0x6008)  # GPIO boot mode
+        a.c("M=D")
+        a.c("D=M")
     if key_by_addition:
         a.at(0x255A)
         a.c("D=A")
@@ -933,6 +941,15 @@ def programs() -> list:
     progs.append(Program("xcache", cycles=7_000, imem_words=xcache()))
     # Stores to the ROM and to unassigned regions, ignored; done by cycle ~300
     progs.append(Program("rom_stores", cycles=2_000, imem_words=rom_stores()))
+    # Hack gives RV32 (0x101) for its soft reset: back in hack_stub as RV32 (HACK_BACK)
+    progs.append(
+        Program(
+            "boot_mode_rv32",
+            cycles=20_000,
+            imem_words=hack_stub(),
+            xmem=[(HACK_I_BASE, hack_image_bytes(hack_soft_reset(mode_rv32=True)))],
+        )
+    )
     # The whole chain with the real second stage: the first stage boots it from the card,
     # its `run` starts the hello demo in the PSRAM, which prints a0-a2
     progs.append(

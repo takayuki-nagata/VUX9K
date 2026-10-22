@@ -8,6 +8,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
 
 use emu_core::sdcard::{Faults, SdCard};
+use emu_core::soc::default_load_addr;
 use emu_core::{Isa, Profile, Stop};
 
 fn parse_profile(name: &str) -> PyResult<Profile> {
@@ -55,9 +56,11 @@ impl Soc {
     /// applications are linked) it goes there and the CPU starts at `addr`. Hack: `addr`
     /// is the byte offset in Hack's instruction segment (the PSRAM at 0x8000_0000, 64 KB)
     /// and the CPU starts at 0. The CPU runs it in that ISA from the first fetch; call this
-    /// after `reset()`, which starts RV32 again.
-    #[pyo3(signature = (data, mode = "riscv", addr = 0))]
-    fn load_app(&mut self, data: &[u8], mode: &str, addr: u32) -> PyResult<()> {
+    /// after `reset()`, which starts RV32 again. Without `addr`, where the board starts such
+    /// an image (as the CLI's `--load-addr`): RV32 at 0x8000_0000 on "real" (0 on
+    /// "isa-test"), Hack at offset 0.
+    #[pyo3(signature = (data, mode = "riscv", addr = None))]
+    fn load_app(&mut self, data: &[u8], mode: &str, addr: Option<u32>) -> PyResult<()> {
         let isa = match mode {
             "riscv" => Isa::Rv32,
             "hack" => Isa::Hack,
@@ -67,6 +70,7 @@ impl Soc {
                 )))
             }
         };
+        let addr = addr.unwrap_or_else(|| default_load_addr(self.inner.profile, isa));
         self.inner
             .load_app_at(data, isa, addr)
             .map_err(PyValueError::new_err)

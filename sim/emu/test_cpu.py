@@ -220,6 +220,13 @@ def test_load_app_into_the_psram():
     assert soc.regs[10:12] == [XMEM_BASE, words[0]]
     soc.load_xmem(XMEM_BASE + 8, b"\x01\x02\x03")
     assert soc.xmem_word(XMEM_BASE + 8) == 0x030201
+    # Without an address, where the board starts it: RV32 in the PSRAM (as --load-addr)
+    real = Soc("real")
+    real.load_app(image)
+    assert (real.pc, real.rom_word(0), real.xmem_word(XMEM_BASE)) == (XMEM_BASE, 0, words[0])
+    flat = Soc("isa-test")
+    flat.load_app(image)
+    assert (flat.pc, flat.rom_word(0)) == (0, words[0])
     # A Hack image's load address is an offset in its segment
     with pytest.raises(ValueError, match="Hack instruction segment"):
         soc.load_app(image, "hack", XMEM_BASE)
