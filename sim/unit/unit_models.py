@@ -101,3 +101,35 @@ HACK_COMP = {
     0b010101: lambda d, y: d | y,
     0b000101: lambda d, y: d ^ y,
 }
+
+
+# The M extension's funct3 (rv32m_muldiv's funct3 input)
+MUL, MULH, MULHSU, MULHU, DIV, DIVU, REM, REMU = range(8)
+
+
+def muldiv_model(funct3, a, b):
+    """An RV32M instruction's rd from rs1 = a and rs2 = b (the ISA spec, division by zero
+    and the signed overflow included)."""
+    sa, sb = signed32(a), signed32(b)
+    if funct3 == MUL:
+        r = a * b
+    elif funct3 == MULH:
+        r = (sa * sb) >> 32
+    elif funct3 == MULHSU:
+        r = (sa * b) >> 32
+    elif funct3 == MULHU:
+        r = (a * b) >> 32
+    elif funct3 in (DIV, REM):
+        if b == 0:
+            q, rem = -1, sa
+        elif sa == -(1 << 31) and sb == -1:
+            q, rem = sa, 0
+        else:
+            q = abs(sa) // abs(sb) * (-1 if (sa < 0) != (sb < 0) else 1)  # rounds toward zero
+            rem = sa - q * sb
+        r = q if funct3 == DIV else rem
+    elif b == 0:
+        r = 0xFFFF_FFFF if funct3 == DIVU else a
+    else:
+        r = a // b if funct3 == DIVU else a % b
+    return r & 0xFFFF_FFFF

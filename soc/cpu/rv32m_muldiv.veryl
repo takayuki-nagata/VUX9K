@@ -1,0 +1,133 @@
+// Copyright (c) 2026 Takayuki Nagata
+// SPDX-License-Identifier: MIT
+
+// RISC-V M extension: iterative multiply/divide, one bit per cycle.
+//
+// `start` (one cycle, the instruction's EXECUTE) latches the operands and funct3; 32 steps
+// follow, one per cycle, and `done` is high for the one cycle after the last step, with
+// `result` valid while it is (and until the next `start`). The latency is the same for
+// every operation and operand: start + 32 + 1, so the CPU's MULDIV_WAIT lasts 33 cycles.
+// A `start` while busy restarts with the new operands.
+//
+// One 34-bit adder does both:
+// - Multiply: shift-add over the multiplier's 32 bits into a 33-bit signed accumulator
+//   (`hi`), the product's low half shifting into `lo`. The multiplicand is sign-extended
+//   for MULH/MULHSU; a signed multiplier (MULH) subtracts on its sign bit's step, so no
+//   operand or result is negated. MUL takes `lo`, the MULH* forms `hi`.
+// - Divide: restoring division of the magnitudes (remainder in `hi`, the dividend
+//   shifting out of `lo` as the quotient shifts in), then the quotient's or the
+//   remainder's sign put back. Division by zero falls out as the spec wants (quotient all
+//   ones, remainder the dividend) with the quotient's sign left alone; the overflow
+//   (-2^31 / -1) gives -2^31 and 0 with no special case.
+// Signs come from bit 31, never from `as i32` compares (docs/agents/veryl.md).
+pub module rv32m_muldiv (
+    clk   : input  clock    ,
+    rst   : input  reset    ,
+    start : input  logic    ,
+    funct3: input  logic<3> , // MUL, MULH, MULHSU, MULHU, DIV, DIVU, REM, REMU
+    a     : input  logic<32>, // rs1
+    b     : input  logic<32>, // rs2
+    done  : output logic    , // result valid (the cycle after the last step)
+    result: output logic<32>,
+) {
+    var hi     : logic<33>; // multiply: accumulator; divide: partial remainder
+    var lo     : logic<32>; // multiply: multiplier, then the product's low half; divide: dividend, then quotient
+    var mcand  : logic<33>; // multiply: the multiplicand (sign- or zero-extended); divide: the divisor's magnitude
+    var count  : logic<5> ; // steps left after the current one
+    var active : logic    ;
+    var fin    : logic    ;
+    var is_div : logic    ;
+    var msub   : logic    ; // multiply: the multiplier is signed (MULH), its sign bit's step subtracts
+    var sel_hi : logic    ; // result from hi (MULH*, REM*) rather than lo
+    var neg_res: logic    ; // divide: negate the result
+
+    var sum: logic<34>;
+
+    // The operands' signs and magnitudes at start
+    var sa   : logic    ; // a is signed and negative
+    var sb   : logic    ; // b is signed and negative
+    var mag_a: logic<32>;
+    var mag_b: logic<32>;
+
+    always_comb {
+        let signed_a: logic = funct3 == 3'd1 || funct3 == 3'd2 || funct3 == 3'd4 || funct3 == 3'd6;
+        let signed_b: logic = funct3 == 3'd1 || funct3 == 3'd4 || funct3 == 3'd6;
+        sa       = signed_a && a[31];
+        sb       = signed_b && b[31];
+        mag_a    = if sa ? (~a + 32'd1) : a;
+        mag_b    = if sb ? (~b + 32'd1) : b;
+    }
+
+    // One step: multiply adds (or, on MULH's last step, subtracts) the multiplicand when
+    // the multiplier's next bit is set; divide subtracts the divisor from the shifted
+    // remainder
+    always_comb {
+        let shifted: logic<33> = {hi[31:0], lo[31]};
+        let add_m  : logic     = lo[0];
+        let sub    : logic     = is_div || (msub && count == 5'd0);
+        let x      : logic<34> = if is_div ? {1'b0, shifted} : {hi[32], hi};
+        let y0     : logic<34> = if is_div ? {1'b0, mcand} : (if add_m ? {mcand[32], mcand} : 34'd0);
+        let y      : logic<34> = if sub ? ~y0 : y0;
+        sum     = x + y + (if sub ? 34'd1 : 34'd0);
+    }
+
+    always_ff (clk, rst) {
+        if_reset {
+            hi      = 33'd0;
+            lo      = 32'd0;
+            mcand   = 33'd0;
+            count   = 5'd0;
+            active  = 1'b0;
+            fin     = 1'b0;
+            is_div  = 1'b0;
+            msub    = 1'b0;
+            sel_hi  = 1'b0;
+            neg_res = 1'b0;
+        } else if start {
+            is_div = funct3[2];
+            msub   = funct3 == 3'd1;
+            sel_hi = funct3[1:0] != 2'd0 && !funct3[2] || funct3[2] && funct3[1];
+            // Quotient: negative when the signs differ and the divisor isn't 0;
+            // remainder: the dividend's sign
+            neg_res = funct3[2] && (if funct3[1] ? sa : (sa != sb) && b != 32'd0);
+            hi      = 33'd0;
+            if funct3[2] {
+                lo    = mag_a;
+                mcand = {1'b0, mag_b};
+            } else {
+                lo    = b;
+                mcand = {funct3 != 3'd3 && funct3 != 3'd0 && a[31], a};
+            }
+            count  = 5'd31;
+            active = 1'b1;
+            fin    = 1'b0;
+        } else if active {
+            if is_div {
+                // The difference's sign: the shifted remainder was below the divisor
+                if sum[33] {
+                    hi = {hi[31:0], lo[31]};
+                } else {
+                    hi = sum[32:0];
+                }
+                lo = {lo[30:0], !sum[33]};
+            } else {
+                hi = sum[33:1];
+                lo = {sum[0], lo[31:1]};
+            }
+            count = count - 5'd1;
+            if count == 5'd0 {
+                active = 1'b0;
+                fin    = 1'b1;
+            }
+        } else {
+            fin = 1'b0;
+        }
+    }
+
+    always_comb {
+        let raw   : logic<32> = if sel_hi ? hi[31:0] : lo;
+        result = if neg_res ? (~raw + 32'd1) : raw;
+    }
+
+    assign done = fin;
+}

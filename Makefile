@@ -89,7 +89,7 @@ veryl: $(VERYL_OUT_DIR)/.stamp
 # Generated RTL (read order: packages first). SOC_RTL_SRCS, further down, adds the rest of the SoC.
 CPU_RTL_SRCS = $(addprefix $(VERYL_OUT_DIR)/soc/cpu/,rv32i_pkg.sv hack_translator.sv \
 	rv32i_alu.sv rv32i_decode.sv rv32i_regfile.sv rv32i_csrs.sv rv32i_lsu.sv rv32i_trap_unit.sv next_pc_unit.sv \
-	unified_cpu.sv)
+	rv32m_muldiv.sv unified_cpu.sv)
 
 # verilator -Wall on the generated .sv: the SoC as synthesized (board_top, with the PLL's
 # cell model) and the Veryl testbenches. Waivers, each with its reason: soc/verilator_lint.vlt

@@ -26,6 +26,7 @@ UNIT = [
     ("rv32i_lsu", "test_rv32i_lsu"),
     ("next_pc_unit", "test_next_pc_unit"),
     ("rv32i_trap_unit", "test_rv32i_trap_unit"),
+    ("rv32m_muldiv", "test_rv32m_muldiv"),
     ("unified_cpu", "test_unified_cpu"),
     ("unified_cpu", "test_hack_cpu_ops"),
     ("unified_cpu", "test_rv32i_smoke"),
