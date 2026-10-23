@@ -42,7 +42,8 @@ def expect(a, reg, value):
 @cocotb.test()
 async def test_muldiv_results(dut):
     """Every operation on boundary pairs, rd = rs1 (the operands are taken at the start)
-    and rd = x0 (no write)"""
+    and rd = x0 (it retires and execution goes on; x0 itself is hardwired, so the lockstep's
+    write list is what checks that nothing is written)"""
 
     def body(a):
         for x, y in PAIRS:

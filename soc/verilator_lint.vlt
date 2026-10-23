@@ -29,8 +29,6 @@ lint_off -rule UNUSEDSIGNAL -file "*/rv32i_csrs.sv" -match "*'pending'*"
 // The SD data register is 8 bits wide on a 32-bit bus; its TX shift register sends
 // bits 7..0 and so never reads its top bit after the load
 lint_off -rule UNUSEDSIGNAL -file "*/sdcard_spi.sv" -match "*'shift_tx'*"
-// The decoder hands over the whole funct7; RV32I only needs bit 5 (SUB/SRA)
-lint_off -rule UNUSEDSIGNAL -file "*/unified_cpu.sv" -match "*'rv_funct7'*"
 lint_off -rule UNUSEDSIGNAL -file "*/sdcard_spi.sv" -match "*'data_in'*"
 // Outputs nothing reads: the shift registers' unused side, the PLL's other clocks, and
 // the CPU outputs the riscv-tests harness doesn't need

@@ -28,7 +28,7 @@ pub trait Sink {
         self.put(HEX[(val & 0xF) as usize]);
     }
 
-    /// Decimal, no leading zeros (by repeated subtraction: RV32I has no divider).
+    /// Decimal, no leading zeros (by repeated subtraction: no `divu`, which takes 35 cycles).
     fn put_dec(&mut self, mut val: u32) {
         const POWERS: [u32; 10] = [
             1_000_000_000,

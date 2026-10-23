@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Takayuki Nagata
 // SPDX-License-Identifier: MIT
 
-//! The SoC: CPU (RV32I + Hack), memories and the data-address decode.
+//! The SoC: CPU (RV32IM + Hack), memories and the data-address decode.
 //!
 //! Every rule here mirrors a line of the RTL, which is the specification:
 //! - CPU FSM, cycle costs, writeback: soc/cpu/unified_cpu.veryl
@@ -113,7 +113,7 @@ pub enum Stop {
 pub struct Retire {
     /// Cycle of the instruction's FETCH.
     pub cycle: u64,
-    /// True: RV32I, false: Hack.
+    /// True: RV32, false: Hack.
     pub riscv: bool,
     pub pc: u32,
     pub instr: u32,
@@ -140,7 +140,7 @@ pub struct Soc {
     pub pc: u32,
     pub csr: Csrs,
     pub periph: Periph,
-    /// true: RV32I, false: Hack (unified_cpu's is_riscv_mode).
+    /// true: RV32, false: Hack (unified_cpu's is_riscv_mode).
     pub riscv_mode: bool,
     /// The CPU has RV32M (true, the default). false models the CPU before it (the v0.3.x
     /// bitstreams): misa without M, and the M instructions illegal. Kept across resets.

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 """
-Minimal RV32I (+ Zicsr) assembler for small SoC test programs (sim/integration/rv32_asm.py).
+Minimal RV32IM (+ Zicsr) assembler for small SoC test programs (sim/integration/rv32_asm.py).
 
 Only what the SoC tests need: base integer instructions, CSR access, mret, a few
 pseudo-instructions and forward/backward labels. Programs are built in Python,
@@ -279,7 +279,7 @@ def _hi20(value):
 
 
 def selftest():
-    """Compare against encodings produced by GNU as (riscv64-zephyr-elf-as -march=rv32i_zicsr)."""
+    """Compare against encodings produced by GNU as (riscv64-zephyr-elf-as -march=rv32im_zicsr)."""
     a = Asm()
     a.label("top")
     a.lui("a1", 0x40000)  # 400005b7
@@ -301,6 +301,8 @@ def selftest():
         "csrrw zero,mtvec,t0": (i_type(0, "t0", 1, "zero", 0x73) | (0x305 << 20), 0x30529073),
         "csrrs t0,mcause,zero": (i_type(0, "zero", 2, "t0", 0x73) | (0x342 << 20), 0x342022F3),
         "sub t0,t1,t2": (r_type(0x20, "t2", "t1", 0, "t0"), 0x407302B3),
+        "mulhsu a2,a0,a1": (r_type(1, "a1", "a0", Asm.MUL_OPS.index("mulhsu"), "a2"), 0x02B52633),
+        "remu t0,t1,t2": (r_type(1, "t2", "t1", Asm.MUL_OPS.index("remu"), "t0"), 0x027372B3),
     }
     for text, (got, want) in checks.items():
         assert got == want, f"{text}: got 0x{got:08x}, want 0x{want:08x}"

@@ -33,7 +33,7 @@ FLASH_BYTES = 4 * 1024 * 1024
 BOOT_CYCLES = 2_000_000_000
 LINE_CYCLES = 500_000_000
 # bc_clone_py's self-test: the wait for each line of its report (its slowest case, recursive
-# f(20), measured ~64M cycles), and the most lines a report has
+# f(20), measured ~56M cycles), and the most lines a report has
 BC_CASE_CYCLES = 500_000_000
 BC_REPORT_LINES = 40
 # The second stage loads ~200 cycles a byte (s1_env.RUN_LOAD_CYCLES): ~70M for ~357 KB

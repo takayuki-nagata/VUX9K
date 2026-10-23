@@ -1,6 +1,6 @@
 [package]
 name = "vux9k_emu"
-description = "Cycle-counting emulator of the VUX9K SoC (RV32I + Hack CPU, memories, peripherals)"
+description = "Cycle-counting emulator of the VUX9K SoC (RV32IM + Hack CPU, memories, peripherals)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -19,7 +19,7 @@ const SLEEP_MS: i32 = 100;
 #[no_mangle]
 pub extern "C" fn rust_main() {
     zephyr_print_c(b"\n[Rust App] Hello from Rust running on Zephyr RTOS!\n\0");
-    zephyr_print_c(b"[Rust App] Executing on VUX9K RISC-V RV32I Dual-ISA SoC.\n\0");
+    zephyr_print_c(b"[Rust App] Executing on VUX9K RISC-V RV32IM Dual-ISA SoC.\n\0");
 
     for i in 1..=5 {
         zephyr_print_c(b"[Rust Task] Task iteration \0");

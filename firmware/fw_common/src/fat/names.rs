@@ -17,7 +17,7 @@ const CHARS: [usize; 13] = [1, 3, 5, 7, 9, 14, 16, 18, 20, 22, 24, 28, 30];
 pub(crate) const DOT: [u8; 11] = *b".          ";
 pub(crate) const DOTDOT: [u8; 11] = *b"..         ";
 
-/// n * 13 by shifts (RV32I has no multiply).
+/// n * 13 by shifts (a `mul` takes 35 cycles).
 fn times13(n: u8) -> usize {
     let n = n as usize;
     (n << 3) + (n << 2) + n

@@ -13,7 +13,7 @@
 //!
 //! A volume is FAT32 when its BPB says so (`FATSz16 == 0`), whatever its cluster count,
 //! so small test images work; FAT16 and exFAT are refused (`NotFat32`). No multiply or
-//! divide (RV32I has neither): sectors per cluster is a power of two, and cluster
+//! divide (a `mul` or `div` takes 35 cycles): sectors per cluster is a power of two, and cluster
 //! arithmetic shifts by it. tests/fat_images/ holds images mkfs.fat and mtools made
 //! (sim/emu/test_fat_images.py), which the host tests read.
 

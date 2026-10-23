@@ -36,7 +36,7 @@ int main(void)
 {
 	printk("\n========================================\n");
 	printk("  Zephyr RTOS Booting on VUX9K SoC!     \n");
-	printk("  Dual-ISA (RV32I & Hack) FPGA Platform \n");
+	printk("  Dual-ISA (RV32IM & Hack) FPGA Platform\n");
 	printk("========================================\n");
 
 	printk("[Zephyr Kernel] Kernel initialized successfully.\n");
