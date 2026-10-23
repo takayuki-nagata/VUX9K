@@ -31,7 +31,7 @@ Around it: **Zephyr RTOS** board support for the real board (C or Rust applicati
 |  |                                                                             |  |
 |  |   +-----------------------+     +-------------------+     +-------------+   |  |
 |  |   |  ISA mode register    | --> |  Multi-Cycle FSM  | --> | Shared ALU  |   |  |
-|  |   | (RV32I vs Hack 16-bit)|     | (FETCH->EXEC->MEM)|     | (32-bit ops)|   |  |
+|  |   | (RV32IM / Hack 16-bit)|     | (FETCH->EXEC->MEM)|     | (32-bit ops)|   |  |
 |  |   +-----------------------+     +-------------------+     +-------------+   |  |
 |  |               |                                                  |          |  |
 |  |   +-----------------------+                         +-------------------+   |  |
@@ -88,10 +88,10 @@ The RTL modules in this repository were originally authored in VHDL-2008 and hav
 - **UART Controller (`uart_controller`)**: Ported from [`takayuki-nagata/uart_controller`](https://github.com/takayuki-nagata/uart_controller)
   - Parameterized baud rate clock timer (18.0 MHz -> 115200 bps), 8N1 serial framing, and dual 32-entry synchronous TX/RX FIFOs.
 - **Arbitrary-Precision Math Engine & REPL (`vendor/bc_clone_rs`)**: Submodule from [`takayuki-nagata/bc_clone_rs`](https://github.com/takayuki-nagata/bc_clone_rs)
-  - Embedded `bc_core` arbitrary-precision arithmetic engine with 10/10 math test suite running atop Zephyr RTOS. At about 260 KB it runs on the board from the PSRAM (`make build-zephyr`, `\VUX9K\APPS\BC.BIN` started by the second stage's `run`), through the caches in front of it: about 3 s from its start to the first `bc> ` (51M cycles on the emulator, which the RTL matches cycle for cycle).
+  - Embedded `bc_core` arbitrary-precision arithmetic engine with 10/10 math test suite running atop Zephyr RTOS. At about 260 KB it runs on the board from the PSRAM (`make build-zephyr`, `\VUX9K\APPS\BC.BIN` started by the second stage's `run`), through the caches in front of it: about 2 s from its start to the first `bc> ` (36M cycles on the emulator, which the RTL matches cycle for cycle; 51M before RV32M).
 - **MicroPython (`make build-micropython`)**: [MicroPython](https://micropython.org)'s Zephyr port, from its release tarball (fetched into `vendor/`, not part of this repository)
   - Its REPL on the board's UART, run from the PSRAM like bc (`\VUX9K\APPS\MPY.BIN`, ~357 KB): about 40 ms from its start to the first `>>> ` (0.73M cycles on the emulator, which the RTL matches cycle for cycle); Ctrl-C stops a running program. The port's full configuration less networking and sensors: arbitrary-precision integers, `time`, f-strings, a 256 KB heap.
-  - [bc_clone_py](https://github.com/takayuki-nagata/bc_clone_py), the bc calculator in pure Python, frozen into the image (fetched like MicroPython, at a pinned commit): `import bc_clone; bc_clone.repl(mathlib=True)` (`quit` returns to `>>> `), `import bc_selftest; bc_selftest.run()` (16 cases, ~26 s on the board). A bc line takes about 0.5 s (~9M cycles on the emulator; `4*a(1)` at scale 20 took 1.6 s on the board).
+  - [bc_clone_py](https://github.com/takayuki-nagata/bc_clone_py), the bc calculator in pure Python, frozen into the image (fetched like MicroPython, at a pinned commit): `import bc_clone; bc_clone.repl(mathlib=True)` (`quit` returns to `>>> `), `import bc_selftest; bc_selftest.run()` (16 cases, ~21 s on the board). A bc line takes about 0.5 s (~8M cycles on the emulator; `4*a(1)` at scale 20 took 1.0 s on the board).
 - **Hack Toolchain & C Firmware (`hack_demo`)**: Powered by [`takayuki-nagata/hack_tools`](https://github.com/takayuki-nagata/hack_tools) (`has` assembler & `m2h` transpiler)
   - 16-bit C and Hack assembly firmware testing recursive arithmetic, Fibonacci, array manipulations, and MMIO UART output.
 
@@ -151,7 +151,7 @@ The data side:
 | `0x6004` - `0x600F` | **GPIO** | Register = address bits `[3:0]`: `0x6004` button (1 = pressed), `0x6008` ISA for the next soft reset, `0x600C` soft reset in progress (read) and trigger (write). The LED register (GPIO `0x0`) is unreachable from Hack mode. To soft-reset, store the short key `0x0000_A55A`: an `@n` holds at most `0x7FFF`, but Hack registers are 32 bits wide in this CPU, so `0x255A + 0x4000 + 0x4000` forms it (`!0x5AA5` gives `0xFFFF_A55A`, which is ignored) |
 | other | unmapped | Reads 0, writes ignored |
 
-**ISA selection.** Power-on starts RV32I, at `0x0000_0000` (the first stage). The ISA changes only at a soft reset: a loader that soft-resets into a program gives its ISA in GPIO register `0x8` first (`0x100` = Hack, `0x101` = RV32I), and the CPU starts in it at address 0; a soft reset without a mode starts RV32I, so a Hack program that soft-resets (`0x0000_A55A` to `0x600C`) without writing `0x6008` goes back to the first stage. To start a Hack program, put it into the I segment (`0x8000_0000`), write `0x100` to `0x4000_3008` and the soft-reset key to `0x4000_300C`, as the second stage's `run` does.
+**ISA selection.** Power-on starts RV32IM, at `0x0000_0000` (the first stage). The ISA changes only at a soft reset: a loader that soft-resets into a program gives its ISA in GPIO register `0x8` first (`0x100` = Hack, `0x101` = RV32IM), and the CPU starts in it at address 0; a soft reset without a mode starts RV32IM, so a Hack program that soft-resets (`0x0000_A55A` to `0x600C`) without writing `0x6008` goes back to the first stage. To start a Hack program, put it into the I segment (`0x8000_0000`), write `0x100` to `0x4000_3008` and the soft-reset key to `0x4000_300C`, as the second stage's `run` does.
 
 ### Two-stage boot: the first stage and the SD card
 
@@ -196,7 +196,7 @@ followed by the payload, without padding:
 | `0x00` - `0x03` | Magic Number | `u32` | `0x56555839` (`"VUX9"` ASCII) |
 | `0x04` - `0x05` | Header Version | `u16` | `4`; any other value is rejected |
 | `0x06` - `0x07` | Reserved | `u16` | `0`; any other value is rejected |
-| `0x08` - `0x0B` | ISA Mode | `u32` | `0` = Nand2Tetris Hack 16-bit, `1` = RISC-V RV32I (a second stage must be `1`) |
+| `0x08` - `0x0B` | ISA Mode | `u32` | `0` = Nand2Tetris Hack 16-bit, `1` = RISC-V RV32IM (a second stage must be `1`) |
 | `0x0C` - `0x0F` | Payload Length | `u32` | Bytes after the header; the file is exactly 64 + this |
 | `0x10` - `0x13` | Load Address | `u32` | Where the payload goes; for a second stage inside `0x8070_0000`-`0x807F_FFFF` |
 | `0x14` - `0x17` | Entry Point | `u32` | RV32: word-aligned, inside the loaded payload |
