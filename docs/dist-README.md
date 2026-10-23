@@ -39,11 +39,12 @@ python3 tools/vux_tool.py put sd/VUX9K/APPS/HELLO.BIN VUX9K/APPS/HELLO.BIN
 python3 tools/vux_tool.py run-app VUX9K/APPS/HELLO.BIN
 ```
 
-Upgrading a board from v0.2.x: write this `bitstream/pack.fs` to the flash
-(`openFPGALoader -b tangnano9k -f bitstream/pack.fs`) and prepare the card as above; a v0.2.x
-card whose first partition is FAT32 works as it is, and its slots are left alone, no longer
-read. Applications built for
-v0.2.x must be rebuilt. Section 2 of `docs/APP_DEVELOPMENT.md` has the steps.
+Upgrading a board from v0.3.x: write this `bitstream/pack.fs` to the flash first
+(`openFPGALoader -b tangnano9k -f bitstream/pack.fs`), then install the second stage and put
+the applications as above. The second stage and the applications use RV32M, which v0.3.x's
+bitstream doesn't have: on it, the second stage says so and stops. From v0.2.x, also
+`mkdir VUX9K/APPS`; its card's first partition must be FAT32, and its applications must be
+rebuilt. Section 2 of `docs/APP_DEVELOPMENT.md` has the steps.
 
 On the emulator:
 

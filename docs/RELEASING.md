@@ -47,11 +47,12 @@ the tag).
 
 `test-hw-upgrade` is the upgrade from the previous release (the Makefile's `PREV_RELEASE`,
 which `make prev-release` fetches from GitHub and checks), its bitstream half: the previous
-release's `pack.fs` into SRAM and its Boot Manager at its prompt, then the candidate's, whose
-first stage boots the card's second stage; it doesn't write the card. The card half, a card as
-v0.2.x left it through docs/APP_DEVELOPMENT.md's "Upgrading from v0.2.x" steps, is the
-emulator's `sim/emu/test_upgrade.py`, which CI runs. (Until v0.2.x the way up was tested with
-the slots on the board, which the two-stage boot replaced.)
+release's `pack.fs` into SRAM, whose first stage boots the candidate's second stage from the
+card and the second stage stops at its RV32M check (the card written before the flash), then
+the candidate's, whose first stage boots the same second stage to its prompt; it doesn't write
+the card, which must hold the candidate's second stage (run `test-hw-dist` first). The card
+half, a card as v0.3.x left it through docs/APP_DEVELOPMENT.md's "Upgrading from v0.3.x" steps,
+is the emulator's `sim/emu/test_upgrade.py`, which CI runs.
 
 ## 3. Tag
 

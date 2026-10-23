@@ -398,8 +398,8 @@ $(BC_PY_STAMP):
 
 # The previous release's archive, as GitHub publishes it, for the upgrade tests from it
 # (sim/emu/test_upgrade.py, test-hw-upgrade); a build input, so in build/
-PREV_RELEASE = v0.2.0
-PREV_SHA256 = f71675fe99981d5861d04de33d9e719940bf22a0b1f2915d0e3ff2df05ef0ecd
+PREV_RELEASE = v0.3.0
+PREV_SHA256 = d743cba65941e6f61bd422178e3d5288a68f2573796650c9a8931e7715477112
 PREV_URL = https://github.com/takayuki-nagata/VUX9K/releases/download/$(PREV_RELEASE)/vux9k-$(PREV_RELEASE)-linux-x86_64.tar.gz
 PREV_DIR = $(BUILD_DIR)/previous/vux9k-$(PREV_RELEASE)
 PREV_STAMP = $(PREV_DIR)/.vux9k-fetched-$(PREV_SHA256)

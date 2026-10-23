@@ -118,10 +118,11 @@ clock-and-board.md, "Board UART output that is noise: ModemManager and the bridg
   instead: it takes `IRQECHO.BIN` and `pack.fs` from the tree. Given only `--bin`, the script
   once left the board on a weeks-old local `pack.fs` after a dist run.
 - `make test-hw-upgrade DIST=<dir>` (`scripts/test_hw_upgrade.py`): the previous release's
-  `pack.fs` (`make prev-release`: `PREV_RELEASE`, v0.2.0, fetched into `build/previous/`) into
-  SRAM, its Boot Manager's banner and `vux>`, then the tree's `pack.fs`, its first stage
-  booting the card's second stage; no card writes. Not `r` at `vux>`: the Resident Loader then
-  starts slot 0, which a FAT32 card from mkfs doesn't have (it stops at `[RL] Slot 0`). The
-  card half is `sim/emu/test_upgrade.py` in `test-emu`: v0.2.0's slots written by its own tool
-  in front of a FAT32 partition, then docs/APP_DEVELOPMENT.md's upgrade steps with this tree's
-  `vux_tool` (~40 s).
+  `pack.fs` (`make prev-release`: `PREV_RELEASE`, v0.3.0, fetched into `build/previous/`) into
+  SRAM, its first stage booting the card's second stage (the tree's, as `test-hw-dist` leaves
+  it), which stops at its RV32M check; then the tree's `pack.fs`, its first stage booting the
+  same second stage to `s2> `; no card writes. The output before the port reopens after a load
+  may be cut, so step 1 waits only for the second stage's message. The card half is
+  `sim/emu/test_upgrade.py` in `test-emu`: a card with v0.3.0's second stage and demos through
+  docs/APP_DEVELOPMENT.md's upgrade steps with this tree's `vux_tool`, and v0.3.0's first stage
+  on a CPU without M (`m_ext`) booting this tree's second stage.

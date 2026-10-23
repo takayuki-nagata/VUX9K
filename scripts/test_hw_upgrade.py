@@ -4,13 +4,13 @@
 
 """
 The upgrade from the previous release on the board, its bitstream half: the previous
-release's bitstream (v0.2.x, the Boot Manager) loaded into the FPGA's SRAM, its Boot Manager
-seen at its `vux>` prompt; then the candidate's, whose first stage boots the second stage on
-the card to `s2> `. Both are SRAM loads (the flash is left alone) and neither writes the card:
-the Boot Manager only reads slot 0's header as it starts (a v0.2.x layout, slots in LBA
-64-703, isn't needed; the card stays FAT32 as test-hw-dist left it). The card half, a v0.2.x
-card through docs/APP_DEVELOPMENT.md's steps, is sim/emu/test_upgrade.py. Both trees'
-SHA256SUMS are checked first. Ends on the candidate's bitstream.
+release's bitstream (v0.3.x, a CPU without RV32M) loaded into the FPGA's SRAM, its first stage
+booting the candidate's second stage on the card (as test-hw-dist leaves it), which says it
+needs RV32M and stops: the card written before the flash. Then the candidate's bitstream, whose
+first stage boots the same second stage to `s2> `. Both are SRAM loads (the flash is left
+alone) and neither writes the card. The card half, a v0.3.x card through
+docs/APP_DEVELOPMENT.md's steps, is sim/emu/test_upgrade.py. Both trees' SHA256SUMS are checked
+first. Ends on the candidate's bitstream.
 """
 
 import argparse
@@ -27,10 +27,9 @@ from test_hardware import fail_msg, find_loader, load_bitstream, reopen_port, us
 
 import tools.vux_tool as vux_tool  # noqa: E402 (needs REPO_ROOT on sys.path)
 
-BM_PROMPT = "vux> "
-# The Boot Manager's banner as it starts
-BM_BANNER = "VUX9K Dual-ISA RISC-V / Hack SoC Boot Manager (v{})"
-BM_TIMEOUT = 15.0
+# What the second stage prints on a CPU without M (firmware/stage2/bootstrap/start.s)
+NO_M = "VUX9K Stage 2 needs a CPU with RV32M: program the v0.4.0 bitstream or later. Stopped."
+OLD_TIMEOUT = 15.0
 
 
 def manifest(dist):
@@ -46,17 +45,14 @@ def load(loader, dist, port, baud):
     return reopen_port(port, baud)
 
 
-def old_boot_manager(ser, version):
-    """The previous release's Boot Manager at its prompt: its start banner (printed before the
-    port was open, handed over at the open) names its version, `h` its prompt. Not `r`: that
-    reboots through the Resident Loader from slot 0, which a FAT32 card from mkfs doesn't have
-    (it stops at "[RL] Slot 0"). Returns the text."""
-    ser.write(b"h")
-    ser.flush()
-    got, out = vux_tool.read_until(ser, (BM_PROMPT,), BM_TIMEOUT)
-    want = BM_BANNER.format(version)
-    if not got or want not in out:
-        raise TimeoutError(fail_msg(f"No {want!r} and {BM_PROMPT!r} after h.", out))
+def old_bitstream(ser, _versions):
+    """The previous release's first stage boots the card's second stage on its own, and the
+    second stage stops at its RV32M check. What was printed before the port was open is
+    handed over at the open; the first stage's banner may be cut there, so only the second
+    stage's message is required. Returns the text."""
+    got, out = vux_tool.read_until(ser, (NO_M,), OLD_TIMEOUT)
+    if not got:
+        raise TimeoutError(fail_msg(f"No {NO_M!r}.", out))
     return out
 
 
@@ -87,7 +83,6 @@ def main():
 
     for dist in (args.old, args.new):
         release_check.check_sums(dist)
-    bm_version = manifest(args.old)["boot_manager_version"]
     new = manifest(args.new)
     versions = (new["stage1_version"], new["stage2_version"])
     loader = find_loader(args.loader)
@@ -105,7 +100,7 @@ def main():
 
     ok = True
     for name, dist, check, version in (
-        ("1. The previous release's bitstream: its Boot Manager", args.old, old_boot_manager, bm_version),
+        ("1. The previous release's bitstream: the second stage needs RV32M", args.old, old_bitstream, versions),
         ("2. The candidate's bitstream: its first stage boots the second stage", args.new, new_stages, versions),
     ):
         try:

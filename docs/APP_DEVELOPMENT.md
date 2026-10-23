@@ -96,25 +96,29 @@ python3 tools/vux_tool.py run-app VUX9K/APPS/HELLO.BIN
 
 `demos/` holds the Zephyr and Hack demos' raw images for the emulator (section 4).
 
-**Upgrading from v0.2.x.** v0.2.x kept applications and a Boot Manager in slots between the
-card's partition table and its first partition; this release reads only the FAT32 partition
-and ignores them, and leaves them as they are. A v0.2.x card whose first partition is FAT32
-works as it is; one with exFAT or FAT16 there (v0.2.x took any) must be formatted FAT32 as
-above. Write the new bitstream to the flash, then install the second stage and the
-applications over the serial port:
+**Upgrading from v0.3.x.** This release's CPU has the M extension (RV32IM), and its second
+stage and applications use it; v0.3.x's CPU traps those instructions. Write the new
+bitstream to the flash first, then the card: the new first stage still boots v0.3.x's second
+stage and starts its applications (they are RV32I, which this release runs as before), but
+v0.3.x's bitstream can't run the new second stage, which then says "needs a CPU with RV32M:
+program the v0.4.0 bitstream or later" and stops (program the flash then; the card stays as
+it is). The card's format and the v4 files are unchanged: install the second stage and put
+the new applications over the old ones:
 
 ```sh
-openFPGALoader -b tangnano9k -f bitstream/pack.fs
-python3 tools/vux_tool.py sd-info                                 # no STAGE2.BIN yet
-python3 tools/vux_tool.py install-stage2 sd/VUX9K/STAGE2.BIN
-python3 tools/vux_tool.py mkdir VUX9K/APPS
+openFPGALoader -b tangnano9k -f bitstream/pack.fs                 # first
+python3 tools/vux_tool.py install-stage2 sd/VUX9K/STAGE2.BIN      # the old one becomes STAGE2.OLD
 python3 tools/vux_tool.py put sd/VUX9K/APPS/HELLO.BIN VUX9K/APPS/HELLO.BIN
 python3 tools/vux_tool.py run-app VUX9K/APPS/HELLO.BIN
 ```
 
-(or copy `sd/VUX9K/` to the card with a PC). Applications built for v0.2.x don't run: they
-ran from the block RAM, and their slot images are v3 files, which `run` refuses ("not a VUX9
-v4 file"). Rebuild them for the PSRAM (section 3).
+(or copy `sd/VUX9K/` to the card with a PC, after the flash). **From v0.2.x**, whose
+applications and Boot Manager were in slots between the partition table and the first
+partition: the same steps, with `python3 tools/vux_tool.py mkdir VUX9K/APPS` before the first
+`put`. This release ignores the slots and leaves them as they are; the first partition must be
+FAT32 (v0.2.x took exFAT and FAT16 too: format it as above). v0.2.x's applications don't run:
+they ran from the block RAM, and their slot images are v3 files, which `run` refuses ("not a
+VUX9 v4 file"). Rebuild them for the PSRAM (section 3).
 
 ## 3. Building an application
 
@@ -350,7 +354,9 @@ header, `\VUX9K\STAGE2.BIN` on a FAT32 card, and the state a program starts in. 
 releases of one minor version, a patch release doesn't break applications or SD cards: an
 application that uses only what is documented, and a card prepared for an earlier patch
 release, keep working. (The v0.2.x releases, the previous revision, kept that promise for
-their slots, which this revision no longer reads.)
+their slots, which this revision no longer reads.) v0.4.0 added RV32M to this revision: v0.3.x's
+applications and cards keep working on it, but software built for v0.4.0 or later needs its
+bitstream ("Upgrading from v0.3.x", section 2).
 
 A later hardware revision makes no such promise. Its memory map, registers, file format,
 SD card layout and loaders may all change, and its release says how to rebuild and
