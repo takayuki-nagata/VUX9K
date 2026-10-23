@@ -145,6 +145,13 @@ ACCEPTED: dict[str, dict[str, str]] = {
         " shift register holds; CNT (434 here, 156 in the SoC) is even, so it is back to the right value on"
         " every rdy; data differs only without rdy",
     },
+    "rv32m_muldiv": {
+        # The step counter (31 down to 0) with bit 4 read inverted while bit 3 is 0: the values
+        # read are a permutation of 31..0 that still ends at 0, so every operation takes 32
+        # steps and count == 0 (MULH's last subtract, the end) holds only on the last one.
+        "cnot0 Q[4] ctrl 3 count[4] @ rv32m_muldiv.sv:36.20-36.25 rv32m_muldiv.sv:82.5-133.8": "equivalent:"
+        " still 32 steps, count reads 0 only on the last; dprove times out",
+    },
     "unified_cpu": {
         # Re-keyed: the waiting Hack M write in HACK_WB moved MEM_WAIT's code two lines down (same cell)
         "const0 B[23] @ unified_cpu.sv:605.25-613.28 unified_cpu.sv:605.29-605.42": "clears bit 23 of"
