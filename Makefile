@@ -39,7 +39,7 @@ HACK_BUILD_DIR := $(BUILD_DIR)/hack
 ZEPHYR_BUILD_DIR ?= $(BUILD_DIR)/zephyr
 SYNTH_DIR := $(BUILD_DIR)/synth
 
-.PHONY: all hello apps micropython-src linux-src linux-rootfs linux prev-release build-micropython sim-stage2 sim-zephyr-demo-gls sim-hw-suite-emu lint-rtl check-rtl-syntax coverage-fcov mutation act4-elfs test-act4 test-act4-gls test-act4-emu test-isa-waits emu emu-py emu-test emu-bench test-isa-emu test-isa-emu-linux test-emu test-fw-host test-fat firmware-size coverage-fw coverage-rust coverage-rust-tool sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hw-dist test-hw-irq-echo test-hw-irq-echo-dist test-hw-upgrade dist check-dist test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware hwtest hw-smoke sim-unit sim-psram-contract sim-psram-icarus sim-unit-random sim-boot sim-soc sim test-isa test-isa-gls zephyr-bc-lib build-zephyr build-zephyr-demo build-zephyr-irq-echo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-irq-echo-rtl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
+.PHONY: all hello apps micropython-src linux-src linux-rootfs linux test-linux-emu prev-release build-micropython sim-stage2 sim-zephyr-demo-gls sim-hw-suite-emu lint-rtl check-rtl-syntax coverage-fcov mutation act4-elfs test-act4 test-act4-gls test-act4-emu test-isa-waits emu emu-py emu-test emu-bench test-isa-emu test-isa-emu-linux test-emu test-fw-host test-fat firmware-size coverage-fw coverage-rust coverage-rust-tool sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hw-dist test-hw-irq-echo test-hw-irq-echo-dist test-hw-upgrade dist check-dist test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware hwtest hw-smoke sim-unit sim-psram-contract sim-psram-icarus sim-unit-random sim-boot sim-soc sim test-isa test-isa-gls zephyr-bc-lib build-zephyr build-zephyr-demo build-zephyr-irq-echo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-irq-echo-rtl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
 
 all: test-ci
 
@@ -572,6 +572,11 @@ test-isa-emu: emu-py
 # emulator only), plus rv32ua: env/p runs rv32ui/um/ua in U-mode then
 test-isa-emu-linux: emu-py
 	$(PYTHON) scripts/run_riscv_tests.py --backend emu --linux-ext
+
+# noMMU Linux to busybox's shell on the emulator's Linux profile (sim/emu/test_linux.py, which
+# skips without make linux's Image): by hand, not in test-sim (make linux builds buildroot)
+test-linux-emu: emu-py linux
+	VUX9K_LINUX_TEST=1 $(PYTHON) -m pytest -s sim/emu/test_linux.py
 
 LOCKSTEP_TRACE_FILE = $(BUILD_DIR)/sim/verilator/tb_soc_top/run_test_soc_lockstep/lockstep.trace
 
