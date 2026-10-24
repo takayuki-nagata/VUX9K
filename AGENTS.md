@@ -25,6 +25,7 @@ hack_demo/              Standalone Hack 16-bit C/asm demo app (toolchain self-te
 zephyr_workspace/       Zephyr west module: board/SoC/driver/dts support for "vux9k"
   app/                  Zephyr Rust demo (C glue + rust_demo staticlib; docs/agents/zephyr.md)
   irq_echo/             Zephyr interrupt-driven UART echo (C), the driver's IRQ API test
+linux_workspace/        noMMU Linux: buildroot external tree, kernel fragment, the emulator's DTS
 sim/                    cocotb/pytest RTL testbenches
   unit/                 cocotb unit tests (single RTL module each)
   integration/          cocotb SoC-level integration tests + sdcard_model.py/virtual_serial.py
@@ -39,7 +40,7 @@ docs/agents/            Topic guides for agents (this file indexes them)
 build/                  ALL generated/build output (gitignored) — see below
 ```
 
-Everything under `soc/`, `firmware/`, `hack_demo/`, `zephyr_workspace/`, `scripts/`,
+Everything under `soc/`, `firmware/`, `hack_demo/`, `zephyr_workspace/`, `linux_workspace/`, `scripts/`,
 `tools/` is source. Nothing generated should ever be written outside `build/`
 except the root `firmware.hex` symlink described below
 (docs/agents/layout.md, "`build/`").
@@ -107,6 +108,7 @@ except the root `firmware.hex` symlink described below
 | CPU ISA behavior, CSRs, `tb_hex_runner`, `scripts/run_riscv_tests.py`, `scripts/{riscv_tests,act4}/` | [isa-tests.md](docs/agents/isa-tests.md) |
 | `firmware/`, the file format in `tools/vux_tool.py`, firmware coverage | [firmware.md](docs/agents/firmware.md) |
 | `zephyr_workspace/` | [zephyr.md](docs/agents/zephyr.md) |
+| `linux_workspace/`, `make linux`, the emulator's Linux profile | [linux.md](docs/agents/linux.md) |
 | `make dist`, releases, `.github/workflows/`, `docs/APP_DEVELOPMENT.md` | [dist-release.md](docs/agents/dist-release.md) |
 | `make mutation`, `make coverage`, `coverage/thresholds.toml` | [quality.md](docs/agents/quality.md) |
 | `build/` layout, moving files, `Makefile` paths, the post-move checklist | [layout.md](docs/agents/layout.md) |

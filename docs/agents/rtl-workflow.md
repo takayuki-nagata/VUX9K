@@ -98,6 +98,10 @@ against the RTL: tb_soc_top.sv writes a trace in RTL builds (`VUX9K_RTL_TRACE`) 
   sim/emu/test_sd_transcripts.py`) must stay green on both sides.
 - Firmware bugs the tests expose are pinned as `xfail(strict=True)` with the reason
   until they are fixed, so the fix shows up as an XPASS.
+- The `linux` profile is the exception: it is ahead of the RTL on purpose (A, U-mode, a
+  CLINT block, a liteuart view; linux.md). The lockstep covers `real` only. When the RTL gains
+  one of those, the profile's version becomes the model it has to match, and it moves into
+  `real` with a lockstep program.
 
 ## Synthesis flags (`SYNTH_GOWIN_OPTS = -nowidelut -no-rw-check`)
 
