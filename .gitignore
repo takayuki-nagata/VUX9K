@@ -32,6 +32,10 @@ vendor/micropython-*/
 vendor/bc_clone_py/
 vendor/bc_clone_py.part/
 
+# The Linux kernel's and buildroot's release tarballs, unpacked on demand by `make linux-src`
+vendor/linux-*/
+vendor/buildroot-*/
+
 # Simulation stray artifacts (non-standard names cocotb/Icarus occasionally leave behind)
 sim/soc_top
 sim/e~*

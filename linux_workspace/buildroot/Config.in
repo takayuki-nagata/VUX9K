@@ -1,0 +1,4 @@
+# Copyright (c) 2026 Takayuki Nagata
+# SPDX-License-Identifier: MIT
+
+# No packages of our own: the external tree holds only the defconfig and the board's scripts

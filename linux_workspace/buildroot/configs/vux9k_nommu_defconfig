@@ -1,0 +1,26 @@
+# Copyright (c) 2026 Takayuki Nagata
+# SPDX-License-Identifier: MIT
+
+# The toolchain and the busybox initramfs for VUX9K's noMMU Linux, after buildroot's
+# qemu_riscv32_nommu_virt_defconfig: RV32IMA (no F/D/C, the CPU has none), ilp32, uClibc-ng and
+# FLAT executables. The kernel is not buildroot's: make linux builds vendor/linux-* with this
+# toolchain and the rootfs.cpio as its initramfs.
+BR2_riscv=y
+BR2_riscv_custom=y
+BR2_RISCV_ISA_RVM=y
+BR2_RISCV_ISA_RVA=y
+BR2_RISCV_32=y
+# BR2_RISCV_USE_MMU is not set
+BR2_RISCV_ABI_ILP32=y
+BR2_BINFMT_FLAT=y
+BR2_KERNEL_HEADERS_6_18=y
+BR2_DOWNLOAD_FORCE_CHECK_HASHES=y
+BR2_GLOBAL_PATCH_DIR="board/qemu/patches"
+BR2_TARGET_GENERIC_HOSTNAME="vux9k"
+BR2_TARGET_GENERIC_ISSUE="Welcome to VUX9K"
+# The shell straight on the console, no login (board/post-build.sh)
+# BR2_TARGET_GENERIC_GETTY is not set
+BR2_SYSTEM_DHCP=""
+BR2_ROOTFS_POST_BUILD_SCRIPT="$(BR2_EXTERNAL_VUX9K_PATH)/board/post-build.sh"
+# BR2_TARGET_ROOTFS_TAR is not set
+BR2_TARGET_ROOTFS_CPIO=y

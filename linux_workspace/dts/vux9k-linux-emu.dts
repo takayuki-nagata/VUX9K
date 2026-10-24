@@ -1,0 +1,64 @@
+// Copyright (c) 2026 Takayuki Nagata
+// SPDX-License-Identifier: MIT
+
+// The emulator's Linux profile (vux9k-emu --profile linux): ahead of the RTL, which has neither
+// the CLINT block nor the liteuart registers (docs/agents/linux.md). The memory is the PSRAM up
+// to the first stage's data (0x806F_0000); the DTB itself sits at its top.
+/dts-v1/;
+
+/ {
+	#address-cells = <1>;
+	#size-cells = <1>;
+	model = "VUX9K (emulator, Linux profile)";
+	compatible = "vux9k,linux-emu";
+
+	chosen {
+		stdout-path = &uart0;
+	};
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		timebase-frequency = <18000000>;
+
+		cpu0: cpu@0 {
+			device_type = "cpu";
+			reg = <0>;
+			compatible = "riscv";
+			riscv,isa-base = "rv32i";
+			/* No zicntr: mcounteren is 0, so cycle/time/instret trap in U-mode */
+			riscv,isa-extensions = "i", "m", "a", "zicsr", "zifencei";
+			mmu-type = "riscv,none";
+
+			cpu0_intc: interrupt-controller {
+				#address-cells = <0>;
+				#interrupt-cells = <1>;
+				compatible = "riscv,cpu-intc";
+				interrupt-controller;
+			};
+		};
+	};
+
+	memory@80000000 {
+		device_type = "memory";
+		reg = <0x80000000 0x6f0000>;
+	};
+
+	soc {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		compatible = "simple-bus";
+		ranges;
+
+		clint@20000000 {
+			compatible = "riscv,clint0";
+			reg = <0x20000000 0x10000>;
+			interrupts-extended = <&cpu0_intc 3>, <&cpu0_intc 7>;
+		};
+
+		uart0: serial@40000000 {
+			compatible = "litex,liteuart";
+			reg = <0x40000000 0x100>;
+		};
+	};
+};

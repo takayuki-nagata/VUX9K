@@ -44,7 +44,8 @@ jobs:
       - name: Install Host Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-riscv64-linux-gnu device-tree-compiler ninja-build dosfstools mtools
+          # flex bison bc cpio: make linux (buildroot and the kernel), run by hand, not in CI
+          sudo apt-get install -y gcc-riscv64-linux-gnu device-tree-compiler ninja-build dosfstools mtools flex bison bc cpio
 
       - name: Install Rust Toolchain & Target
         uses: dtolnay/rust-toolchain@master

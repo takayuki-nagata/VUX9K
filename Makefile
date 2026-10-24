@@ -39,7 +39,7 @@ HACK_BUILD_DIR := $(BUILD_DIR)/hack
 ZEPHYR_BUILD_DIR ?= $(BUILD_DIR)/zephyr
 SYNTH_DIR := $(BUILD_DIR)/synth
 
-.PHONY: all hello apps micropython-src prev-release build-micropython sim-stage2 sim-zephyr-demo-gls sim-hw-suite-emu lint-rtl check-rtl-syntax coverage-fcov mutation act4-elfs test-act4 test-act4-gls test-act4-emu test-isa-waits emu emu-py emu-test emu-bench test-isa-emu test-emu test-fw-host test-fat firmware-size coverage-fw coverage-rust coverage-rust-tool sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hw-dist test-hw-irq-echo test-hw-irq-echo-dist test-hw-upgrade dist check-dist test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware hwtest hw-smoke sim-unit sim-psram-contract sim-psram-icarus sim-unit-random sim-boot sim-soc sim test-isa test-isa-gls zephyr-bc-lib build-zephyr build-zephyr-demo build-zephyr-irq-echo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-irq-echo-rtl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
+.PHONY: all hello apps micropython-src linux-src linux-rootfs linux prev-release build-micropython sim-stage2 sim-zephyr-demo-gls sim-hw-suite-emu lint-rtl check-rtl-syntax coverage-fcov mutation act4-elfs test-act4 test-act4-gls test-act4-emu test-isa-waits emu emu-py emu-test emu-bench test-isa-emu test-emu test-fw-host test-fat firmware-size coverage-fw coverage-rust coverage-rust-tool sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hw-dist test-hw-irq-echo test-hw-irq-echo-dist test-hw-upgrade dist check-dist test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware hwtest hw-smoke sim-unit sim-psram-contract sim-psram-icarus sim-unit-random sim-boot sim-soc sim test-isa test-isa-gls zephyr-bc-lib build-zephyr build-zephyr-demo build-zephyr-irq-echo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-irq-echo-rtl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
 
 all: test-ci
 
@@ -395,6 +395,64 @@ $(MICROPY_STAMP):
 
 $(BC_PY_STAMP):
 	$(call fetch_archive,$(BC_PY_URL),$(BC_PY_SHA256),$(BC_PY_DIR),$(BC_PY_STAMP))
+
+# noMMU Linux: the kernel's release tarball and buildroot's (its toolchain and the
+# busybox initramfs), both unpacked into vendor/ like MicroPython's; linux_workspace/ holds this
+# repository's configurations for them (docs/agents/linux.md)
+LINUX_VERSION = 7.3
+LINUX_SHA256 = 87363c24f10e06321eb362765521094e94471f6bff8bce2d6b3e40f39f004953
+LINUX_URL = https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-$(LINUX_VERSION).tar.xz
+LINUX_DIR = vendor/linux-$(LINUX_VERSION)
+LINUX_STAMP = $(LINUX_DIR)/.vux9k-fetched-$(LINUX_SHA256)
+BUILDROOT_VERSION = 2026.08.1
+BUILDROOT_SHA256 = 34fb7bea8a213ffde39cc02e61703391560f26e0850f03138c722d0b09880f2b
+BUILDROOT_URL = https://buildroot.org/downloads/buildroot-$(BUILDROOT_VERSION).tar.xz
+BUILDROOT_DIR = vendor/buildroot-$(BUILDROOT_VERSION)
+BUILDROOT_STAMP = $(BUILDROOT_DIR)/.vux9k-fetched-$(BUILDROOT_SHA256)
+linux-src: $(LINUX_STAMP) $(BUILDROOT_STAMP)
+
+$(LINUX_STAMP):
+	$(call fetch_archive,$(LINUX_URL),$(LINUX_SHA256),$(LINUX_DIR),$(LINUX_STAMP))
+
+$(BUILDROOT_STAMP):
+	$(call fetch_archive,$(BUILDROOT_URL),$(BUILDROOT_SHA256),$(BUILDROOT_DIR),$(BUILDROOT_STAMP))
+
+# The toolchain (riscv32 uClibc-ng, FLAT) and the busybox initramfs, built by buildroot out of
+# its tree into build/ (its downloads too, checked against its hashes). FORCE_UNSAFE_CONFIGURE:
+# host-tar's configure refuses to run as root, which a CI container is
+BUILDROOT_OUT = $(BUILD_DIR)/buildroot
+BUILDROOT_MAKE = FORCE_UNSAFE_CONFIGURE=1 $(MAKE) -C $(BUILDROOT_DIR) O=$(CURDIR)/$(BUILDROOT_OUT) \
+	BR2_EXTERNAL=$(CURDIR)/linux_workspace/buildroot BR2_DL_DIR=$(CURDIR)/$(BUILD_DIR)/downloads/buildroot
+LINUX_ROOTFS = $(BUILDROOT_OUT)/images/rootfs.cpio
+linux-rootfs: $(BUILDROOT_STAMP)
+	$(BUILDROOT_MAKE) vux9k_nommu_defconfig
+	$(BUILDROOT_MAKE)
+
+# The kernel from vendor/linux-*, built with that toolchain: rv32_nommu_virt_defconfig with
+# linux_workspace/kernel/vux9k_nommu.config merged over it and the initramfs built in (Image), and
+# the emulator's device tree. A fragment's value the final .config lacks (a dependency left it
+# out) stops the build; an "is not set" line only if the option ended up set (an option whose
+# dependencies are off is left out of .config altogether).
+LINUX_OUT = $(BUILD_DIR)/linux
+LINUX_FRAGMENT = linux_workspace/kernel/vux9k_nommu.config
+LINUX_MAKE = $(MAKE) -C $(LINUX_DIR) O=$(CURDIR)/$(LINUX_OUT) ARCH=riscv \
+	CROSS_COMPILE=$(CURDIR)/$(BUILDROOT_OUT)/host/bin/riscv32-buildroot-linux-uclibc-
+linux: linux-rootfs $(LINUX_STAMP)
+	@mkdir -p $(LINUX_OUT)
+	echo 'CONFIG_INITRAMFS_SOURCE="$(CURDIR)/$(LINUX_ROOTFS)"' > $(LINUX_OUT)/initramfs.config
+	$(LINUX_MAKE) rv32_nommu_virt_defconfig
+	ARCH=riscv $(LINUX_DIR)/scripts/kconfig/merge_config.sh -m -O $(LINUX_OUT) \
+		$(LINUX_OUT)/.config $(LINUX_FRAGMENT) $(LINUX_OUT)/initramfs.config
+	$(LINUX_MAKE) olddefconfig
+	@grep -hE '^CONFIG_' $(LINUX_FRAGMENT) $(LINUX_OUT)/initramfs.config | \
+		while read -r line; do grep -qxF "$$line" $(LINUX_OUT)/.config || \
+		{ echo "$(LINUX_FRAGMENT): not in the final .config: $$line"; exit 1; }; done
+	@sed -n 's/^# \(CONFIG_[A-Za-z0-9_]*\) is not set$$/\1/p' $(LINUX_FRAGMENT) | \
+		while read -r opt; do ! grep -q "^$$opt=" $(LINUX_OUT)/.config || \
+		{ echo "$(LINUX_FRAGMENT): set in the final .config: $$opt"; exit 1; }; done
+	$(LINUX_MAKE) Image
+	dtc -I dts -O dtb -o $(LINUX_OUT)/vux9k-linux-emu.dtb linux_workspace/dts/vux9k-linux-emu.dts
+	@ls -l $(LINUX_OUT)/arch/riscv/boot/Image $(LINUX_ROOTFS) $(LINUX_OUT)/vux9k-linux-emu.dtb
 
 # The previous release's archive, as GitHub publishes it, for the upgrade tests from it
 # (sim/emu/test_upgrade.py, test-hw-upgrade); a build input, so in build/
