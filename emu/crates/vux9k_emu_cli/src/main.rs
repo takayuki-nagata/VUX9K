@@ -14,7 +14,7 @@
 //!
 //! `--linux IMAGE --dtb DTB` starts a noMMU Linux kernel on the emulator-only Linux profile
 //! (`--profile linux`, ahead of the RTL): no firmware, the kernel in the PSRAM at
-//! 0x8000_0000 and its device tree below the PSRAM's first stage data (`Soc::load_linux`).
+//! 0x8000_0000 and its device tree in the PSRAM's top 64 KB (`Soc::load_linux`).
 //!
 //! The UART is connected to stdout (batch), the terminal (`--stdio`), or a TCP
 //! client (`--tcp PORT`, e.g. `vux_tool.py --port socket://localhost:PORT`).
@@ -51,7 +51,7 @@ usage: vux9k-emu [options]
   --hex FILE          $readmemh words into the ROM from word 0 (RV32 code)
   --linux IMAGE       start a Linux kernel Image at 0x80000000 (implies --profile linux and
                       --no-firmware; needs --dtb)
-  --dtb DTB           with --linux: the flattened device tree, put at 0x806e0000 (a1)
+  --dtb DTB           with --linux: the flattened device tree, put at 0x807f0000 (a1)
   --sd IMAGE          raw SD image (sector n at byte 512 n; vux_tool.py mkfat makes FAT32
                       ones); changes are kept in memory
   --sd-write-back     write the SD image back to IMAGE on exit

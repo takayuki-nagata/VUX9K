@@ -1,0 +1,34 @@
+# Copyright (c) 2026 Takayuki Nagata
+# SPDX-License-Identifier: MIT
+
+# Over buildroot's busybox-minimal.config (the noMMU default): no network, disk, login or
+# daemon applets; the busybox executable is loaded whole into contiguous RAM at every exec
+# CONFIG_IFCONFIG is not set
+# CONFIG_IFUP is not set
+# CONFIG_IFDOWN is not set
+# CONFIG_IP is not set
+# CONFIG_IPADDR is not set
+# CONFIG_IPLINK is not set
+# CONFIG_IPROUTE is not set
+# CONFIG_NETSTAT is not set
+# CONFIG_PING is not set
+# CONFIG_ROUTE is not set
+# CONFIG_UDHCPC is not set
+# CONFIG_HOSTNAME is not set
+# CONFIG_DNSDOMAINNAME is not set
+# CONFIG_MKE2FS is not set
+# CONFIG_MKDOSFS is not set
+# CONFIG_DF is not set
+# CONFIG_FREERAMDISK is not set
+# CONFIG_RESUME is not set
+# CONFIG_NUKE is not set
+# CONFIG_RUN_INIT is not set
+# CONFIG_SETSERIAL is not set
+# CONFIG_LINUX32 is not set
+# CONFIG_LINUX64 is not set
+# CONFIG_SETPRIV is not set
+# CONFIG_GETTY is not set
+# CONFIG_LOGIN is not set
+# CONFIG_START_STOP_DAEMON is not set
+# CONFIG_BASE32 is not set
+# CONFIG_ZCAT is not set

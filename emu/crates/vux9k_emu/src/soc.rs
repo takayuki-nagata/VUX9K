@@ -88,10 +88,10 @@ pub enum Isa {
     Hack,
 }
 
-/// Where `load_linux` puts the device tree: the top 64 KB of the memory the Linux profile's
-/// device tree gives the kernel (0x8000_0000 + 0x6F_0000, below the first stage's data;
-/// linux_workspace/dts/vux9k-linux-emu.dts).
-pub const LINUX_DTB_ADDR: u32 = 0x806E_0000;
+/// Where `load_linux` puts the device tree: the top 64 KB of the PSRAM, all of which the Linux
+/// profile's device tree gives the kernel (linux_workspace/dts/vux9k-linux-emu.dts: the stages'
+/// memory is free once the kernel runs; the kernel keeps the device tree's own pages).
+pub const LINUX_DTB_ADDR: u32 = 0x807F_0000;
 /// The largest device tree `load_linux` takes.
 pub const LINUX_DTB_MAX: usize = 64 * 1024;
 

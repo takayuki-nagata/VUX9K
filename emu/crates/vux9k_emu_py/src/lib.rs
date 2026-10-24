@@ -85,7 +85,7 @@ impl Soc {
     }
 
     /// Start a Linux kernel on the "linux" profile: `image` (the kernel's Image) at
-    /// 0x8000_0000, the device tree `dtb` (at most 64 KB) at 0x806E_0000, the CPU in RV32
+    /// 0x8000_0000, the device tree `dtb` (at most 64 KB) at 0x807F_0000, the CPU in RV32
     /// M-mode at 0x8000_0000 with a0 = 0 and a1 = the device tree. Call it after `reset()`.
     fn load_linux(&mut self, image: &[u8], dtb: &[u8]) -> PyResult<()> {
         self.inner

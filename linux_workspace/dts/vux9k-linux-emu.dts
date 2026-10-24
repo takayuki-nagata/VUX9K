@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: MIT
 
 // The emulator's Linux profile (vux9k-emu --profile linux): ahead of the RTL, which has neither
-// the CLINT block nor the liteuart registers (docs/agents/linux.md). The memory is the PSRAM up
-// to the first stage's data (0x806F_0000); the DTB itself sits at its top.
+// the CLINT block nor the liteuart registers (docs/agents/linux.md). The memory is all of the
+// PSRAM: the stages' memory (0x806F_0000 up) is free once the kernel runs. The DTB sits in its
+// top 64 KB (0x807F_0000), which the kernel keeps.
 /dts-v1/;
 
 / {
@@ -41,7 +42,7 @@
 
 	memory@80000000 {
 		device_type = "memory";
-		reg = <0x80000000 0x6f0000>;
+		reg = <0x80000000 0x800000>;
 	};
 
 	soc {
