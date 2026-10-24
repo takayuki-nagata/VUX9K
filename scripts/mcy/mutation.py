@@ -153,17 +153,21 @@ ACCEPTED: dict[str, dict[str, str]] = {
         " still 32 steps, count reads 0 only on the last; dprove times out",
     },
     "unified_cpu": {
-        # Re-keyed: the waiting Hack M write in HACK_WB moved MEM_WAIT's code two lines down (same cell)
-        "const0 B[23] @ unified_cpu.sv:605.25-613.28 unified_cpu.sv:605.29-605.42": "clears bit 23 of"
+        # Re-keyed: MULDIV_WAIT (B6) moved MEM_WAIT's code 33 lines down (same cells)
+        "const0 B[23] @ unified_cpu.sv:638.25-646.28 unified_cpu.sv:638.29-638.42": "clears bit 23 of"
         " r_hack_data in RV32 mode's MEM_WAIT. Only a Hack instruction with M as operand reads it, in"
         " HACK_WB, after its own MEM_WAIT has reloaded it from data_in; the ISA mode changes only through a"
         " reset, which zeroes it. Equivalent from reset, beyond dprove's reach on the whole CPU",
-        "const0 A[30] @ unified_cpu.sv:602.21-614.24 unified_cpu.sv:602.25-602.35": "clears bit 30 of"
+        "const0 A[30] @ unified_cpu.sv:635.21-647.24 unified_cpu.sv:635.25-635.35": "clears bit 30 of"
         " r_hack_data while a MEM_WAIT waits (data_ready low). In RV32 mode the register is always 0 (reset"
         " zeroes it, only a Hack MEM_WAIT loads it); in Hack mode it holds the previous M read's value then,"
         " and the MEM_WAIT's last cycle reloads it from data_in before HACK_WB reads it. Meanwhile it"
         " reaches only data_out without mem_write and the pc_out of a waiting MEM_WAIT, an instruction read"
         " no FETCH uses (HACK_WB comes next). Differs only outside the interface's contract",
+        "const0 B[1] @ unified_cpu.sv:587.30-630.24 unified_cpu.sv:587.34-587.60": "clears bit 1 of"
+        " r_load_byte_sel as EXECUTE goes to MULDIV_WAIT. It is read only through the LSU's load_val, which"
+        " only a load's MEM_WAIT writes back, and every load sets it in its EXECUTE first. Equivalent from"
+        " reset, beyond dprove's reach on the whole CPU",
         "cnot1 A[27] ctrl 1 @ rv32i_csrs.sv:124.18-175.12 rv32i_csrs.sv:124.22-124.30": "flips bit 27 of"
         " mepc's next value when its bit 1 is set, which never happens: trap entry stores the PC of an RV32"
         " instruction (4-byte aligned; traps never happen in Hack mode, where pc_reg can have bit 1 set)"

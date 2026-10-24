@@ -225,7 +225,9 @@ def half_independence_checks(a, lo, hi):
     """With a pattern in one half of the counter, the other half read twice an odd number
     of cycles apart (an ALU or CSR instruction takes 2 cycles, a load 3): a bit of one half
     that a bit of the other disturbs toggles while it counts or holds, so one of the two
-    reads shows it. Uses t0-t2, s4, t6."""
+    reads shows it. A write to the upper half keeps the lower one counting: read it after
+    such a write, from two values whose bit 2 differs at every count (a mutant that
+    flipped mcycle[2] on each mcycleh write survived). Uses t0-t2, s4, t6."""
     for n, h in enumerate((0, 0x5555_5555, 0xAAAA_AAAA)):
         a.li("t0", h)
         a.csrw(hi, "t0")
@@ -252,6 +254,16 @@ def half_independence_checks(a, lo, hi):
         a.lw("zero", 0, "zero")
         a.csrr("t1", hi)
         expect(a, "t1", h)
+    for n, v in enumerate((0x5555_5551, 0x5555_5555)):  # 4 apart mod 8: bit 2 opposite at each count
+        a.li("t0", v)
+        a.csrw(lo, "t0")
+        a.csrw(hi, "zero")
+        a.csrr("t1", lo)
+        a.sub("t1", "t1", "t0")
+        if n == 0:
+            a.mv("s4", "t1")
+        else:
+            a.bne("t1", "s4", "bad")
 
 
 @cocotb.test(timeout_time=1, timeout_unit="ms")

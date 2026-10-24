@@ -425,6 +425,19 @@ async def test_system_funct3_100_is_illegal(dut):
     await expect_ok(dut, trap_program(body, 2, mtval=lambda a, r: a.li(r, word)))
 
 
+@cocotb.test()
+async def test_misc_mem_funct3_010_is_illegal(dut):
+    """MISC-MEM with funct3 = 010 (neither FENCE nor FENCE.I) is illegal, mtval = the word
+    (a mutant that let every funct3 through survived the riscv-tests, which only use FENCE)"""
+    word = (0b010 << 12) | 0x0F
+
+    def body(a):
+        a.label("insn")
+        a.word(word)
+
+    await expect_ok(dut, trap_program(body, 2, mtval=lambda a, r: a.li(r, word)))
+
+
 # Above the riscv-tests' 256 KB window: the trap path's upper address bits are this test's job
 HIGH_CODE = 0x0034_0400  # bits 21, 20, 18 and 10
 HIGH_MTVEC = 0x0028_0800  # bits 21, 19 and 11
