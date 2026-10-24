@@ -124,6 +124,55 @@ def test_load_addr_errors(args, error):
     assert error in r.stderr, r.stderr
 
 
+def linux_handoff() -> bytes:
+    """An RV32 "kernel" that prints L when it starts as a kernel does on the Linux profile: hart
+    0 in a0, the device tree in a1 (its first word, read back, is the DTB magic's)."""
+    from rv32_asm import Asm
+
+    a = Asm()
+    a.li("s0", 0x4000_0000)  # liteuart RXTX
+    a.li("a2", ord("x"))
+    a.bnez("a0", "out")
+    a.li("t0", 0x807F_0000)
+    a.bne("a1", "t0", "out")
+    a.lw("t1", 0, "a1")
+    a.li("t2", 0xEDFE0DD0)  # 0xd00dfeed, big-endian in memory
+    a.bne("t1", "t2", "out")
+    a.li("a2", ord("L"))
+    a.label("out")
+    a.sb("a2", 0, "s0")
+    a.label("halt")
+    a.j("halt")
+    return b"".join(w.to_bytes(4, "little") for w in a.assemble())
+
+
+def test_linux_starts_the_kernel_with_the_device_tree(tmp_path):
+    image, dtb = tmp_path / "Image", tmp_path / "dtb"
+    image.write_bytes(linux_handoff())
+    dtb.write_bytes(bytes.fromhex("d00dfeed") + bytes(60))
+    r = run("--linux", str(image), "--dtb", str(dtb), "--until", "L", "--cycles", "100000")
+    assert r.returncode == 0, r.stderr
+    assert r.stdout == b"L"
+
+
+@pytest.mark.parametrize(
+    "args,error",
+    [
+        (["--dtb", "x"], b"--dtb needs --linux"),
+        (["--linux", "x"], b"--linux needs --dtb"),
+        (["--linux", "x", "--dtb", "y", "--profile", "real"], b"--profile linux only"),
+        (["--linux", "x", "--dtb", "y", "--firmware", "build/firmware"], b"without firmware"),
+        (["--linux", "x", "--dtb", "y", "--hex", "z"], b"excludes --load and --hex"),
+        (["--linux", "missing-image", "--dtb", "missing-dtb"], b"missing-image"),
+    ],
+    ids=["dtb-alone", "no-dtb", "profile", "firmware", "hex", "missing"],
+)
+def test_linux_errors(args, error):
+    r = run(*args)
+    assert r.returncode != 0
+    assert error in r.stderr, r.stderr
+
+
 def free_port():
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
