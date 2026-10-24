@@ -17,6 +17,11 @@
 //!   soc/soc_top.veryl (vendor/psram_controller), and the caches in front of it
 //!   (soc/soc_icache.veryl, soc/soc_dcache.veryl; crate::cache).
 //!
+//! Except the Linux profile's additions, which are ahead of the RTL and mirror nothing yet
+//! (crate::profile): the A extension (`a_ext`), U-mode (`u_mode`), the CLINT block at
+//! region 2 (crate::periph::clint) and the UART's liteuart view (crate::periph::uart).
+//! With them off (Real, IsaTest) every path below is the RTL's.
+//!
 //! Timing: `cycle` counts SoC clocks (18 MHz) since reset release. An instruction starts
 //! with its FETCH cycle; `Soc::step` executes one instruction and advances `cycle` by
 //! its cost (RV: 2, +1 MEM_WAIT for loads/stores, +`MULDIV_WAIT_CYCLES` for RV32M; Hack: 2, +2 (MEM_WAIT, HACK_WB) when the
@@ -83,6 +88,13 @@ pub enum Isa {
     Hack,
 }
 
+/// Where `load_linux` puts the device tree: the top 64 KB of the memory the Linux profile's
+/// device tree gives the kernel (0x8000_0000 + 0x6F_0000, below the first stage's data;
+/// linux_workspace/dts/vux9k-linux-emu.dts).
+pub const LINUX_DTB_ADDR: u32 = 0x806E_0000;
+/// The largest device tree `load_linux` takes.
+pub const LINUX_DTB_MAX: usize = 64 * 1024;
+
 /// Cycles an RV32M instruction spends in MULDIV_WAIT after its EXECUTE: rv32m_muldiv's 32
 /// steps and its done cycle, the same for every operation and operand.
 pub const MULDIV_WAIT_CYCLES: u32 = 33;
@@ -92,7 +104,7 @@ pub const MULDIV_WAIT_CYCLES: u32 = 33;
 /// start; a Hack image goes to the start of its segment (offset 0). The isa-test profile,
 /// which has no PSRAM, loads RV32 at 0.
 pub fn default_load_addr(profile: Profile, isa: Isa) -> u32 {
-    if profile == Profile::Real && isa == Isa::Rv32 {
+    if profile != Profile::IsaTest && isa == Isa::Rv32 {
         XMEM_BASE
     } else {
         0
@@ -145,6 +157,15 @@ pub struct Soc {
     /// The CPU has RV32M (true, the default). false models the CPU before it (the v0.3.x
     /// bitstreams): misa without M, and the M instructions illegal. Kept across resets.
     pub m_ext: bool,
+    /// The CPU has the A extension (LR.W/SC.W/AMO*.W; misa.A). Off by default; the Linux
+    /// profile turns it on (emulator only, ahead of the RTL). Kept across resets.
+    pub a_ext: bool,
+    /// The CPU has U-mode (mret to MPP = U, ecall from U, M-level CSRs and MRET illegal in
+    /// U, mcounteren hardwired to 0; misa.U). Off by default; the Linux profile turns it on
+    /// (emulator only, ahead of the RTL). Kept across resets.
+    pub u_mode: bool,
+    /// The A extension's reservation: the address of the last LR.W, until an SC.W or a trap.
+    reservation: Option<u32>,
     /// Instructions executed (retired or trapped), for statistics.
     pub steps: u64,
     /// The boot ROM at 0 (Real: 16 KB, the CPU can't write it); IsaTest: the flat RAM.
@@ -157,6 +178,8 @@ pub struct Soc {
     rom_mask: u32,
     /// The IsaTest profile: one flat RAM, `TOHOST` (see `rv_read_word`/`rv_write`).
     isa_test: bool,
+    /// The Linux profile's devices: the CLINT block, the UART's liteuart view.
+    linux: bool,
     /// IsaTest profile: the first value stored to `TOHOST`.
     pub tohost: Option<u32>,
     /// mcycle value set by a CSR write in the current instruction (replaces the count)
@@ -218,9 +241,37 @@ const OP_IMM: u32 = 0x13;
 const OP_REG: u32 = 0x33;
 const OP_FENCE: u32 = 0x0F;
 const OP_SYSTEM: u32 = 0x73;
+const OP_AMO: u32 = 0x2F;
 
-/// rv32i_trap_unit's `is_illegal` for an RV32 instruction word (`m_ext`: RV32M is legal).
-fn rv_illegal(i: u32, m_ext: bool) -> bool {
+// The A extension's funct5 (instruction bits 31:27)
+const AMO_ADD: u32 = 0x00;
+const AMO_SWAP: u32 = 0x01;
+const AMO_LR: u32 = 0x02;
+const AMO_SC: u32 = 0x03;
+const AMO_XOR: u32 = 0x04;
+const AMO_OR: u32 = 0x08;
+const AMO_AND: u32 = 0x0C;
+const AMO_MIN: u32 = 0x10;
+const AMO_MAX: u32 = 0x14;
+const AMO_MINU: u32 = 0x18;
+const AMO_MAXU: u32 = 0x1C;
+
+/// What the CPU implements beyond RV32I and where it runs, for `rv_illegal`.
+#[derive(Clone, Copy)]
+struct Legal {
+    /// RV32M
+    m_ext: bool,
+    /// The A extension (Linux profile)
+    a_ext: bool,
+    /// U-mode exists (Linux profile): mcounteren is a CSR
+    u_mode: bool,
+    /// The hart is in U-mode now
+    user: bool,
+}
+
+/// rv32i_trap_unit's `is_illegal` for an RV32 instruction word (`m_ext`: RV32M is legal),
+/// plus, ahead of the RTL, the A extension and U-mode's rules (`Legal`).
+fn rv_illegal(i: u32, x: Legal) -> bool {
     let f3 = funct3(i);
     let f7 = funct7(i);
     match i & 0x7F {
@@ -234,15 +285,38 @@ fn rv_illegal(i: u32, m_ext: bool) -> bool {
             5 => f7 != 0 && f7 != 0x20,
             _ => false,
         },
-        OP_REG => !(f7 == 0 || (m_ext && f7 == 1) || (f7 == 0x20 && (f3 == 0 || f3 == 5))),
+        OP_REG => !(f7 == 0 || (x.m_ext && f7 == 1) || (f7 == 0x20 && (f3 == 0 || f3 == 5))),
+        OP_AMO => {
+            let f5 = i >> 27;
+            let known = matches!(
+                f5,
+                AMO_ADD
+                    | AMO_SWAP
+                    | AMO_LR
+                    | AMO_SC
+                    | AMO_XOR
+                    | AMO_OR
+                    | AMO_AND
+                    | AMO_MIN
+                    | AMO_MAX
+                    | AMO_MINU
+                    | AMO_MAXU
+            );
+            !x.a_ext || f3 != 2 || !known || (f5 == AMO_LR && rs2(i) != 0)
+        }
         OP_FENCE => f3 >> 1 != 0,
         OP_SYSTEM => {
             if f3 == 0 {
                 !matches!(i, 0x0000_0073 | 0x0010_0073 | 0x3020_0073 | 0x1050_0073)
+                    || (x.user && i == 0x3020_0073) // MRET in U
             } else {
                 let addr = (i >> 20) as u16;
                 let writes = f3 & 3 == 1 || rs1(i) != 0;
-                f3 == 4 || (csr::read_only(addr) && writes) || !csr::exists(addr)
+                let exists = csr::exists(addr) || (x.u_mode && addr == csr::MCOUNTEREN);
+                // In U: the M-level CSRs, and the user counters, which mcounteren (0) denies
+                let denied =
+                    x.user && ((addr >> 8) & 3 == 3 || matches!(addr & 0xF7F, 0xC00..=0xC02));
+                f3 == 4 || (csr::read_only(addr) && writes) || !exists || denied
             }
         }
         _ => true,
@@ -279,12 +353,16 @@ impl Soc {
             periph: Periph::default(),
             riscv_mode: true,
             m_ext: true,
+            a_ext: profile == Profile::Linux,
+            u_mode: profile == Profile::Linux,
+            reservation: None,
             steps: 0,
             rom: vec![0; rom_words],
             xmem: vec![0; profile.xmem_bytes() / 4],
             caches: Caches::default(),
             rom_mask: (rom_words - 1) as u32,
             isa_test: profile == Profile::IsaTest,
+            linux: profile == Profile::Linux,
             tohost: None,
             mcycle_written: None,
             cov: None,
@@ -304,6 +382,7 @@ impl Soc {
         self.periph = Periph::default();
         self.periph.sd.card = card;
         self.riscv_mode = true;
+        self.reservation = None;
         self.cycle = 0;
         self.tohost = None;
     }
@@ -316,6 +395,7 @@ impl Soc {
         self.pc = 0;
         self.csr = Csrs::default();
         self.mcycle_written = None;
+        self.reservation = None;
         self.cycle = sr.release;
         self.riscv_mode = sr.mode.unwrap_or(true);
     }
@@ -435,6 +515,39 @@ impl Soc {
         Ok(())
     }
 
+    /// Start a Linux kernel (the Linux profile, no firmware): the kernel's `Image` at
+    /// 0x8000_0000 and the flattened device tree `dtb` at `LINUX_DTB_ADDR`, written into the
+    /// PSRAM directly; the caches start cold. The CPU starts in RV32 M-mode at 0x8000_0000
+    /// with a0 = 0 (the hart id) and a1 = the device tree, as RISC-V boot loaders hand over.
+    /// Call it after `reset` (or on a new `Soc`).
+    pub fn load_linux(&mut self, image: &[u8], dtb: &[u8]) -> Result<(), String> {
+        if !self.linux {
+            return Err("a Linux kernel needs the linux profile".into());
+        }
+        if dtb.is_empty() || dtb.len() > LINUX_DTB_MAX {
+            return Err(format!(
+                "device tree of {} bytes: must be 1 to {LINUX_DTB_MAX} bytes",
+                dtb.len()
+            ));
+        }
+        let room = (LINUX_DTB_ADDR - XMEM_BASE) as usize;
+        if image.is_empty() || image.len() > room {
+            return Err(format!(
+                "kernel image of {} bytes: must be 1 to {room} bytes (below the device tree at {LINUX_DTB_ADDR:#010x})",
+                image.len()
+            ));
+        }
+        self.load_xmem(XMEM_BASE, image)?;
+        self.load_xmem(LINUX_DTB_ADDR, dtb)?;
+        self.caches = Caches::default();
+        self.pc = XMEM_BASE;
+        self.riscv_mode = true;
+        self.csr.user = false;
+        self.regs[10] = 0;
+        self.regs[11] = LINUX_DTB_ADDR;
+        Ok(())
+    }
+
     /// soc_rom's preload: the ROM from firmware.hex (`$readmemh` text).
     pub fn load_readmemh(&mut self, rom: &str) -> Result<(), String> {
         let words = crate::hexfile::parse(rom)?;
@@ -507,6 +620,8 @@ impl Soc {
         match addr >> 28 {
             // The ROM, repeating every 16 KB across region 0
             0 => self.rom[((addr >> 2) & self.rom_mask) as usize],
+            // The Linux profile's CLINT block, sampled in EXECUTE like the timer
+            2 if self.linux => self.periph.clint.read(addr, &self.periph.timer, t + 1),
             4 => self.mmio_read(addr, t),
             _ if self.in_xmem(addr) => self.xmem[Self::xmem_index(addr)],
             _ => 0,
@@ -527,6 +642,10 @@ impl Soc {
             return;
         }
         match addr >> 28 {
+            2 if self.linux => self
+                .periph
+                .clint
+                .write(addr, data, &mut self.periph.timer, t + 2),
             4 => self.mmio_write(addr, data, t + 2),
             _ if self.in_xmem(addr) => {
                 let idx = Self::xmem_index(addr);
@@ -543,6 +662,7 @@ impl Soc {
     /// combinationally in MEM_WAIT, t + 2.
     fn mmio_read(&mut self, addr: u32, t: u64) -> u32 {
         match (addr >> 12) & 0xF {
+            periph::PAGE_UART if self.linux => self.periph.uart.lite_read(addr, t + 2),
             periph::PAGE_UART => self.periph.uart.read(addr, t + 2),
             periph::PAGE_TIMER => self.periph.timer.read(addr, t + 1),
             periph::PAGE_SD => self.periph.sd.read(addr, t + 1),
@@ -554,6 +674,7 @@ impl Soc {
     /// MMIO write taking effect at the end of cycle `edge`.
     fn mmio_write(&mut self, addr: u32, data: u32, edge: u64) {
         match (addr >> 12) & 0xF {
+            periph::PAGE_UART if self.linux => self.periph.uart.lite_write(addr, data, edge),
             periph::PAGE_UART => self.periph.uart.write(addr, data, edge),
             periph::PAGE_TIMER => self.periph.timer.write(addr, data, edge),
             periph::PAGE_SD => self.periph.sd.write(addr, data, edge),
@@ -613,14 +734,28 @@ impl Soc {
 
     // ----- interrupts -----------------------------------------------------------------
 
+    /// The machine external interrupt during cycle `c`: the RX FIFO holds data; in the
+    /// Linux profile the liteuart view's EV_ENABLE & EV_PENDING.
+    #[inline]
+    fn meip(&mut self, c: u64) -> bool {
+        if self.linux {
+            self.periph.uart.lite_irq(c)
+        } else {
+            self.periph.uart.rx_pending(c)
+        }
+    }
+
     /// Pending interrupt lines (mip) during cycle `c`.
     fn mip_at(&mut self, c: u64) -> u32 {
         let mut mip = 0;
         if self.periph.timer.irq(c) {
             mip |= csr::MIP_MTIP;
         }
-        if self.periph.uart.rx_pending(c) {
+        if self.meip(c) {
             mip |= csr::MIP_MEIP;
+        }
+        if self.linux && self.periph.clint.msip(c) {
+            mip |= csr::MIP_MSIP;
         }
         mip
     }
@@ -634,13 +769,16 @@ impl Soc {
     #[inline]
     fn sample_interrupt(&mut self) -> Option<u32> {
         let enabled = self.csr.mie;
-        if self.csr.mstatus & csr::MSTATUS_MIE == 0 || enabled == 0 {
+        if !self.csr.interrupts_on() || enabled == 0 {
             return None;
         }
         let c = self.cycle;
         let mut mip = 0;
-        if enabled & csr::MIP_MEIP != 0 && self.periph.uart.rx_pending(c) {
+        if enabled & csr::MIP_MEIP != 0 && self.meip(c) {
             mip |= csr::MIP_MEIP;
+        }
+        if enabled & csr::MIP_MSIP != 0 && self.linux && self.periph.clint.msip(c) {
+            mip |= csr::MIP_MSIP;
         }
         if enabled & csr::MIP_MTIP != 0 && self.periph.timer.irq(c) {
             mip |= csr::MIP_MTIP;
@@ -703,6 +841,7 @@ impl Soc {
 
     fn take_trap(&mut self, cause: u32, tval: u32, r: &mut Retire) {
         self.csr.enter_trap(self.pc, cause, tval);
+        self.reservation = None;
         self.pc = self.csr.mtvec;
         r.trap = Some(cause);
         r.cycles = 2;
@@ -719,7 +858,13 @@ impl Soc {
         if let Some(cause) = irq {
             return self.take_trap(cause, 0, r);
         }
-        if rv_illegal(i, self.m_ext) {
+        let legal = Legal {
+            m_ext: self.m_ext,
+            a_ext: self.a_ext,
+            u_mode: self.u_mode,
+            user: self.csr.user,
+        };
+        if rv_illegal(i, legal) {
             return self.take_trap(2, i, r);
         }
         let x1 = self.regs[rs1(i)];
@@ -846,14 +991,22 @@ impl Soc {
                 self.rv_write(addr, data, be, self.cycle);
                 r.store = Some((addr, data, be));
             }
+            OP_AMO => {
+                if let Some(cause) = self.exec_amo(i, r) {
+                    return self.take_trap(cause, x1, r);
+                }
+            }
             OP_FENCE => {} // FENCE / FENCE.I: no-ops
             OP_SYSTEM => {
                 if f3 == 0 {
                     match i {
-                        0x0000_0073 => return self.take_trap(11, 0, r), // ECALL
+                        // ECALL: from M 11, from U (`u_mode`) 8
+                        0x0000_0073 => {
+                            return self.take_trap(if self.csr.user { 8 } else { 11 }, 0, r)
+                        }
                         0x0010_0073 => return self.take_trap(3, pc, r), // EBREAK
                         0x3020_0073 => {
-                            self.csr.mret();
+                            self.csr.mret(self.u_mode);
                             next = self.csr.mepc;
                         }
                         _ => {} // WFI: no-op
@@ -879,8 +1032,16 @@ impl Soc {
         let mut at_execute = self.csr.clone();
         at_execute.mcycle = at_execute.mcycle.wrapping_add(1);
         let mut old = at_execute.read(addr, self.mip(), self.mtime().wrapping_add(1));
-        if addr == csr::MISA && !self.m_ext {
-            old &= !csr::MISA_M;
+        if addr == csr::MISA {
+            if !self.m_ext {
+                old &= !csr::MISA_M;
+            }
+            if self.a_ext {
+                old |= csr::MISA_A;
+            }
+            if self.u_mode {
+                old |= csr::MISA_U;
+            }
         }
         let src = if f3 & 4 != 0 {
             rs1(i) as u32
@@ -905,11 +1066,75 @@ impl Soc {
                     self.csr.write(addr, value);
                     counts = false;
                 }
+                csr::MSTATUS if self.u_mode => {
+                    self.csr.write(addr, value);
+                    self.csr.write_mpp(value);
+                }
                 _ => self.csr.write(addr, value),
             }
         }
         self.write_rd(rd(i), old, r);
         counts
+    }
+
+    /// An A-extension instruction (`a_ext`; rs1 is the address): LR.W, SC.W or an AMO*.W.
+    /// Returns the cause of the trap a misaligned address takes instead (LR: 4, SC/AMO: 6;
+    /// mtval is the address). The memory goes through the data path of LW/SW (the ROM, the
+    /// window with its caches, MMIO, the IsaTest RAM), so its waits and the caches' state
+    /// are as for a load followed by a store. aq/rl are ignored (one hart, in order).
+    ///
+    /// Cycle cost (a placeholder until the RTL has the A extension, L1): LR a load's
+    /// (3 + the read wait), SC a store's (3 + the write wait), or 3 when it fails (no
+    /// store), an AMO a load's plus a store's (6 + both waits).
+    fn exec_amo(&mut self, i: u32, r: &mut Retire) -> Option<u32> {
+        let f5 = i >> 27;
+        let addr = self.regs[rs1(i)];
+        if addr & 3 != 0 {
+            return Some(if f5 == AMO_LR { 4 } else { 6 });
+        }
+        let src = self.regs[rs2(i)];
+        let win = self.in_xmem(addr);
+        let t = self.cycle;
+        if f5 == AMO_SC {
+            let ok = self.reservation.take() == Some(addr);
+            r.cycles = 3;
+            if ok {
+                r.cycles += if win { XMEM_WRITE_LATENCY } else { 0 };
+                self.rv_write(addr, src, 0b1111, t);
+                r.store = Some((addr, src, 0b1111));
+            }
+            self.write_rd(rd(i), !ok as u32, r);
+            return None;
+        }
+        let read_wait = if win && !self.caches.load(Self::xmem_index(addr)) {
+            XMEM_READ_LATENCY
+        } else {
+            0
+        };
+        let old = self.rv_read_word(addr, t);
+        r.cycles = 3 + read_wait;
+        if f5 == AMO_LR {
+            self.reservation = Some(addr);
+            self.write_rd(rd(i), old, r);
+            return None;
+        }
+        let new = match f5 {
+            AMO_SWAP => src,
+            AMO_ADD => old.wrapping_add(src),
+            AMO_XOR => old ^ src,
+            AMO_AND => old & src,
+            AMO_OR => old | src,
+            AMO_MIN => (old as i32).min(src as i32) as u32,
+            AMO_MAX => (old as i32).max(src as i32) as u32,
+            AMO_MINU => old.min(src),
+            _ => old.max(src), // AMO_MAXU; rv_illegal rejects the other funct5
+        };
+        // The store as if made by a store instruction fetched right after the load part
+        self.rv_write(addr, new, 0b1111, t + r.cycles as u64);
+        r.cycles += 3 + if win { XMEM_WRITE_LATENCY } else { 0 };
+        r.store = Some((addr, new, 0b1111));
+        self.write_rd(rd(i), old, r);
+        None
     }
 
     fn step_hack(&mut self, word: u32, r: &mut Retire) {

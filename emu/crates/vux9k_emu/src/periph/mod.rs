@@ -3,11 +3,13 @@
 
 //! Peripherals behind the MMIO pages of soc_addr_decoder (page = addr[15:12]).
 
+pub mod clint;
 pub mod gpio;
 pub mod sdspi;
 pub mod timer;
 pub mod uart;
 
+pub use clint::Clint;
 pub use gpio::{Gpio, SoftReset};
 pub use sdspi::SdSpi;
 pub use timer::Timer;
@@ -24,4 +26,6 @@ pub struct Periph {
     pub gpio: Gpio,
     pub uart: Uart,
     pub sd: SdSpi,
+    /// The Linux profile's CLINT block (its msip; mtime/mtimecmp are `timer`'s).
+    pub clint: Clint,
 }

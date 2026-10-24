@@ -1,0 +1,72 @@
+// Copyright (c) 2026 Takayuki Nagata
+// SPDX-License-Identifier: MIT
+
+//! A CLINT-compatible block (SiFive's layout, Linux's `riscv,clint0`) at RV32 region 2
+//! (`CLINT_BASE`, decoded on addr[15:0] and repeating across the region), in the Linux
+//! profile only: emulator-only, ahead of the RTL, which leaves region 2 unassigned.
+//!
+//! Registers (32-bit words; a byte or halfword access hits its word): 0x0000 msip (bit 0,
+//! the machine software interrupt, mip.MSIP), 0x4000/0x4004 mtimecmp lo/hi, 0xBFF8/0xBFFC
+//! mtime lo/hi; everything else reads 0 and ignores writes. mtime and mtimecmp are the
+//! machine timer's (crate::periph::Timer, also at 0x4000_1000), with its timing: a read
+//! returns the value during the load's EXECUTE cycle, a write takes effect at the end of
+//! the store's write cycle, and mtime is writable as there.
+
+use super::timer::{Stepped, Timer};
+
+/// The block's base address (RV32 region 2).
+pub const CLINT_BASE: u32 = 0x2000_0000;
+pub const MSIP: u32 = 0x0000;
+pub const MTIMECMP: u32 = 0x4000;
+pub const MTIME: u32 = 0xBFF8;
+
+#[derive(Clone, Debug)]
+pub struct Clint {
+    msip: Stepped<bool>,
+}
+
+impl Default for Clint {
+    fn default() -> Self {
+        Clint {
+            msip: Stepped::new(false),
+        }
+    }
+}
+
+/// The machine timer's register (`Timer::read`/`write`'s addr[3:0]) at CLINT offset `off`.
+fn timer_reg(off: u32) -> Option<u32> {
+    match off {
+        MTIME => Some(0x0),
+        0xBFFC => Some(0x4),
+        MTIMECMP => Some(0x8),
+        0x4004 => Some(0xC),
+        _ => None,
+    }
+}
+
+impl Clint {
+    /// msip during cycle `c` (mip.MSIP).
+    #[inline]
+    pub fn msip(&self, c: u64) -> bool {
+        self.msip.at(c)
+    }
+
+    /// Read in cycle `c` of the word holding `addr`.
+    pub fn read(&self, addr: u32, timer: &Timer, c: u64) -> u32 {
+        let off = addr & 0xFFFC;
+        if off == MSIP {
+            return self.msip(c) as u32;
+        }
+        timer_reg(off).map_or(0, |r| timer.read(r, c))
+    }
+
+    /// Write at the end of cycle `c`.
+    pub fn write(&mut self, addr: u32, v: u32, timer: &mut Timer, c: u64) {
+        let off = addr & 0xFFFC;
+        if off == MSIP {
+            self.msip.set(c + 1, v & 1 != 0);
+        } else if let Some(r) = timer_reg(off) {
+            timer.write(r, v, c);
+        }
+    }
+}

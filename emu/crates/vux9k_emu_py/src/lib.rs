@@ -15,8 +15,9 @@ fn parse_profile(name: &str) -> PyResult<Profile> {
     match name {
         "real" => Ok(Profile::Real),
         "isa-test" => Ok(Profile::IsaTest),
+        "linux" => Ok(Profile::Linux),
         _ => Err(PyValueError::new_err(format!(
-            "unknown profile {name:?} (real, isa-test)"
+            "unknown profile {name:?} (real, isa-test, linux)"
         ))),
     }
 }
@@ -80,6 +81,15 @@ impl Soc {
     fn load_xmem(&mut self, addr: u32, data: &[u8]) -> PyResult<()> {
         self.inner
             .load_xmem(addr, data)
+            .map_err(PyValueError::new_err)
+    }
+
+    /// Start a Linux kernel on the "linux" profile: `image` (the kernel's Image) at
+    /// 0x8000_0000, the device tree `dtb` (at most 64 KB) at 0x806E_0000, the CPU in RV32
+    /// M-mode at 0x8000_0000 with a0 = 0 and a1 = the device tree. Call it after `reset()`.
+    fn load_linux(&mut self, image: &[u8], dtb: &[u8]) -> PyResult<()> {
+        self.inner
+            .load_linux(image, dtb)
             .map_err(PyValueError::new_err)
     }
 
@@ -333,6 +343,36 @@ impl Soc {
         self.inner.m_ext = on;
     }
 
+    /// The CPU has the A extension (LR.W/SC.W/AMO*.W, misa.A): True on "linux", else False
+    /// (emulator only, ahead of the RTL). Kept across reset().
+    #[getter]
+    fn a_ext(&self) -> bool {
+        self.inner.a_ext
+    }
+
+    #[setter]
+    fn set_a_ext(&mut self, on: bool) {
+        self.inner.a_ext = on;
+    }
+
+    /// The CPU has U-mode (misa.U, mstatus.MPP {U, M}, mcounteren = 0): True on "linux",
+    /// else False (emulator only, ahead of the RTL). Kept across reset().
+    #[getter]
+    fn u_mode(&self) -> bool {
+        self.inner.u_mode
+    }
+
+    #[setter]
+    fn set_u_mode(&mut self, on: bool) {
+        self.inner.u_mode = on;
+    }
+
+    /// The hart runs in U-mode now (only ever with `u_mode`).
+    #[getter]
+    fn user(&self) -> bool {
+        self.inner.csr.user
+    }
+
     #[getter]
     fn mcause(&self) -> u32 {
         self.inner.csr.mcause
@@ -363,9 +403,10 @@ impl Soc {
             .map_or_else(Vec::new, |c| c.iter().copied().collect())
     }
 
+    /// mstatus as a CSR read returns it (MPP reads as M without `u_mode`).
     #[getter]
     fn mstatus(&self) -> u32 {
-        self.inner.csr.mstatus | 0x1800 // MPP reads as M
+        self.inner.csr.read(emu_core::csr::MSTATUS, 0, 0)
     }
 
     fn __repr__(&self) -> String {

@@ -19,6 +19,17 @@
 //! - The CPU reads the data/status in its MEM_WAIT cycle (combinational); the pop and
 //!   the flag clear happen at the end of that cycle.
 //!
+//! The Linux profile (emulator only, ahead of the RTL) reads and writes the same UART
+//! through a liteuart register view instead (Linux's drivers/tty/serial/liteuart.c,
+//! `litex,liteuart`; `lite_read`/`lite_write`, 32-bit words decoded on addr[7:2], repeating
+//! every 256 bytes): 0x00 RXTX (a read pops RX, a write pushes TX, as register 0x0 here),
+//! 0x04 TXFULL, 0x08 RXEMPTY (bit 0), 0x0C EV_STATUS and 0x10 EV_PENDING (bit 0 TX = TX
+//! FIFO not full, bit 1 RX = RX FIFO not empty), 0x14 EV_ENABLE (2 bits, reset 0). The
+//! events are levels, not latched: EV_PENDING equals EV_STATUS and ignores writes (the
+//! driver's write of EV_RX after each byte has nothing to clear), and the machine external
+//! interrupt is `EV_ENABLE & EV_PENDING != 0` (`lite_irq`). The status register's error
+//! bits aren't visible there. Timing as for the RTL's registers.
+//!
 //! Everything that happens at one clock edge is decided from the state during that
 //! cycle; CPU effects are therefore queued and applied at their edge, after the UART's
 //! own events have been evaluated.
@@ -40,6 +51,8 @@ enum CpuOp {
     TxPush(u8),
     RxPop,
     ClearErrors,
+    /// liteuart view: EV_ENABLE is written.
+    SetEvEnable(u8),
 }
 
 /// A byte on the RX line: its value, the cycle its start bit begins, and whether its
@@ -72,6 +85,8 @@ pub struct Uart {
     cpu_ops: VecDeque<(u64, CpuOp)>,
     /// No edge before this cycle changes anything (`advance`'s fast path; 0 = unknown).
     quiet_until: u64,
+    /// liteuart view's EV_ENABLE (bit 0 TX, bit 1 RX).
+    ev_enable: u8,
 }
 
 impl Default for Uart {
@@ -89,6 +104,7 @@ impl Default for Uart {
             frame_err: false,
             cpu_ops: VecDeque::new(),
             quiet_until: 0,
+            ev_enable: 0,
         }
     }
 }
@@ -179,6 +195,7 @@ impl Uart {
                     self.overrun &= overrun_set;
                     self.frame_err &= frame_err_set;
                 }
+                CpuOp::SetEvEnable(v) => self.ev_enable = v,
             }
         }
         if let Some(b) = pushed {
@@ -226,6 +243,53 @@ impl Uart {
         if self.tx_fifo.len() < FIFO_DEPTH {
             self.queue(c, CpuOp::TxPush(v as u8));
         }
+    }
+
+    /// liteuart view: EV_STATUS = EV_PENDING (state advanced to the cycle).
+    fn lite_events(&self) -> u32 {
+        let tx = self.tx_fifo.len() < FIFO_DEPTH;
+        let rx = !self.rx_fifo.is_empty();
+        tx as u32 | (rx as u32) << 1
+    }
+
+    /// liteuart view: CPU read in cycle `c` (its MEM_WAIT cycle).
+    pub fn lite_read(&mut self, addr: u32, c: u64) -> u32 {
+        self.advance(c);
+        match addr & 0xFC {
+            0x00 => {
+                let head = self.rx_fifo.front().copied();
+                if head.is_some() {
+                    self.queue(c, CpuOp::RxPop);
+                }
+                head.unwrap_or(0) as u32
+            }
+            0x04 => (self.tx_fifo.len() == FIFO_DEPTH) as u32,
+            0x08 => self.rx_fifo.is_empty() as u32,
+            0x0C | 0x10 => self.lite_events(),
+            0x14 => self.ev_enable as u32,
+            _ => 0,
+        }
+    }
+
+    /// liteuart view: CPU write at the end of cycle `c` (RXTX transmits when the TX FIFO
+    /// isn't full; EV_ENABLE; the rest ignore writes).
+    pub fn lite_write(&mut self, addr: u32, v: u32, c: u64) {
+        match addr & 0xFC {
+            0x00 => self.write(0, v, c),
+            0x14 => {
+                self.advance(c);
+                self.queue(c, CpuOp::SetEvEnable((v & 3) as u8));
+            }
+            _ => {}
+        }
+    }
+
+    /// liteuart view: the machine external interrupt during cycle `c`
+    /// (EV_ENABLE & EV_PENDING).
+    #[inline]
+    pub fn lite_irq(&mut self, c: u64) -> bool {
+        self.advance(c);
+        self.ev_enable as u32 & self.lite_events() != 0
     }
 
     /// Bytes in the RX FIFO during cycle `c`.

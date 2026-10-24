@@ -12,14 +12,14 @@
 
 /// A value that changed at most once recently: `old` before cycle `from`, `new` from it.
 #[derive(Clone, Copy, Debug)]
-struct Stepped<T: Copy> {
+pub(crate) struct Stepped<T: Copy> {
     old: T,
     new: T,
     from: u64,
 }
 
 impl<T: Copy> Stepped<T> {
-    fn new(v: T) -> Self {
+    pub(crate) fn new(v: T) -> Self {
         Stepped {
             old: v,
             new: v,
@@ -28,7 +28,7 @@ impl<T: Copy> Stepped<T> {
     }
 
     #[inline]
-    fn at(&self, cycle: u64) -> T {
+    pub(crate) fn at(&self, cycle: u64) -> T {
         if cycle >= self.from {
             self.new
         } else {
@@ -37,7 +37,7 @@ impl<T: Copy> Stepped<T> {
     }
 
     /// The value changes to `v` from `cycle` on (writes arrive in time order).
-    fn set(&mut self, cycle: u64, v: T) {
+    pub(crate) fn set(&mut self, cycle: u64, v: T) {
         self.old = self.at(cycle.saturating_sub(1));
         self.new = v;
         self.from = cycle;

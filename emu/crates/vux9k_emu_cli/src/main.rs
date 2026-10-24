@@ -12,6 +12,10 @@
 //! starts it (`--load-addr`: RV32 in the PSRAM at 0x8000_0000; Hack at an offset in its
 //! instruction segment in the PSRAM, 0 by default).
 //!
+//! `--linux IMAGE --dtb DTB` starts a noMMU Linux kernel on the emulator-only Linux profile
+//! (`--profile linux`, ahead of the RTL): no firmware, the kernel in the PSRAM at
+//! 0x8000_0000 and its device tree below the PSRAM's first stage data (`Soc::load_linux`).
+//!
 //! The UART is connected to stdout (batch), the terminal (`--stdio`), or a TCP
 //! client (`--tcp PORT`, e.g. `vux_tool.py --port socket://localhost:PORT`).
 //! Interactive modes run at the board's speed (18 MHz, `--speed`), so the firmware's
@@ -30,8 +34,10 @@ use vux9k_emu::{hexfile, Isa, Profile, Soc, Stop};
 const USAGE: &str = "\
 usage: vux9k-emu [options]
 
-  --profile NAME      memory profile: real (default, the board) or isa-test (riscv-tests)
-  --firmware DIR      preload the ROM from DIR/firmware.hex (default build/firmware)
+  --profile NAME      memory profile: real (default, the board), isa-test (riscv-tests) or
+                      linux (real + A, U-mode, CLINT, liteuart; emulator only)
+  --firmware DIR      preload the ROM from DIR/firmware.hex (default build/firmware;
+                      none on the linux profile)
   --no-firmware       start with empty memories
   --load FILE         raw binary into the ROM at address 0
   --mode riscv|hack   with --load: FILE is an application image (hack: big-endian
@@ -43,6 +49,9 @@ usage: vux9k-emu [options]
                       board links), else 0. hack: the offset in Hack's 64 KB
                       instruction segment (word-aligned; default 0); it starts at 0
   --hex FILE          $readmemh words into the ROM from word 0 (RV32 code)
+  --linux IMAGE       start a Linux kernel Image at 0x80000000 (implies --profile linux and
+                      --no-firmware; needs --dtb)
+  --dtb DTB           with --linux: the flattened device tree, put at 0x806e0000 (a1)
   --sd IMAGE          raw SD image (sector n at byte 512 n; vux_tool.py mkfat makes FAT32
                       ones); changes are kept in memory
   --sd-write-back     write the SD image back to IMAGE on exit
@@ -58,6 +67,12 @@ usage: vux9k-emu [options]
 
 struct Opts {
     profile: Profile,
+    /// --profile was given
+    profile_set: bool,
+    /// --firmware or --no-firmware was given
+    firmware_set: bool,
+    linux: Option<String>,
+    dtb: Option<String>,
     firmware: Option<String>,
     load: Option<String>,
     mode: Option<Isa>,
@@ -78,6 +93,10 @@ struct Opts {
 fn parse_args() -> Result<Opts, String> {
     let mut o = Opts {
         profile: Profile::Real,
+        profile_set: false,
+        firmware_set: false,
+        linux: None,
+        dtb: None,
         firmware: Some("build/firmware".into()),
         load: None,
         mode: None,
@@ -102,11 +121,21 @@ fn parse_args() -> Result<Opts, String> {
                 o.profile = match val("--profile")?.as_str() {
                     "real" => Profile::Real,
                     "isa-test" => Profile::IsaTest,
+                    "linux" => Profile::Linux,
                     p => return Err(format!("unknown profile {p:?}")),
-                }
+                };
+                o.profile_set = true;
             }
-            "--firmware" => o.firmware = Some(val("--firmware")?),
-            "--no-firmware" => o.firmware = None,
+            "--firmware" => {
+                o.firmware = Some(val("--firmware")?);
+                o.firmware_set = true;
+            }
+            "--no-firmware" => {
+                o.firmware = None;
+                o.firmware_set = true;
+            }
+            "--linux" => o.linux = Some(val("--linux")?),
+            "--dtb" => o.dtb = Some(val("--dtb")?),
             "--load" => o.load = Some(val("--load")?),
             "--mode" => {
                 o.mode = Some(match val("--mode")?.as_str() {
@@ -159,6 +188,29 @@ fn parse_args() -> Result<Opts, String> {
     if o.sd_write_back && o.sd.is_none() {
         return Err("--sd-write-back needs --sd".into());
     }
+    if o.dtb.is_some() && o.linux.is_none() {
+        return Err("--dtb needs --linux".into());
+    }
+    if o.linux.is_some() {
+        if o.dtb.is_none() {
+            return Err("--linux needs --dtb".into());
+        }
+        if o.profile_set && o.profile != Profile::Linux {
+            return Err("--linux runs on --profile linux only".into());
+        }
+        if o.firmware_set && o.firmware.is_some() {
+            return Err("--linux runs without firmware (--firmware)".into());
+        }
+        if o.load.is_some() || o.hex.is_some() {
+            return Err("--linux excludes --load and --hex".into());
+        }
+        o.profile = Profile::Linux;
+        o.firmware = None;
+    }
+    // The Linux profile boots no first stage: its ROM stays empty unless asked for
+    if o.profile == Profile::Linux && !o.firmware_set {
+        o.firmware = None;
+    }
     Ok(o)
 }
 
@@ -196,6 +248,10 @@ fn setup(o: &Opts) -> Result<Soc, String> {
     }
     if let Some(path) = &o.hex {
         soc.load_rom_words(0, &hexfile::parse(&read_text(path)?)?);
+    }
+    if let (Some(image), Some(dtb)) = (&o.linux, &o.dtb) {
+        let read = |p: &String| std::fs::read(p).map_err(|e| format!("{p}: {e}"));
+        soc.load_linux(&read(image)?, &read(dtb)?)?;
     }
     if o.card {
         let image = match &o.sd {
