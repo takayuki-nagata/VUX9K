@@ -11,7 +11,8 @@ cycle, and every word a load returns is checked against the memory, so a stale l
 wrong byte merge fails the test. Besides RV32's accesses (one per MEM_WAIT, a FETCH between
 two), the CPU makes one pair back to back: a Hack instruction that reads M and writes it
 (AM=M+1) loads in MEM_WAIT and stores the whole word from the next cycle (HACK_WB), the line
-read at the same index all along."""
+read at the same index all along. The instruction cache's probe (probe_req, probe_addr) is
+random in every cycle: a write-through cache holds no dirty line, so probe_dirty stays 0."""
 
 import random
 
@@ -115,6 +116,8 @@ class Bench:
         d.data_we.value = int(kind == "store")
         d.data_wdata.value = wdata if kind == "store" else random.getrandbits(32)
         d.data_wstrb.value = wstrb if kind == "store" else random.randrange(16)
+        d.probe_req.value = random.getrandbits(1)
+        d.probe_addr.value = random.getrandbits(21)
 
     async def tick(self, clear=0, rd_idx=None, kind=None, sel=False, addr=0, wdata=0, wstrb=0):
         """One cycle against the model; returns (data_ready, hit)."""
@@ -134,6 +137,7 @@ class Bench:
         ctx = f"cycle {c}: {kind} sel={sel} addr={wa:06x} rd_idx={rd} wstrb={wstrb:04b}"
         assert int(d.hit.value) == hit, f"{ctx}: hit={int(d.hit.value)}, model {hit}"
         assert int(d.mem_sel.value) == want_sel, f"{ctx}: mem_sel={int(d.mem_sel.value)}"
+        assert int(d.probe_dirty.value) == 0, f"{ctx}: probe_dirty (write-through: no dirty line)"
         if want_sel:
             # The bridge's request fields: the access as it stands
             assert int(d.mem_we.value) == store, f"{ctx}: mem_we"

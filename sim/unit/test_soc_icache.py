@@ -5,9 +5,12 @@
 as unified_cpu does (the line is read a cycle ahead at rd_idx, then FETCH is held until
 instr_ready), sometimes completing a store to the window in the cycle before (inv); a
 memory model stands in for soc_xmem_bridge and the PSRAM (a miss completes after a random
-delay with the word, outside a miss mem_ready is 1, as the bridge's instr_ready). A Python
-model of the cache predicts hit, mem_sel and instr_ready in every cycle, and every word a
-fetch returns is checked against the memory, so a stale line fails the test."""
+delay with the word, outside a miss mem_ready is 1, as the bridge's instr_ready). For the
+first cycles of some fetches fill_hold is high (soc_dcache's probe_dirty: the data cache
+writing back the line): a miss must then wait without asking the bridge, although its
+mem_ready is 1. A Python model of the cache predicts hit, miss, mem_sel and instr_ready in
+every cycle, and every word a fetch returns is checked against the memory, so a stale line
+fails the test."""
 
 import random
 
@@ -32,6 +35,13 @@ def sample(outcome, inv, ahead, evict):
     pass
 
 
+# Per window fetch once the lines are swept: whether fill_hold kept its miss from the bridge
+# for at least a cycle
+@fcov.point("icache.fill_hold", ("held", "free"), xf=lambda held: held)
+def sample_hold(held):
+    pass
+
+
 def idx_of(word):
     return word & (LINES - 1)
 
@@ -53,6 +63,7 @@ class Bench:
         self.conflict_q = False
         self.missing = False  # a miss at the bridge stays one until it completes
         self.due = None  # cycle the pending miss completes
+        self.held = 0  # cycles fill_hold kept a miss from the bridge
         self.cycle = 0
         self.clocked = False
 
@@ -79,8 +90,10 @@ class Bench:
         await FallingEdge(d.clk)
         d.rst.value = 1
 
-    def drive(self, rd_idx=None, fetch=False, sel=False, addr=0, inv=False, inv_idx=0):
+    def drive(self, rd_idx=None, fetch=False, sel=False, addr=0, inv=False, inv_idx=0, hold=None):
         d = self.dut
+        # Outside a fetch's hold, fill_hold is anything: it only counts for a window miss
+        d.fill_hold.value = random.getrandbits(1) if hold is None else int(hold)
         d.rd_idx.value = random.randrange(LINES) if rd_idx is None else rd_idx
         d.fetch_req.value = int(fetch)
         # Outside FETCH fetch_sel still follows pc_reg (in the window or not), as in soc_top
@@ -89,11 +102,11 @@ class Bench:
         d.inv.value = int(inv)
         d.inv_idx.value = inv_idx if inv else random.randrange(LINES)
 
-    async def tick(self, clear=0, rd_idx=None, fetch=False, sel=False, addr=0, inv=False, inv_idx=0):
+    async def tick(self, clear=0, rd_idx=None, fetch=False, sel=False, addr=0, inv=False, inv_idx=0, hold=None):
         """One cycle against the model; returns (instr_ready, hit)."""
         d, c = self.dut, self.cycle
         d.clear.value = clear
-        self.drive(rd_idx, fetch, sel, addr, inv, inv_idx)
+        self.drive(rd_idx, fetch, sel, addr, inv, inv_idx, hold)
         await Timer(1, unit="ns")
         rd = int(d.rd_idx.value)
         fa = int(d.fetch_addr.value)
@@ -102,10 +115,18 @@ class Bench:
         line_ok = self.rd_idx_q == idx and self.tags.get(idx) == tag_of(fa)
         hit = self.swept and not self.missing and not self.conflict_q and line_ok
         win = fetch and sel
-        want_sel = win and self.swept and not hit
-        ctx = f"cycle {c}: fetch={fetch} sel={sel} addr={fa:06x} rd_idx={rd} inv={inv}/{inv_idx}"
+        fill_hold = bool(int(d.fill_hold.value))
+        miss = win and self.swept and not hit
+        want_sel = miss and not fill_hold
+        ctx = f"cycle {c}: fetch={fetch} sel={sel} addr={fa:06x} rd_idx={rd} inv={inv}/{inv_idx} hold={fill_hold:d}"
         assert int(d.hit.value) == hit, f"{ctx}: hit={int(d.hit.value)}, model {hit}"
+        assert int(d.miss.value) == miss, f"{ctx}: miss={int(d.miss.value)}, model {miss}"
         assert int(d.mem_sel.value) == want_sel, f"{ctx}: mem_sel={int(d.mem_sel.value)}"
+        held = miss and fill_hold
+        if held:
+            # Never under a request in flight: fill_hold only falls during a fetch
+            assert self.due is None, f"{ctx}: fill_hold rose under a miss at the bridge"
+            self.held += 1
 
         # The bridge: ready outside a miss, else when the miss's response comes
         done = False
@@ -118,14 +139,16 @@ class Bench:
         d.mem_rdata.value = self.word(fa) if done else random.getrandbits(32)
         await Timer(1, unit="ns")
 
-        ready = not win or (self.swept and (hit or mem_ready))
+        ready = not win or (self.swept and (hit or mem_ready and not fill_hold))
         assert int(d.instr_ready.value) == ready, f"{ctx}: instr_ready={int(d.instr_ready.value)}"
+        if held:
+            assert not ready, f"{ctx}: a held miss completed"
         if win and ready:
             got = int(d.rdata.value)
             assert got == self.word(fa), f"{ctx}: rdata {got:08x}, memory {self.word(fa):08x}"
 
         # The model's writes in this cycle (one tag write port)
-        fill = win and self.swept and not hit and mem_ready
+        fill = want_sel and mem_ready
         tag_we, waddr = False, 0
         if not self.swept:
             if clear:
@@ -153,10 +176,12 @@ class Bench:
             await self.tick(clear=1)
         assert self.swept
 
-    async def fetch(self, word, sel=True, inv=None, ahead=True, clear=1):
+    async def fetch(self, word, sel=True, inv=None, ahead=True, clear=1, hold=0):
         """The cycle before FETCH (EXECUTE, or a store's last MEM_WAIT cycle when inv is a
         word being stored), then FETCH until ready. ahead=False reads another line ahead (a
-        path where pc_out isn't the next pc_reg), which must not hit."""
+        path where pc_out isn't the next pc_reg), which must not hit. fill_hold is high in
+        FETCH's first hold cycles, then low until the fetch completes (it only falls during a
+        fetch)."""
         idx = idx_of(word)
         rd = idx if ahead else (idx + random.randrange(1, LINES)) % LINES
         inv_kind = "none"
@@ -167,8 +192,9 @@ class Bench:
         await self.tick(clear, rd, inv=inv is not None, inv_idx=idx_of(inv or 0))
         swept = self.swept
         hit = None
-        for _ in range(LINES + 100):  # the sweep, or a miss
-            ready, h = await self.tick(clear, idx, True, sel, word)
+        self.held = 0
+        for n in range(LINES + 100):  # the sweep, or a miss
+            ready, h = await self.tick(clear, idx, True, sel, word, hold=n < hold)
             if hit is None:
                 hit = h
             if ready:
@@ -180,6 +206,8 @@ class Bench:
                     outcome = "hit" if hit else "miss"
                 fill = "none" if outcome != "miss" else ("empty" if filled is None else "replace")
                 sample(outcome, inv_kind, "match" if ahead else "mismatch", fill)
+                if sel and swept:
+                    sample_hold("held" if self.held else "free")
                 return outcome
         raise AssertionError(f"fetch of {word:06x} never completed")
 
@@ -195,8 +223,9 @@ def pool(n_lines=6, n_tags=3):
 async def test_directed(dut):
     """A fetch while the lines are swept waits; then miss, hit, eviction by another tag, a
     store to the line (and to another), a store to the next fetch's line in the cycle it is
-    read (the board leaves that read undefined), a stale read-ahead, and a fetch outside the
-    window"""
+    read (the board leaves that read undefined), a stale read-ahead, a fetch outside the
+    window, and misses held by fill_hold (the data cache writing back the line) and a hit it
+    doesn't hold"""
     b = Bench(dut, max_delay=3)
     await b.reset()
     # Before clear: no sweep yet, a window fetch waits without asking the memory
@@ -219,6 +248,17 @@ async def test_directed(dut):
     await b.fetch(w, ahead=False)  # a stale read-ahead misses
     await b.fetch(w, sel=False)  # outside the window
     await b.fetch(w)
+    # fill_hold: the miss waits without asking the bridge (whose mem_ready is 1 meanwhile),
+    # then goes to it and completes with the memory's word; a hit doesn't wait for it
+    v = w + (3 << TAG_SHIFT)
+    held_from = b.cycle
+    assert await b.fetch(v, hold=4) == "miss"
+    assert b.held == 4
+    assert b.cycle - held_from > 1 + 4, "the held miss completed early"
+    assert await b.fetch(v, hold=3) == "hit"
+    assert b.held == 0
+    assert await b.fetch(w, hold=1) == "miss"
+    assert b.held == 1
     fcov.export()
 
 
@@ -233,8 +273,9 @@ async def test_random(dut):
     for _ in range(1500):
         word = random.choice(words)
         inv = random.choice(words) if random.random() < 0.25 else None
+        hold = random.choice((1, 2, 5)) if random.random() < 0.2 else 0
         await b.fetch(word, sel=random.random() < 0.9, inv=inv, ahead=random.random() < 0.9,
-                      clear=random.randint(0, 1))  # fmt: skip
+                      clear=random.randint(0, 1), hold=hold)  # fmt: skip
     fcov.export()
 
 

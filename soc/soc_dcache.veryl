@@ -29,6 +29,10 @@
 //   cycle, before the CPU runs: the RAMs have no reset. Until then window accesses wait.
 // - The bridge's request fields (mem_we, mem_addr, mem_wdata, mem_wstrb) are the CPU's
 //   access as it stands.
+// - The probe is for the instruction cache's coherence once this cache writes back: an
+//   instruction-cache miss (probe_req) at the PSRAM word probe_addr whose line this cache
+//   holds dirty waits (probe_dirty, its fill_hold) until the line is written back.
+//   Write-through holds no dirty line, so probe_dirty is 0 for now.
 // - ENABLE = 0 passes every access to the bridge as if this module weren't there (its RAMs
 //   and registers then drive nothing): soc_top's wiring was proven with it (make eqy).
 pub module soc_dcache #(
@@ -58,6 +62,11 @@ pub module soc_dcache #(
     mem_wstrb: output logic<4> ,
     mem_ready: input  logic    ,
     mem_rdata: input  logic<32>,
+
+    // soc_icache's probe: its miss at the PSRAM word of the fetch (pc_reg[22:2])
+    probe_req  : input  logic    ,
+    probe_addr : input  logic<21>,
+    probe_dirty: output logic    , // the line holding probe_addr is dirty: soc_icache's fill_hold
 ) {
     const LINES: u32 = 512;
 
@@ -86,6 +95,8 @@ pub module soc_dcache #(
     assign mem_addr   = data_addr;
     assign mem_wdata  = data_wdata;
     assign mem_wstrb  = data_wstrb;
+
+    assign probe_dirty = 1'b0;
 
     let done : logic     = win && swept && (data_we || !hit) && mem_ready;
     let merge: logic<32> = {

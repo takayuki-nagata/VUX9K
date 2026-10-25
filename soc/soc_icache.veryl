@@ -15,6 +15,11 @@
 //   stays a miss until then (missing), so mem_sel never drops under a request in flight even
 //   if the line could read as a hit later in the wait. The word the bridge returns
 //   goes to the CPU and fills the line in the same cycle.
+// - miss is a window fetch the cache doesn't hold (soc_dcache's probe_req). While fill_hold is
+//   high (soc_dcache's probe_dirty: the data cache holds the fetched word in a line not yet
+//   written back) the miss waits instead of going to the bridge, so it never reads a stale
+//   word. fill_hold only falls during a fetch, never rises under a request in flight: a line
+//   becomes dirty only by a store, and the CPU stores nothing while it fetches.
 // - Coherence: inv is a store to the window completing (the CPU's only way to write the
 //   memory behind it); the line at its index is invalidated, whatever its tag. Code the CPU
 //   writes is therefore never fetched stale, and fence.i needs to do nothing.
@@ -41,12 +46,14 @@ pub module soc_icache #(
     instr_ready: output logic    ,
     rdata      : output logic<32>, // the fetched word, valid when a window fetch completes
     hit        : output logic    ,
+    miss       : output logic    , // a window fetch the cache doesn't hold
 
     // A store to the window completing, at line inv_idx (its address [13:2])
     inv    : input logic    ,
     inv_idx: input logic<12>,
 
-    // soc_xmem_bridge's fetch side: misses only
+    // soc_xmem_bridge's fetch side: misses only, once fill_hold is low
+    fill_hold: input  logic    ,
     mem_sel  : output logic    ,
     mem_ready: input  logic    ,
     mem_rdata: input  logic<32>,
@@ -71,11 +78,12 @@ pub module soc_icache #(
 
     assign hit         = ENABLE && swept && !missing && !conflict_q && rd_idx_q == idx && tag_q
         == {1'b1, fetch_addr[20:12]};
-    assign mem_sel     = win && on && !hit;
-    assign instr_ready = !win || on && (hit || mem_ready);
+    assign miss        = win && on && !hit;
+    assign mem_sel     = miss && !fill_hold;
+    assign instr_ready = !win || on && (hit || mem_ready && !fill_hold);
     assign rdata       = if hit ? word_q : mem_rdata;
 
-    let fill: logic = win && swept && !hit && mem_ready;
+    let fill: logic = win && swept && !hit && mem_ready && !fill_hold;
 
     var tag_we   : logic    ;
     var tag_waddr: logic<12>;

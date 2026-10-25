@@ -94,8 +94,11 @@ pub module soc_top (
 
     // The window's caches, between the CPU and the bridge: what they pass on (misses,
     // stores, with the data cache's request fields), the bridge's readies they complete
-    // them with, the words they return
+    // them with, the words they return; the instruction cache's misses probing the data cache
+    // and its answer
     var icache_mem_sel    : logic    ;
+    var icache_miss       : logic    ;
+    var dcache_probe_dirty: logic    ;
     var icache_rdata      : logic<32>;
     var dcache_mem_sel    : logic    ;
     var dcache_mem_we     : logic    ;
@@ -210,7 +213,10 @@ pub module soc_top (
     // instruction-cache line. While cpu_soft_rst holds the CPU in FETCH the instruction cache
     // sees no fetch: one it started then (a soft reset into Hack fetches from the window at
     // once) would stay a miss until the bridge, which takes no request then, answered it, so
-    // the first fetch after the pulse is a hit or a miss by its line alone.
+    // the first fetch after the pulse is a hit or a miss by its line alone. An instruction-cache
+    // miss probes the data cache at the fetch's PSRAM word (pc_reg's, not pc_out's) and waits
+    // while the data cache holds that word in a dirty line (fill_hold; low while it
+    // writes through).
     inst icache: soc_icache (
         clk                                                          ,
         rst        : rst_n                                           ,
@@ -222,34 +228,39 @@ pub module soc_top (
         instr_ready: instr_ready                                     ,
         rdata      : icache_rdata                                    ,
         hit        : _                                               ,
+        miss       : icache_miss                                     ,
         inv        : data_req && xmem_wsel && mem_write && data_ready,
         inv_idx    : win_data_waddr[13:2]                            ,
+        fill_hold  : dcache_probe_dirty                              ,
         mem_sel    : icache_mem_sel                                  ,
         mem_ready  : bridge_instr_ready                              ,
         mem_rdata  : xmem_rdata                                      ,
     );
 
     inst dcache: soc_dcache (
-        clk                             ,
-        rst       : rst_n               ,
-        clear     : !raw_rst            ,
-        rd_idx    : win_data_idx        ,
-        data_req  : data_req            ,
-        data_sel  : xmem_wsel           , // data_waddr: the registered access address in MEM_WAIT
-        data_addr : win_data_waddr[22:2],
-        data_we   : mem_write           ,
-        data_wdata: cpu_data_out        ,
-        data_wstrb: cpu_byte_we         ,
-        data_ready: data_ready          ,
-        rdata     : dcache_rdata        ,
-        hit       : _                   ,
-        mem_sel   : dcache_mem_sel      ,
-        mem_we    : dcache_mem_we       ,
-        mem_addr  : dcache_mem_addr     ,
-        mem_wdata : dcache_mem_wdata    ,
-        mem_wstrb : dcache_mem_wstrb    ,
-        mem_ready : bridge_data_ready   ,
-        mem_rdata : xmem_rdata          ,
+        clk                              ,
+        rst        : rst_n               ,
+        clear      : !raw_rst            ,
+        rd_idx     : win_data_idx        ,
+        data_req   : data_req            ,
+        data_sel   : xmem_wsel           , // data_waddr: the registered access address in MEM_WAIT
+        data_addr  : win_data_waddr[22:2],
+        data_we    : mem_write           ,
+        data_wdata : cpu_data_out        ,
+        data_wstrb : cpu_byte_we         ,
+        data_ready : data_ready          ,
+        rdata      : dcache_rdata        ,
+        hit        : _                   ,
+        mem_sel    : dcache_mem_sel      ,
+        mem_we     : dcache_mem_we       ,
+        mem_addr   : dcache_mem_addr     ,
+        mem_wdata  : dcache_mem_wdata    ,
+        mem_wstrb  : dcache_mem_wstrb    ,
+        mem_ready  : bridge_data_ready   ,
+        mem_rdata  : xmem_rdata          ,
+        probe_req  : icache_miss         ,
+        probe_addr : win_fetch_addr[22:2],
+        probe_dirty: dcache_probe_dirty  ,
     );
 
     inst xmem_bridge: soc_xmem_bridge (
