@@ -9,6 +9,12 @@
 // answers in one cycle.
 // - The selects already hold the CPU's FETCH and data access (the caches' mem_sel is their
 //   window access gated by it), so the bridge needs neither.
+// - Both selects may be raised at once, or one while the other side's request is in flight
+//   (soc_dcache's write-back while soc_icache holds its miss, fill_hold). The data side's
+//   request goes first; the other side waits (no request, no ready) until the bridge is
+//   free. busy_data records whose request was accepted, and a response completes only that
+//   side, also in the cycle a held select is raised again. data_sel must not rise while
+//   the fetch's request waits for req_ready: the request's fields would change.
 // - Addresses are PSRAM words (addr[22:2]); soc_top makes the controller's byte address.
 // - The request is raised in the first cycle of the access and held, with the same fields,
 //   until accepted: the CPU holds its address and data while it waits. A Hack M read and
@@ -16,8 +22,8 @@
 // - busy (accepted, no response yet) drops req_valid, so the access the CPU is still
 //   waiting on is never requested twice; the response's cycle completes it (ready).
 // - ready comes from registers only (fetch_addr is pc_reg, data_addr the registered
-//   access address, rsp_valid a register), never from the CPU's next-PC or address
-//   adders: it gates the CPU's FSM.
+//   access address, rsp_valid, busy and busy_data registers), never from the CPU's
+//   next-PC or address adders: it gates the CPU's FSM.
 // - No new request while the CPU is held in soft reset. None is in flight then: the
 //   GPIO store that starts it completed outside the window, as did its fetch.
 pub module soc_xmem_bridge (
@@ -50,7 +56,8 @@ pub module soc_xmem_bridge (
     rsp_valid: input  logic    ,
     rsp_rdata: input  logic<32>,
 ) {
-    var busy: logic;
+    var busy     : logic;
+    var busy_data: logic; // the request in flight is the data side's
 
     let done: logic = busy && rsp_valid;
 
@@ -59,15 +66,17 @@ pub module soc_xmem_bridge (
     assign req_addr    = if data_sel ? data_addr : fetch_addr;
     assign req_wdata   = data_wdata;
     assign req_wstrb   = data_wstrb;
-    assign instr_ready = !fetch_sel || done;
-    assign data_ready  = !data_sel || done;
+    assign instr_ready = !fetch_sel || (done && !busy_data);
+    assign data_ready  = !data_sel || (done && busy_data);
     assign rdata       = rsp_rdata;
 
     always_ff (clk, rst) {
         if_reset {
-            busy = 1'b0;
+            busy      = 1'b0;
+            busy_data = 1'b0;
         } else if req_valid && req_ready {
-            busy = 1'b1;
+            busy      = 1'b1;
+            busy_data = data_sel;
         } else if rsp_valid {
             busy = 1'b0;
         }
