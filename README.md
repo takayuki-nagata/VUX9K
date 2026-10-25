@@ -606,7 +606,7 @@ VUX9K/
 │   ├── soc_rom.veryl               # The 16 KB boot ROM (two read ports)
 │   ├── soc_pkg.veryl               # SoC constants: clock-derived dividers, data-address map
 │   ├── soc_addr_decoder.veryl      # Data-address decoder (one instance per read/write address)
-│   ├── soc_xmem_bridge.veryl       # CPU side of the PSRAM window: fetch/load/store -> req/rsp, CPU ready
+│   ├── soc_xmem_bridge.veryl       # Caches' side of the PSRAM window: fetch miss/load/store -> req/rsp, ready
 │   ├── soc_icache.veryl            # PSRAM window instruction cache: 16 KB, direct-mapped, one word a line
 │   ├── soc_dcache.veryl            # PSRAM window data cache: 2 KB, direct-mapped, write-through
 │   ├── soc_top.veryl               # Tang Nano 9K SoC top-level wrapper

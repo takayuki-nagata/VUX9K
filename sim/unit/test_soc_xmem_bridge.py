@@ -1,10 +1,11 @@
 # Copyright (c) 2026 Takayuki Nagata
 # SPDX-License-Identifier: MIT
 
-"""soc_xmem_bridge: a CPU access in the window becomes exactly one request of the memory
-controller's contract, held until accepted, and completes (instr_ready / data_ready) in
-the response's cycle; accesses outside the window complete at once and request nothing;
-nothing is requested while the CPU is held in soft reset. A CPU model holds each access
+"""soc_xmem_bridge: an access the caches pass on (fetch_sel / data_sel, their mem_sel)
+becomes exactly one request of the memory controller's contract, held until accepted, and
+completes (instr_ready / data_ready) in the response's cycle; accesses the caches don't
+pass on (out of the window, or hits) complete at once and request nothing; nothing is
+requested while the CPU is held in soft reset. A CPU-and-caches model holds each access
 until it completes, a memory model behind the bridge accepts and answers with random
 delays (the contract's lower bounds, not the PSRAM controller's latencies); every output
 is checked in every cycle."""
@@ -77,15 +78,14 @@ class Bench:
         dut.rst.value = 1
 
     def drive(self, soft_rst=0, kind=None, window=False, addr=0, wdata=0, wstrb=0):
-        """The CPU's side for this cycle: kind None is a cycle without FETCH or MEM_WAIT."""
+        """The caches' side for this cycle: kind None is a cycle without FETCH or MEM_WAIT;
+        window False an access the caches don't pass on. addr is the PSRAM word."""
         d = self.dut
         d.soft_rst.value = soft_rst
-        d.fetch_req.value = int(kind == "fetch")
         d.fetch_sel.value = int(kind == "fetch" and window)
-        d.fetch_addr.value = addr if kind == "fetch" else random.getrandbits(32)
-        d.data_req.value = int(kind in ("load", "store"))
+        d.fetch_addr.value = addr if kind == "fetch" else random.getrandbits(21)
         d.data_sel.value = int(kind in ("load", "store") and window)
-        d.data_addr.value = addr if kind in ("load", "store") else random.getrandbits(32)
+        d.data_addr.value = addr if kind in ("load", "store") else random.getrandbits(21)
         d.data_we.value = int(kind == "store")
         d.data_wdata.value = wdata
         d.data_wstrb.value = wstrb
@@ -106,7 +106,7 @@ class Bench:
         assert int(d.req_valid.value) == want_valid, f"{ctx}: req_valid={int(d.req_valid.value)}"
         if want_valid:
             assert int(d.req_we.value) == (kind == "store"), f"{ctx}: req_we"
-            assert int(d.req_addr.value) == addr, f"{ctx}: req_addr {int(d.req_addr.value):08x}"
+            assert int(d.req_addr.value) == addr, f"{ctx}: req_addr {int(d.req_addr.value):06x}"
             if kind == "store":
                 assert (int(d.req_wdata.value), int(d.req_wstrb.value)) == (wdata, wstrb), f"{ctx}: write data"
         want_instr = not (kind == "fetch" and window) or done
@@ -129,8 +129,7 @@ class Bench:
         """Idle `gap` cycles, then hold one access until it completes."""
         for _ in range(gap):
             await self.tick()
-        region = 0x8 if window else random.choice((0x0, 0x2, 0x4, 0x9))
-        addr = region << 28 | random.getrandbits(28) & ~3
+        addr = random.getrandbits(21)
         wdata, wstrb = random.getrandbits(32), random.randrange(16)
         waited = False
         for _ in range(100):
@@ -139,7 +138,7 @@ class Bench:
             if ready:
                 sample(kind, "in" if window else "out", "after_wait" if waited else "at_once")
                 return
-        raise AssertionError(f"{kind} at {addr:08x} never completed")
+        raise AssertionError(f"{kind} at word {addr:06x} never completed")
 
 
 @cocotb.test(timeout_time=1, timeout_unit="ms")
@@ -164,7 +163,7 @@ async def test_soft_reset_requests_nothing(dut):
     b = Bench(dut, p_ready=1.0, max_delay=2)
     await b.reset()
     for _ in range(5):
-        ready, accepted, _ = await b.tick(1, "fetch", True, 0x8000_0040)
+        ready, accepted, _ = await b.tick(1, "fetch", True, 0x10)
         assert not ready and not accepted
     await b.access("fetch", True)
     fcov.export()

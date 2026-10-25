@@ -27,6 +27,8 @@
 //   the line leaves it as a hit's merge would have.
 // - clear (high while soc_top's power-on reset counts) invalidates every line once, one a
 //   cycle, before the CPU runs: the RAMs have no reset. Until then window accesses wait.
+// - The bridge's request fields (mem_we, mem_addr, mem_wdata, mem_wstrb) are the CPU's
+//   access as it stands.
 // - ENABLE = 0 passes every access to the bridge as if this module weren't there (its RAMs
 //   and registers then drive nothing): soc_top's wiring was proven with it (make eqy).
 pub module soc_dcache #(
@@ -50,6 +52,10 @@ pub module soc_dcache #(
 
     // soc_xmem_bridge's data side: load misses and stores
     mem_sel  : output logic    ,
+    mem_we   : output logic    ,
+    mem_addr : output logic<21>, // the PSRAM word
+    mem_wdata: output logic<32>,
+    mem_wstrb: output logic<4> ,
     mem_ready: input  logic    ,
     mem_rdata: input  logic<32>,
 ) {
@@ -76,6 +82,10 @@ pub module soc_dcache #(
     assign mem_sel    = win && on && (data_we || !hit);
     assign data_ready = !win || on && (hit && !data_we || mem_ready);
     assign rdata      = if hit ? word_q : mem_rdata;
+    assign mem_we     = data_we;
+    assign mem_addr   = data_addr;
+    assign mem_wdata  = data_wdata;
+    assign mem_wstrb  = data_wstrb;
 
     let done : logic     = win && swept && (data_we || !hit) && mem_ready;
     let merge: logic<32> = {

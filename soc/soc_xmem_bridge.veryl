@@ -1,15 +1,18 @@
 // Copyright (c) 2026 Takayuki Nagata
 // SPDX-License-Identifier: MIT
 
-// The CPU's side of the wait-state window (RV32 region soc_pkg::RV_REGION_XMEM, and Hack's
-// segments in it): turns a fetch (FETCH) or a data access (unified_cpu's data_req: RV32
-// MEM_WAIT, a Hack M read or write) in the window into one request of the
-// memory controller's request/response contract (psram::psram_controller, its header) and tells the
-// CPU when it completes. Outside the window instr_ready/data_ready are 1: everything else
+// The caches' side of the wait-state window (RV32 region soc_pkg::RV_REGION_XMEM, and Hack's
+// segments in it): turns soc_icache's miss (fetch_sel, its mem_sel) or soc_dcache's access
+// (data_sel, its mem_sel, with the fields it gives) into one request of the memory
+// controller's request/response contract (psram::psram_controller, its header) and tells the
+// cache when it completes. Without a request instr_ready/data_ready are 1: everything else
 // answers in one cycle.
-// - The request is raised in the first cycle of the CPU's access and held, with the same
-//   fields, until accepted: the CPU holds its address and data while it waits. A Hack M
-//   read and the write of the same instruction (HACK_WB) are two requests back to back.
+// - The selects already hold the CPU's FETCH and data access (the caches' mem_sel is their
+//   window access gated by it), so the bridge needs neither.
+// - Addresses are PSRAM words (addr[22:2]); soc_top makes the controller's byte address.
+// - The request is raised in the first cycle of the access and held, with the same fields,
+//   until accepted: the CPU holds its address and data while it waits. A Hack M read and
+//   the write of the same instruction (HACK_WB) are two requests back to back.
 // - busy (accepted, no response yet) drops req_valid, so the access the CPU is still
 //   waiting on is never requested twice; the response's cycle completes it (ready).
 // - ready comes from registers only (fetch_addr is pc_reg, data_addr the registered
@@ -22,25 +25,26 @@ pub module soc_xmem_bridge (
     rst     : input reset,
     soft_rst: input logic,
 
-    // CPU side
-    fetch_req  : input  logic    , // the CPU is in FETCH
-    fetch_sel  : input  logic    , // fetch_addr is in the window
-    fetch_addr : input  logic<32>,
-    data_req   : input  logic    , // the CPU has a data access on the bus (unified_cpu)
-    data_sel   : input  logic    , // data_addr is in the window
-    data_addr  : input  logic<32>,
-    data_we    : input  logic    , // 1: store, 0: load
-    data_wdata : input  logic<32>,
-    data_wstrb : input  logic<4> ,
+    // soc_icache's misses
+    fetch_sel  : input  logic    , // a window fetch the cache doesn't hold
+    fetch_addr : input  logic<21>, // its PSRAM word
     instr_ready: output logic    ,
-    data_ready : output logic    ,
-    rdata      : output logic<32>, // the read word, valid in the cycle a window access completes
+
+    // soc_dcache's accesses
+    data_sel  : input  logic    , // a window data access for the memory
+    data_addr : input  logic<21>, // its PSRAM word
+    data_we   : input  logic    , // 1: store, 0: load
+    data_wdata: input  logic<32>,
+    data_wstrb: input  logic<4> ,
+    data_ready: output logic    ,
+
+    rdata: output logic<32>, // the read word, valid in the cycle a window access completes
 
     // Memory controller side
     req_valid: output logic    ,
     req_ready: input  logic    ,
     req_we   : output logic    ,
-    req_addr : output logic<32>,
+    req_addr : output logic<21>, // the PSRAM word
     req_wdata: output logic<32>,
     req_wstrb: output logic<4> ,
     rsp_valid: input  logic    ,
@@ -48,17 +52,15 @@ pub module soc_xmem_bridge (
 ) {
     var busy: logic;
 
-    let fetch_win: logic = fetch_req && fetch_sel;
-    let data_win : logic = data_req && data_sel;
-    let done     : logic = busy && rsp_valid;
+    let done: logic = busy && rsp_valid;
 
-    assign req_valid   = (fetch_win || data_win) && !busy && !soft_rst;
-    assign req_we      = data_win && data_we;
-    assign req_addr    = if data_win ? data_addr : fetch_addr;
+    assign req_valid   = (fetch_sel || data_sel) && !busy && !soft_rst;
+    assign req_we      = data_sel && data_we;
+    assign req_addr    = if data_sel ? data_addr : fetch_addr;
     assign req_wdata   = data_wdata;
     assign req_wstrb   = data_wstrb;
-    assign instr_ready = !fetch_win || done;
-    assign data_ready  = !data_win || done;
+    assign instr_ready = !fetch_sel || done;
+    assign data_ready  = !data_sel || done;
     assign rdata       = rsp_rdata;
 
     always_ff (clk, rst) {

@@ -134,6 +134,12 @@ class Bench:
         ctx = f"cycle {c}: {kind} sel={sel} addr={wa:06x} rd_idx={rd} wstrb={wstrb:04b}"
         assert int(d.hit.value) == hit, f"{ctx}: hit={int(d.hit.value)}, model {hit}"
         assert int(d.mem_sel.value) == want_sel, f"{ctx}: mem_sel={int(d.mem_sel.value)}"
+        if want_sel:
+            # The bridge's request fields: the access as it stands
+            assert int(d.mem_we.value) == store, f"{ctx}: mem_we"
+            assert int(d.mem_addr.value) == wa, f"{ctx}: mem_addr {int(d.mem_addr.value):06x}"
+            if store:
+                assert (int(d.mem_wdata.value), int(d.mem_wstrb.value)) == (wdata, wstrb), f"{ctx}: write data"
 
         done = False
         if want_sel:

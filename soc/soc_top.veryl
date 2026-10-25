@@ -85,7 +85,7 @@ pub module soc_top (
     var xmem_req_valid: logic    ;
     var xmem_req_ready: logic    ;
     var xmem_req_we   : logic    ;
-    var xmem_req_addr : logic<32>;
+    var xmem_req_addr : logic<21>; // the PSRAM word
     var xmem_req_wdata: logic<32>;
     var xmem_req_wstrb: logic<4> ;
     var xmem_rsp_valid: logic    ;
@@ -93,10 +93,15 @@ pub module soc_top (
     var xmem_fetch_sel: logic    ;
 
     // The window's caches, between the CPU and the bridge: what they pass on (misses,
-    // stores), the bridge's readies they complete them with, the words they return
+    // stores, with the data cache's request fields), the bridge's readies they complete
+    // them with, the words they return
     var icache_mem_sel    : logic    ;
     var icache_rdata      : logic<32>;
     var dcache_mem_sel    : logic    ;
+    var dcache_mem_we     : logic    ;
+    var dcache_mem_addr   : logic<21>;
+    var dcache_mem_wdata  : logic<32>;
+    var dcache_mem_wstrb  : logic<4> ;
     var dcache_rdata      : logic<32>;
     var bridge_instr_ready: logic    ;
     var bridge_data_ready : logic    ;
@@ -239,43 +244,46 @@ pub module soc_top (
         rdata     : dcache_rdata        ,
         hit       : _                   ,
         mem_sel   : dcache_mem_sel      ,
+        mem_we    : dcache_mem_we       ,
+        mem_addr  : dcache_mem_addr     ,
+        mem_wdata : dcache_mem_wdata    ,
+        mem_wstrb : dcache_mem_wstrb    ,
         mem_ready : bridge_data_ready   ,
         mem_rdata : xmem_rdata          ,
     );
 
     inst xmem_bridge: soc_xmem_bridge (
-        clk        : clk               ,
-        rst        : rst               ,
-        soft_rst   : cpu_soft_rst      ,
-        fetch_req  : fetch_req         ,
-        fetch_sel  : icache_mem_sel    ,
-        fetch_addr : win_fetch_addr    ,
-        data_req   : data_req          ,
-        data_sel   : dcache_mem_sel    ,
-        data_addr  : win_data_waddr    ,
-        data_we    : mem_write         ,
-        data_wdata : cpu_data_out      ,
-        data_wstrb : cpu_byte_we       ,
-        instr_ready: bridge_instr_ready,
-        data_ready : bridge_data_ready ,
-        rdata      : xmem_rdata        ,
-        req_valid  : xmem_req_valid    ,
-        req_ready  : xmem_req_ready    ,
-        req_we     : xmem_req_we       ,
-        req_addr   : xmem_req_addr     ,
-        req_wdata  : xmem_req_wdata    ,
-        req_wstrb  : xmem_req_wstrb    ,
-        rsp_valid  : xmem_rsp_valid    ,
-        rsp_rdata  : xmem_rsp_rdata    ,
+        clk        : clk                 ,
+        rst        : rst                 ,
+        soft_rst   : cpu_soft_rst        ,
+        fetch_sel  : icache_mem_sel      ,
+        fetch_addr : win_fetch_addr[22:2],
+        instr_ready: bridge_instr_ready  ,
+        data_sel   : dcache_mem_sel      ,
+        data_addr  : dcache_mem_addr     ,
+        data_we    : dcache_mem_we       ,
+        data_wdata : dcache_mem_wdata    ,
+        data_wstrb : dcache_mem_wstrb    ,
+        data_ready : bridge_data_ready   ,
+        rdata      : xmem_rdata          ,
+        req_valid  : xmem_req_valid      ,
+        req_ready  : xmem_req_ready      ,
+        req_we     : xmem_req_we         ,
+        req_addr   : xmem_req_addr       ,
+        req_wdata  : xmem_req_wdata      ,
+        req_wstrb  : xmem_req_wstrb      ,
+        rsp_valid  : xmem_rsp_valid      ,
+        rsp_rdata  : xmem_rsp_rdata      ,
     );
 
-    // The window's memory: 8 MB of PSRAM. req_addr[23] selects the controller's register
-    // space (ID/CR registers), which the CPU must never reach, so it is forced to 0: region
-    // 8's 256 MB repeat the 8 MB every 8 MB (0x8080_0020 is the word at 0x8000_0020, not
+    // The window's memory: 8 MB of PSRAM, at the bridge's PSRAM word (req_addr[1:0], which
+    // the controller ignores, are 0). req_addr[23] selects the controller's register space
+    // (ID/CR registers), which the CPU must never reach, so it is forced to 0: region 8's
+    // 256 MB repeat the 8 MB every 8 MB (0x8080_0020 is the word at 0x8000_0020, not
     // CR0). The controller is reset by rst_n, not by the power-on reset: its power-up
     // (soc_pkg::PSRAM_INIT_CYCLES, about 3,610 cycles) ends inside the 32,768-cycle POR,
     // so the CPU never sees req_ready low for it (test_psram_contract pins both numbers).
-    let xmem_addr: logic<24> = {1'b0, xmem_req_addr[soc_pkg::XMEM_ADDR_BITS + 1:0]};
+    let xmem_addr: logic<24> = {1'b0, xmem_req_addr, 2'b00};
 
     // The RTL builds for Verilator (sim_runner.py) define VUX9K_PSRAM_MODEL and get the word
     // model instead: same host ports and timing, no pins (the pin-level PSRAM model is
