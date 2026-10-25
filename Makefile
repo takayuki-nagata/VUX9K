@@ -885,7 +885,7 @@ prog-flash: $(SYNTH_DIR)/pack.fs
 
 # Every push/PR (CI). Long SoC runs are on Verilator (SIM_SOC); timings: docs/agents/sim.md,
 # "Verilator".
-test-sim: check lint-rtl emu-test test-isa-emu firmware test-fw-host test-fat firmware-size build-zephyr-demo build-zephyr-irq-echo zephyr-bc-lib build-micropython build-hack test-emu coverage-fw sim-lockstep build-zephyr emu-bench sim-unit sim-psram-contract coverage-fcov test-isa test-act4 test-act4-emu test-isa-waits coverage-rust sim-gls-unit test-isa-gls test-act4-gls sim-soc-fast sim-soc-fast-icarus sim-soc-mmio sim-boot sim-hack-rtl sim-sd-quirks sim-hw-flow sim-stage2 sim-zephyr-demo-rtl sim-zephyr-irq-echo-rtl synth-top sim-soc-gls-fast
+test-sim: check lint-rtl emu-test test-isa-emu test-isa-emu-linux firmware test-fw-host test-fat firmware-size build-zephyr-demo build-zephyr-irq-echo zephyr-bc-lib build-micropython build-hack test-emu coverage-fw sim-lockstep build-zephyr emu-bench sim-unit sim-psram-contract coverage-fcov test-isa test-act4 test-act4-emu test-isa-waits coverage-rust sim-gls-unit test-isa-gls test-act4-gls sim-soc-fast sim-soc-fast-icarus sim-soc-mmio sim-boot sim-hack-rtl sim-sd-quirks sim-hw-flow sim-stage2 sim-zephyr-demo-rtl sim-zephyr-irq-echo-rtl synth-top sim-soc-gls-fast
 	@echo "========================================================================"
 	@echo "  [SIM] ALL RTL, GLS NETLIST, ISA & SOC SIMULATION TESTS PASSED!        "
 	@echo "========================================================================"

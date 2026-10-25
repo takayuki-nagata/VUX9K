@@ -18,7 +18,7 @@ What `test-sim` and `test-slow` cover, and which long tests to run by hand for w
 
 `make test-sim` (every push/PR in CI) runs the firmware's host tests (`test-fw-host`, and
 `test-fat`: the FAT32 images rebuilt with dosfstools/mtools, which CI installs), the emulator's
-tests (`emu-test`, `test-emu`, `test-isa-emu`, `test-act4-emu`), the coverage checks
+tests (`emu-test`, `test-emu`, `test-isa-emu`, `test-isa-emu-linux`, `test-act4-emu`), the coverage checks
 (`coverage-fw`, `coverage-fcov`, `coverage-rust`), `sim-lockstep`, the unit suites (RTL + GLS)
 and `sim-psram-contract`, `test-isa` and `test-act4` (+ `test-isa-gls`, `test-act4-gls`,
 `test-isa-waits`), and the SoC tests: `sim-soc-fast` (+ `-icarus`), `sim-soc-mmio`,

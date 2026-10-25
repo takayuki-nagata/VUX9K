@@ -90,7 +90,7 @@ except the root `firmware.hex` symlink described below
 | Tier | What | When |
 |---|---|---|
 | `make check`, `check-rtl-syntax`, `lint-rtl` | static checks | every change (seconds) |
-| `make test-sim` | the simulations CI runs per push (CI then adds `make sta` and `make dist check-dist`): unit RTL + GLS, the PSRAM contract, ISA (riscv-tests, ACT4) RTL/GLS/emu and RTL with bus waits, emulator, firmware host tests + size + FAT images (`test-fat`), coverage-fw/fcov/rust, lockstep, SoC fast (Verilator and Icarus)/mmio/boot/hack/sd-quirks/hw-flow/stage2, Zephyr demo and irq_echo RTL, GLS fast | before merging |
+| `make test-sim` | the simulations CI runs per push (CI then adds `make sta` and `make dist check-dist`): unit RTL + GLS, the PSRAM contract, ISA (riscv-tests, ACT4) RTL/GLS/emu and RTL with bus waits, emulator (and its Linux profile's A and U-mode on riscv-tests), firmware host tests + size + FAT images (`test-fat`), coverage-fw/fcov/rust, lockstep, SoC fast (Verilator and Icarus)/mmio/boot/hack/sd-quirks/hw-flow/stage2, Zephyr demo and irq_echo RTL, GLS fast | before merging |
 | `make test-slow` | GLS RAM-boot/install flow, Icarus full flow, long lockstep, the Zephyr demo through the second stage on GLS, the board suite on the emulator, the PSRAM controller on its pin model (SoC window on Icarus RTL, controller netlist), unit tests with a new random seed | nightly; by hand after touching the flashing/SD chain (sync-points.md) |
 | `make sta`, `make timing`, `make eqy` | timing; RTL refactor proof | RTL changes |
 | `make hw-smoke`, `make test-hw`, `test-hw-dist` | the board | after RTL changes, before flashing or releasing |
