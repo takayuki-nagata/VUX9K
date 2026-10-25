@@ -292,10 +292,10 @@ fn dseg(a: u32) -> u32 {
 
 #[test]
 fn hack_semantics_and_cycles() {
-    use vux9k_emu::soc::{XMEM_READ_LATENCY as R, XMEM_WRITE_LATENCY as W};
+    use vux9k_emu::soc::{XMEM_LINE_FILL as F, XMEM_READ_LATENCY as R};
     // @7, D=A, @100, M=D, @100, D=M+1 (reads M: 4 cycles), AD=D+1 (dual dest: 3 cycles).
-    // The first instruction of each word misses the instruction cache (R), M=D stores to
-    // the PSRAM (W) and allocates the line D=M+1 then hits.
+    // The first instruction of each word misses the instruction cache (R), M=D misses the
+    // data cache (F: write-allocate, the line fills) and D=M+1 then hits.
     let mut soc = hack_app(&[
         7,
         c(0b010, 0b110000, false, 0),
@@ -312,20 +312,20 @@ fn hack_semantics_and_cycles() {
     assert_eq!(soc.xmem_word(dseg(100)), 7);
     assert_eq!(
         soc.cycle,
-        (2 + R + 2 + 2 + R + 2 + W + 2 + R + 4 + 3 + R) as u64
+        (2 + R + 2 + 2 + R + 2 + F + 2 + R + 4 + 3 + R) as u64
     );
 }
 
 #[test]
 fn hack_window_waits() {
-    use vux9k_emu::soc::{XMEM_READ_LATENCY as R, XMEM_WRITE_LATENCY as W};
+    use vux9k_emu::soc::{XMEM_LINE_FILL as F, XMEM_READ_LATENCY as R};
     let mut soc = hack_app(&[
         3,
-        c(0b111, 0b110111, true, 0), // AMD=M+1: M[3] misses (R), the store (W), D last
-        c(0b010, 0b110000, true, 0), // D=M: a new word, a miss, the fetch too
+        c(0b111, 0b110111, true, 0), // AMD=M+1: M[3] misses (F), the store hits, D last
+        c(0b010, 0b110000, true, 0), // D=M: M[1], the same line, a hit; the fetch misses
         3,
-        c(0b001, 0b110111, true, 0), // M=M+1: M[3] hits (the store allocated it), the store
-        c(0b001, 0b111010, false, 0), // M=-1: the store in EXECUTE
+        c(0b001, 0b110111, true, 0),  // M=M+1: M[3] hits, the store too
+        c(0b001, 0b111010, false, 0), // M=-1: the store in EXECUTE, a hit
     ]);
     let mut cycles = vec![];
     let mut stores = vec![];
@@ -336,8 +336,8 @@ fn hack_window_waits() {
     }
     assert_eq!(
         cycles,
-        [2 + R, 4 + R + W + 1, 2 + R + 2 + R, 2, R + 4 + W, 2 + W],
-        "FETCH (+R on a miss), EXECUTE (+W for M=), MEM_WAIT (+R on a miss), HACK_WB (+W), HACK_WR_D"
+        [2 + R, 4 + F + 1, 2 + R + 2, 2, R + 4, 2],
+        "FETCH (+R on a miss), EXECUTE, MEM_WAIT (+F on a miss), HACK_WB, HACK_WR_D"
     );
     // The bus shows the CPU's A; the word is in the D segment
     assert_eq!(stores[1], Some((3, 1, 0b1111)));
@@ -345,7 +345,31 @@ fn hack_window_waits() {
     assert_eq!((soc.regs[1], soc.regs[2]), (3, 0));
     assert_eq!(soc.xmem_word(dseg(3)), 0xFFFF_FFFF);
     let st = soc.caches.stats;
-    assert_eq!((st.load_hits, st.load_misses, st.stores), (1, 2, 3));
+    assert_eq!((st.load_hits, st.load_misses, st.stores), (2, 1, 3));
+    assert_eq!((st.store_hits, st.store_misses, st.writebacks), (3, 0, 0));
+}
+
+#[test]
+fn hack_am_m_plus_1_evicts_a_dirty_line() {
+    use vux9k_emu::soc::{XMEM_LINE_DIRTY as DM, XMEM_LINE_FILL as F, XMEM_READ_LATENCY as R};
+    // M[3] and M[515] share a data-cache line (512 words apart). M=1 in EXECUTE misses
+    // (F) and dirties the line; AM=M+1 at 515 evicts it (DM), its store then hits; D=M at
+    // 3 evicts 515's line, dirty from that store, and reads the 1 back
+    let mut soc = hack_app(&[
+        3,
+        c(0b001, 0b111111, false, 0), // M=1
+        515,
+        c(0b101, 0b110111, true, 0), // AM=M+1
+        3,
+        c(0b010, 0b110000, true, 0), // D=M
+    ]);
+    let cycles: Vec<u32> = (0..6).map(|_| soc.step().cycles).collect();
+    assert_eq!(cycles, [2 + R, 2 + F, 2 + R, 4 + DM, 2 + R, 4 + DM]);
+    assert_eq!((soc.regs[1], soc.regs[2]), (3, 1));
+    assert_eq!(soc.xmem_word(dseg(515)), 1);
+    let st = soc.caches.stats;
+    assert_eq!((st.load_hits, st.load_misses), (0, 2));
+    assert_eq!((st.store_hits, st.store_misses, st.writebacks), (1, 1, 2));
 }
 
 #[test]
@@ -534,7 +558,7 @@ fn hpm_csrs_exist_in_their_ranges() {
 }
 
 // ----- the wait-state window (soc_xmem_bridge + the 8 MB PSRAM, RV32 region 8) --------
-use vux9k_emu::soc::{XMEM_READ_LATENCY, XMEM_WRITE_LATENCY};
+use vux9k_emu::soc::{XMEM_FETCH_PROBE, XMEM_LINE_DIRTY, XMEM_LINE_FILL, XMEM_READ_LATENCY};
 
 /// lui + addi loading `v` into `rd`.
 fn li(rd: u32, v: u32) -> [u32; 2] {
@@ -569,8 +593,9 @@ fn xmem_loads_stores_aliases_and_wait_cycles() {
         "0x8F80_0010 is 0x8000_0010, 248 MB up"
     );
     assert_eq!(soc.xmem_word(0x8000_0810), 0, "no 2 KB repeat any more");
-    let stores = 2 * (3 + XMEM_WRITE_LATENCY) as u64;
-    let loads = 3 * 3; // data-cache hits: the sw allocated the line, the sb merged into it
+    // The sw misses the data cache and fills the line; the sb and the loads hit it
+    let stores = (3 + XMEM_LINE_FILL + 3) as u64;
+    let loads = 3 * 3;
     assert_eq!(soc.cycle, 4 * 2 + stores + loads);
     // Region 9 is unmapped: reads 0, writes ignored, no wait
     let mut soc = load(
@@ -589,7 +614,9 @@ fn xmem_loads_stores_aliases_and_wait_cycles() {
 }
 
 /// ROM code that copies `routine` to 0x8000_0000, sets x9 to the return address and
-/// jumps there; returns the program and the number of steps up to the jump.
+/// jumps there; returns the program and the number of steps up to the jump. The data cache
+/// holds the routine dirty (one line up to 8 words): its first fetch waits
+/// `XMEM_FETCH_PROBE`, the others `XMEM_READ_LATENCY`.
 fn xmem_call(routine: &[u32]) -> (Vec<u32>, usize) {
     let mut w = vec![lui(1, 0x80000)];
     for (k, word) in routine.iter().enumerate() {
@@ -618,15 +645,15 @@ fn xmem_fetch_waits_and_runs_late() {
     assert_eq!(soc.pc, 0x8000_0000);
     let (c0, mc0) = (soc.cycle, soc.csr.mcycle);
     let r = soc.step();
-    let w = XMEM_READ_LATENCY as u64;
+    let (p, w) = (XMEM_FETCH_PROBE as u64, XMEM_READ_LATENCY as u64);
     assert_eq!(
         (r.cycle, r.cycles as u64),
-        (c0, 2 + w),
+        (c0, 2 + p),
         "Retire::cycle is the first FETCH cycle"
     );
     assert_eq!(
         soc.regs[8] as u64,
-        mc0 + w + 1,
+        mc0 + p + 1,
         "mcycle as read in EXECUTE, after the wait"
     );
     let r = soc.step();
@@ -637,7 +664,7 @@ fn xmem_fetch_waits_and_runs_late() {
     );
     soc.step();
     assert_eq!(soc.pc, 4 * steps as u32, "returned to the ROM");
-    assert_eq!(soc.cycle, c0 + 3 * (2 + w));
+    assert_eq!(soc.cycle, c0 + (2 + p) + 2 * (2 + w));
 }
 
 #[test]
@@ -654,8 +681,8 @@ fn xmem_fetch_samples_the_interrupt_in_its_last_cycle() {
         soc.csr.mie = 1 << 7;
         soc.csr.mstatus = 1 << 3;
         let c0 = soc.cycle;
-        let w = XMEM_READ_LATENCY as u64;
-        // timer_irq in cycle c is mtime(c-1) >= mtimecmp, and mtime(c) == c here
+        let w = XMEM_FETCH_PROBE as u64; // the first fetch of the stored routine
+                                         // timer_irq in cycle c is mtime(c-1) >= mtimecmp, and mtime(c) == c here
         let cmp = c0 + w - 1 + late;
         soc.periph.timer.write(0xC, (cmp >> 32) as u32, c0 - 3);
         soc.periph.timer.write(0x8, cmp as u32, c0 - 2);
@@ -672,9 +699,12 @@ fn xmem_fetch_samples_the_interrupt_in_its_last_cycle() {
 
 #[test]
 fn xmem_fetch_hits_the_icache_and_stores_invalidate_it() {
-    // A two-instruction routine at 0x8000_0000 (addi x11 += 1; jalr x0, 0(x9)) called
-    // four times from the ROM: cold, warm, after a store to 0x8000_4000 (another word on
-    // the routine's first line, 16 KB up), and through the 8 MB alias
+    // A two-instruction routine at 0x8000_0000 (addi x11 += 1; jalr x0, 0(x9)), stored by
+    // the ROM (the data cache holds it dirty) and called four times without fence.i:
+    // cold (the first fetch's probe writes the data line back, the second's finds it
+    // clean), warm, after a store to 0x8000_4000 (another word on the routine's first
+    // instruction-cache line, 16 KB up, and on its data line with another tag: dirty, but
+    // no match for the probe), and through the 8 MB alias
     let mut w = vec![lui(1, 0x80000)];
     for (k, word) in [addi(11, 11, 1), i(0x67, 0, 9, 0, 0)].iter().enumerate() {
         w.extend(li(2, *word));
@@ -701,11 +731,12 @@ fn xmem_fetch_hits_the_icache_and_stores_invalidate_it() {
             waits.push(r.cycles - 2);
         }
     }
-    let m = XMEM_READ_LATENCY;
-    assert_eq!(waits, [m, m, 0, 0, m, 0, 0, 0]);
+    let (m, p) = (XMEM_READ_LATENCY, XMEM_FETCH_PROBE);
+    assert_eq!(waits, [p, m, 0, 0, m, 0, 0, 0]);
     assert_eq!(soc.regs[11], 4);
     let st = soc.caches.stats;
     assert_eq!((st.fetch_hits, st.fetch_misses), (5, 3));
+    assert_eq!((st.probe_writebacks, st.writebacks), (1, 0));
     // The power-on reset empties it
     soc.reset();
     soc.pc = 0x8000_0000;
@@ -715,39 +746,127 @@ fn xmem_fetch_hits_the_icache_and_stores_invalidate_it() {
 
 #[test]
 fn xmem_loads_hit_the_dcache_by_its_rules() {
-    // lw: cold, warm; another tag on the line (4 KB up) evicts it; a partial store hit
-    // keeps it; a partial store miss invalidates the line whatever it holds; a full-word
-    // store miss allocates it; the alias 8 MB up is the same line
+    // 0x8000_0040 and 0x8000_1040 (4 KB up, another tag) share a data line; a line holds
+    // 8 words, so 0x8000_0044 is on it too. A clean victim costs a fill (F), a dirty one
+    // its write-back first (D); a store, partial or not, allocates like a load, and the
+    // alias 8 MB up is the same line
     let mut soc = load(
         Profile::Real,
         &[
             lui(1, 0x80000),
             lui(2, 0x80001),
-            i(0x03, 0x40, 1, 2, 5), // lw x5, 0x8000_0040: miss
+            i(0x03, 0x40, 1, 2, 5), // lw 0x8000_0040: miss, the line was invalid
+            i(0x03, 0x44, 1, 2, 5), // lw 0x8000_0044: the same line, a hit
+            i(0x03, 0x40, 2, 2, 6), // lw 0x8000_1040: miss, evicts the clean line
+            i(0x03, 0x40, 1, 2, 5), // miss, clean victim
+            s(0x40, 0, 1, 0),       // sb x0, 0x8000_0040: hit, the line dirty
             i(0x03, 0x40, 1, 2, 5), // hit
-            i(0x03, 0x40, 2, 2, 6), // lw x6, 0x8000_1040: miss, evicts 0x40
-            i(0x03, 0x40, 1, 2, 5), // miss
-            s(0x40, 0, 1, 0),       // sb x0, 0x8000_0040: hit, merged
-            i(0x03, 0x40, 1, 2, 5), // hit
-            s(0x40, 0, 2, 0),       // sb x0, 0x8000_1040: partial miss, the line goes
-            i(0x03, 0x40, 1, 2, 5), // miss
-            s(0x40, 0, 2, 2),       // sw x0, 0x8000_1040: full-word miss, allocates
+            s(0x40, 0, 2, 0),       // sb x0, 0x8000_1040: partial miss, dirty victim
+            i(0x03, 0x40, 1, 2, 5), // miss, dirty victim (the sb's line)
+            s(0x40, 0, 2, 2),       // sw x0, 0x8000_1040: miss, clean victim
             i(0x03, 0x40, 2, 2, 6), // hit
             lui(4, 0x80801),
             i(0x03, 0x40, 4, 2, 6), // lw through the alias: hit
         ],
     );
-    let m = XMEM_READ_LATENCY;
+    let (f, d) = (XMEM_LINE_FILL, XMEM_LINE_DIRTY);
     let mut waits = vec![];
     for _ in 0..14 {
         let r = soc.step();
-        if r.instr & 0x7F == 0x03 {
+        if matches!(r.instr & 0x7F, 0x03 | 0x23) {
             waits.push(r.cycles - 3);
         }
     }
-    assert_eq!(waits, [m, 0, m, m, 0, m, 0, 0]);
+    assert_eq!(waits, [f, 0, f, f, 0, 0, d, d, f, 0, 0]);
     let st = soc.caches.stats;
-    assert_eq!((st.load_hits, st.load_misses, st.stores), (4, 4, 3));
+    assert_eq!((st.load_hits, st.load_misses), (4, 4));
+    assert_eq!((st.stores, st.store_hits, st.store_misses), (3, 1, 2));
+    assert_eq!((st.writebacks, st.probe_writebacks), (2, 0));
+}
+
+#[test]
+fn xmem_store_hit_then_load_reads_the_store() {
+    // sw (a miss: the line fills, then the word merges), sb into byte 1 and sh into the
+    // upper half (hits, partial), lw (a hit) sees all three; a load of another word of
+    // the line hits and is untouched
+    let mut soc = load(
+        Profile::Real,
+        &[
+            lui(1, 0x80000),
+            lui(2, 0x12345),
+            addi(2, 2, 0x678),
+            s(0x100, 2, 1, 2), // sw 0x1234_5678
+            addi(3, 0, 0xAA),
+            s(0x101, 3, 1, 0), // sb 0xAA into byte 1
+            addi(3, 0, 0x7BC),
+            s(0x102, 3, 1, 1), // sh 0x07BC into the upper half
+            i(0x03, 0x100, 1, 2, 5),
+            i(0x03, 0x11C, 1, 2, 6),
+        ],
+    );
+    let mut waits = vec![];
+    for _ in 0..10 {
+        let r = soc.step();
+        if matches!(r.instr & 0x7F, 0x03 | 0x23) {
+            waits.push(r.cycles - 3);
+        }
+    }
+    assert_eq!(waits, [XMEM_LINE_FILL, 0, 0, 0, 0]);
+    assert_eq!((soc.regs[5], soc.regs[6]), (0x07BC_AA78, 0));
+    assert_eq!(soc.xmem_word(0x8000_0100), 0x07BC_AA78);
+}
+
+#[test]
+fn xmem_dirty_lines_survive_a_soft_reset_not_the_power_on_reset() {
+    // sw 7 to 0x8000_0100 (a miss: the line fills and is dirty), then the soft reset key
+    // (GPIO 0xC); the program runs again from 0 and its sw hits the line the soft reset
+    // kept. The power-on reset drops the dirty line: its store never reached the PSRAM
+    let prog = [
+        lui(1, 0x80000),
+        addi(2, 0, 7),
+        s(0x100, 2, 1, 2),
+        lui(3, 0x40003),
+        lui(4, 0xA),
+        addi(4, 4, 0x55A),
+        s(0xC, 4, 3, 2), // soft reset
+    ];
+    let mut soc = load(Profile::Real, &prog);
+    soc.load_xmem(0x8000_0104, &5u32.to_le_bytes()).unwrap();
+    let store_wait = |soc: &mut Soc| {
+        run_n(soc, 2);
+        soc.step().cycles - 3
+    };
+    assert_eq!(store_wait(&mut soc), XMEM_LINE_FILL);
+    run_n(&mut soc, 4);
+    assert_eq!(soc.pc, 0, "soft reset");
+    assert_eq!(store_wait(&mut soc), 0, "the line survived the soft reset");
+    assert_eq!(soc.caches.stats.store_hits, 1);
+    assert_eq!(soc.xmem_word(0x8000_0100), 7);
+    // load_xmem writes the PSRAM: a word it writes behind the dirty line stays
+    soc.load_xmem(0x8000_0108, &9u32.to_le_bytes()).unwrap();
+    soc.reset();
+    assert_eq!(
+        (soc.xmem_word(0x8000_0100), soc.xmem_word(0x8000_0104)),
+        (0, 5),
+        "the dirty line's store is lost, the PSRAM's words stay"
+    );
+    assert_eq!(soc.xmem_word(0x8000_0108), 9);
+    assert_eq!(soc.caches.stats, Default::default());
+    assert_eq!(store_wait(&mut soc), XMEM_LINE_FILL, "the line is gone");
+    // A line written back (here by the fetch's probe) is clean: the reset keeps its words
+    let mut soc = load(
+        Profile::Real,
+        &[
+            lui(1, 0x80000),
+            addi(2, 0, 0x13), // nop
+            s(0, 2, 1, 2),
+            i(0x67, 0, 1, 0, 0), // jalr x0, 0(x1)
+        ],
+    );
+    run_n(&mut soc, 4);
+    assert_eq!(soc.step().cycles, 2 + XMEM_FETCH_PROBE);
+    soc.reset();
+    assert_eq!(soc.xmem_word(0x8000_0000), 0x13);
 }
 
 #[test]

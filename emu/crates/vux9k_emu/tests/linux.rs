@@ -5,7 +5,9 @@
 //! block, the UART's liteuart view and `load_linux`; and that Real keeps none of them.
 
 use vux9k_emu::periph::uart::Uart;
-use vux9k_emu::soc::{LINUX_DTB_ADDR, LINUX_DTB_MAX, XMEM_READ_LATENCY, XMEM_WRITE_LATENCY};
+use vux9k_emu::soc::{
+    LINUX_DTB_ADDR, LINUX_DTB_MAX, XMEM_LINE_DIRTY, XMEM_LINE_FILL, XMEM_READ_LATENCY,
+};
 use vux9k_emu::{Profile, Retire, Soc};
 
 // ----- encoders ---------------------------------------------------------------------
@@ -105,18 +107,36 @@ fn amo_ops_return_the_old_value_and_store_the_result() {
 
 #[test]
 fn amo_cycles_and_caches_are_a_load_and_a_store() {
-    let (rw, ww) = (XMEM_READ_LATENCY, XMEM_WRITE_LATENCY);
+    let (rw, fill, dirty) = (XMEM_READ_LATENCY, XMEM_LINE_FILL, XMEM_LINE_DIRTY);
     let mut soc = new_soc(Profile::Linux);
     soc.regs[1] = A;
     let add = amo(0x00, 0, 0, 1, 3);
-    assert_eq!(exec(&mut soc, add).cycles, 6 + rw + ww, "cold: a load miss");
     assert_eq!(
         exec(&mut soc, add).cycles,
-        6 + ww,
-        "the line stays: a load hit"
+        6 + fill,
+        "cold: a load miss, then the store hits the line"
     );
+    assert_eq!(exec(&mut soc, add).cycles, 6, "the line stays: hits");
     assert_eq!(exec(&mut soc, amo(LR, 0, 0, 1, 3)).cycles, 3, "LR hits");
-    assert_eq!(exec(&mut soc, amo(SC, 0, 0, 1, 3)).cycles, 3 + ww);
+    assert_eq!(exec(&mut soc, amo(SC, 0, 0, 1, 3)).cycles, 3, "SC hits");
+    let st = soc.caches.stats;
+    assert_eq!((st.load_hits, st.load_misses), (2, 1));
+    assert_eq!((st.store_hits, st.store_misses), (3, 0));
+    // Another tag on the line (2 KB up): the AMO's load evicts the dirty line. An SC whose
+    // line went since its LR misses on its store: here the AMO dirtied the line in between
+    soc.regs[1] = A + 0x800;
+    assert_eq!(exec(&mut soc, add).cycles, 6 + dirty, "a dirty victim");
+    soc.regs[1] = A;
+    assert_eq!(exec(&mut soc, amo(LR, 0, 0, 1, 3)).cycles, 3 + dirty);
+    soc.regs[1] = A + 0x800;
+    assert_eq!(
+        exec(&mut soc, add).cycles,
+        6 + fill,
+        "the LR's line was clean"
+    );
+    soc.regs[1] = A;
+    assert_eq!(exec(&mut soc, amo(SC, 0, 0, 1, 3)).cycles, 3 + dirty);
+    assert_eq!(soc.caches.stats.writebacks, 3);
     assert_eq!(
         exec(&mut soc, amo(SC, 0, 0, 1, 3)).cycles,
         3,

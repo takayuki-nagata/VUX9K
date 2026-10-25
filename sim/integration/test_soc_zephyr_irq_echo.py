@@ -23,6 +23,9 @@ BURST = bytes(b"abcdefghijklmnopqrstuvwxyz0123456789"[i % 36] for i in range(64)
 ECHO = BURST.upper() + b"\nrx=64 drop=0 err=0\n"
 UART_ERROR_OVERRUN = 1  # Zephyr's enum uart_rx_stop_reason
 RX_FIFO = 32  # soc's UART RX FIFO
+# Sent from irq_echo's first cycle: overflows the RX FIFO and has arrived whole well before RX is
+# enabled (~81k cycles, 47 frame times of the bridge, from the PSRAM with the write-back data cache)
+EARLY = BURST[: RX_FIFO + 2]
 BRIDGE_BYTE_BITS = 11  # VirtualSerialBridge sends two stop bits
 
 
@@ -77,7 +80,7 @@ async def test_zephyr_irq_echo_back_to_back(dut):
 async def test_zephyr_irq_echo_overrun_while_it_starts(dut):
     """A line sent while irq_echo starts, before it enables RX, overflows the RX FIFO; the line
     keeps its first 32 bytes, and uart_err_check reports the overrun"""
-    ser = await start(dut, early=BURST)
+    ser = await start(dut, early=EARLY)
     await wait_cycles(1_000_000)  # past uart_irq_rx_enable and the handler emptying the FIFO
     ser.write(b"\n")
     out = await reply(ser)

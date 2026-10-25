@@ -722,7 +722,7 @@ synth-units: veryl
 	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/uart/clk_timer.sv $(VERYL_OUT_DIR)/soc/uart/shift_registers.sv $(VERYL_OUT_DIR)/soc/uart/fifo_sync.sv $(VERYL_OUT_DIR)/soc/uart/uart_tx.sv $(VERYL_OUT_DIR)/soc/uart/uart_rx.sv $(VERYL_OUT_DIR)/soc/uart/uart_controller.sv; synth_gowin -top uart_controller $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/uart_controller_syn.v"
 	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/soc_xmem_bridge.sv; synth_gowin -top soc_xmem_bridge $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/soc_xmem_bridge_syn.v"
 	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/soc_icache.sv; synth_gowin -top soc_icache $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/soc_icache_syn.v"
-	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/soc_dcache.sv; synth_gowin -top soc_dcache $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/soc_dcache_syn.v"
+	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/soc_pkg.sv $(VERYL_OUT_DIR)/soc/soc_dcache.sv; synth_gowin -top soc_dcache $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/soc_dcache_syn.v"
 	$(YOSYS) -p "read_verilog -sv $(PSRAM_RTL_SRCS); chparam -set CLK_HZ $(SOC_CLK_HZ) psram_psram_controller; synth_gowin -top psram_psram_controller $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/psram_controller_syn.v"
 
 # soc_pkg::CLK_HZ, for the PSRAM controller's netlist above (soc_top's instance sets it; a

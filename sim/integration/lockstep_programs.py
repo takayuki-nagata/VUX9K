@@ -31,8 +31,16 @@ UART_BIT = 156  # soc_pkg::UART_CNT: 18 MHz / 115200
 UART_FRAME = 10 * UART_BIT
 XMEM = 0x8000_0000  # the wait-state window: soc_pkg::RV_REGION_XMEM, 8 MB of PSRAM
 XMEM_BYTES = 0x80_0000  # soc_pkg::XMEM_WORDS * 4: the window repeats every 8 MB of region 8
-XMEM_WAIT = 35  # soc_pkg::XMEM_READ_LATENCY: the longest wait of one access
-XMEM_WRITE_WAIT = 34  # soc_pkg::XMEM_WRITE_LATENCY: a store's wait
+XMEM_WAIT = 35  # soc_pkg::XMEM_READ_LATENCY: an uncached read's wait (an instruction-cache miss)
+XMEM_WRITE_WAIT = 34  # soc_pkg::XMEM_WRITE_LATENCY: a write's (the data cache's write-backs)
+# soc_dcache's line transfers, 8 one-word requests each (its header; the emulator's
+# XMEM_LINE_FILL/XMEM_LINE_DIRTY/XMEM_FETCH_PROBE): a data-cache miss with a clean or invalid
+# victim, one with a dirty victim, and an instruction-cache miss whose probe writes a dirty
+# data line back first
+XMEM_LINE_WORDS = 8
+XMEM_LINE_FILL = XMEM_LINE_WORDS * (XMEM_WAIT + 1) + 2
+XMEM_LINE_DIRTY = XMEM_LINE_WORDS * (XMEM_WRITE_WAIT + 1) + XMEM_LINE_FILL + 1
+XMEM_FETCH_PROBE = XMEM_LINE_WORDS * (XMEM_WRITE_WAIT + 1) + 2 + XMEM_WAIT
 # Hack's segments in the window (soc_pkg::HACK_I_BASE/HACK_D_BASE): instructions at
 # HACK_I_BASE + pc[15:0], data word A at HACK_D_BASE + 4 * A[14:0]
 HACK_I_BASE = 0x8000_0000
@@ -158,12 +166,17 @@ STAGE2_BASE = 0x8070_0000
 XMEM_USED += [(0x6F_0000, 0x6F_0100), (0x6F_E000, 0x70_0000), (0x70_0000, 0x70_0100)]
 # s2_launch's two parts and its RV32 program (S2L_CODE, S2L_COPY, S2L_APP, S2L_BYTES each)
 XMEM_USED += [(0x1000, 0x1200), (0x1800, 0x1A00), (0x2000, 0x2200)]
-# xcache's routines: A, and B one instruction-cache size (16 KB) above it on the same lines;
-# its data word D, and D2 4 KB above it on D's data-cache line
+# xcache's routines: A, and B one instruction-cache size (16 KB) above it on the same lines
+# (and on A's first data-cache line); its data word D, and D2 4 KB above it on D's data-cache
+# line; the line P of its partial stores and P2 2 KB (one data-cache size) above it. Fills
+# read whole lines (8 words, 32 bytes)
 XCACHE_I_BYTES = 0x4000  # soc_icache: 4096 lines of a word
+XCACHE_D_BYTES = 0x800  # soc_dcache: 64 lines of 8 words
 XCACHE_A, XCACHE_B, XCACHE_D = 0x600, 0x600 + XCACHE_I_BYTES, 0x700
 XCACHE_D2 = XCACHE_D + 0x1000
-XMEM_USED += [(XCACHE_B, XCACHE_B + 0x40), (XCACHE_D2, XCACHE_D2 + 4)]
+XCACHE_P = 0x780
+XCACHE_P2 = XCACHE_P + XCACHE_D_BYTES
+XMEM_USED += [(XCACHE_B, XCACHE_B + 0x40), (XCACHE_D2, XCACHE_D2 + 0x20), (XCACHE_P2, XCACHE_P2 + 0x20)]
 # Hack: the I segment up to HACK_DEMO_BYTES (the demo's image; the other Hack programs are
 # smaller), the D segment's first 256 words (R0-R15, the compiler's temporaries) and the
 # demo's stack (the 512 words below its SP, 0x4000), and hack_stub's pass counter
@@ -171,6 +184,10 @@ HACK_DEMO_BYTES = 0x1600
 HACK_STUB_FLAG = XMEM + 0x40_0000
 XMEM_USED += [(0x800, HACK_DEMO_BYTES), (0x2_0000, 0x2_0400), (0x2_F800, 0x3_0000)]
 XMEM_USED += [(HACK_STUB_FLAG - XMEM, HACK_STUB_FLAG - XMEM + 4)]
+# xcache_hack's data words 515 and 1027, on the data-cache line of word 3 under other tags
+# (their whole lines, which the fills read)
+XCACHE_HACK_WORDS = (3, 3 + 512, 3 + 1024)
+XMEM_USED += [(0x2_0000 + 4 * (w & ~7), 0x2_0000 + 4 * (w & ~7) + 0x20) for w in XCACHE_HACK_WORDS[1:]]
 # The data the RV32 programs once kept in D-RAM: random_rv's loads and stores (sp +-512 B
 # around RV_DATA; traps' sp, whose accesses trap) and xmem's store between window accesses
 RV_DATA = XMEM + 0x5_0000
@@ -189,9 +206,9 @@ def _soft_reset_key(a, gpio: str):
 
 
 HACK_BACK = ord("S")  # what hack_stub prints when a soft reset without a mode brings it back
-# The Hack demo's report has left the UART by cycle ~4.12M (its stores wait on the PSRAM),
-# hack_stub's HACK_BACK after the demo's soft reset by ~4.125M
-HACK_DEMO_CYCLES = 4_140_000
+# The Hack demo's report has left the UART by cycle ~1.46M (its data in the data cache),
+# hack_stub's HACK_BACK after the demo's soft reset starts at ~1.4606M
+HACK_DEMO_CYCLES = 1_480_000
 
 
 def hack_stub() -> list:
@@ -336,16 +353,26 @@ XCACHE_IRQ_LOOPS = 400  # the last pass, with a timer interrupt in it
 
 
 def xcache() -> list:
-    """The window's caches (soc_icache, soc_dcache). Instruction cache: routine A, a counted loop
-    (with a window load) that hits from its second pass on, then a store to the next
-    instruction's word (no fence.i: the store invalidates the line, in the very cycle that
-    line is read ahead, which the cache turns into a miss) and a store to the next fetch's
-    line under another tag (the data stays, the line goes); routine B, 16 KB above A on the
-    same lines, called alternately with A so each evicts the other; A through the window's 8
-    MB alias (the same lines: a hit); and a last long pass of A's loop, all hits, during
-    which a timer interrupt is taken. Data cache, from the ROM: loads of D cold and warm, a
-    byte store hit (merged, loaded back), D2 on D's line evicting it, a halfword store miss
-    (the line goes), a word store miss (allocates), and a load through the 8 MB alias."""
+    """The window's caches (soc_icache, soc_dcache). The ROM stores routines A and B without
+    fence.i: B, on A's data-cache line (A is one line) under another tag, evicts that line
+    (dirty) before A runs, so A's code is fetched from the PSRAM and its first fetch finds a
+    dirty line of another tag there (no write-back, R); each call of B finds the line holding it
+    dirty (the probe writes it back, XMEM_FETCH_PROBE). Instruction cache: routine A, a counted
+    loop (with a window load) that hits from its second pass on, then a store to the next
+    instruction's word (no fence.i: the store invalidates the line, in the very cycle that line
+    is read ahead, which the cache turns into a miss; the store misses the data cache, its
+    victim B's dirty line, and the fetch's probe writes the stored word back) and a store to the
+    next fetch's line under another tag (the data stays, the line goes; on the data side it
+    evicts the clean line the probe left and leaves a dirty one of another tag at the fetch's
+    line); routine B, 16 KB above A on the same lines, called alternately with A so each evicts
+    the other; A through the window's 8 MB alias (the same lines: a hit); and a last long pass
+    of A's loop, all hits, during which a timer interrupt is taken. Data cache, from the ROM: a
+    word store hit (the loop loaded D), loaded back, a byte store hit (merged, loaded back), D2
+    on D's line evicting it (dirty), D evicting D2 (clean), a halfword store miss (fills, dirty
+    with half a word), D evicting it, a word store miss, a load hit and one through the 8 MB
+    alias; then partial stores into a fresh line P (a byte into word 0, a halfword into word 1:
+    masks 0010 and 1100), evicted by a load of P2 (the write-back writes only those bytes) and
+    loaded back from the PSRAM."""
     a = Asm()
     a.li("s0", XMEM)
     a.li("s2", 0x4000_1000)  # timer
@@ -418,16 +445,26 @@ def xcache() -> list:
     a.li("t0", 0xA5)
     a.sb("t0", 1, "s1")  # a byte store hit: merged
     a.lw("a3", 0, "s1")
-    a.lw("a4", 0, "s3")  # D2: a miss, evicts D
-    a.lw("a3", 0, "s1")  # a miss, evicts D2
+    a.lw("a4", 0, "s3")  # D2: a miss, evicts D's dirty line
+    a.lw("a3", 0, "s1")  # a miss, evicts D2's clean line
     a.li("t0", 0xBEEF)
-    a.sh("t0", 2, "s3")  # a halfword store miss: D's line goes
-    a.lw("a3", 0, "s1")  # a miss
+    a.sh("t0", 2, "s3")  # a halfword store miss: fills D2's line, then merges (dirty)
+    a.lw("a3", 0, "s1")  # a miss, evicts it
     a.li("t0", 0x0BAD_F00D)
     a.sw("t0", 0, "s3")  # a word store miss: allocates D2
     a.lw("a4", 0, "s3")  # a hit
     a.li("t1", XMEM + XMEM_BYTES + XCACHE_D2)
     a.lw("a4", 0, "t1")  # the alias: a hit
+    # Partial masks: a byte and a halfword into P's line, evicted, read back from the PSRAM
+    a.li("s1", XMEM + XCACHE_P)
+    a.li("s3", XMEM + XCACHE_P2)
+    a.li("t0", 0x5A)
+    a.sb("t0", 1, "s1")  # a miss: fills, the byte merges (mask 0010)
+    a.li("t0", 0xC3A5)
+    a.sh("t0", 6, "s1")  # word 1's upper half, a hit (mask 1100)
+    a.lw("a5", 0, "s3")  # P2: a miss, the dirty victim written back
+    a.lw("a3", 0, "s1")  # a miss: P's words as the write-back left them
+    a.lw("a4", 4, "s1")
     a.label("done")
     a.j("done")
 
@@ -577,6 +614,42 @@ def hack_soft_reset(key_by_addition: bool = True, mode_rv32: bool = False) -> li
     return a.assemble()
 
 
+XCACHE_HACK_CYCLES = 6_000  # its digit starts at cycle ~3,300
+
+
+def xcache_hack() -> list:
+    """Hack (for its I segment, started by hack_stub) on the data cache: data words 3, 515 and
+    1027 (XCACHE_HACK_WORDS) share a line under three tags (and with hack_stub's flag, which it
+    left dirty across its soft reset). M=1 at 3 in EXECUTE (a store miss, the flag's line its
+    dirty victim); AM=M+1 at 515 (its load evicts the dirty line, XMEM_LINE_DIRTY, then its store
+    in HACK_WB hits); D=M at 3 (evicts 515's line, dirty from that store, and reads the 1 back);
+    M=-1 at 1027 in EXECUTE (a store miss whose victim, 3's line, is clean: a fill); AMD=M+1 at
+    3 (its load evicts 1027's dirty line, then HACK_WB and HACK_WR_D); then D (2) to the UART
+    as a digit, and spin."""
+    import hack_asm
+
+    w3, w515, w1027 = XCACHE_HACK_WORDS
+    a = hack_asm.Asm()
+    a.at(w3)
+    a.c("M=1")
+    a.at(w515)
+    a.c("AM=M+1")
+    a.at(w3)
+    a.c("D=M")
+    a.at(w1027)
+    a.c("M=-1")
+    a.at(w3)
+    a.c("AMD=M+1")
+    a.at(ord("0"))
+    a.c("D=D+A")
+    a.at(0x6000)  # UART data
+    a.c("M=D")
+    a.label("spin")
+    a.at("spin")
+    a.c("0;JMP")
+    return a.assemble()
+
+
 def boot_mode_hack() -> list:
     """RV32 writes a Hack program (starting with `@0`, which RV32 can't tell from its own
     code) into Hack's instruction segment word by word, gives Hack in GPIO 0x8 (read back),
@@ -615,7 +688,7 @@ S2L_CODE = XMEM + 0x1000  # the launcher's first part, as the second stage's cod
 S2L_COPY = XMEM + 0x1800  # where the first part copies the second (fence.i, then a jump)
 S2L_APP = XMEM + 0x2000  # where the second part copies an RV32 program (the PSRAM target)
 S2L_BYTES = 0x200  # room for each part and the RV32 program (XMEM_USED)
-# 'P' starts at cycle ~4,100 (Hack: ~3,900), 'L' after the jump at ~5,600 ('K' after the soft reset ~5,500)
+# 'P' starts at cycle ~5,900 (Hack: ~5,800), 'L' after the jump at ~8,000 ('K' after the soft reset ~7,600)
 S2_LAUNCH_CYCLES = 18_000
 
 
@@ -991,12 +1064,21 @@ def programs() -> list:
     progs.append(Program("sd_clkdiv", cycles=30_000, imem_words=sd_clkdiv()))
     progs.append(Program("s2_launch", cycles=S2_LAUNCH_CYCLES, imem_words=s2_launch()))
     progs.append(Program("s2_launch_hack", cycles=S2_LAUNCH_CYCLES, imem_words=s2_launch(hack=True)))
-    # The window programs finish by cycle ~3,600 / ~4,000 (window waits included); xmem
-    # then takes timer interrupts in the ROM until the end
-    progs.append(Program("xmem", cycles=6_500, imem_words=xmem()))
-    progs.append(Program("random_rv_xmem_4", cycles=8_000, imem_words=random_rv(4, base=XMEM + 0x400)))
-    # The window's caches: done by cycle ~5,500, then spins in the ROM
-    progs.append(Program("xcache", cycles=7_000, imem_words=xcache()))
+    # The window programs finish by cycle ~15,500 / ~10,900 (window waits included, most of
+    # them line transfers); xmem then takes timer interrupts in the ROM until the end
+    progs.append(Program("xmem", cycles=17_500, imem_words=xmem()))
+    progs.append(Program("random_rv_xmem_4", cycles=13_000, imem_words=random_rv(4, base=XMEM + 0x400)))
+    # The window's caches: done by cycle ~15,700, then spins in the ROM
+    progs.append(Program("xcache", cycles=18_000, imem_words=xcache()))
+    # The data cache from Hack (XCACHE_HACK_CYCLES), then spins
+    progs.append(
+        Program(
+            "xcache_hack",
+            cycles=XCACHE_HACK_CYCLES,
+            imem_words=hack_stub(),
+            xmem=[(HACK_I_BASE, hack_image_bytes(xcache_hack()))],
+        )
+    )
     # Stores to the ROM and to unassigned regions, ignored; done by cycle ~300
     progs.append(Program("rom_stores", cycles=2_000, imem_words=rom_stores()))
     md_rom, md_code = muldiv()

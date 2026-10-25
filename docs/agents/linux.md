@@ -77,7 +77,7 @@ emulator's Linux profile. Index and the rules that apply everywhere: [`AGENTS.md
   (`RISCV_PROBE_UNALIGNED_ACCESS`). head.S writes the PMP CSRs behind a temporary trap vector
   that skips them.
 
-## Speed (2026-10-25, emulator, the current memory system)
+## Speed (2026-10-25, emulator, the write-through data cache)
 
 The boot to the prompt is ~3.1G cycles (173 s at 18 MHz), with CPI 25. A command that executes
 busybox is 0.2-0.5G cycles. Most of the time is instruction fetches that miss the I cache: its lines
@@ -85,4 +85,7 @@ are one word, so even straight-line code misses every word at 35 cycles. Stores,
 34 cycles, take most of the rest. A PC profile shows the timer tick's work, because a tick
 takes most of the CPU at that speed. Throwaway emulator versions put the boot at ~35 s with
 4-word I-cache lines (a PSRAM burst read), and ~14 s with a write buffer as well. The
-measurements are in `test_linux.py`'s output.
+measurements are in `test_linux.py`'s output. Since then the data cache is write-back with
+8-word lines, not a write buffer: a store that hits no longer waits, a miss moves the line one
+word at a time (~290 cycles, ~570 with a dirty victim), and the I-cache lines are still one
+word; these figures are from before that change (re-measure with `make test-linux-emu`).

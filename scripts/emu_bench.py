@@ -57,7 +57,7 @@ class Workload:
 
 
 def synthetic_words(iterations: int = 2_000_000) -> list[int]:
-    """ALU, PSRAM loads/stores (through the data cache; the stores wait) and branches with
+    """ALU, PSRAM loads/stores (32 words, through the data cache, which they hit after the first pass) and branches with
     interrupts enabled (MTIE; mtimecmp stays at its reset maximum, so none is taken), a '.'
     every 1024 iterations, then DONE."""
     a = Asm()

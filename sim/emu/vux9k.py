@@ -184,14 +184,17 @@ class Meter:
 
 
 def hit_rates(stats: dict[str, int]) -> str:
-    """The fetches' and loads' hit rates in a Meter's window, and its stores."""
+    """The fetches', loads' and stores' hit rates in a Meter's window, its stores and the data
+    cache's write-backs (dirty victims, and the fetches' probes)."""
 
     def rate(hits: int, misses: int) -> str:
         return f"{100 * hits / max(hits + misses, 1):5.1f}%"
 
     i = rate(stats["fetch_hits"], stats["fetch_misses"])
     d = rate(stats["load_hits"], stats["load_misses"])
-    return f"I {i} D {d} stores {stats['stores']:,}"
+    st = rate(stats["store_hits"], stats["store_misses"])
+    wb = f"wb {stats['writebacks']:,}+{stats['probe_writebacks']:,}"
+    return f"I {i} D {d} stores {stats['stores']:,} ({st}) {wb}"
 
 
 def press_button(soc, hold_ms: float = 25, after_ms: float = 15) -> None:

@@ -126,9 +126,12 @@ The CPU is RV32IM with Zicsr and Zifencei, machine mode only, at 18 MHz, with a 
 ROM (the first stage, read-only) and 8 MB of PSRAM, its only RAM. The Zephyr board `vux9k`
 links applications into the PSRAM: the image runs in place from `0x8000_0000` (4 MB, where
 the second stage's `run` loads it), its RAM is the 3 MB from `0x8040_0000`. In the PSRAM, a
-fetch that misses the 16 KB instruction cache, a load that misses the 2 KB data cache (both
-one word a line) and every store (written through) wait ~35 cycles; a hit takes no longer
-than a fetch or load from the ROM.
+fetch that misses the 16 KB instruction cache (one word a line) waits ~35 cycles, and a load
+or store that misses the 2 KB data cache (write-back, 8-word lines) ~290 (~570 when the line
+it replaces holds stores, which are written back first); a hit takes no longer than a fetch
+or load from the ROM, and a store that hits stays in the data cache without waiting. The
+board's reset button (S1) drops the stores the data cache still holds: after it, as after
+power-on, write before reading; a soft reset keeps them.
 Misaligned loads and stores trap, and so does any CSR that isn't implemented
 ([RV32 CSRs](../README.md#rv32-csrs) in the repository's README lists them).
 
@@ -149,7 +152,7 @@ Use it as `west build` writes it: it carries the initial values of `.data`, whic
 image copies to its RAM at startup.
 
 - **C:** any Zephyr application; start from `samples/hello_world`. Size still costs time:
-  `run` loads a file at ~200-260 cycles a byte (on the emulator, which follows the RTL
+  `run` loads a file at ~180-220 cycles a byte (on the emulator, which follows the RTL
   cycle for cycle: ~0.2 s for 13 KB, ~3 s for `BC.BIN`'s 260 KB), so Zephyr's size options
   still pay off.
 - **Rust:** `vux9k-zephyr-bsp/app/` is a template: a Zephyr application whose logic is a
@@ -182,8 +185,9 @@ hcc -r hack/main.c -o app.bin    # the image for the emulator (--mode hack)
 ```
 
 Hack mode sees the UART at `0x6000`-`0x6003`, the GPIO at `0x6004`-`0x600F` and 24K words
-of RAM (`0x0000`-`0x5FFF`); its code and data are in the PSRAM, in two segments, so every
-store and every fetch or load that misses the caches waits ~35 cycles
+of RAM (`0x0000`-`0x5FFF`); its code and data are in the PSRAM, in two segments, so a fetch that
+misses the instruction cache waits ~35 cycles and a load or store that misses the data cache
+~290 (~570 with a write-back); 8 consecutive RAM words share a data-cache line
 ([Hack Mode Address Space](../README.md#hack-mode-address-space-16-bit-word-addresses)).
 The instruction segment holds at most 64 KB of code (32K instructions, two to a 32-bit word).
 The data segment is 96 KB of the PSRAM: each of the 24K RAM words is a 32-bit word of its
@@ -212,8 +216,8 @@ python3 tools/vux_tool.py mkv4 --mode hack --name "my hack app" app.bin HACKAPP.
 
 The PSRAM window is `XMEM_BASE` (`0x8000_0000`) up to the second stage at `STAGE2_BASE`
 (`0x8070_0000`); the entry point defaults to the load address. Code there can run slower: a
-fetch that misses the 16 KB instruction cache, a load that misses the 2 KB data cache and
-every store wait ~35 cycles. A PSRAM application starts with `a0` = 1 on an SDHC card (else 0),
+fetch that misses the 16 KB instruction cache waits ~35 cycles, a load or store that misses
+the 2 KB data cache ~290 (~570 when it writes a line back first); stores that hit don't wait. A PSRAM application starts with `a0` = 1 on an SDHC card (else 0),
 `a1` = the FAT32 partition's first LBA, `a2` = the first stage's version, and the first stage
 in the ROM (a soft reset goes back to it); `sd/VUX9K/APPS/HELLO.BIN` and the Zephyr
 demos are. `run` checks the file's magic, mode and size before it writes anything; it then

@@ -27,11 +27,14 @@
 //! its cost (RV: 2, +1 MEM_WAIT for loads/stores, +`MULDIV_WAIT_CYCLES` for RV32M; Hack: 2, +2 (MEM_WAIT, HACK_WB) when the
 //! comp reads M, +1 (HACK_WR_D) when it writes both A and D). A trap costs 2 (it is taken
 //! in EXECUTE).
-//! Window accesses wait on top of that: a fetch from the window that misses the
-//! instruction cache stays in FETCH `XMEM_READ_LATENCY` cycles more (a hit, none), a
-//! window load that misses the data cache in MEM_WAIT `XMEM_READ_LATENCY` more (a hit,
-//! none), a window store `XMEM_WRITE_LATENCY` more where it is made (RV32: MEM_WAIT; Hack:
-//! EXECUTE for `M=` with a comp that doesn't read M, else HACK_WB, after the load's wait).
+//! Window accesses wait on top of that, by the caches' rules (crate::cache): a fetch from
+//! the window that misses the instruction cache stays in FETCH `XMEM_READ_LATENCY` cycles
+//! more, or `XMEM_FETCH_PROBE` when the data cache first writes back a dirty line holding
+//! its word (a hit, none); a window load or store that misses the data cache waits
+//! `XMEM_LINE_FILL` cycles more, or `XMEM_LINE_DIRTY` when the victim line is dirty (a
+//! hit, none: a store hit makes no bus access), where it is made (RV32: MEM_WAIT; Hack: a
+//! load in MEM_WAIT, `M=` in EXECUTE with a comp that doesn't read M, else in HACK_WB after
+//! the load, on the line the load just made present: a hit).
 //! Every Hack fetch is from the window (its I segment, `HACK_I_BASE`), and Hack's data
 //! below 0x6000 is too (its D segment, `HACK_D_BASE`). Nothing in the CPU moves while a
 //! fetch waits (it samples the interrupt in its last FETCH cycle), so an instruction
@@ -53,7 +56,8 @@ pub const TOHOST: u32 = 0xF000_0000;
 // docs/agents/sync-points.md): RV32 region XMEM_REGION, the 8 MB PSRAM (XMEM_WORDS words)
 // repeating every 8 MB across it (soc_top hides the controller's register space); a
 // request accepted in the first FETCH/MEM_WAIT cycle is answered XMEM_*_LATENCY cycles
-// later, which is how many cycles the access adds. The controller's power-up (about 3,610
+// later. An uncached access (the instruction cache's miss) adds that many cycles; the data
+// cache moves whole lines (XMEM_LINE_*). The controller's power-up (about 3,610
 // cycles after reset) is not modeled: it ends inside soc_top's 32,768-cycle power-on reset,
 // before the CPU's first cycle, so no program can see it.
 /// RV32 region (`addr[31:28]`) of the window: soc_pkg::RV_REGION_XMEM.
@@ -62,8 +66,24 @@ pub const XMEM_REGION: u32 = 0x8;
 pub const XMEM_WORDS: usize = 1 << 21;
 /// Extra cycles of a window fetch or load: soc_pkg::XMEM_READ_LATENCY.
 pub const XMEM_READ_LATENCY: u32 = 35;
-/// Extra cycles of a window store: soc_pkg::XMEM_WRITE_LATENCY.
+/// Cycles of a write accepted by the controller until its response:
+/// soc_pkg::XMEM_WRITE_LATENCY.
 pub const XMEM_WRITE_LATENCY: u32 = 34;
+// soc_dcache's line transfers (its header): DCACHE_LINE_WORDS one-word requests, each taken
+// in the cycle it is raised, answered XMEM_*_LATENCY cycles later, the next raised the
+// cycle after; sim/unit/test_soc_dcache.py measures them.
+const LINE: u32 = crate::cache::DCACHE_LINE_WORDS as u32;
+/// Extra cycles of a window load or store that misses the data cache, its victim line
+/// invalid or clean: the line's fill, 8(R+1)+2 = 290.
+pub const XMEM_LINE_FILL: u32 = LINE * (XMEM_READ_LATENCY + 1) + 2;
+/// Extra cycles of a data-cache miss whose victim line is dirty: its write-back, then the
+/// fill, 8(W+1)+8(R+1)+3 = 571.
+pub const XMEM_LINE_DIRTY: u32 =
+    LINE * (XMEM_WRITE_LATENCY + 1) + LINE * (XMEM_READ_LATENCY + 1) + 3;
+/// Extra cycles of a window fetch that misses the instruction cache while the data cache
+/// holds its word in a dirty line: the probe's write-back of the line, then the fetch,
+/// 8(W+1)+2+R = 317.
+pub const XMEM_FETCH_PROBE: u32 = LINE * (XMEM_WRITE_LATENCY + 1) + 2 + XMEM_READ_LATENCY;
 /// The window's first address, where the board's RV32 applications are linked
 /// (fw_common::map::XMEM_BASE; the `vux9k` Zephyr board's flash).
 pub const XMEM_BASE: u32 = XMEM_REGION << 28;
@@ -372,10 +392,11 @@ impl Soc {
     }
 
     /// Power-on reset: CPU, peripherals and the window's caches (memories keep their
-    /// contents, and an SD card stays in its socket as it is).
+    /// contents, except the stores the data cache still held in dirty lines, which never
+    /// reach the PSRAM; an SD card stays in its socket as it is).
     pub fn reset(&mut self) {
         self.regs = [0; 32];
-        self.caches = Caches::default();
+        self.caches.power_on(&mut self.xmem);
         self.pc = 0;
         self.csr = Csrs::default();
         let card = self.periph.sd.card.take();
@@ -497,7 +518,9 @@ impl Soc {
     }
 
     /// Write `bytes` into the wait-state window at RV32 address `addr` (word-aligned; little-
-    /// endian words, the last one's bytes past the end 0), within its 8 MB.
+    /// endian words, the last one's bytes past the end 0), within its 8 MB. It writes the
+    /// PSRAM past the caches (crate::cache): call it before the CPU runs, or the words of
+    /// lines the data cache holds differ from the RTL's.
     pub fn load_xmem(&mut self, addr: u32, bytes: &[u8]) -> Result<(), String> {
         let offset = addr.wrapping_sub(XMEM_BASE) as usize;
         if !self.in_xmem(addr) || !addr.is_multiple_of(4) || offset + bytes.len() > XMEM_BYTES {
@@ -510,7 +533,9 @@ impl Soc {
         for (n, chunk) in bytes.chunks(4).enumerate() {
             let mut w = [0u8; 4];
             w[..chunk.len()].copy_from_slice(chunk);
-            self.xmem[offset / 4 + n] = u32::from_le_bytes(w);
+            let v = u32::from_le_bytes(w);
+            self.xmem[offset / 4 + n] = v;
+            self.caches.psram_written(offset / 4 + n, v);
         }
         Ok(())
     }
@@ -589,12 +614,7 @@ impl Soc {
         match win {
             Some(addr) => {
                 let idx = Self::xmem_index(addr);
-                let wait = if self.caches.fetch(idx) {
-                    0
-                } else {
-                    XMEM_READ_LATENCY
-                };
-                (self.xmem[idx], wait)
+                (self.xmem[idx], self.caches.fetch(idx))
             }
             None => (self.rom[((pc >> 2) & self.rom_mask) as usize], 0),
         }
@@ -609,6 +629,18 @@ impl Soc {
     #[inline]
     fn xmem_index(addr: u32) -> usize {
         (addr >> 2) as usize & (XMEM_WORDS - 1)
+    }
+
+    /// The cycles an RV32 load of `addr` waits in MEM_WAIT: a window load's data-cache
+    /// access.
+    #[inline]
+    fn rv_load_wait(&mut self, addr: u32) -> u32 {
+        if self.in_xmem(addr) {
+            self.caches
+                .access(Self::xmem_index(addr), false, &self.xmem)
+        } else {
+            0
+        }
     }
 
     /// RV32 data read of the 32-bit word containing `addr` (soc_addr_decoder + soc_rom),
@@ -629,8 +661,9 @@ impl Soc {
     }
 
     /// RV32 data store (in MEM_WAIT, from the third cycle of the instruction fetched in `t`):
-    /// `data` is the lane-replicated store data, `be` the byte enables.
-    fn rv_write(&mut self, addr: u32, data: u32, be: u8, t: u64) {
+    /// `data` is the lane-replicated store data, `be` the byte enables. Returns the cycles
+    /// MEM_WAIT waits (a window store's data-cache access).
+    fn rv_write(&mut self, addr: u32, data: u32, be: u8, t: u64) -> u32 {
         if self.isa_test {
             if addr == TOHOST && self.tohost.is_none() {
                 self.tohost = Some(data);
@@ -639,21 +672,27 @@ impl Soc {
                 let idx = ((addr >> 2) & self.rom_mask) as usize;
                 self.rom[idx] = merge_bytes(self.rom[idx], data, be);
             }
-            return;
+            return 0;
         }
         match addr >> 28 {
-            2 if self.linux => self
-                .periph
-                .clint
-                .write(addr, data, &mut self.periph.timer, t + 2),
-            4 => self.mmio_write(addr, data, t + 2),
+            2 if self.linux => {
+                self.periph
+                    .clint
+                    .write(addr, data, &mut self.periph.timer, t + 2);
+                0
+            }
+            4 => {
+                self.mmio_write(addr, data, t + 2);
+                0
+            }
             _ if self.in_xmem(addr) => {
                 let idx = Self::xmem_index(addr);
+                let wait = self.caches.access(idx, true, &self.xmem);
                 self.xmem[idx] = merge_bytes(self.xmem[idx], data, be);
-                self.caches.store(idx, be);
+                wait
             }
             // Region 0 (the ROM) and the unassigned regions take no stores
-            _ => {}
+            _ => 0,
         }
     }
 
@@ -697,26 +736,21 @@ impl Soc {
 
     /// Hack data read of the word at address `a` (Hack decode: the D segment below 0x6000,
     /// MMIO at 0x6000-0x600F, nothing above), for the instruction fetched in cycle `t`, and
-    /// the cycles its MEM_WAIT waits (a data-cache miss).
+    /// the cycles its MEM_WAIT waits (its data-cache access).
     fn hack_read(&mut self, a: u32, t: u64) -> (u32, u32) {
         let a16 = a & 0xFFFF;
         if (0x6000..0x6010).contains(&a16) {
             (self.mmio_read(Self::hack_mmio(a16), t), 0)
         } else if a16 < 0x6000 && !self.xmem.is_empty() {
             let idx = Self::hack_data_index(a16);
-            let wait = if self.caches.load(idx) {
-                0
-            } else {
-                XMEM_READ_LATENCY
-            };
-            (self.xmem[idx], wait)
+            (self.xmem[idx], self.caches.access(idx, false, &self.xmem))
         } else {
             (0, 0)
         }
     }
 
     /// Hack data write, at the end of cycle `edge` for MMIO, and the cycles it waits (a
-    /// store to the D segment: the whole word, all byte enables, through the data cache).
+    /// store to the D segment: the whole word, all byte enables, its data-cache access).
     fn hack_write(&mut self, a: u32, v: u32, edge: u64) -> u32 {
         let a16 = a & 0xFFFF;
         if (0x6000..0x6010).contains(&a16) {
@@ -724,9 +758,9 @@ impl Soc {
             0
         } else if a16 < 0x6000 && !self.xmem.is_empty() {
             let idx = Self::hack_data_index(a16);
+            let wait = self.caches.access(idx, true, &self.xmem);
             self.xmem[idx] = v;
-            self.caches.store(idx, 0b1111);
-            XMEM_WRITE_LATENCY
+            wait
         } else {
             0
         }
@@ -952,11 +986,7 @@ impl Soc {
                 if misaligned(addr, f3) {
                     return self.take_trap(4, addr, r);
                 }
-                r.cycles = 3 + if self.in_xmem(addr) && !self.caches.load(Self::xmem_index(addr)) {
-                    XMEM_READ_LATENCY
-                } else {
-                    0
-                };
+                r.cycles = 3 + self.rv_load_wait(addr);
                 let word = self.rv_read_word(addr, self.cycle);
                 let sh = (addr & 3) * 8;
                 let v = match f3 {
@@ -973,11 +1003,6 @@ impl Soc {
                 if misaligned(addr, f3) {
                     return self.take_trap(6, addr, r);
                 }
-                r.cycles = 3 + if self.in_xmem(addr) {
-                    XMEM_WRITE_LATENCY
-                } else {
-                    0
-                };
                 let x2 = self.regs[rs2(i)];
                 let lane = addr & 3;
                 let (data, be) = match f3 {
@@ -988,7 +1013,7 @@ impl Soc {
                     ),
                     _ => (x2, 0b1111),
                 };
-                self.rv_write(addr, data, be, self.cycle);
+                r.cycles = 3 + self.rv_write(addr, data, be, self.cycle);
                 r.store = Some((addr, data, be));
             }
             OP_AMO => {
@@ -1084,8 +1109,9 @@ impl Soc {
     /// are as for a load followed by a store. aq/rl are ignored (one hart, in order).
     ///
     /// Cycle cost (a placeholder until the RTL has the A extension, L1): LR a load's
-    /// (3 + the read wait), SC a store's (3 + the write wait), or 3 when it fails (no
-    /// store), an AMO a load's plus a store's (6 + both waits).
+    /// (3 + its data-cache wait), SC a store's (3 + its wait), or 3 when it fails (no
+    /// store), an AMO a load's plus a store's (6 + both waits: a load access, then a store
+    /// access to the same word, which hits the line the load made present).
     fn exec_amo(&mut self, i: u32, r: &mut Retire) -> Option<u32> {
         let f5 = i >> 27;
         let addr = self.regs[rs1(i)];
@@ -1093,24 +1119,18 @@ impl Soc {
             return Some(if f5 == AMO_LR { 4 } else { 6 });
         }
         let src = self.regs[rs2(i)];
-        let win = self.in_xmem(addr);
         let t = self.cycle;
         if f5 == AMO_SC {
             let ok = self.reservation.take() == Some(addr);
             r.cycles = 3;
             if ok {
-                r.cycles += if win { XMEM_WRITE_LATENCY } else { 0 };
-                self.rv_write(addr, src, 0b1111, t);
+                r.cycles += self.rv_write(addr, src, 0b1111, t);
                 r.store = Some((addr, src, 0b1111));
             }
             self.write_rd(rd(i), !ok as u32, r);
             return None;
         }
-        let read_wait = if win && !self.caches.load(Self::xmem_index(addr)) {
-            XMEM_READ_LATENCY
-        } else {
-            0
-        };
+        let read_wait = self.rv_load_wait(addr);
         let old = self.rv_read_word(addr, t);
         r.cycles = 3 + read_wait;
         if f5 == AMO_LR {
@@ -1130,8 +1150,8 @@ impl Soc {
             _ => old.max(src), // AMO_MAXU; rv_illegal rejects the other funct5
         };
         // The store as if made by a store instruction fetched right after the load part
-        self.rv_write(addr, new, 0b1111, t + r.cycles as u64);
-        r.cycles += 3 + if win { XMEM_WRITE_LATENCY } else { 0 };
+        let write_wait = self.rv_write(addr, new, 0b1111, t + r.cycles as u64);
+        r.cycles += 3 + write_wait;
         r.store = Some((addr, new, 0b1111));
         self.write_rd(rd(i), old, r);
         None

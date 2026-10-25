@@ -7,7 +7,7 @@
  * the PSRAM's upper half, which its window tests leave alone: t_xmem's first and last 2 KB
  * and its address-line words (0x8000_0000 + 4 << b and 0x807F_FFFC - 4 << b: the nearest
  * are 0x805F_FFFC and 0x806F_FFFC), t_xmem_lanes' words (the lower 4 MB), t_xmem_exec's
- * and t_xmem_time's (the first 8 KB) */
+ * and the t_xmem_time tests' (the first 8 KB) */
 MEMORY
 {
   I_ROM (rx)  : ORIGIN = 0x00000000, LENGTH = 16K

@@ -79,7 +79,7 @@ EQ_MEM_SHARE = 0.6
 NO_EQUIV = {
     "soc_icache": "memory_map makes its 4096 lines ~172k flip-flops a side (at 1024 lines, 45k: one check took"
     " hours and 1.4 GB)",
-    "soc_dcache": "memory_map makes its 512 lines 22k flip-flops a side, as soc_icache's",
+    "soc_dcache": "memory_map makes its word RAM (512x36) and tags (64x14) ~19k flip-flops a side, as soc_icache's",
 }
 
 CONFIG = """\
@@ -215,22 +215,6 @@ ACCEPTED: dict[str, dict[str, str]] = {
         "const1 A[3] @ soc_icache.sv:108.13-108.17 soc_icache.sv:108.9-110.12": "changes the word write's"
         " address or data (both 12- and 32-bit muxes are x on A) when fill is 0, i.e. when nothing is"
         " written",
-    },
-    "soc_dcache": {
-        "inv Y[7] @ soc_dcache.sv:112.18-116.12 soc_dcache.sv:112.22-112.26": "sets bit 7 of the tag written"
-        " for a partial store miss, which writes it invalid (bit 12 = 0), and of a tag no branch writes",
-        "const1 A[10] @ soc_dcache.sv:112.18-116.12 soc_dcache.sv:112.22-112.26": "changes the tag value of"
-        " the branch that writes no tag (no access completing)",
-        "cnot1 B[8] ctrl 6 @ soc_dcache.sv:141.13-146.16 soc_dcache.sv:141.17-141.32": "the sweep counts in"
-        " another order and still clears every line once in 512 cycles (counted out)",
-        "cnot1 Q[6] ctrl 4 sweep_idx[6] @ soc_dcache.sv:133.5-151.8 soc_dcache.sv:63.20-63.29": "the sweep"
-        " visits the lines in another order (index bit 6 read flipped with bit 4; the register itself"
-        " holds) and still clears every line once in 512 cycles (counted out)",
-        "cnot1 B[0] ctrl 8 @ soc_dcache.sv:149.50-149.65": "changes conflict_q, which counts only for an"
-        " access in the cycle after a write: a write is a MEM_WAIT's last cycle or the sweep, the CPU's"
-        " next cycle is no data access, and after the sweep every line is invalid anyway",
-        "const1 B[0] @ soc_dcache.sv:149.27-149.65": "conflict_q after every write, whatever the index: counts"
-        " only for an access in the cycle after a write, which the CPU never makes (see the entry above)",
     },
     "fifo_sync": {
         "const1 A[1] @ $auto$proc_dff.cc:proc_dff": "sets bit 1 of a memory word while rst is asserted. The"

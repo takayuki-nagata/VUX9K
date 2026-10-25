@@ -117,7 +117,8 @@ impl Soc {
         self.inner.xmem_word(addr)
     }
 
-    /// Reset the CPU (memories keep their contents).
+    /// The power-on reset (memories keep their contents, except the stores the data cache
+    /// still held in dirty lines).
     fn reset(&mut self) {
         self.inner.reset();
     }
@@ -297,7 +298,9 @@ impl Soc {
     }
 
     /// What the window's caches did since the power-on reset: {"fetch_hits": n,
-    /// "fetch_misses": n, "load_hits": n, "load_misses": n, "stores": n}
+    /// "fetch_misses": n, "load_hits": n, "load_misses": n, "stores": n, "store_hits": n,
+    /// "store_misses": n, "writebacks": n (data misses with a dirty victim),
+    /// "probe_writebacks": n (fetch misses that wrote a dirty data line back)}
     #[getter]
     fn cache_stats<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let s = self.inner.caches.stats;
@@ -307,6 +310,10 @@ impl Soc {
         d.set_item("load_hits", s.load_hits)?;
         d.set_item("load_misses", s.load_misses)?;
         d.set_item("stores", s.stores)?;
+        d.set_item("store_hits", s.store_hits)?;
+        d.set_item("store_misses", s.store_misses)?;
+        d.set_item("writebacks", s.writebacks)?;
+        d.set_item("probe_writebacks", s.probe_writebacks)?;
         Ok(d)
     }
 

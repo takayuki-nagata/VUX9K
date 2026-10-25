@@ -30,6 +30,9 @@ BURST = bytes(b"abcdefghijklmnopqrstuvwxyz0123456789"[i % 36] for i in range(64)
 ECHO = BURST.upper().decode() + "\nrx=64 drop=0 err=0\n"
 UART_ERROR_OVERRUN = 1  # Zephyr's enum uart_rx_stop_reason
 RX_FIFO = 32  # soc's UART RX FIFO
+# Sent from irq_echo's first cycle: overflows the RX FIFO and has arrived whole well before RX is
+# enabled (~81k cycles, 52 frame times, from the PSRAM with the write-back data cache)
+EARLY = BURST[: RX_FIFO + 2]
 
 
 @pytest.fixture(scope="module")
@@ -120,10 +123,11 @@ def test_a_line_sent_while_it_starts_reports_the_overrun(echo_bin):
     the sticky error bits that its own status reads clear)."""
     soc = new_soc()
     soc.load_app(echo_bin, "riscv", XMEM_BASE)
-    soc.uart_send(BURST)
+    soc.uart_send(EARLY)
     wait_for(soc, b"irq_echo ready\n", timeout_cycles=10_000_000)
-    # The precondition: RX enabled (as the ready message starts out) once the FIFO had overflowed
-    assert soc.cycle > (RX_FIFO + 1 + len(b"irq_echo ready\n")) * UART_FRAME, f"ready at cycle {soc.cycle}"
+    # The precondition: RX enabled (as the ready message starts out) once the whole line had
+    # arrived, so past the FIFO's overflow
+    assert soc.cycle > (len(EARLY) + len(b"irq_echo ready\n")) * UART_FRAME, f"ready at cycle {soc.cycle}"
     soc.run(1_000_000)  # past uart_irq_rx_enable and the handler emptying the FIFO
     mark = len(soc.uart_received())
     soc.uart_send(b"\n")

@@ -576,7 +576,7 @@ def test_run_hack_zeroes_the_last_word_past_its_payload():
     soc.load_xmem(HACK_I_BASE + 4, b"\xff" * 4)
     out = s2_cmd(soc, "run ODD.BIN", until=b"\n\n", timeout_cycles=RUN_CYCLES)
     assert '[RUN] v1 "odd" 6 B, Hack segment, starting at 0x00000000' in out, out
-    soc.run(2_000_000)  # the data segment zeroed, the soft reset
+    soc.run(3_000_000)  # the data segment zeroed (~2M cycles, line write-backs), the soft reset
     assert not soc.riscv_mode
     assert soc.xmem_word(HACK_I_BASE + 4) == 0x0006, hex(soc.xmem_word(HACK_I_BASE + 4))
 

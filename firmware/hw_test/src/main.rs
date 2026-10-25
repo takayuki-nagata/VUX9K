@@ -414,7 +414,7 @@ global_asm!(
     "    xor a0, a0, t1",
     "    ret",
     "xmem_code_end:",
-    // the reference `ret` in the ROM for t_xmem_time
+    // the reference `ret` in the ROM for t_xmem_time and t_xmem_time_line
     "rom_ret:",
     "    ret",
     ".option pop",
@@ -469,57 +469,100 @@ fn t_xmem_exec(seed: u32) -> u32 {
 }
 
 /// Cycles window accesses add over the same access to the ROM (a load, a store, which the
-/// ROM ignores, or the fetch of a `ret`), from `cycle` around each, 6 bits each: fetch miss << 24 |
-/// fetch hit << 18 | load miss << 12 | load hit << 6 | store. A miss is soc_pkg's
-/// XMEM_READ_LATENCY, a hit of the window's caches nothing, a store XMEM_WRITE_LATENCY.
-/// The misses are made sure of: storing the `ret` invalidates its instruction-cache line,
-/// and a byte store to the loaded word's data-cache line under another tag leaves the line
-/// without that word (a hit keeps the other word, a partial miss invalidates).
+/// ROM ignores, or the fetch of a `ret`), from `cycle` around each, 6 bits each: fetch miss
+/// << 18 | fetch hit << 12 | load hit << 6 | store hit. A fetch miss is soc_pkg's
+/// XMEM_READ_LATENCY, a hit of either cache nothing (a store hit stays in the data cache).
+/// Each case is made by construction, inside one asm block (no stack access in between):
+/// the stored `ret` invalidates its instruction-cache line and dirties x's data line; a
+/// load 2 KB up (the same data line, another tag) writes it back and holds the line clean,
+/// so the load and the store after it hit; the fetch miss then probes a dirty line of
+/// another tag, which costs nothing.
 fn t_xmem_time(_: u32) -> u32 {
     let x = xmem_word(0x40 / 4);
     let xret = xmem_word(0x44 / 4);
-    let (c0, c1, c2, c3, c4, c5, c6, c7, c8): (u32, u32, u32, u32, u32, u32, u32, u32, u32);
+    let (c0, c1, c2, c3, c4, c5, c6, c7): (u32, u32, u32, u32, u32, u32, u32, u32);
     unsafe {
-        write_volatile(xret, 0x0000_8067); // ret
-        fence_i();
         asm!(
             ".option push",
             ".option arch, +zicsr",
-            // 4 KB above x, x's data-cache line: whatever it holds, the load of x misses
-            "sb zero, 0({xo})",
+            "sw {ret}, 0({rx})",
+            "lw {t}, 0({xo})",
             "rdcycle {c0}",
             "lw {t}, 0({d})",
             "rdcycle {c1}",
-            "lw {t}, 0({x})",
+            "lw {t}, 0({xo})",
             "rdcycle {c2}",
-            "lw {t}, 0({x})",
+            "sw zero, 0({d})",
             "rdcycle {c3}",
-            "sw {t}, 0({d})",
+            "sw zero, 0({xo})",
             "rdcycle {c4}",
-            "sw {t}, 0({x})",
+            "jalr ra, 0({d})",
             "rdcycle {c5}",
-            "jalr ra, 0({ri})",
+            "jalr ra, 0({rx})",
             "rdcycle {c6}",
             "jalr ra, 0({rx})",
             "rdcycle {c7}",
-            "jalr ra, 0({rx})",
-            "rdcycle {c8}",
             ".option pop",
-            d = in(reg) rom_ret as *const () as usize, x = in(reg) x,
-            xo = in(reg) x.wrapping_byte_add(0x1000),
-            ri = in(reg) rom_ret as *const () as usize, rx = in(reg) xret, t = out(reg) _,
+            d = in(reg) rom_ret as *const () as usize, rx = in(reg) xret,
+            xo = in(reg) x.wrapping_byte_add(0x800), ret = in(reg) 0x0000_8067u32,
+            t = out(reg) _,
             c0 = out(reg) c0, c1 = out(reg) c1, c2 = out(reg) c2, c3 = out(reg) c3,
             c4 = out(reg) c4, c5 = out(reg) c5, c6 = out(reg) c6, c7 = out(reg) c7,
-            c8 = out(reg) c8, out("ra") _)
+            out("ra") _)
     };
     let load = c1 - c0;
-    let fetch = c6 - c5;
+    let fetch = c5 - c4;
     let field = |v: u32| v & 0x3F;
-    field((c7 - c6).wrapping_sub(fetch)) << 24
-        | field((c8 - c7).wrapping_sub(fetch)) << 18
-        | field((c2 - c1).wrapping_sub(load)) << 12
-        | field((c3 - c2).wrapping_sub(load)) << 6
-        | field((c5 - c4).wrapping_sub(c4 - c3))
+    field((c6 - c5).wrapping_sub(fetch)) << 18
+        | field((c7 - c6).wrapping_sub(fetch)) << 12
+        | field((c2 - c1).wrapping_sub(load)) << 6
+        | field((c4 - c3).wrapping_sub(c3 - c2))
+}
+
+/// The line transfers' cycles over the same access to the ROM, as t_xmem_time measures
+/// them, 10 bits each: dirty miss << 20 | clean miss << 10 | probed fetch. A load that
+/// misses with a dirty victim waits XMEM_LINE_DIRTY (the emulator's soc.rs: the victim's 8
+/// words written back, then the 8 read), one with a clean victim XMEM_LINE_FILL, and a
+/// fetch miss whose word the data cache holds dirty XMEM_FETCH_PROBE (the line written
+/// back first, without fence.i). By construction, in one asm block: a store 2 KB above y
+/// makes y's data line dirty under another tag, whatever it held; the load of y then
+/// evicts it, the load 2 KB up evicts y's clean line, and the stored `ret` next to y (a
+/// store miss of a clean victim) leaves its line dirty and its instruction-cache line
+/// invalid.
+fn t_xmem_time_line(_: u32) -> u32 {
+    let y = xmem_word(0x80 / 4);
+    let yret = xmem_word(0x84 / 4);
+    let (c0, c1, c2, c3, c4, c5, c6): (u32, u32, u32, u32, u32, u32, u32);
+    unsafe {
+        asm!(
+            ".option push",
+            ".option arch, +zicsr",
+            "sw zero, 0({yo})",
+            "rdcycle {c0}",
+            "lw {t}, 0({d})",
+            "rdcycle {c1}",
+            "lw {t}, 0({y})",
+            "rdcycle {c2}",
+            "lw {t}, 0({yo})",
+            "rdcycle {c3}",
+            "sw {ret}, 0({yr})",
+            "rdcycle {c4}",
+            "jalr ra, 0({d})",
+            "rdcycle {c5}",
+            "jalr ra, 0({yr})",
+            "rdcycle {c6}",
+            ".option pop",
+            d = in(reg) rom_ret as *const () as usize, y = in(reg) y, yr = in(reg) yret,
+            yo = in(reg) y.wrapping_byte_add(0x800), ret = in(reg) 0x0000_8067u32,
+            t = out(reg) _,
+            c0 = out(reg) c0, c1 = out(reg) c1, c2 = out(reg) c2, c3 = out(reg) c3,
+            c4 = out(reg) c4, c5 = out(reg) c5, c6 = out(reg) c6, out("ra") _)
+    };
+    let load = c1 - c0;
+    let field = |v: u32| v & 0x3FF;
+    field((c2 - c1).wrapping_sub(load)) << 20
+        | field((c3 - c2).wrapping_sub(load)) << 10
+        | field((c6 - c5).wrapping_sub(c5 - c4))
 }
 
 /// A test folds `f(a, b)` over xorshift pairs (`checksum`), or runs once (given its
@@ -533,7 +576,7 @@ enum Test {
 use Test::{Once, Pairs};
 
 /// (name, test, checksum the emulator computes)
-const TESTS: [(&str, Test, u32); 16] = [
+const TESTS: [(&str, Test, u32); 17] = [
     ("add", Pairs(t_add), 0xC02B_9A30),
     ("sub", Pairs(t_sub), 0x1C9E_5AB3),
     ("logic", Pairs(t_logic), 0x0F9E_3961),
@@ -548,8 +591,9 @@ const TESTS: [(&str, Test, u32); 16] = [
     ("xmem", Once(t_xmem), 0xDB16_358C),
     ("xmem_lanes", Pairs(t_xmem_lanes), 0x4490_6ED7),
     ("xmem_exec", Once(t_xmem_exec), 0x9273_B7CB),
-    ("xmem_time", Once(t_xmem_time), 0x2302_3022),
-    ("muldiv", Pairs(t_muldiv), 0x2FD0_20AB),
+    ("xmem_time", Once(t_xmem_time), 0x008C_0000),
+    ("xmem_time_line", Once(t_xmem_time_line), 0x23B4_893D),
+    ("muldiv", Pairs(t_muldiv), 0x180C_F09F),
 ];
 
 #[no_mangle]

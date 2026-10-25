@@ -43,6 +43,10 @@ pub package soc_pkg {
     const XMEM_READ_LATENCY : u32      = 35;
     const XMEM_WRITE_LATENCY: u32      = 34;
 
+    // The window's data cache (soc_dcache): lines of 8 words (line addr[10:5], word
+    // addr[4:2], tag addr[22:11]); the emulator copies it (emu/crates/vux9k_emu/src/cache.rs)
+    const DCACHE_LINES: u32 = 64;
+
     // PSRAM power-up (psram::psram_controller): cycles from reset release until req_ready
     // and init_done first rise. psram_core holds RESET# low for tRP (psram_pkg::T_RP_NS,
     // 400 ns) and waits tVCS (T_VCS_NS, 200 us), each converted to CLK_HZ cycles rounded

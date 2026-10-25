@@ -22,8 +22,10 @@ mtime +0x0 / mtimecmp +0x8 layout is `timer_core`'s, so Zephyr's in-tree
   target), leaving the first stage in the ROM: a Zephyr app never returns, but Button S1 (the
   board's reset) starts the first stage and the boot again. The tests can't press it, so
   the board tests (`test_hardware.py` 13 to 15, `hw_irq_echo.py`) load the bitstream afterwards.
-  A fetch or load there that misses the caches in front of the PSRAM, and every store, waits
-  ~35 cycles, so a cycle budget depends on how the code and data fall into the caches.
+  A fetch there that misses the instruction cache in front of the PSRAM waits ~35 cycles, a
+  load or store that misses the data cache (8-word lines, write-back) ~290 (~570 with a
+  dirty line written back first), so a cycle budget depends on how the code and data fall
+  into the caches.
 
 bc_clone_rs (`make build-zephyr`: `vendor/bc_clone_rs/examples/zephyr_app`, its own
 `prj.conf` with a 32 KB main stack; its 64 KB static heap is `HEAP_SIZE` in
@@ -31,7 +33,9 @@ bc_clone_rs (`make build-zephyr`: `vendor/bc_clone_rs/examples/zephyr_app`, its 
 like the demos; nothing of it is changed for this board (the submodule is upstream), and
 `make apps` makes it `BC.BIN`. It runs from the PSRAM through the caches: the second
 stage's `run` loads it in ~52M cycles (2.9 s), and its start to the first `bc> ` is ~36M
-(2.1 s; ~51M before RV32M, ~74M with the earlier 4 KB instruction cache, 314M, 17.4 s, without the caches). `sim/emu/test_zephyr_bc.py` loads it
+(2.1 s; these two were measured with the earlier write-through data cache, whose every
+store waited 34 cycles, and change with the write-back one: re-measure with
+`sim/emu/test_zephyr_bc.py`; ~51M before RV32M, ~74M with the earlier 4 KB instruction cache, 314M, 17.4 s, without the caches). `sim/emu/test_zephyr_bc.py` loads it
 straight into the PSRAM for the self-tests and the REPL, starts it once through the second
 stage's `run` from a card (`s1_env.run_from_card(..., load_cycles=...)`), and prints the
 cycles and `minstret` (`Soc.instret`) to the first `bc> ` and per REPL line: the emulator is
@@ -49,7 +53,7 @@ default `--load-addr` for riscv) and the RTL (`sim-zephyr-demo-rtl`: `soc_env.pr
 writes the PSRAM word model and puts a jump to `0x8000_0000` at ROM word 0, so Verilator RTL
 only), and as the board starts it, the second stage's `run VUX9K/APPS/ZEPHYR.BIN` from the
 card: on the emulator (the same test, same expectations) and on the netlist
-(`sim-zephyr-demo-gls`, test-slow: the prompt at ~12.8M cycles, the 13 KB load ~3.5M, then
+(`sim-zephyr-demo-gls`, test-slow: the prompt at ~12.1M cycles, the 13 KB load ~3.5M, then
 the demo). Its `prj.conf` size settings, from the 14 KB I-RAM board it was first
 linked for, keep it small and so quick to load.
 
@@ -167,8 +171,11 @@ hardware gives and what the driver makes up for:
   shared by the emulator, RTL and board tests; the emulator test prints the measurement and
   fails below a 2x margin). The overrun check (`err=1`, `UART_ERROR_OVERRUN`) now sends its
   line from irq_echo's first cycle, while it starts and before it enables RX: the FIFO keeps
-  32 bytes, and the reply is exactly those. The emulator test checks that the app became
-  ready only after the FIFO had overflowed (its precondition).
+  32 bytes, and the reply is exactly those. The line is 34 bytes, not 64: with the
+  write-back data cache irq_echo enables RX after ~81k cycles (about 50 frame times), before
+  a 64-byte line has arrived. The emulator test checks that the app became ready only after
+  the whole line had arrived (its precondition); a faster start that breaks it needs a
+  shorter line, down to 33 bytes.
 
 A TX interrupt and an interrupt-enable register would only come with a later hardware
 revision, whose register map isn't bound by this one's (docs/APP_DEVELOPMENT.md, "Hardware

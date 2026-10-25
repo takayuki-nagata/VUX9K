@@ -2,48 +2,84 @@
 // SPDX-License-Identifier: MIT
 
 // The data cache in front of the wait-state window (RV32 region soc_pkg::RV_REGION_XMEM):
-// direct-mapped, write-through, one word a line, 512 lines (2 KB). It sits between the CPU's
-// data accesses (RV32 MEM_WAIT; Hack's M reads and writes, in its D segment) and
-// soc_xmem_bridge, which sees the load misses and every store.
-// - Lines are keyed by the PSRAM word (addr[22:2]: index [10:2], tag [22:11]), so every alias
-//   of a word in region 8 is the same line, as the memory behind the window repeats every 8 MB.
-// - The RAMs are read a cycle ahead at rd_idx (the CPU's data_addr: the access address,
+// direct-mapped, write-back and write-allocate, 8-word lines, soc_pkg::DCACHE_LINES (64)
+// lines (2 KB). It sits between the CPU's data accesses (RV32 MEM_WAIT; Hack's M reads and
+// writes, in its D segment) and soc_xmem_bridge's data side, which sees only line
+// transfers: a write-back and a fill, each 8 one-word requests.
+// - Lines are keyed by the PSRAM word (addr[22:2]: line [10:5], word [4:2], tag [22:11]),
+//   so every alias of a word in region 8 is the same line, as the memory behind the window
+//   repeats every 8 MB. Hack's data word A is in line A[8:3].
+// - tags (LUT RAM, {valid, dirty, tag}) and words (one 512x36 block RAM, {mask[3:0],
+//   data}) are read a cycle ahead at rd_idx (the CPU's data_addr: the access address,
 //   computed in EXECUTE and held through MEM_WAIT), as the ROM is. In MEM_WAIT the registered
-//   tag is compared with data_addr (the registered access address); a load hit completes in
-//   the first MEM_WAIT cycle, so it costs what a load of the ROM costs.
-// - A load miss goes to the bridge (mem_sel) and completes with it (mem_ready); the word fills
-//   the line in that cycle. Once a load is at the bridge it stays a miss until then
-//   (missing), so mem_sel never drops under a request in flight. A store's mem_sel doesn't
-//   depend on hit, and its hit in the completing cycle decides what happens to the line.
-// - A store always goes to the bridge and completes with it (write-through: the memory is
-//   always current, nothing is ever written back). In its completing cycle a hit merges the
-//   stored bytes into the line; a miss of a full word (wstrb 1111) allocates the line; a
-//   partial store that misses invalidates the line, whatever it holds.
-// - A write to the index being read in the same cycle leaves that read undefined on the board
-//   (-no-rw-check, as soc_icache): the next cycle then misses. Writes happen only in a
-//   completing cycle, after which the CPU fetches, so no access sees it, except the store of
-//   a Hack instruction that reads M and writes it (AM=M+1), the cycle after its load: after
-//   a load miss's fill it misses, and with Hack's full-word stores (wstrb 1111) allocating
-//   the line leaves it as a hit's merge would have.
+//   tag is compared with data_addr (the registered access address). The probe has a second,
+//   asynchronous read port on tags (ptag), so it adds no cycle to an instruction miss.
+// - A hit (in IDLE, the read-ahead at this access's word, not stale) completes in its
+//   cycle: a load returns word_q, which is all rdata ever is (the bridge's word never
+//   reaches the CPU); a store merges its bytes into the word, ORs its strobes into the
+//   word's mask and marks the line dirty, with no bus access. Loads and stores cost what a
+//   load of the ROM costs.
+// - A miss (also of a partial store: write-allocate) leaves IDLE: to WB if the victim line is
+//   valid and dirty, else to FILL. WB writes the victim's 8 words back (mem_we, mem_wstrb =
+//   the word's mask: only the bytes the CPU stored reach the PSRAM, so a byte the cache
+//   never had defined, X in simulation, is never written; the W955 model counts an
+//   unmasked X byte as an error). FILL reads the access's 8 words, each written as
+//   {4'b0000, word}, then the tag {1, 0, tag}, and returns to IDLE. The access then
+//   completes as a hit, two cycles later (the next cycle is stale: the tag and word are
+//   read again at rd_idx).
+// - The word counter cnt advances with the bridge's ready (mem_ready while mem_sel: the
+//   response); it wraps to 0 after the eighth word, so it is 0 in IDLE. In WB the word RAM
+//   is read at {line, cnt_next} instead of rd_idx (the select is the registered state), so
+//   the first WB cycle only reads word 0 and raises no request.
+// - mem_sel is high in FILL and, from its second cycle, in WB: only while a request is
+//   wanted, and never dropped under one in flight. The fields (mem_we, mem_addr = {tag,
+//   line, cnt} from registers, mem_wdata/mem_wstrb = word_q, which holds word cnt) stay
+//   unchanged until the response: the RAMs aren't written in WB.
+// - Cycle costs over a hit, with the controller's latencies R (soc_pkg::XMEM_READ_LATENCY,
+//   35) and W (XMEM_WRITE_LATENCY, 34), each request taken in the cycle it is raised and
+//   the next one raised the cycle after the response (sim/unit/test_soc_dcache.py
+//   measures them): a miss with an invalid or clean victim 8(R+1)+2 = 290; with a dirty
+//   victim 8(W+1)+8(R+1)+3 = 571. A stale or mismatched read-ahead adds a cycle.
+// - The probe: an instruction-cache miss (probe_req) at the PSRAM word probe_addr (soc_top's
+//   win_fetch_addr, from pc_reg, never pc_out) whose line this cache holds valid and dirty
+//   with the same tag (probe_dirty, combinational from ptag; soc_icache's fill_hold, which
+//   keeps its miss from the bridge) starts a write-back in IDLE when no data access is in
+//   the window (data first; none is in MEM_WAIT while the CPU fetches): the line is
+//   written back as on a dirty miss and stays valid, now clean ({1, 0, tag}); probe_dirty
+//   falls the cycle after the last word's response and the instruction cache's request
+//   follows. A probed miss costs 8(W+1)+2 = 282 cycles before the fetch's own R: 317. The
+//   words keep their masks: a later write-back of the line writes those bytes again,
+//   unchanged. Without a dirty match the probe costs nothing (the miss stays R = 35).
+// - soc_xmem_bridge's contract (its header): data_sel must not rise while the fetch's
+//   request waits for req_ready. A line transfer starts either in MEM_WAIT (the
+//   instruction's fetch completed) or by the probe, whose fill_hold keeps the instruction
+//   cache from requesting, so the bridge is always free when mem_sel rises.
+// - A write to the address being read in the same cycle leaves that read undefined on the
+//   board (-no-rw-check; RTL simulation shows the old value). stale_q, high the cycle after
+//   such a collision (the tag line or the word) and the cycle after any cycle outside
+//   IDLE, makes that cycle a non-lookup: the access waits a cycle, rd_idx being held.
+//   Writes happen in a store hit's cycle, in FILL, at the end of a probe's write-back and
+//   in the sweep.
+// - Hack's instruction that reads M and writes it (AM=M+1) loads in MEM_WAIT and stores the
+//   whole word from the next cycle (HACK_WB), rd_idx at the same word all along. The load
+//   completes as a hit, a cycle with no write (a miss completes by the replay), so the
+//   store's lookup is not stale and it hits: AM=M+1 costs the load's cycles only.
 // - clear (high while soc_top's power-on reset counts) invalidates every line once, one a
-//   cycle, before the CPU runs: the RAMs have no reset. Until then window accesses wait.
-// - The bridge's request fields (mem_we, mem_addr, mem_wdata, mem_wstrb) are the CPU's
-//   access as it stands.
-// - The probe is for the instruction cache's coherence once this cache writes back: an
-//   instruction-cache miss (probe_req) at the PSRAM word probe_addr whose line this cache
-//   holds dirty waits (probe_dirty, its fill_hold) until the line is written back.
-//   Write-through holds no dirty line, so probe_dirty is 0 for now.
-// - ENABLE = 0 passes every access to the bridge as if this module weren't there (its RAMs
-//   and registers then drive nothing): soc_top's wiring was proven with it (make eqy).
-pub module soc_dcache #(
-    param ENABLE: bit = 1'b1,
-) (
+//   cycle (64 cycles), before the CPU runs: the RAMs have no reset. Until then window
+//   accesses wait and the probe sees nothing. The words aren't cleared: a line is filled
+//   before any of its words is used, which clears the masks.
+// - rst is soc_top's rst_n (power-on and the reset button): it resets the FSM, possibly in
+//   the middle of a transfer, and the sweep that follows drops the dirty lines, whose
+//   stores never reach the PSRAM. The CPU's soft reset doesn't reset the cache: dirty lines
+//   survive it, and no transfer is in flight then (the GPIO store that starts it completed
+//   outside the window, after its fetch).
+pub module soc_dcache (
     clk  : input clock,
     rst  : input reset,
     clear: input logic,
 
     // CPU side
-    rd_idx    : input  logic<9> , // data_addr[10:2]: the line of the access, from EXECUTE on
+    rd_idx    : input  logic<9> , // data_addr[10:2]: the word of the access, from EXECUTE on
     data_req  : input  logic    , // the CPU has a data access on the bus (unified_cpu)
     data_sel  : input  logic    , // data_addr is in the window
     data_addr : input  logic<21>, // data_waddr[22:2]: the PSRAM word of the registered access address
@@ -54,7 +90,7 @@ pub module soc_dcache #(
     rdata     : output logic<32>, // the loaded word, valid when a window load completes
     hit       : output logic    ,
 
-    // soc_xmem_bridge's data side: load misses and stores
+    // soc_xmem_bridge's data side: the line transfers, one word a request
     mem_sel  : output logic    ,
     mem_we   : output logic    ,
     mem_addr : output logic<21>, // the PSRAM word
@@ -68,109 +104,178 @@ pub module soc_dcache #(
     probe_addr : input  logic<21>,
     probe_dirty: output logic    , // the line holding probe_addr is dirty: soc_icache's fill_hold
 ) {
-    const LINES: u32 = 512;
+    const LINES : u32 = soc_pkg::DCACHE_LINES;
+    const NWORDS: u32 = LINES * 8;
 
-    var tags : logic<13> [LINES]; // {valid, addr[22:11]}
-    var words: logic<32> [LINES];
+    enum State {
+        IDLE,
+        WB,
+        FILL,
+    }
 
-    var tag_q     : logic<13>;
-    var word_q    : logic<32>;
-    var rd_idx_q  : logic<9> ;
-    var conflict_q: logic    ;
-    var swept     : logic    ;
-    var missing   : logic    ;
-    var sweep_idx : logic<9> ;
+    var tags : logic<14> [LINES] ; // {valid, dirty, addr[22:11]}
+    var words: logic<36> [NWORDS]; // {the bytes stored since the fill, the word}
 
-    let idx: logic<9> = data_addr[8:0];
-    let win: logic    = data_req && data_sel;
+    var tag_q    : logic<14>;
+    var word_q   : logic<36>;
+    var rd_idx_q : logic<9> ;
+    var stale_q  : logic    ;
+    var swept    : logic    ;
+    var sweep_idx: logic<6> ;
+    var state    : State    ;
+    var is_probe : logic    ; // the write-back is the probe's: back to IDLE after it
+    var primed   : logic    ; // in WB: word_q holds word cnt
+    var cnt      : logic<3> ; // the word being transferred
+    var line_r   : logic<6> ; // the line being transferred
+    var tag_r    : logic<12>; // and the tag of its words in the PSRAM
 
-    let on: logic = !ENABLE || swept; // serving accesses
+    let idx : logic<9>  = data_addr[8:0];
+    let line: logic<6>  = data_addr[8:3];
+    let tag : logic<12> = data_addr[20:9];
+    let win : logic     = data_req && data_sel;
+    let idle: logic     = state == State::IDLE;
 
-    assign hit        = ENABLE && swept && !missing && !conflict_q && rd_idx_q == idx && tag_q
-        == {1'b1, data_addr[20:9]};
-    assign mem_sel    = win && on && (data_we || !hit);
-    assign data_ready = !win || on && (hit && !data_we || mem_ready);
-    assign rdata      = if hit ? word_q : mem_rdata;
-    assign mem_we     = data_we;
-    assign mem_addr   = data_addr;
-    assign mem_wdata  = data_wdata;
-    assign mem_wstrb  = data_wstrb;
+    // The registered tag and word are this access's
+    let lookup: logic = win && swept && idle && !stale_q && rd_idx_q == idx;
+    let match : logic = tag_q[13] && tag_q[11:0] == tag;
 
-    assign probe_dirty = 1'b0;
+    assign hit        = lookup && match;
+    assign data_ready = !win || hit;
+    assign rdata      = word_q[31:0];
 
-    let done : logic     = win && swept && (data_we || !hit) && mem_ready;
+    let miss        : logic = lookup && !match;
+    let victim_dirty: logic = tag_q[13] && tag_q[12];
+
+    let ptag: logic<14> = tags[probe_addr[8:3]];
+
+    assign probe_dirty = swept && ptag[13] && ptag[12] && ptag[11:0] == probe_addr[20:9];
+
+    let probe_wb: logic = idle && swept && !win && probe_req && probe_dirty;
+
+    assign mem_sel   = state == State::FILL || state == State::WB && primed;
+    assign mem_we    = state == State::WB;
+    assign mem_addr  = {tag_r, line_r, cnt};
+    assign mem_wdata = word_q[31:0];
+    assign mem_wstrb = word_q[35:32];
+
+    let done    : logic    = mem_sel && mem_ready;
+    let last    : logic    = done && cnt == 3'd7;
+    let cnt_next: logic<3> = cnt + {2'b00, done};
+    let ra      : logic<9> = if state == State::WB ? {line_r, cnt_next} : rd_idx;
+
     let merge: logic<32> = {
         if data_wstrb[3] ? data_wdata[31:24] : word_q[31:24], if data_wstrb[2] ? data_wdata[23:16] : word_q[23:16],
         if data_wstrb[1] ? data_wdata[15:8] : word_q[15:8], if data_wstrb[0] ? data_wdata[7:0] : word_q[7:0]
     };
 
     var tag_we    : logic    ;
+    var tag_waddr : logic<6> ;
+    var tag_wdata : logic<14>;
     var word_we   : logic    ;
-    var waddr     : logic<9> ;
-    var tag_wdata : logic<13>;
-    var word_wdata: logic<32>;
+    var word_waddr: logic<9> ;
+    var word_wdata: logic<36>;
 
     always_comb {
         tag_we     = 1'b0;
+        tag_waddr  = line_r;
+        tag_wdata  = {2'b10, tag_r};
         word_we    = 1'b0;
-        waddr      = idx;
-        tag_wdata  = {1'b1, data_addr[20:9]};
-        word_wdata = mem_rdata;
+        word_waddr = {line_r, cnt};
+        word_wdata = {4'b0000, mem_rdata};
         if !swept {
             tag_we    = clear;
-            waddr     = sweep_idx;
-            tag_wdata = 13'd0;
-        } else if done && !data_we {
-            // load miss: fill
-            tag_we  = 1'b1;
-            word_we = 1'b1;
-        } else if done && hit {
-            // store hit: merge the bytes, the tag stays
-            word_we    = 1'b1;
-            word_wdata = merge;
-        } else if done && data_wstrb == 4'b1111 {
-            // full-word store miss: allocate
+            tag_waddr = sweep_idx;
+            tag_wdata = 14'd0;
+        } else if hit && data_we {
+            // store hit: merge the bytes, record them, the line is dirty
             tag_we     = 1'b1;
+            tag_waddr  = line;
+            tag_wdata  = {2'b11, tag};
             word_we    = 1'b1;
-            word_wdata = data_wdata;
-        } else if done {
-            // partial store miss: invalidate
-            tag_we    = 1'b1;
-            tag_wdata = 13'd0;
+            word_waddr = idx;
+            word_wdata = {word_q[35:32] | data_wstrb, merge};
+        } else if state == State::FILL && done {
+            // a word of the fill; after the last, the line is valid and clean
+            word_we = 1'b1;
+            tag_we  = last;
+        } else if state == State::WB && last && is_probe {
+            // the probe's write-back is over: the line stays valid, now clean
+            tag_we = 1'b1;
         }
     }
 
     always_ff (clk) {
         if tag_we {
-            tags[waddr] = tag_wdata;
+            tags[tag_waddr] = tag_wdata;
         }
-        tag_q = tags[rd_idx];
+        tag_q = tags[rd_idx[8:3]];
     }
 
     always_ff (clk) {
         if word_we {
-            words[waddr] = word_wdata;
+            words[word_waddr] = word_wdata;
         }
-        word_q = words[rd_idx];
+        word_q = words[ra];
     }
 
     always_ff (clk, rst) {
         if_reset {
-            swept      = 1'b0;
-            missing    = 1'b0;
-            sweep_idx  = 9'd0;
-            rd_idx_q   = 9'd0;
-            conflict_q = 1'b0;
+            swept     = 1'b0;
+            sweep_idx = 6'd0;
+            rd_idx_q  = 9'd0;
+            stale_q   = 1'b0;
+            state     = State::IDLE;
+            is_probe  = 1'b0;
+            primed    = 1'b0;
+            cnt       = 3'd0;
+            line_r    = 6'd0;
+            tag_r     = 12'd0;
         } else {
             if !swept && clear {
-                sweep_idx = sweep_idx + 9'd1;
-                if sweep_idx == 9'd511 {
+                sweep_idx = sweep_idx + 6'd1;
+                if sweep_idx == 6'd63 {
                     swept = 1'b1;
                 }
             }
-            missing    = mem_sel && !mem_ready && !data_we;
-            rd_idx_q   = rd_idx;
-            conflict_q = (tag_we || word_we) && waddr == rd_idx;
+            rd_idx_q = rd_idx;
+            stale_q  = !idle || tag_we && tag_waddr == rd_idx[8:3] || word_we && word_waddr == rd_idx;
+            cnt      = cnt_next;
+            case state {
+                State::IDLE: {
+                    if miss {
+                        line_r   = line;
+                        is_probe = 1'b0;
+                        if victim_dirty {
+                            state = State::WB;
+                            tag_r = tag_q[11:0];
+                        } else {
+                            state = State::FILL;
+                            tag_r = tag;
+                        }
+                    } else if probe_wb {
+                        state    = State::WB;
+                        line_r   = probe_addr[8:3];
+                        tag_r    = probe_addr[20:9];
+                        is_probe = 1'b1;
+                    }
+                }
+                State::WB: {
+                    primed = !last;
+                    if last {
+                        if is_probe {
+                            state = State::IDLE;
+                        } else {
+                            state = State::FILL;
+                            tag_r = tag;
+                        }
+                    }
+                }
+                default: {
+                    if last {
+                        state = State::IDLE;
+                    }
+                }
+            }
         }
     }
 }

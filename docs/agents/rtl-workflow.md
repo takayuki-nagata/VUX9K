@@ -117,7 +117,9 @@ without them, +2.03 ns with `-nowidelut`, +4.78 ns with both.
   the combinational fetch address `pc_out` onto the critical path). The boot ROM that
   replaced it has no write port; the window's caches still need the flag: without it
   yosys adds ~215 flops of read-first/transparency logic to `soc_icache`'s and
-  `soc_dcache`'s tag and word RAMs (synthesized 2026-10-17). A read colliding with a
+  `soc_dcache`'s tag and word RAMs (synthesized 2026-10-17, with the earlier write-through
+  data cache). The write-back `soc_dcache`'s tags (64 lines) are LUT RAM now, which
+  the flag doesn't concern; its word RAM (512x36) is still block RAM and needs it. A read colliding with a
   write there is undefined on the board and harmless by design (their headers: the
   next cycle misses). RTL simulation still shows read-before-write, so no RTL test can
   see this.

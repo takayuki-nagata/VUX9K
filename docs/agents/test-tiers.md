@@ -58,8 +58,8 @@ at ~250 cycles a byte as the board does: the other SoC tests boot a 28-byte `STA
 card (`soc_env.s2_card`: `STAGE2.BIN` and the demos of `make apps` in `\VUX9K\APPS\`): `ls`,
 `run HELLO.BIN` (the PSRAM, a0-a2, `r` back to the first stage; ~14M cycles) and `run
 HACK.BIN` (its PSRAM segment in Hack mode, then its soft reset back to the first stage;
-~18M cycles). The prompt alone takes ~12.8M cycles (the 35 KB
-file at ~250 cycles a byte), and `run` loads at ~200-260 cycles a byte (the second stage
+~18M cycles). The prompt alone takes ~12.1M cycles (the 35 KB
+file at ~250 cycles a byte), and `run` loads at ~180-220 cycles a byte (the second stage
 runs from the PSRAM, through its caches): the 13 KB Zephyr demo through it is ~19M cycles,
 minutes on the netlist, so it runs there only in `sim-zephyr-demo-gls` (`test_soc_zephyr_s2.py`, test-slow);
 the RTL runs the Zephyr demos preloaded into the PSRAM (`soc_env.preload_psram_app`: the word

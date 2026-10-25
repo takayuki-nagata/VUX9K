@@ -24,7 +24,7 @@ from collections import deque, namedtuple
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "integration"))
-from lockstep_programs import UART_BIT, UART_FRAME, XMEM_WAIT, XMEM_WRITE_WAIT, programs  # noqa: E402
+from lockstep_programs import UART_BIT, UART_FRAME, XMEM_FETCH_PROBE, XMEM_LINE_DIRTY, programs  # noqa: E402
 from vux9k import REPO_ROOT, start_soc  # noqa: E402
 
 TRACE = os.environ.get("LOCKSTEP_TRACE", "")
@@ -32,11 +32,13 @@ DIFF_DIR = os.path.join(REPO_ROOT, "build", "sim", "diff")
 
 Instr = namedtuple("Instr", "cycle riscv pc regs writes trap")
 # Longest instruction in cycles: a Hack AMD=M+1 (FETCH, EXECUTE, MEM_WAIT, HACK_WB,
-# HACK_WR_D) whose fetch and M read miss the caches (two waits of soc_pkg::XMEM_READ_LATENCY)
-# and whose M write waits XMEM_WRITE_LATENCY; longer than any RV32 one (a window load fetched
-# from the window: 3 + 2 * XMEM_WAIT; an RV32M instruction fetched from the window: 35 +
-# XMEM_WAIT), with room to spare
-LONGEST = 5 + 2 * XMEM_WAIT + XMEM_WRITE_WAIT + 7
+# HACK_WR_D) whose fetch misses the instruction cache while the data cache holds its word in a
+# dirty line (the probe's write-back, then the read: XMEM_FETCH_PROBE, 317) and whose M read
+# misses the data cache with a dirty victim (the write-back, then the fill: XMEM_LINE_DIRTY,
+# 571; its M write then hits); 5 + 317 + 571 = 893, longer than any RV32 one (a window load or
+# store fetched the same way: 3 + 317 + 571; an RV32M instruction fetched from the window:
+# 35 + 317), with room to spare
+LONGEST = 5 + XMEM_FETCH_PROBE + XMEM_LINE_DIRTY + 7
 
 
 def _index_trace(path):

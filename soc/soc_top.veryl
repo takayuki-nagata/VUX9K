@@ -214,9 +214,12 @@ pub module soc_top (
     // sees no fetch: one it started then (a soft reset into Hack fetches from the window at
     // once) would stay a miss until the bridge, which takes no request then, answered it, so
     // the first fetch after the pulse is a hit or a miss by its line alone. An instruction-cache
-    // miss probes the data cache at the fetch's PSRAM word (pc_reg's, not pc_out's) and waits
-    // while the data cache holds that word in a dirty line (fill_hold; low while it
-    // writes through).
+    // miss probes the data cache at the fetch's PSRAM word (pc_reg's, not pc_out's: the probe
+    // reads the data cache's tags combinationally into fill_hold and on to the bridge's
+    // req_valid) and waits while the data cache holds that word in a dirty line
+    // (fill_hold), which the data cache then writes back: the fetch never reads a word
+    // older than a store, and fence.i still needs to do nothing. The data cache's dirty
+    // lines survive the soft reset; rst_n drops them.
     inst icache: soc_icache (
         clk                                                          ,
         rst        : rst_n                                           ,
