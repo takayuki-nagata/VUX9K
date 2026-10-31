@@ -216,6 +216,19 @@ ACCEPTED: dict[str, dict[str, str]] = {
         " address or data (both 12- and 32-bit muxes are x on A) when fill is 0, i.e. when nothing is"
         " written",
     },
+    "soc_dcache": {
+        "const1 A[3] @ soc_dcache.sv:243.83-243.103": "the word half of stale_q. A real collision is"
+        " caught anyway: a store hit also writes the tag of the line rd_idx reads, and FILL is outside"
+        " IDLE. A false one needs a store hit while rd_idx is at another line and a lookup the next"
+        " cycle; the CPU holds rd_idx at the access's word and fetches after a store",
+        "const1 B[0] @ soc_dcache.sv:139.40-139.60": "the idle of lookup. Only the first cycle outside IDLE"
+        " has stale_q low. After a miss rd_idx is held, so the tag read again still mismatches and"
+        " the FSM uses miss only in IDLE; after the probe's start no data access is in the window (the"
+        " CPU is fetching)",
+        "cnot1 Y[5] ctrl 1 @ soc_dcache.sv:237.30-237.46": "the sweep counts in another order (0, 1, 34,"
+        " 3, 4, 5, 38, 7, ...): every line once in 64 cycles and 63 last (enumerated), so swept rises"
+        " at the same cycle",
+    },
     "fifo_sync": {
         "const1 A[1] @ $auto$proc_dff.cc:proc_dff": "sets bit 1 of a memory word while rst is asserted. The"
         " memory has no reset: a word is read as the head only after it has been written, so only rdata of"

@@ -610,6 +610,13 @@ async def reset_drops_dirty(b):
         outcome, _ = await b.access("load", w)
         assert outcome in ("clean_miss", "sweep_wait"), f"{w:06x}: {outcome} after the sweep"
     assert not any(k == "wb" for k, _ in b.events)
+    # An access held across the sweep's last write (line 63), that line valid with the access's
+    # tag before the reset: the read colliding with the write is stale, so it never hits
+    last = 1 << 9 | (LINES - 1) << 3 | 1
+    await b.access("load", last)
+    await b.reset()
+    assert (await b.access("load", last))[0] == "sweep_wait"
+    assert any(k == "miss" for k, _ in b.events), "the line was swept: the load must fill it"
     await b.flush()
 
 
