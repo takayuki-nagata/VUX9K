@@ -228,6 +228,17 @@ ACCEPTED: dict[str, dict[str, str]] = {
         "cnot1 Y[5] ctrl 1 @ soc_dcache.sv:246.30-246.46": "the sweep counts in another order (0, 1, 34,"
         " 3, 4, 5, 38, 7, ...): every line once in 64 cycles and 63 last (enumerated), so swept rises"
         " at the same cycle",
+        "const0 A[2] @ soc_dcache.sv:266.30-271.24 soc_dcache.sv:266.34-266.42": "the value line_r or tag_r"
+        " keeps in IDLE. Both are loaded on leaving IDLE and read only outside it: the RAM writes they"
+        " address are enabled there",
+        "const1 B[4] @ soc_dcache.sv:252.83-252.103": "the word half of stale_q again, one address bit: as"
+        " the entry above for the same comparison",
+        "cnot1 A[1] ctrl 0 @ soc_dcache.sv:254.13-289.20 soc_dcache.sv:254.25-254.25": "state's compare with"
+        " IDLE, bit 1 flipped by bit 0: the states 0, 1, 2 read as 0, 3, 2, so only IDLE still matches",
+        "inv A[0] @ soc_dcache.sv:219.13-219.19 soc_dcache.sv:219.9-221.12": "bit 0 of a tag is written"
+        " every cycle at tag_waddr's default, tags[line_r] with tag_r[0]. Line_r's tag already has that"
+        " value in IDLE (its last transfer's tag). Outside IDLE no lookup or fetch reads it, and the"
+        " fill's end writes the whole tag",
     },
     "fifo_sync": {
         "const1 A[1] @ $auto$proc_dff.cc:proc_dff": "sets bit 1 of a memory word while rst is asserted. The"
