@@ -28,7 +28,7 @@
 //! comp reads M, +1 (HACK_WR_D) when it writes both A and D). A trap costs 2 (it is taken
 //! in EXECUTE).
 //! Window accesses wait on top of that, by the caches' rules (crate::cache): a fetch from
-//! the window that misses the instruction cache stays in FETCH `XMEM_READ_LATENCY` cycles
+//! the window that misses the instruction cache stays in FETCH `XMEM_FETCH_FILL` cycles
 //! more, or `XMEM_FETCH_PROBE` when the data cache first writes back a dirty line holding
 //! its word (a hit, none); a window load or store that misses the data cache waits
 //! `XMEM_LINE_FILL` cycles more, or `XMEM_LINE_DIRTY` when the victim line is dirty (a
@@ -56,24 +56,28 @@ pub const TOHOST: u32 = 0xF000_0000;
 // docs/agents/sync-points.md): RV32 region XMEM_REGION, the 8 MB PSRAM (XMEM_WORDS words)
 // repeating every 8 MB across it (soc_top hides the controller's register space); a
 // request accepted in the first FETCH/MEM_WAIT cycle is answered XMEM_*_LATENCY cycles
-// later. An uncached access (the instruction cache's miss) adds that many cycles; the data
-// cache moves whole lines (XMEM_LINE_*). The controller's power-up (about 3,610
+// later. Neither cache uses a single word: both move whole lines (XMEM_LINE_*,
+// XMEM_FETCH_*), which derive from these. The controller's power-up (about 3,610
 // cycles after reset) is not modeled: it ends inside soc_top's 32,768-cycle power-on reset,
 // before the CPU's first cycle, so no program can see it.
 /// RV32 region (`addr[31:28]`) of the window: soc_pkg::RV_REGION_XMEM.
 pub const XMEM_REGION: u32 = 0x8;
 /// Words in the window: soc_pkg::XMEM_WORDS (8 MB).
 pub const XMEM_WORDS: usize = 1 << 21;
-/// Extra cycles of a window fetch or load: soc_pkg::XMEM_READ_LATENCY.
+/// Cycles of a single read accepted by the controller until its response:
+/// soc_pkg::XMEM_READ_LATENCY.
 pub const XMEM_READ_LATENCY: u32 = 35;
 /// Cycles of a write accepted by the controller until its response:
 /// soc_pkg::XMEM_WRITE_LATENCY.
 pub const XMEM_WRITE_LATENCY: u32 = 34;
-// soc_dcache's line transfers (its header): one burst of DCACHE_LINE_WORDS words, taken in
+// The caches' line transfers (their headers): one burst of LINE_WORDS words, taken in
 // the cycle it is raised; each later word takes 2 cycles more than a single one, a burst
 // read's last word comes 3 cycles before R + 2(N-1), and a burst write answers once, in
-// W + 2(N-1); sim/unit/test_soc_dcache.py measures them.
-const BURST_EXTRA: u32 = 2 * (crate::cache::DCACHE_LINE_WORDS as u32 - 1);
+// W + 2(N-1); sim/unit/test_soc_dcache.py and test_soc_icache.py measure them. The controller
+// is ready again R + 2(N-1) after accepting a read: the cycle after the access's replay
+// hit, and every next request rises at least a cycle later (a fill's FSM leaves IDLE the
+// cycle after its miss), so no request ever waits for it and nothing here models that wait.
+const BURST_EXTRA: u32 = 2 * (crate::cache::LINE_WORDS as u32 - 1);
 /// Extra cycles of a window load or store that misses the data cache, its victim line
 /// invalid or clean: the line's fill, R+14 = 49 (accepted the cycle after the miss, the last
 /// word 46 later, a stale cycle, the hit).
@@ -82,10 +86,14 @@ pub const XMEM_LINE_FILL: u32 = XMEM_READ_LATENCY + BURST_EXTRA;
 /// the cycle after the miss, accepted the next, its response W+14 later), then the fill,
 /// accepted the cycle after that: (W+14)+2+(R+14) = 99.
 pub const XMEM_LINE_DIRTY: u32 = XMEM_WRITE_LATENCY + BURST_EXTRA + 2 + XMEM_LINE_FILL;
+/// Extra cycles of a window fetch that misses the instruction cache: its line's fill, the
+/// same FSM and the same cycles as the data cache's, R+14 = 49.
+pub const XMEM_FETCH_FILL: u32 = XMEM_LINE_FILL;
 /// Extra cycles of a window fetch that misses the instruction cache while the data cache
-/// holds its word in a dirty line: the probe's write-back of the line, then the fetch,
-/// (W+14)+3+R = 86.
-pub const XMEM_FETCH_PROBE: u32 = XMEM_WRITE_LATENCY + BURST_EXTRA + 3 + XMEM_READ_LATENCY;
+/// holds its line dirty: the probe's write-back of the line (the miss's cycle, a cycle
+/// reading word 0, accepted the next, its response W+14 later, the hold falling a cycle
+/// after), then the fill: (W+14)+3+(R+14) = 100.
+pub const XMEM_FETCH_PROBE: u32 = XMEM_WRITE_LATENCY + BURST_EXTRA + 3 + XMEM_FETCH_FILL;
 /// The window's first address, where the board's RV32 applications are linked
 /// (fw_common::map::XMEM_BASE; the `vux9k` Zephyr board's flash).
 pub const XMEM_BASE: u32 = XMEM_REGION << 28;

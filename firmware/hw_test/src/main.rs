@@ -470,10 +470,11 @@ fn t_xmem_exec(seed: u32) -> u32 {
 
 /// Cycles window accesses add over the same access to the ROM (a load, a store, which the
 /// ROM ignores, or the fetch of a `ret`), from `cycle` around each, 6 bits each: fetch miss
-/// << 18 | fetch hit << 12 | load hit << 6 | store hit. A fetch miss is soc_pkg's
-/// XMEM_READ_LATENCY, a hit of either cache nothing (a store hit stays in the data cache).
+/// << 18 | fetch hit << 12 | load hit << 6 | store hit. A fetch miss is the instruction
+/// line's fill, XMEM_FETCH_FILL (the emulator's soc.rs: 8 words in a burst, 49 from soc_pkg's
+/// XMEM_READ_LATENCY), a hit of either cache nothing (a store hit stays in the data cache).
 /// Each case is made by construction, inside one asm block (no stack access in between):
-/// the stored `ret` invalidates its instruction-cache line and dirties x's data line; a
+/// the stored `ret` invalidates its whole instruction-cache line and dirties x's data line; a
 /// load 2 KB up (the same data line, another tag) writes it back and holds the line clean,
 /// so the load and the store after it hit; the fetch miss then probes a dirty line of
 /// another tag, which costs nothing.
@@ -523,8 +524,8 @@ fn t_xmem_time(_: u32) -> u32 {
 /// them, 10 bits each: dirty miss << 20 | clean miss << 10 | probed fetch. A load that
 /// misses with a dirty victim waits XMEM_LINE_DIRTY (the emulator's soc.rs: the victim's 8
 /// words written back in a burst, then the 8 read in one), one with a clean victim XMEM_LINE_FILL, and a
-/// fetch miss whose word the data cache holds dirty XMEM_FETCH_PROBE (the line written
-/// back first, without fence.i). By construction, in one asm block: a store 2 KB above y
+/// fetch miss whose line the data cache holds dirty XMEM_FETCH_PROBE (the line written
+/// back first, without fence.i, then the instruction line's fill). By construction, in one asm block: a store 2 KB above y
 /// makes y's data line dirty under another tag, whatever it held; the load of y then
 /// evicts it, the load 2 KB up evicts y's clean line, and the stored `ret` next to y (a
 /// store miss of a clean victim) leaves its line dirty and its instruction-cache line
@@ -591,8 +592,8 @@ const TESTS: [(&str, Test, u32); 17] = [
     ("xmem", Once(t_xmem), 0xDB16_358C),
     ("xmem_lanes", Pairs(t_xmem_lanes), 0x4490_6ED7),
     ("xmem_exec", Once(t_xmem_exec), 0x9273_B7CB),
-    ("xmem_time", Once(t_xmem_time), 0x008C_0000),
-    ("xmem_time_line", Once(t_xmem_time_line), 0x0630_C456),
+    ("xmem_time", Once(t_xmem_time), 0x00C4_0000),
+    ("xmem_time_line", Once(t_xmem_time_line), 0x0630_C464),
     ("muldiv", Pairs(t_muldiv), 0x180C_F09F),
 ];
 

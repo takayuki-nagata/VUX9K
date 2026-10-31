@@ -10,20 +10,20 @@
 //! written back), but the CPU never reads it there: a load goes through the data cache,
 //! and a fetch that misses the instruction cache first probes the data cache, which writes
 //! the line back if it holds the fetched word dirty. Every window store also invalidates
-//! the instruction-cache line at its index (soc_top's `inv`), so an instruction-cache line
-//! always equals the memory too. Lines are keyed by the PSRAM word (`addr[22:2]`), so the
+//! the whole instruction-cache line at its index (soc_top's `inv`), so an instruction-cache
+//! line always equals the memory too. Lines are keyed by the PSRAM word (`addr[22:2]`), so the
 //! window's 8 MB aliases share them. Every rule mirrors the RTL:
-//! - direct-mapped: the instruction cache `ICACHE_LINES` lines of one word (index
-//!   `addr[13:2]`, tag `addr[22:14]`), the data cache `DCACHE_LINES` lines of
-//!   `DCACHE_LINE_WORDS` words (line `addr[10:5]`, word `addr[4:2]`, tag `addr[22:11]`),
+//! - direct-mapped: the instruction cache `ICACHE_LINES` lines of `LINE_WORDS` words (line
+//!   `addr[13:5]`, word `addr[4:2]`, tag `addr[22:14]`), the data cache `DCACHE_LINES` lines of
+//!   `LINE_WORDS` words (line `addr[10:5]`, word `addr[4:2]`, tag `addr[22:11]`),
 //!   write-back and write-allocate;
 //! - a hit (fetch, load or store) costs nothing over a fetch or a load of the ROM; a
 //!   store hit marks its line dirty and makes no bus access;
 //! - a data miss (load or store, also a partial store) fills the line, `XMEM_LINE_FILL`
 //!   cycles (soc.rs), after writing the victim back first if it is dirty,
 //!   `XMEM_LINE_DIRTY` in all; a store then merges into the line (dirty);
-//! - an instruction miss waits `XMEM_READ_LATENCY`, or `XMEM_FETCH_PROBE` when the data
-//!   cache holds its word in a dirty line (the same tag at the fetch's data line), which
+//! - an instruction miss fills its line, `XMEM_FETCH_FILL`, or `XMEM_FETCH_PROBE` when the
+//!   data cache holds that line dirty (the same tag at the fetch's data line), which
 //!   is written back and stays valid, now clean; a dirty line of another tag there costs
 //!   nothing;
 //! - the power-on reset (soc_top's rst_n, also the reset button) empties both (they sweep
@@ -47,14 +47,14 @@
 //! IDLE. Within one instruction, Hack's AM=M+1 stores in HACK_WB right after its load
 //! completed as a hit, a cycle with no write, at the same word: the store hits.
 
-use crate::soc::{XMEM_FETCH_PROBE, XMEM_LINE_DIRTY, XMEM_LINE_FILL, XMEM_READ_LATENCY};
+use crate::soc::{XMEM_FETCH_FILL, XMEM_FETCH_PROBE, XMEM_LINE_DIRTY, XMEM_LINE_FILL};
 
 /// Lines of the instruction cache (soc_icache's LINES).
-pub const ICACHE_LINES: usize = 4096;
+pub const ICACHE_LINES: usize = 512;
 /// Lines of the data cache (soc_pkg::DCACHE_LINES).
 pub const DCACHE_LINES: usize = 64;
-/// Words in a data-cache line (soc_dcache's 8).
-pub const DCACHE_LINE_WORDS: usize = 8;
+/// Words in a line of either cache (soc_icache's and soc_dcache's 8).
+pub const LINE_WORDS: usize = 8;
 
 /// What the caches did since the power-on reset (for measurements; the RTL counts nothing).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -81,13 +81,13 @@ struct DLine {
 }
 
 pub struct Caches {
-    /// Per instruction-cache line, the tag of the word it holds.
+    /// Per instruction-cache line, the tag of the words it holds.
     itag: Vec<Option<u32>>,
     /// Per data-cache line, the tag of the words it holds and whether it is dirty.
     dline: [Option<DLine>; DCACHE_LINES],
     /// Per dirty data line, the words the PSRAM holds behind it (the memory's words when
     /// the line became dirty).
-    behind: [[u32; DCACHE_LINE_WORDS]; DCACHE_LINES],
+    behind: [[u32; LINE_WORDS]; DCACHE_LINES],
     pub stats: CacheStats,
 }
 
@@ -96,16 +96,23 @@ impl Default for Caches {
         Caches {
             itag: vec![None; ICACHE_LINES],
             dline: [None; DCACHE_LINES],
-            behind: [[0; DCACHE_LINE_WORDS]; DCACHE_LINES],
+            behind: [[0; LINE_WORDS]; DCACHE_LINES],
             stats: CacheStats::default(),
         }
     }
 }
 
+/// The instruction line and tag of PSRAM word `word`.
+#[inline]
+fn iline_of(word: usize) -> (usize, u32) {
+    let line = word / LINE_WORDS;
+    (line % ICACHE_LINES, (line / ICACHE_LINES) as u32)
+}
+
 /// The data line and tag of PSRAM word `word`.
 #[inline]
 fn dline_of(word: usize) -> (usize, u32) {
-    let line = word / DCACHE_LINE_WORDS;
+    let line = word / LINE_WORDS;
     (line % DCACHE_LINES, (line / DCACHE_LINES) as u32)
 }
 
@@ -114,7 +121,7 @@ impl Caches {
     /// miss probes the data cache (writing a dirty line holding the word back) and fills
     /// the line.
     pub fn fetch(&mut self, word: usize) -> u32 {
-        let (line, tag) = (word % ICACHE_LINES, (word / ICACHE_LINES) as u32);
+        let (line, tag) = iline_of(word);
         if self.itag[line] == Some(tag) {
             self.stats.fetch_hits += 1;
             return 0;
@@ -128,7 +135,7 @@ impl Caches {
                 self.stats.probe_writebacks += 1;
                 XMEM_FETCH_PROBE
             }
-            _ => XMEM_READ_LATENCY,
+            _ => XMEM_FETCH_FILL,
         }
     }
 
@@ -161,10 +168,10 @@ impl Caches {
             let l = self.dline[line].as_mut().expect("a store's line is valid");
             if !l.dirty {
                 l.dirty = true;
-                let base = word & !(DCACHE_LINE_WORDS - 1);
-                self.behind[line].copy_from_slice(&mem[base..base + DCACHE_LINE_WORDS]);
+                let base = word & !(LINE_WORDS - 1);
+                self.behind[line].copy_from_slice(&mem[base..base + LINE_WORDS]);
             }
-            self.itag[word % ICACHE_LINES] = None;
+            self.itag[iline_of(word).0] = None;
         }
         wait
     }
@@ -179,7 +186,7 @@ impl Caches {
         }) = self.dline[line]
         {
             if t == tag {
-                self.behind[line][word % DCACHE_LINE_WORDS] = value;
+                self.behind[line][word % LINE_WORDS] = value;
             }
         }
     }
@@ -189,8 +196,8 @@ impl Caches {
     pub fn power_on(&mut self, mem: &mut [u32]) {
         for (line, l) in self.dline.iter().enumerate() {
             if let Some(DLine { tag, dirty: true }) = *l {
-                let base = (tag as usize * DCACHE_LINES + line) * DCACHE_LINE_WORDS;
-                mem[base..base + DCACHE_LINE_WORDS].copy_from_slice(&self.behind[line]);
+                let base = (tag as usize * DCACHE_LINES + line) * LINE_WORDS;
+                mem[base..base + LINE_WORDS].copy_from_slice(&self.behind[line]);
             }
         }
         *self = Caches::default();

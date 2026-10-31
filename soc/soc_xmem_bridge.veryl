@@ -2,33 +2,34 @@
 // SPDX-License-Identifier: MIT
 
 // The caches' side of the wait-state window (RV32 region soc_pkg::RV_REGION_XMEM, and Hack's
-// segments in it): turns soc_icache's miss (fetch_sel, its mem_sel) or soc_dcache's access
-// (data_sel, its mem_sel, with the fields it gives) into one request of the memory
-// controller's request/response contract (psram::psram_controller, its header) and tells the
-// cache when it completes: the fetch's requests are single words (req_len 0), the data
-// side's whole lines (an 8-word burst, req_len 7). Without a request instr_ready/data_ready
-// are 1: everything else
-// answers in one cycle.
+// segments in it): turns soc_icache's line fill (fetch_sel, its mem_sel, with the address it
+// gives) or soc_dcache's line transfer (data_sel, its mem_sel, with the fields it gives) into
+// one request of the memory controller's request/response contract
+// (psram::psram_controller, its header) and tells the cache when each word completes. Both
+// sides' requests are whole lines (an 8-word burst, req_len 7). Without a request
+// instr_ready/data_ready are 1: everything else answers in one cycle.
 // - The selects already hold the CPU's FETCH and data access (the caches' mem_sel is their
 //   window access gated by it), so the bridge needs neither.
 // - Both selects may be raised at once, or one while the other side's request is in flight
-//   (soc_dcache's write-back while soc_icache holds its miss, fill_hold). The data side's
-//   request goes first; the other side waits (no request, no ready) until the bridge is
-//   free. busy_data records whose request was accepted, and a response completes only that
-//   side, also in the cycle a held select is raised again. data_sel must not rise while
-//   the fetch's request waits for req_ready: the request's fields would change.
+//   (the bench's stimulus; the CPU's caches never overlap, soc_icache's fill_hold keeps
+//   its fill from soc_dcache's write-back). The data side's request goes first; the other side
+//   waits (no request, no ready) until the bridge is free. busy_data records whose request was
+//   accepted, and a response completes only that side, also in the cycle a held select is
+//   raised again. data_sel must not rise while the fetch's request waits for req_ready: the
+//   request's fields would change. The fetch's never waits (soc_icache's header: the
+//   controller is ready before either cache's next request, by the same count for the data
+//   side's fill).
 // - Addresses are PSRAM words (addr[22:2]); soc_top makes the controller's byte address.
 // - The request is raised in the first cycle of the access and held, with the same fields,
-//   until accepted: the CPU holds its address and data while it waits. A Hack M read and
-//   the write of the same instruction (HACK_WB) are two requests back to back.
-// - busy (accepted, the last response not yet in) drops req_valid, so the access the CPU is
+//   until accepted: the caches hold their address and data while they wait.
+// - busy (accepted, the last response not yet in) drops req_valid, so the access the cache is
 //   still waiting on is never requested twice; rsp_last ends it. Each response completes
-//   something: the fetch's single word; of the data side's read each word, of its write the
-//   one response (data_ready; soc_dcache counts the words). wdata_next (the burst write's
-//   next word, in the next cycle) only passes through to it, as data_wnext.
-// - ready comes from registers only (fetch_addr is pc_reg, data_addr the registered
-//   access address, rsp_valid, busy and busy_data registers), never from the CPU's
-//   next-PC or address adders: it gates the CPU's FSM.
+//   something: of a read each word (instr_ready or data_ready; the caches count the words), of
+//   the data side's write the one response. wdata_next (the burst write's next word, in the
+//   next cycle) only passes through to it, as data_wnext.
+// - ready comes from registers only (the caches' mem_sel from their state, rsp_valid, busy and
+//   busy_data registers), never from the CPU's next-PC or address adders: it gates the CPU's
+//   FSM.
 // - No new request while the CPU is held in soft reset. None is in flight then: the
 //   GPIO store that starts it completed outside the window, as did its fetch.
 pub module soc_xmem_bridge (
@@ -36,21 +37,21 @@ pub module soc_xmem_bridge (
     rst     : input reset,
     soft_rst: input logic,
 
-    // soc_icache's misses
-    fetch_sel  : input  logic    , // a window fetch the cache doesn't hold
-    fetch_addr : input  logic<21>, // its PSRAM word
+    // soc_icache's fills
+    fetch_sel  : input  logic    , // a line the cache wants
+    fetch_addr : input  logic<21>, // its first PSRAM word
     instr_ready: output logic    ,
 
-    // soc_dcache's accesses
-    data_sel  : input  logic    , // a window data access for the memory
-    data_addr : input  logic<21>, // its PSRAM word
+    // soc_dcache's line transfers
+    data_sel  : input  logic    , // a line to transfer
+    data_addr : input  logic<21>, // its first PSRAM word
     data_we   : input  logic    , // 1: store, 0: load
     data_wdata: input  logic<32>,
     data_wstrb: input  logic<4> ,
     data_ready: output logic    ,
     data_wnext: output logic    , // the data side's write: the next cycle takes its next word
 
-    rdata: output logic<32>, // the read word, valid in the cycle a window access completes
+    rdata: output logic<32>, // the read word, valid in the cycle its ready completes it
 
     // Memory controller side
     req_valid : output logic    ,
@@ -75,7 +76,7 @@ pub module soc_xmem_bridge (
     assign req_addr    = if data_sel ? data_addr : fetch_addr;
     assign req_wdata   = data_wdata;
     assign req_wstrb   = data_wstrb;
-    assign req_len     = if data_sel ? 3'd7 : 3'd0;
+    assign req_len     = 3'd7;
     assign instr_ready = !fetch_sel || (done && !busy_data);
     assign data_ready  = !data_sel || (done && busy_data);
     assign data_wnext  = wdata_next;

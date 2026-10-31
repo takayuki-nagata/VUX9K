@@ -46,7 +46,7 @@ eqy can't see this (zero-delay models, and both sides of eqy come from Yosys). S
   `XMEM_WRITE_LATENCY` and `PSRAM_INIT_CYCLES` (and the assumption that the power-up ends
   inside the POR), with their copies in the wait-state window's row of sync-points.md (the
   emulator's `XMEM_*_LATENCY`, `lockstep_programs.XMEM_WAIT`, `hw_test`'s `xmem_time` and
-  `xmem_time_line` checksums, which the line transfers' `XMEM_LINE_*` derive from);
+  `xmem_time_line` checksums, which the line transfers' `XMEM_LINE_*` and `XMEM_FETCH_*` derive from);
   `make sim-psram-contract` fails until they match the controller. The one
   derived copy is the Makefile's `SOC_CLK_HZ` (read from `soc_pkg.veryl`, for the
   controller's unit netlist). `make sim-lockstep` catches an emulator that disagrees with

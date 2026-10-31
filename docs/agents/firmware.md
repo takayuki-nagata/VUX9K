@@ -94,8 +94,8 @@ binaries land in the single shared `firmware/target/riscv32im-unknown-none-elf/`
   it is behind `fat-full`, as is the nibble-table `crc32_update` (the bitwise one, which the
   first stage keeps, cost ~1,800 cycles a byte from the PSRAM). Check
   `build/firmware/firmware.hex` is unchanged after any `fw_common` change.
-- **Code in the PSRAM can be slow**: a fetch that misses the 16 KB instruction cache waits
-  ~35 cycles, a load or store that misses the 2 KB data cache (write-back, 8-word lines)
+- **Code in the PSRAM can be slow**: a fetch that misses the 16 KB instruction cache (8-word
+  lines) waits ~49 cycles (~100 when it writes a dirty data line back first), a load or store that misses the 2 KB data cache (write-back, 8-word lines)
   ~49 (~99 when the line it replaces is dirty and written back first); hits, stores
   included, don't wait. Before the caches, the
   second stage's transfer loop lost UART bytes at 115200 baud until the receive stopped

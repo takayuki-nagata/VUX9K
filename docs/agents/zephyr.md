@@ -22,7 +22,7 @@ mtime +0x0 / mtimecmp +0x8 layout is `timer_core`'s, so Zephyr's in-tree
   target), leaving the first stage in the ROM: a Zephyr app never returns, but Button S1 (the
   board's reset) starts the first stage and the boot again. The tests can't press it, so
   the board tests (`test_hardware.py` 13 to 15, `hw_irq_echo.py`) load the bitstream afterwards.
-  A fetch there that misses the instruction cache in front of the PSRAM waits ~35 cycles, a
+  A fetch there that misses the instruction cache in front of the PSRAM (8-word lines) waits ~49 cycles, a
   load or store that misses the data cache (8-word lines, write-back) ~49 (~99 with a
   dirty line written back first), so a cycle budget depends on how the code and data fall
   into the caches.
@@ -169,14 +169,17 @@ hardware gives and what the driver makes up for:
   back-to-back line comes back whole. The paced line stays: the board test sends it by
   default (16-byte chunks, a chunk every 176 frame times, `sim/integration/irq_echo_pace.py`,
   shared by the emulator, RTL and board tests; the emulator test prints the measurement and
-  fails below a 2x margin). The overrun check (`err=1`, `UART_ERROR_OVERRUN`) now sends its
-  line from irq_echo's first cycle, while it starts and before it enables RX: the FIFO keeps
-  32 bytes, and the reply is exactly those. The line is 33 bytes, the shortest that overflows
-  the FIFO: with the data cache's burst lines irq_echo enables RX after ~58k cycles (a line up
-  to 37 bytes on the emulator; on the RTL, whose bridge sends two stop bits, its 33 bytes take
-  56.6k cycles and a 34th gets in), before a longer line has arrived. The emulator test checks
-  that the app became ready only after the whole line had arrived (its precondition). A start
-  faster still leaves no line to shorten: that test then needs another synchronization.
+  fails below a 2x margin). The overrun check (`err=1`, `UART_ERROR_OVERRUN`) sends a line that
+  arrives before irq_echo enables RX: the FIFO keeps 32 bytes, and the reply is exactly those.
+  The line is 33 bytes, the shortest that overflows the FIFO. It no longer races irq_echo's
+  start-up, which the instruction cache's lines moved ahead of it (RX enabled after ~32k
+  cycles, the line taking 51.5k on the emulator and 56.6k from the RTL's bridge, two stop bits:
+  sending with one stop bit wouldn't have closed that gap): `irq_echo_pace.hold_words` is a
+  ROM stub in place of the plain jump that waits `HOLD_CYCLES` (the slowest line and 4 frames'
+  margin, 63.5k) on mtime before it jumps to the app, leaving the UART alone, so the sticky
+  bit is the app's to find. Both tests check the precondition two frames before the hold
+  ends (the RTL `soc_top.uart_overrun`, the emulator the RX level and the line's end, and
+  nothing yet sent), so a lost race says so instead of reading as a wrong echo.
 
 A TX interrupt and an interrupt-enable register would only come with a later hardware
 revision, whose register map isn't bound by this one's (docs/APP_DEVELOPMENT.md, "Hardware

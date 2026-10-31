@@ -31,17 +31,18 @@ UART_BIT = 156  # soc_pkg::UART_CNT: 18 MHz / 115200
 UART_FRAME = 10 * UART_BIT
 XMEM = 0x8000_0000  # the wait-state window: soc_pkg::RV_REGION_XMEM, 8 MB of PSRAM
 XMEM_BYTES = 0x80_0000  # soc_pkg::XMEM_WORDS * 4: the window repeats every 8 MB of region 8
-XMEM_WAIT = 35  # soc_pkg::XMEM_READ_LATENCY: an uncached read's wait (an instruction-cache miss)
+XMEM_WAIT = 35  # soc_pkg::XMEM_READ_LATENCY: a single read's latency, what the line transfers derive from
 XMEM_WRITE_WAIT = 34  # soc_pkg::XMEM_WRITE_LATENCY: a write's (the data cache's write-backs)
-# soc_dcache's line transfers, one 8-word burst each (its header; the emulator's
-# XMEM_LINE_FILL/XMEM_LINE_DIRTY/XMEM_FETCH_PROBE): a data-cache miss with a clean or invalid
-# victim, one with a dirty victim, and an instruction-cache miss whose probe writes a dirty
-# data line back first
+# The caches' line transfers, one 8-word burst each (their headers; the emulator's
+# XMEM_LINE_FILL/XMEM_LINE_DIRTY/XMEM_FETCH_FILL/XMEM_FETCH_PROBE): a data-cache miss with a
+# clean or invalid victim, one with a dirty victim, an instruction-cache miss, and one whose
+# probe writes a dirty data line back first
 XMEM_LINE_WORDS = 8
 XMEM_BURST_EXTRA = 2 * (XMEM_LINE_WORDS - 1)  # a burst's later words, 2 cycles each
 XMEM_LINE_FILL = XMEM_WAIT + XMEM_BURST_EXTRA  # 49
 XMEM_LINE_DIRTY = XMEM_WRITE_WAIT + XMEM_BURST_EXTRA + 2 + XMEM_LINE_FILL  # 99
-XMEM_FETCH_PROBE = XMEM_WRITE_WAIT + XMEM_BURST_EXTRA + 3 + XMEM_WAIT  # 86
+XMEM_FETCH_FILL = XMEM_LINE_FILL  # 49: the same FSM's cycles
+XMEM_FETCH_PROBE = XMEM_WRITE_WAIT + XMEM_BURST_EXTRA + 3 + XMEM_FETCH_FILL  # 100
 # Hack's segments in the window (soc_pkg::HACK_I_BASE/HACK_D_BASE): instructions at
 # HACK_I_BASE + pc[15:0], data word A at HACK_D_BASE + 4 * A[14:0]
 HACK_I_BASE = 0x8000_0000
@@ -170,14 +171,17 @@ XMEM_USED += [(0x1000, 0x1200), (0x1800, 0x1A00), (0x2000, 0x2200)]
 # xcache's routines: A, and B one instruction-cache size (16 KB) above it on the same lines
 # (and on A's first data-cache line); its data word D, and D2 4 KB above it on D's data-cache
 # line; the line P of its partial stores and P2 2 KB (one data-cache size) above it. Fills
-# read whole lines (8 words, 32 bytes)
-XCACHE_I_BYTES = 0x4000  # soc_icache: 4096 lines of a word
+# read whole lines (8 words, 32 bytes). Routine C ends one line and starts the next
+XCACHE_I_BYTES = 0x4000  # soc_icache: 512 lines of 8 words
 XCACHE_D_BYTES = 0x800  # soc_dcache: 64 lines of 8 words
 XCACHE_A, XCACHE_B, XCACHE_D = 0x600, 0x600 + XCACHE_I_BYTES, 0x700
 XCACHE_D2 = XCACHE_D + 0x1000
 XCACHE_P = 0x780
 XCACHE_P2 = XCACHE_P + XCACHE_D_BYTES
+XCACHE_C = 0x7D8  # 2 words before an 8-word line's start: a fetch walking off a line
+XCACHE_C2 = XCACHE_C + 0x800  # a data line of XCACHE_C's under another tag, evicting it
 XMEM_USED += [(XCACHE_B, XCACHE_B + 0x40), (XCACHE_D2, XCACHE_D2 + 0x20), (XCACHE_P2, XCACHE_P2 + 0x20)]
+XMEM_USED += [(XCACHE_C2 & ~0x1F, (XCACHE_C2 & ~0x1F) + 0x20)]
 # Hack: the I segment up to HACK_DEMO_BYTES (the demo's image; the other Hack programs are
 # smaller), the D segment's first 256 words (R0-R15, the compiler's temporaries) and the
 # demo's stack (the 512 words below its SP, 0x4000), and hack_stub's pass counter
@@ -373,7 +377,16 @@ def xcache() -> list:
     with half a word), D evicting it, a word store miss, a load hit and one through the 8 MB
     alias; then partial stores into a fresh line P (a byte into word 0, a halfword into word 1:
     masks 0010 and 1100), evicted by a load of P2 (the write-back writes only those bytes) and
-    loaded back from the PSRAM."""
+    loaded back from the PSRAM.
+
+    Instruction lines (8 words): A's whole routine is one line, so a pass's first fetch fills
+    it (XMEM_FETCH_FILL, or XMEM_FETCH_PROBE) and the others hit; the two stores above each
+    invalidate the line A is running from, one at another word, one by its index alone (16 KB
+    up), and the fetch after each refills it. Routine C runs over a line's end: two misses
+    with probes (both its lines dirty), then all hits; a ROM store to another word of C's
+    first line (no instruction of it) drops that line only, its fetch's probe writes the
+    data line back, the second line still hits; and the same store followed by a load that
+    evicts the data line (written back as a victim) makes the next fetch a plain fill."""
     a = Asm()
     a.li("s0", XMEM)
     a.li("s2", 0x4000_1000)  # timer
@@ -397,7 +410,12 @@ def xcache() -> list:
     rb = Asm(origin=XMEM + XCACHE_B)
     rb.addi("s8", "s8", 1)
     rb.jalr("zero", "ra", 0)
-    for base, words in ((XCACHE_A, ra_words), (XCACHE_B, rb.assemble())):
+    rc = Asm(origin=XMEM + XCACHE_C)
+    rc.addi("s9", "s9", 1)
+    rc.addi("s9", "s9", 1)
+    rc.addi("s9", "s9", 1)  # the next line's first word
+    rc.jalr("zero", "ra", 0)
+    for base, words in ((XCACHE_A, ra_words), (XCACHE_B, rb.assemble()), (XCACHE_C, rc.assemble())):
         a.li("t1", XMEM + base)
         for k, w in enumerate(words):
             a.li("t0", w)
@@ -419,6 +437,17 @@ def xcache() -> list:
     a.li("t0", XMEM + XMEM_BYTES + XCACHE_A)  # A through the alias: its lines, hits
     a.mv("s6", "zero")
     a.jalr("ra", "t0", 0)
+
+    # Routine C over a line's end
+    a.li("s10", XMEM + XCACHE_C)
+    a.li("t1", XMEM + XCACHE_C2)
+    a.jalr("ra", "s10", 0)  # two lines, each with a probe's write-back
+    a.jalr("ra", "s10", 0)  # hits
+    a.sw("zero", -0x10, "s10")  # another word of its first line: the line goes
+    a.jalr("ra", "s10", 0)  # the first line again, with a probe; the second hits
+    a.sw("zero", -0x10, "s10")
+    a.lw("t0", 0, "t1")  # evicts the data line, dirty: written back as a victim
+    a.jalr("ra", "s10", 0)  # the first line again, a plain fill
 
     # The last pass with a timer interrupt
     a.la("t0", "handler")
@@ -615,7 +644,7 @@ def hack_soft_reset(key_by_addition: bool = True, mode_rv32: bool = False) -> li
     return a.assemble()
 
 
-XCACHE_HACK_CYCLES = 6_000  # its digit starts by cycle ~3,300
+XCACHE_HACK_CYCLES = 6_000  # its digit has started well before that (UART_FRAME is 1,560)
 
 
 def xcache_hack() -> list:
@@ -626,7 +655,10 @@ def xcache_hack() -> list:
     in HACK_WB hits); D=M at 3 (evicts 515's line, dirty from that store, and reads the 1 back);
     M=-1 at 1027 in EXECUTE (a store miss whose victim, 3's line, is clean: a fill); AMD=M+1 at
     3 (its load evicts 1027's dirty line, then HACK_WB and HACK_WR_D); then D (2) to the UART
-    as a digit, and spin."""
+    as a digit, and spin. Instruction lines: data word 3's PSRAM word has the index of the
+    instruction line this program starts on (16 instructions), so each store at 3 drops the
+    line it runs from and the next fetch fills it again; the stores at 515 and 1027 don't; the
+    spin is on the next line, a fill by walking off the first."""
     import hack_asm
 
     w3, w515, w1027 = XCACHE_HACK_WORDS
@@ -1065,11 +1097,11 @@ def programs() -> list:
     progs.append(Program("sd_clkdiv", cycles=30_000, imem_words=sd_clkdiv()))
     progs.append(Program("s2_launch", cycles=S2_LAUNCH_CYCLES, imem_words=s2_launch()))
     progs.append(Program("s2_launch_hack", cycles=S2_LAUNCH_CYCLES, imem_words=s2_launch(hack=True)))
-    # The window programs finish by cycle ~15,500 / ~10,900 (window waits included, most of
+    # The window programs finish by cycle ~3,900 / ~3,900 (window waits included, most of
     # them line transfers); xmem then takes timer interrupts in the ROM until the end
     progs.append(Program("xmem", cycles=17_500, imem_words=xmem()))
     progs.append(Program("random_rv_xmem_4", cycles=13_000, imem_words=random_rv(4, base=XMEM + 0x400)))
-    # The window's caches: done by cycle ~15,700, then spins in the ROM
+    # The window's caches: done by cycle ~6,900, then spins in the ROM
     progs.append(Program("xcache", cycles=18_000, imem_words=xcache()))
     # The data cache from Hack (XCACHE_HACK_CYCLES), then spins
     progs.append(

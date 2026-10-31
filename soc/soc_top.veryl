@@ -102,6 +102,7 @@ pub module soc_top (
     var icache_mem_sel    : logic    ;
     var icache_miss       : logic    ;
     var dcache_probe_dirty: logic    ;
+    var icache_mem_addr   : logic<21>;
     var icache_rdata      : logic<32>;
     var dcache_mem_sel    : logic    ;
     var dcache_mem_we     : logic    ;
@@ -212,15 +213,16 @@ pub module soc_top (
     // The caches key lines by the PSRAM word (addr[22:2]) and read them a cycle ahead, at
     // the CPU's pc_out and data_addr (in Hack, the segments' bits of them: pc_out[13:2] is
     // the same, A[8:0] the data line). Their RAMs have no reset: they clear every line while
-    // the power-on reset counts (raw_rst low; 4,096 cycles of its 32,768), so they are reset
+    // the power-on reset counts (raw_rst low; 512 cycles of its 32,768), so they are reset
     // by rst_n, not by it. A store to the window completing invalidates its
-    // instruction-cache line. While cpu_soft_rst holds the CPU in FETCH the instruction cache
-    // sees no fetch: one it started then (a soft reset into Hack fetches from the window at
-    // once) would stay a miss until the bridge, which takes no request then, answered it, so
-    // the first fetch after the pulse is a hit or a miss by its line alone. An instruction-cache
+    // instruction-cache line (at the store's address [13:5], whichever of the 8 words it
+    // wrote). While cpu_soft_rst holds the CPU in FETCH the instruction cache sees no fetch: a
+    // fill it started then (a soft reset into Hack fetches from the window at once) would wait
+    // for a bridge that takes no request then, so the first fetch after the pulse is a hit or
+    // a miss by its line alone. An instruction-cache
     // miss probes the data cache at the fetch's PSRAM word (pc_reg's, not pc_out's: the probe
-    // reads the data cache's tags combinationally into fill_hold and on to the bridge's
-    // req_valid) and waits while the data cache holds that word in a dirty line
+    // reads the data cache's tags combinationally into fill_hold and on to the instruction
+    // cache's state) and waits while the data cache holds that word in a dirty line
     // (fill_hold), which the data cache then writes back: the fetch never reads a word
     // older than a store, and fence.i still needs to do nothing. The data cache's dirty
     // lines survive the soft reset; rst_n drops them.
@@ -237,9 +239,10 @@ pub module soc_top (
         hit        : _                                               ,
         miss       : icache_miss                                     ,
         inv        : data_req && xmem_wsel && mem_write && data_ready,
-        inv_idx    : win_data_waddr[13:2]                            ,
+        inv_idx    : win_data_waddr[13:5]                            ,
         fill_hold  : dcache_probe_dirty                              ,
         mem_sel    : icache_mem_sel                                  ,
+        mem_addr   : icache_mem_addr                                 ,
         mem_ready  : bridge_instr_ready                              ,
         mem_rdata  : xmem_rdata                                      ,
     );
@@ -272,31 +275,31 @@ pub module soc_top (
     );
 
     inst xmem_bridge: soc_xmem_bridge (
-        clk        : clk                 ,
-        rst        : rst                 ,
-        soft_rst   : cpu_soft_rst        ,
-        fetch_sel  : icache_mem_sel      ,
-        fetch_addr : win_fetch_addr[22:2],
-        instr_ready: bridge_instr_ready  ,
-        data_sel   : dcache_mem_sel      ,
-        data_addr  : dcache_mem_addr     ,
-        data_we    : dcache_mem_we       ,
-        data_wdata : dcache_mem_wdata    ,
-        data_wstrb : dcache_mem_wstrb    ,
-        data_ready : bridge_data_ready   ,
-        data_wnext : bridge_data_wnext   ,
-        rdata      : xmem_rdata          ,
-        req_valid  : xmem_req_valid      ,
-        req_ready  : xmem_req_ready      ,
-        req_we     : xmem_req_we         ,
-        req_addr   : xmem_req_addr       ,
-        req_wdata  : xmem_req_wdata      ,
-        req_wstrb  : xmem_req_wstrb      ,
-        req_len    : xmem_req_len        ,
-        rsp_valid  : xmem_rsp_valid      ,
-        rsp_last   : xmem_rsp_last       ,
-        rsp_rdata  : xmem_rsp_rdata      ,
-        wdata_next : xmem_wdata_next     ,
+        clk        : clk               ,
+        rst        : rst               ,
+        soft_rst   : cpu_soft_rst      ,
+        fetch_sel  : icache_mem_sel    ,
+        fetch_addr : icache_mem_addr   ,
+        instr_ready: bridge_instr_ready,
+        data_sel   : dcache_mem_sel    ,
+        data_addr  : dcache_mem_addr   ,
+        data_we    : dcache_mem_we     ,
+        data_wdata : dcache_mem_wdata  ,
+        data_wstrb : dcache_mem_wstrb  ,
+        data_ready : bridge_data_ready ,
+        data_wnext : bridge_data_wnext ,
+        rdata      : xmem_rdata        ,
+        req_valid  : xmem_req_valid    ,
+        req_ready  : xmem_req_ready    ,
+        req_we     : xmem_req_we       ,
+        req_addr   : xmem_req_addr     ,
+        req_wdata  : xmem_req_wdata    ,
+        req_wstrb  : xmem_req_wstrb    ,
+        req_len    : xmem_req_len      ,
+        rsp_valid  : xmem_rsp_valid    ,
+        rsp_last   : xmem_rsp_last     ,
+        rsp_rdata  : xmem_rsp_rdata    ,
+        wdata_next : xmem_wdata_next   ,
     );
 
     // The window's memory: 8 MB of PSRAM, at the bridge's PSRAM word (req_addr[1:0], which

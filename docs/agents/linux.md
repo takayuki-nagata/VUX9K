@@ -87,5 +87,6 @@ takes most of the CPU at that speed. Throwaway emulator versions put the boot at
 4-word I-cache lines (a PSRAM burst read), and ~14 s with a write buffer as well. The
 measurements are in `test_linux.py`'s output. Since then the data cache is write-back with
 8-word lines, not a write buffer: a store that hits no longer waits, a miss moves the line in
-one PSRAM burst (~49 cycles, ~99 with a dirty victim), and the I-cache lines are still one
-word; these figures are from before that change (re-measure with `make test-linux-emu`).
+one PSRAM burst (~49 cycles, ~99 with a dirty victim), and the I-cache lines are 8 words (a
+miss ~49 cycles); these figures are from before those changes (re-measure with `make
+test-linux-emu`).

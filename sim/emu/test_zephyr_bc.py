@@ -4,7 +4,7 @@
 """
 bc_clone_rs on Zephyr (make build-zephyr, board vux9k) on the emulator's real profile.
 Like the demos it is linked into the PSRAM (the image at 0x8000_0000, ~260 KB; its RAM
-from 0x8040_0000), where a fetch that misses the instruction cache waits ~35 cycles and a
+from 0x8040_0000), where a fetch that misses the instruction cache waits ~49 cycles and a
 load or store that misses the data cache ~49 (~99 with a dirty line written back).
 Loaded into the PSRAM directly (Soc.load_app(image, "riscv", XMEM_BASE)): the
 self-tests, then the interactive REPL. And once as the board starts it, from the card: the
@@ -43,9 +43,9 @@ SELF_TESTS = [
 FLASH_BYTES = 4 * 1024 * 1024
 # Upper bounds, not measurements (test_record_measurements prints those): from I-RAM, on an
 # emulator profile with bigger memories (since removed), the self-tests reached the prompt
-# within 2,000M cycles and a line within 200M; from the PSRAM (the caches' misses: +35 cycles
-# a fetch, +49 or +99 a data line) several times that. A bound costs little wall time when it is hit: most of
-# the cycles are waits, which the emulator adds in one step, not one by one.
+# within 2,000M cycles and a line within 200M; from the PSRAM (the caches' misses: +49 cycles
+# an instruction line, +49 or +99 a data line) several times that. A bound costs little wall time when it is
+# hit: most of the cycles are waits, which the emulator adds in one step, not one by one.
 BOOT_CYCLES = 20_000_000_000
 LINE_CYCLES = 2_000_000_000
 # The second stage loads ~200 cycles a byte (s1_env.RUN_LOAD_CYCLES): ~52M for bc

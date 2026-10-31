@@ -2,93 +2,127 @@
 // SPDX-License-Identifier: MIT
 
 // The instruction cache in front of the wait-state window (RV32 region
-// soc_pkg::RV_REGION_XMEM, and Hack's I segment in it): direct-mapped, one word a line, 4096 lines (16 KB). It sits between
-// the CPU's fetch and soc_xmem_bridge, which sees only the misses.
-// - Lines are keyed by the PSRAM word (addr[22:2]: index [13:2], tag [22:14]), so every alias
-//   of a word in region 8 is the same line, as the memory behind the window repeats every 8 MB.
+// soc_pkg::RV_REGION_XMEM, and Hack's I segment in it): direct-mapped, 512 lines of 8 words
+// (16 KB). It sits between the CPU's fetch and soc_xmem_bridge's fetch side, which sees only
+// line fills, each one 8-word burst of the PSRAM controller.
+// - Lines are keyed by the PSRAM word (addr[22:2]: line [13:5], word [4:2], tag [22:14]), so
+//   every alias of a word in region 8 is the same line, as the memory behind the window
+//   repeats every 8 MB.
 // - The RAMs are read a cycle ahead at rd_idx (the CPU's pc_out: next_pc in the cycle before
 //   FETCH, pc_reg during it), as the ROM is. In FETCH the registered tag is compared with
 //   fetch_addr (pc_reg); a hit completes in the first FETCH cycle, so a hit costs what a
 //   fetch from the ROM costs. ready comes from registers only (the RAM outputs, the registered read
-//   index, fetch_addr), never from the CPU's next-PC path.
-// - A miss goes to the bridge (mem_sel) and completes with it (mem_ready); once requested it
-//   stays a miss until then (missing), so mem_sel never drops under a request in flight even
-//   if the line could read as a hit later in the wait. The word the bridge returns
-//   goes to the CPU and fills the line in the same cycle.
-// - miss is a window fetch the cache doesn't hold (soc_dcache's probe_req). While fill_hold is
-//   high (soc_dcache's probe_dirty: the data cache holds the fetched word in a line not yet
-//   written back, which it then writes back in a burst, 51 cycles) the miss waits instead of
-//   going to the bridge, so it never reads a stale word. fill_hold only falls during a
-//   fetch, never rises under a request in flight: a line becomes dirty only by a store, and
-//   the CPU stores nothing while it fetches. fill_hold is combinational from fetch_addr
-//   (pc_reg), through the data cache's asynchronous tag read, never from pc_out.
+//   index, the state, fetch_addr), never from the CPU's next-PC path. rdata is all word_q:
+//   the bridge's word never reaches the CPU.
+// - A miss in IDLE leaves for FILL unless fill_hold holds it. FILL reads the fetch's 8 words
+//   in one burst (mem_addr = the line's first word; no early restart, no critical word first),
+//   each written in its response's cycle at {line, cnt}, cnt counting mem_ready; the last
+//   writes the tag too and returns to IDLE. The CPU holds pc_reg and pc_out through all of it,
+//   so nothing here keeps a copy of the address. The fetch then completes as a hit, two
+//   cycles after the last word: the next cycle (replay_q) is no lookup, since the tag and
+//   word registered in it were read while the RAMs were written.
+// - Cycle costs over a hit, with the controller's burst read (word k in R-3+2k after the
+//   accepting cycle, R = soc_pkg::XMEM_READ_LATENCY, 35), the request taken in the cycle it is
+//   raised (sim/unit/test_soc_icache.py measures them): R+14 = 49, as a data-cache fill
+//   (accepted the cycle after the miss, word 7 at 47, the replay cycle, the hit at 49). The
+//   controller is ready again R+14 cycles after accepting a read, the cycle after that hit,
+//   and the earliest next request is later still: the instruction's EXECUTE is that cycle, and
+//   a request in it (a miss of Hack's `M=`) rises a cycle after its miss. So nothing ever waits
+//   for req_ready after a fill, and soc_xmem_bridge's contract (data_sel must not rise while
+//   the fetch's request waits for it) holds trivially.
+// - miss is a window fetch that wants a line (soc_dcache's probe_req). While fill_hold is
+//   high (soc_dcache's probe_dirty: the data cache holds the fetched line dirty, not yet
+//   written back, which it then writes back in a burst, 51 cycles) the miss stays in IDLE,
+//   so it never reads a stale word: 51+49 = 100 in all. Both caches' lines are 8 aligned
+//   words, so the probe covers every word of the fill. fill_hold only falls during a fetch,
+//   never rises in FILL: a line becomes dirty only by a store, and the CPU stores nothing
+//   while it fetches. fill_hold is combinational from fetch_addr (pc_reg), through the data
+//   cache's asynchronous tag read, never from pc_out.
 // - Coherence: inv is a store to the window completing (the CPU's only way to write the
-//   memory behind it); the line at its index is invalidated, whatever its tag. Code the CPU
-//   writes is therefore never fetched stale, and fence.i needs to do nothing.
-// - A tag write to the index being read in the same cycle (the store above, or a fill) leaves
-//   that read undefined on the board (synthesis drops the collision logic, -no-rw-check; RTL
-//   simulation shows the old tag): the next cycle then misses, which is the right answer
-//   anyway (the line was just invalidated, or the next cycle is no FETCH).
+//   memory behind it); the line at its index is invalidated, whatever its tag and whichever
+//   of its words was stored. Code the CPU writes is therefore never fetched stale, and
+//   fence.i needs to do nothing. inv can't come during a fill: the CPU is stalled in FETCH,
+//   and a window store's last cycle is its MEM_WAIT or EXECUTE (HACK_WB), so the tag port
+//   has no collision to arbitrate there and the fill's tag write simply goes first.
+// - A tag write to the line being read in the same cycle leaves that read undefined on the
+//   board (synthesis drops the collision logic, -no-rw-check; RTL simulation shows the old
+//   tag). conflict_q makes the next cycle a miss, which is the right answer for inv's write
+//   (the line was just invalidated); replay_q covers the fill's. A word is only written in
+//   FILL, whose reads nobody uses before the replay cycle's, which is after the last write.
+// - A soft reset finds the state in IDLE: the GPIO store that starts it completed outside
+//   the window, after its own fetch.
 // - clear (high while soc_top's power-on reset counts) invalidates every line once, one a
-//   cycle, before the CPU runs: the RAMs have no reset. Until then window fetches wait.
-// - ENABLE = 0 passes every access to the bridge as if this module weren't there (its RAMs
-//   and registers then drive nothing): soc_top's wiring was proven with it (make eqy).
-pub module soc_icache #(
-    param ENABLE: bit = 1'b1,
-) (
+//   cycle (512 cycles), before the CPU runs: the RAMs have no reset. Until then window
+//   fetches wait. rst (soc_top's rst_n) may cut a fill short, its line's words partly
+//   replaced under the old tag; the sweep that follows drops that tag.
+pub module soc_icache (
     clk  : input clock,
     rst  : input reset,
     clear: input logic,
 
     // CPU side
-    rd_idx     : input  logic<12>, // pc_out[13:2]: the line of the next fetch, a cycle ahead
+    rd_idx     : input  logic<12>, // pc_out[13:2]: the word of the next fetch, a cycle ahead
     fetch_req  : input  logic    , // the CPU is in FETCH
     fetch_sel  : input  logic    , // fetch_addr is in the window (RV32 region 8, or Hack)
     fetch_addr : input  logic<21>, // pc_reg[22:2]: the PSRAM word
     instr_ready: output logic    ,
     rdata      : output logic<32>, // the fetched word, valid when a window fetch completes
     hit        : output logic    ,
-    miss       : output logic    , // a window fetch the cache doesn't hold
+    miss       : output logic    , // a window fetch the cache doesn't hold, not yet at the bridge
 
-    // A store to the window completing, at line inv_idx (its address [13:2])
-    inv    : input logic    ,
-    inv_idx: input logic<12>,
+    // A store to the window completing, at line inv_idx (its address [13:5])
+    inv    : input logic   ,
+    inv_idx: input logic<9>,
 
-    // soc_xmem_bridge's fetch side: misses only, once fill_hold is low
+    // soc_xmem_bridge's fetch side: the line fills, one 8-word burst a request
     fill_hold: input  logic    ,
     mem_sel  : output logic    ,
-    mem_ready: input  logic    ,
+    mem_addr : output logic<21>, // the PSRAM word, the line's first
+    mem_ready: input  logic    , // a word of the burst, in mem_rdata
     mem_rdata: input  logic<32>,
 ) {
-    const LINES: u32 = 4096;
+    const LINES : u32 = 512;
+    const NWORDS: u32 = LINES * 8;
 
-    var tags : logic<10> [LINES]; // {valid, addr[22:14]}
-    var words: logic<32> [LINES];
+    enum State {
+        IDLE,
+        FILL,
+    }
+
+    var tags : logic<10> [LINES] ; // {valid, addr[22:14]}
+    var words: logic<32> [NWORDS];
 
     var tag_q     : logic<10>;
     var word_q    : logic<32>;
     var rd_idx_q  : logic<12>;
     var conflict_q: logic    ;
+    var replay_q  : logic    ; // the cycle after one in FILL: tag_q and word_q aren't the fill's yet
     var swept     : logic    ;
-    var missing   : logic    ;
-    var sweep_idx : logic<12>;
+    var sweep_idx : logic<9> ;
+    var state     : State    ;
+    var cnt       : logic<3> ; // the word being filled
 
-    let idx: logic<12> = fetch_addr[11:0];
-    let win: logic     = fetch_req && fetch_sel;
+    let idx : logic<12> = fetch_addr[11:0];
+    let line: logic<9>  = fetch_addr[11:3];
+    let tag : logic<9>  = fetch_addr[20:12];
+    let win : logic     = fetch_req && fetch_sel;
+    let idle: logic     = state == State::IDLE;
 
-    let on: logic = !ENABLE || swept; // serving accesses
+    // In IDLE, not the replay cycle: the registered tag and word are worth looking at
+    let lookup: logic = swept && idle && !replay_q;
 
-    assign hit         = ENABLE && swept && !missing && !conflict_q && rd_idx_q == idx && tag_q
-        == {1'b1, fetch_addr[20:12]};
-    assign miss        = win && on && !hit;
-    assign mem_sel     = miss && !fill_hold;
-    assign instr_ready = !win || on && (hit || mem_ready && !fill_hold);
-    assign rdata       = if hit ? word_q : mem_rdata;
+    assign hit         = lookup && !conflict_q && rd_idx_q == idx && tag_q == {1'b1, tag};
+    assign miss        = win && lookup && !hit;
+    assign instr_ready = !win || hit;
+    assign rdata       = word_q;
+    assign mem_sel     = state == State::FILL;
+    assign mem_addr    = {tag, line, 3'd0};
 
-    let fill: logic = win && swept && !hit && mem_ready && !fill_hold;
+    let word_we: logic = mem_sel && mem_ready;
+    let last   : logic = word_we && cnt == 3'd7;
 
     var tag_we   : logic    ;
-    var tag_waddr: logic<12>;
+    var tag_waddr: logic<9> ;
     var tag_wdata: logic<10>;
 
     always_comb {
@@ -96,10 +130,10 @@ pub module soc_icache #(
             tag_we    = clear;
             tag_waddr = sweep_idx;
             tag_wdata = 10'd0;
-        } else if fill {
+        } else if last {
             tag_we    = 1'b1;
-            tag_waddr = idx;
-            tag_wdata = {1'b1, fetch_addr[20:12]};
+            tag_waddr = line;
+            tag_wdata = {1'b1, tag};
         } else {
             tag_we    = inv;
             tag_waddr = inv_idx;
@@ -111,12 +145,12 @@ pub module soc_icache #(
         if tag_we {
             tags[tag_waddr] = tag_wdata;
         }
-        tag_q = tags[rd_idx];
+        tag_q = tags[rd_idx[11:3]];
     }
 
     always_ff (clk) {
-        if fill {
-            words[idx] = mem_rdata;
+        if word_we {
+            words[{line, cnt}] = mem_rdata;
         }
         word_q = words[rd_idx];
     }
@@ -124,20 +158,32 @@ pub module soc_icache #(
     always_ff (clk, rst) {
         if_reset {
             swept      = 1'b0;
-            missing    = 1'b0;
-            sweep_idx  = 12'd0;
+            sweep_idx  = 9'd0;
             rd_idx_q   = 12'd0;
             conflict_q = 1'b0;
+            replay_q   = 1'b0;
+            state      = State::IDLE;
+            cnt        = 3'd0;
         } else {
             if !swept && clear {
-                sweep_idx = sweep_idx + 12'd1;
-                if sweep_idx == 12'd4095 {
+                sweep_idx = sweep_idx + 9'd1;
+                if sweep_idx == 9'd511 {
                     swept = 1'b1;
                 }
             }
-            missing    = mem_sel && !mem_ready;
             rd_idx_q   = rd_idx;
-            conflict_q = tag_we && tag_waddr == rd_idx;
+            conflict_q = tag_we && tag_waddr == rd_idx[11:3];
+            replay_q   = !idle;
+            if word_we {
+                cnt = cnt + 3'd1;
+            }
+            if idle {
+                if miss && !fill_hold {
+                    state = State::FILL;
+                }
+            } else if last {
+                state = State::IDLE;
+            }
         }
     }
 }

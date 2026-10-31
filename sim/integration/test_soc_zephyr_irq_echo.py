@@ -8,37 +8,45 @@ preloaded into the PSRAM and started by a jump from the ROM like the Rust demo
 sim/emu/test_zephyr_irq_echo.py). Its interrupt handlers run from the PSRAM as well; with the
 instruction cache in front of it they keep up with a line sent back to back at 115200 baud.
 The paced line (irq_echo_pace) is what the board test sends. An overrun still has to reach
-uart_err_check: a line sent while irq_echo starts, before it enables RX, overflows the
-32-byte RX FIFO.
+uart_err_check: a line that arrives before irq_echo enables RX overflows the 32-byte RX
+FIFO. The ROM holds irq_echo back until it has (irq_echo_pace.hold_words), which leaves no race
+with its start-up time.
 """
 
 import os
 
 import cocotb
 import irq_echo_pace as pace
-from soc_env import REPO_ROOT, UART_BAUD_CYCLES, preload_psram_app, start_soc, wait_cycles
+from soc_env import (
+    REPO_ROOT,
+    UART_BAUD_CYCLES,
+    XMEM_BASE,
+    load_imem,
+    load_xmem,
+    preload_psram_app,
+    soc_of,
+    start_soc,
+    wait_cycles,
+)
 
 ECHO_BIN = os.path.join(REPO_ROOT, "build", "zephyr-irq-echo", "zephyr", "zephyr.bin")
 BURST = bytes(b"abcdefghijklmnopqrstuvwxyz0123456789"[i % 36] for i in range(64))
 ECHO = BURST.upper() + b"\nrx=64 drop=0 err=0\n"
 UART_ERROR_OVERRUN = 1  # Zephyr's enum uart_rx_stop_reason
-RX_FIFO = 32  # soc's UART RX FIFO
-# Sent from irq_echo's first cycle: overflows the RX FIFO by one byte and has arrived whole before
-# RX is enabled (~58k cycles from the PSRAM with the data cache's burst lines; the bridge's 33
-# bytes take 56.6k, the 34th arrives after it)
-EARLY = BURST[: RX_FIFO + 1]
+RX_FIFO = pace.RX_FIFO
+EARLY = BURST[: pace.OVERRUN_LINE]  # overflows the RX FIFO by one byte
 BRIDGE_BYTE_BITS = 11  # VirtualSerialBridge sends two stop bits
 
 
-async def start(dut, early: bytes = b""):
-    """The SoC with irq_echo preloaded and ready for input; returns the serial bridge. early
-    is sent from irq_echo's first cycle on, while it starts."""
+def echo_image() -> bytes:
     assert os.path.exists(ECHO_BIN), f"{ECHO_BIN} missing; run `make build-zephyr-irq-echo`"
     with open(ECHO_BIN, "rb") as f:
-        image = f.read()
-    ser, _ = await start_soc(dut, during_reset=preload_psram_app(image))
-    if early:
-        ser.write(early)
+        return f.read()
+
+
+async def start(dut):
+    """The SoC with irq_echo preloaded and ready for input; returns the serial bridge."""
+    ser, _ = await start_soc(dut, during_reset=preload_psram_app(echo_image()))
     await ser.wait_for(b"irq_echo ready\n", timeout_cycles=10_000_000)
     ser.reset_input_buffer()
     return ser
@@ -79,9 +87,25 @@ async def test_zephyr_irq_echo_back_to_back(dut):
 
 @cocotb.test(timeout_time=2000, timeout_unit="ms")
 async def test_zephyr_irq_echo_overrun_while_it_starts(dut):
-    """A line sent while irq_echo starts, before it enables RX, overflows the RX FIFO; the line
-    keeps its first 32 bytes, and uart_err_check reports the overrun"""
-    ser = await start(dut, early=EARLY)
+    """A line that arrives before irq_echo enables RX overflows the RX FIFO; the line keeps its
+    first 32 bytes, and uart_err_check reports the overrun. The ROM holds irq_echo back until
+    then, whatever its start-up time"""
+    image = echo_image()
+
+    def preload(soc):
+        load_xmem(soc, XMEM_BASE, image)
+        load_imem(soc, pace.hold_words(XMEM_BASE))
+
+    ser, _ = await start_soc(dut, during_reset=preload)
+    ser.write(EARLY)
+    # The precondition, read before the hold ends: a test that lost it says so, instead of
+    # reading as a wrong echo. The sticky bit is unread: the ROM's wait doesn't touch the UART.
+    await wait_cycles(pace.HOLD_CYCLES - 2 * pace.SLOWEST_FRAME_CYCLES)
+    soc = soc_of(dut)
+    assert int(soc.uart_overrun.value) == 1, "the line hasn't overflowed the RX FIFO before irq_echo starts"
+    assert not ser.tx_buffer and ser.in_waiting == 0, "irq_echo started before the line had arrived"
+    await ser.wait_for(b"irq_echo ready\n", timeout_cycles=10_000_000)
+    ser.reset_input_buffer()
     await wait_cycles(1_000_000)  # past uart_irq_rx_enable and the handler emptying the FIFO
     ser.write(b"\n")
     out = await reply(ser)

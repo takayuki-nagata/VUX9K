@@ -13,7 +13,7 @@ fails the test, with both sides' instructions around it in
 build/sim/diff/<program>.txt.
 
 `make sim-lockstep` produces the trace and runs this; LOCKSTEP_TRACE names the trace
-file. Without one (e.g. plain `make test-emu`) the test is skipped.
+file. Without one (e.g. plain `make test-emu`) the comparison is skipped.
 """
 
 import bisect
@@ -24,7 +24,14 @@ from collections import deque, namedtuple
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "integration"))
-from lockstep_programs import UART_BIT, UART_FRAME, XMEM_FETCH_PROBE, XMEM_LINE_DIRTY, programs  # noqa: E402
+from lockstep_programs import (  # noqa: E402
+    UART_BIT,
+    UART_FRAME,
+    XMEM_FETCH_FILL,
+    XMEM_FETCH_PROBE,
+    XMEM_LINE_DIRTY,
+    programs,
+)
 from vux9k import REPO_ROOT, start_soc  # noqa: E402
 
 TRACE = os.environ.get("LOCKSTEP_TRACE", "")
@@ -33,12 +40,29 @@ DIFF_DIR = os.path.join(REPO_ROOT, "build", "sim", "diff")
 Instr = namedtuple("Instr", "cycle riscv pc regs writes trap")
 # Longest instruction in cycles: a Hack AMD=M+1 (FETCH, EXECUTE, MEM_WAIT, HACK_WB,
 # HACK_WR_D) whose fetch misses the instruction cache while the data cache holds its word in a
-# dirty line (the probe's write-back, then the read: XMEM_FETCH_PROBE, 86) and whose M read
+# dirty line (the probe's write-back, then the fill: XMEM_FETCH_PROBE, 100) and whose M read
 # misses the data cache with a dirty victim (the write-back, then the fill: XMEM_LINE_DIRTY,
-# 99; its M write then hits); 5 + 86 + 99 = 190, longer than any RV32 one (a window load or
-# store fetched the same way: 3 + 86 + 99; an RV32M instruction fetched from the window:
-# 35 + 86), with room to spare
+# 99; its M write then hits); 5 + 100 + 99 = 204, longer than any RV32 one (a window load or
+# store fetched the same way: 3 + 100 + 99; an RV32M instruction fetched from the window:
+# 35 + 100), with room to spare
 LONGEST = 5 + XMEM_FETCH_PROBE + XMEM_LINE_DIRTY + 7
+
+
+def test_xcache_exercises_the_instruction_lines():
+    """The window's lockstep programs really reach what they are there for: on the emulator,
+    which the lockstep holds to the RTL. Fetches that fill a line, some with a probe, several
+    words of each line hitting, and the fill's cost for what they claim."""
+    prog = next(p for p in programs() if p.name == "xcache")
+    soc = start_soc(imem_words=prog.imem_words)
+    waits = set()
+    while soc.cycle < prog.cycles:
+        r = soc.step()
+        if r["pc"] >> 28 == 8 and not (r.get("load") or r.get("store")):
+            waits.add(r["cycles"] - 2)
+    st = soc.cache_stats
+    assert st["fetch_misses"] > 15 and st["probe_writebacks"] >= 4, st
+    assert st["fetch_hits"] > st["fetch_misses"] * 8, st
+    assert {XMEM_FETCH_FILL, XMEM_FETCH_PROBE} <= waits, waits
 
 
 def _index_trace(path):

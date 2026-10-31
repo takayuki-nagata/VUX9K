@@ -77,8 +77,8 @@ EQ_MEM_SHARE = 0.6
 # Modules whose mutants skip the equivalence check: all go to the tests, so a survivor may
 # be an equivalent mutant (read it before adding a test). {module: reason}
 NO_EQUIV = {
-    "soc_icache": "memory_map makes its 4096 lines ~172k flip-flops a side (at 1024 lines, 45k: one check took"
-    " hours and 1.4 GB)",
+    "soc_icache": "memory_map makes its word RAM (4096x32) and tags (512x10) ~136k flip-flops a side (at 1024x42, 45k:"
+    " one check took hours and 1.4 GB)",
     "soc_dcache": "memory_map makes its word RAM (512x36) and tags (64x14) ~19k flip-flops a side, as soc_icache's",
 }
 

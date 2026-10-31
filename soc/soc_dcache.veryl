@@ -46,18 +46,19 @@
 //   49); with a dirty victim (W+14)+2+(R+14) = 99 (WB's first cycle reads word 0, accepted
 //   the cycle after, the response at 50, FILL accepted at 51). A stale or mismatched
 //   read-ahead adds a cycle. The controller is ready again R+14 cycles after accepting a read,
-//   three after its last word: the next request (a fetch, the cycle after the hit) never
-//   has to wait for it.
+//   three after its last word: the next request (a fetch's fill, the cycle after the fetch's
+//   miss at the earliest, two after the hit) never has to wait for it.
 // - The probe: an instruction-cache miss (probe_req) at the PSRAM word probe_addr (soc_top's
 //   win_fetch_addr, from pc_reg, never pc_out) whose line this cache holds valid and dirty
 //   with the same tag (probe_dirty, combinational from ptag; soc_icache's fill_hold, which
 //   keeps its miss from the bridge) starts a write-back in IDLE when no data access is in
 //   the window (data first; none is in MEM_WAIT while the CPU fetches): the line is
 //   written back as on a dirty miss and stays valid, now clean ({1, 0, tag}); probe_dirty
-//   falls the cycle after the write's response and the instruction cache's request
-//   follows. A probed miss costs (W+14)+3 = 51 cycles before the fetch's own R: 86. The
-//   words keep their masks: a later write-back of the line writes those bytes again,
-//   unchanged. Without a dirty match the probe costs nothing (the miss stays R = 35).
+//   falls the cycle after the write's response and the instruction cache's fill
+//   follows. Its lines are this cache's lines (8 aligned words), so the write-back covers
+//   every word of the fill. A probed miss costs (W+14)+3 = 51 cycles before the fill's own
+//   R+14 = 49: 100. The words keep their masks: a later write-back of the line writes those
+//   bytes again, unchanged. Without a dirty match the probe costs nothing (the miss stays 49).
 // - soc_xmem_bridge's contract (its header): data_sel must not rise while the fetch's
 //   request waits for req_ready. A line transfer starts either in MEM_WAIT (the
 //   instruction's fetch completed) or by the probe, whose fill_hold keeps the instruction
@@ -108,7 +109,7 @@ pub module soc_dcache (
     mem_rdata: input  logic<32>,
     mem_wnext: input  logic    , // the next cycle takes the write's next word
 
-    // soc_icache's probe: its miss at the PSRAM word of the fetch (pc_reg[22:2])
+    // soc_icache's probe: its miss at the PSRAM word of the fetch (pc_reg[22:2]), any word of the line
     probe_req  : input  logic    ,
     probe_addr : input  logic<21>,
     probe_dirty: output logic    , // the line holding probe_addr is dirty: soc_icache's fill_hold

@@ -6,7 +6,7 @@
 
 use vux9k_emu::periph::uart::Uart;
 use vux9k_emu::soc::{
-    LINUX_DTB_ADDR, LINUX_DTB_MAX, XMEM_LINE_DIRTY, XMEM_LINE_FILL, XMEM_READ_LATENCY,
+    LINUX_DTB_ADDR, LINUX_DTB_MAX, XMEM_FETCH_FILL, XMEM_LINE_DIRTY, XMEM_LINE_FILL,
 };
 use vux9k_emu::{Profile, Retire, Soc};
 
@@ -107,7 +107,7 @@ fn amo_ops_return_the_old_value_and_store_the_result() {
 
 #[test]
 fn amo_cycles_and_caches_are_a_load_and_a_store() {
-    let (rw, fill, dirty) = (XMEM_READ_LATENCY, XMEM_LINE_FILL, XMEM_LINE_DIRTY);
+    let (rw, fill, dirty) = (XMEM_FETCH_FILL, XMEM_LINE_FILL, XMEM_LINE_DIRTY);
     let mut soc = new_soc(Profile::Linux);
     soc.regs[1] = A;
     let add = amo(0x00, 0, 0, 1, 3);
@@ -595,7 +595,7 @@ fn load_linux_sets_up_memory_and_registers() {
     let r = soc.step();
     assert_eq!(
         (r.cycles, soc.regs[5]),
-        (2 + XMEM_READ_LATENCY, 1),
+        (2 + XMEM_FETCH_FILL, 1),
         "a cold fetch"
     );
     // What it refuses

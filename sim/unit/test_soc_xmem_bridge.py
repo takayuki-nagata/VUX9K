@@ -2,9 +2,8 @@
 # SPDX-License-Identifier: MIT
 
 """soc_xmem_bridge: an access the caches pass on (fetch_sel / data_sel, their mem_sel)
-becomes exactly one request of the memory controller's contract, held until accepted: a
-fetch a single word (req_len 0), a data access a whole line (req_len 7). A fetch completes
-(instr_ready) in its response's cycle; a data load gets data_ready in each of its 8 words'
+becomes exactly one request of the memory controller's contract, held until accepted, a whole
+line (req_len 7) on either side. A fetch or a data load gets its ready in each of its 8 words'
 cycles, a data store in its one response's, with the controller's wdata_next passed on
 (data_wnext) and the next word's fields passed through; only rsp_last ends the request. Accesses the caches don't
 pass on (out of the window, or hits) complete at once and request nothing; nothing is
@@ -26,7 +25,7 @@ from cocotb.triggers import FallingEdge, Timer
 
 KINDS = ("fetch", "load", "store")
 OWNER = ("fetch_done", "data_done", "other_side_waits")
-RESPONSE = ("fetch", "read_word", "read_last", "write_last")
+RESPONSE = ("fetch_word", "fetch_last", "read_word", "read_last", "write_last")
 LINE = 8
 
 
@@ -47,8 +46,8 @@ def sample_owner(owner):
     pass
 
 
-# What the memory answered: a fetch's word, a data read's word and its last, a write's one
-# response; and whether a burst write passed its wdata_next on, and a request that waited for
+# What the memory answered: a fetch's word and its last, a data read's word and its last, a
+# write's one response; and whether a burst write passed its wdata_next on, and a request that waited for
 # the controller to recover from a burst read
 @fcov.point("xbridge.response", RESPONSE, xf=lambda response: response)
 def sample_response(response):
@@ -67,8 +66,8 @@ def sample_after_read(after):
 
 class Memory:
     """Behind the bridge: takes a request when ready (randomly low), answers after random
-    delays (controller=True: in the controller's cycles after the accepting one). A single
-    word: one rsp_valid with rsp_last. A burst read: 8 rsp_valid, rsp_last on the last,
+    delays (controller=True: in the controller's cycles after the accepting one). A burst
+    read, a fetch's or a load's: 8 rsp_valid, rsp_last on the last,
     not ready until a while later. A burst write: wdata_next 7 times, each word in the next
     cycle, then one rsp_valid with rsp_last, ready in its cycle."""
 
@@ -105,10 +104,7 @@ class Memory:
     def accept(self, cycle, kind):
         self.kind = kind
         self.wnext = {}
-        if kind == "fetch":
-            at = cycle + (35 if self.controller else self.delay())
-            self.rsps, self.ready_at = {at: True}, at
-        elif kind == "store":
+        if kind == "store":
             t = cycle
             for k in range(1, LINE):
                 t = cycle + 28 + 2 * k if self.controller else t + self.delay()
@@ -140,7 +136,7 @@ class Access:
         self.wdata, self.wstrb = random.getrandbits(32), random.randrange(16)
         self.waited = False  # the memory kept this access's request waiting
         self.hold = False
-        self.words = LINE if kind == "load" else 1  # the readies its request still owes
+        self.words = 1 if kind == "store" else LINE  # the readies its request still owes
         self.cycles = 0
 
     @property
@@ -225,8 +221,7 @@ class Bench:
             store = dsel and data.kind == "store"
             assert int(d.req_we.value) == store, f"{ctx}: req_we"
             assert int(d.req_addr.value) == req.addr, f"{ctx}: req_addr {int(d.req_addr.value):06x}"
-            want_len = LINE - 1 if dsel else 0
-            assert int(d.req_len.value) == want_len, f"{ctx}: req_len {int(d.req_len.value)}"
+            assert int(d.req_len.value) == LINE - 1, f"{ctx}: req_len {int(d.req_len.value)}"
         assert int(d.data_wnext.value) == wdata_next, f"{ctx}: data_wnext"
         if wdata_next:
             sample_wnext(self.mem.wnext[c])
@@ -235,15 +230,10 @@ class Bench:
         if rsp_valid:
             kind = self.mem.kind
             assert self.busy, f"{ctx}: a response without a request"
-            sample_response(
-                "fetch"
-                if kind == "fetch"
-                else "write_last"
-                if kind == "store"
-                else "read_last"
-                if rsp_last
-                else "read_word"
-            )
+            if kind == "store":
+                sample_response("write_last")
+            else:
+                sample_response(f"{'fetch' if kind == 'fetch' else 'read'}_{'last' if rsp_last else 'word'}")
         want_instr = not fsel or (done and not self.busy_data)
         want_data = not dsel or (done and self.busy_data)
         assert int(d.instr_ready.value) == want_instr, f"{ctx}: instr_ready={int(d.instr_ready.value)}"
@@ -257,7 +247,7 @@ class Bench:
                 sample_owner("other_side_waits")
 
         accepted = want_valid and req_ready
-        if want_valid and self.mem.kind == "load":
+        if want_valid and self.mem.kind in ("load", "fetch"):
             sample_after_read("waits" if c < self.mem.ready_at else "ready")
         if want_valid and not req_ready:
             (data if dsel else fetch).waited = True
@@ -384,12 +374,14 @@ async def test_directed(dut):
 
 @cocotb.test(timeout_time=1, timeout_unit="ms")
 async def test_controller_cycles(dut):
-    """The controller's cycles (psram_word_model's header): a fetch in 35, a line read in 47
-    with its readies, a line write's one response in 49 with the word fields passed on,
-    and a fetch right after a line read's last word waits until the controller is ready"""
+    """The controller's cycles (psram_word_model's header): a fetch's and a data side's line
+    read in 47 with its readies, a line write's one response in 49 with the word fields
+    passed on, and a fetch raised right after a line read's last word waits until the
+    controller is ready (the bridge's own behavior: the caches' FSMs raise it later,
+    test_fill_after_a_read_never_waits)"""
     b = Bench(dut, p_ready=1.0, max_delay=1, controller=True)
     await b.reset()
-    for kind, cycles, readies in (("fetch", 36, 1), ("load", 47, 8), ("store", 49, 1)):
+    for kind, cycles, readies in (("fetch", 47, 8), ("load", 47, 8), ("store", 49, 1)):
         a = Access(kind, True)
         await b.drain()
         got = n = 0
@@ -410,12 +402,46 @@ async def test_controller_cycles(dut):
     # The fetch raised at once: refused until the controller's ready, 3 cycles after the word
     f = Access("fetch", True)
     n = 0
-    for _ in range(60):
+    for _ in range(80):
         n += 1
         ir, _, _ = await b.tick(0, f, None)
-        if ir:
+        if f.finished(ir):
             break
-    assert n == 2 + 36, f"the fetch after a burst read took {n} cycles"
+    assert n == 2 + 47, f"the fetch after a burst read took {n} cycles"
+    fcov.export()
+
+
+@cocotb.test(timeout_time=1, timeout_unit="ms")
+async def test_fill_after_a_read_never_waits(dut):
+    """The caches' timing on the controller's cycles (soc_icache's header): after a fetch's or
+    a data side's line read, the access completes by its replay hit two cycles after the last
+    word, and each next request a fill's FSM can raise comes at least a cycle after that hit's
+    next cycle. Its request is taken in the cycle it rises, so data_sel can never meet a
+    fetch's refused request."""
+    b = Bench(dut, p_ready=1.0, max_delay=1, controller=True)
+    await b.reset()
+
+    def run(a):
+        return b.tick(0, a, None) if a.kind == "fetch" else b.tick(0, None, a)
+
+    for kind in ("fetch", "load"):
+        for next_kind in KINDS:
+            a = Access(kind, True)
+            await b.drain()
+            for _ in range(LINE * 8):
+                ir, dr, _ = await run(a)
+                if a.finished(ir if kind == "fetch" else dr):
+                    break
+            for _ in range(3):  # the replay cycle, the hit, the next request's miss
+                await b.tick()
+            n = Access(next_kind, True)
+            first = True
+            for _ in range(LINE * 8):
+                ir, dr, acc = await run(n)
+                assert acc or not first, f"{next_kind} after {kind}: refused"
+                first = False
+                if n.finished(ir if next_kind == "fetch" else dr):
+                    break
     fcov.export()
 
 
