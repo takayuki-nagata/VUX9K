@@ -45,7 +45,7 @@ WRITE_NEXT0 = W - 6  # wdata_next of word k in WRITE_NEXT0 + 2k, the word in the
 WRITE_RSP = W + 14  # 48, the one response, ready again
 CLEAN_MISS = READ_READY  # 49
 DIRTY_MISS = WRITE_RSP + 2 + READ_READY  # 99
-PROBE_WB = WRITE_RSP + 3  # 51 cycles of probe_dirty; the fetch's miss then takes R: 86
+PROBE_WB = WRITE_RSP + 3  # 51 cycles of probe_dirty; the fetch's miss then takes its fill: 100
 
 IDLE, WB, FILL = "IDLE", "WB", "FILL"
 X: Any = object()  # a RAM read that collided with a write, or a word never written
@@ -693,9 +693,9 @@ async def cycle_costs(b):
     assert await b.access("store", w + (2 << 9), wstrb=0x1) == ("clean_miss", 1 + CLEAN_MISS)
     assert await b.load_then_store(w + (3 << 9)) == ("dirty_miss", 1)
     # The probe: none without a dirty match; a dirty match holds the fetch PROBE_WB cycles,
-    # after which its own miss takes R (86 in all)
-    assert await b.fetch_miss(w + (4 << 9), own=R) == 0
-    assert await b.fetch_miss(w + (3 << 9), own=R) == PROBE_WB
+    # after which its own miss takes its fill (100 in all)
+    assert await b.fetch_miss(w + (4 << 9), own=CLEAN_MISS) == 0
+    assert await b.fetch_miss(w + (3 << 9), own=CLEAN_MISS) == PROBE_WB
     assert await b.access("load", w + (3 << 9)) == ("hit", 1)
     await b.flush()
 

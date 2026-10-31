@@ -184,7 +184,9 @@ ACCEPTED: dict[str, dict[str, str]] = {
         "const1 RD_EN[0] @ soc_icache.sv:93.20-93.25": "no change: the word RAM reads every cycle",
         "cnot1 Q[5] ctrl 2 sweep_idx[5] @ soc_icache.sv:101.20-101.29 soc_icache.sv:158.5-188.8": "the sweep"
         " visits the lines in another order (index bit 5 read flipped with bit 2) and still clears every"
-        " line once in 512 cycles, 511 last (enumerated)",
+        " line once in 512 cycles, 511 last (enumerated). The hold path toggles only while the register holds"
+        " before swept with clear low: soc_top raises clear (!raw_rst) with rst_n, and the bench holds only"
+        " at index 0, where bit 2 is 0",
     },
     "soc_dcache": {
         "const1 A[3] @ soc_dcache.sv:252.83-252.103": "the word half of stale_q. A real collision is"
