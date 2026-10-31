@@ -304,7 +304,8 @@ pub module soc_top (
     // Icarus only). Synthesis, lint and Icarus never define it.
     #[ifndef(VUX9K_PSRAM_MODEL)]
     inst xmem_inst: psram::psram_controller #(
-        CLK_HZ: soc_pkg::CLK_HZ,
+        CLK_HZ         : soc_pkg::CLK_HZ              ,
+        MAX_BURST_WORDS: soc_pkg::XMEM_MAX_BURST_WORDS,
     ) (
         clk                            ,
         rst_n                          ,
@@ -314,7 +315,7 @@ pub module soc_top (
         req_addr       : xmem_addr     ,
         req_wdata      : xmem_req_wdata,
         req_wstrb      : xmem_req_wstrb,
-        req_len        : 1'b0          ,
+        req_len        : 3'd0          ,
         rsp_valid      : xmem_rsp_valid,
         rsp_last       : _             ,
         rsp_rdata      : xmem_rsp_rdata,
@@ -330,7 +331,9 @@ pub module soc_top (
     );
 
     #[ifdef(VUX9K_PSRAM_MODEL)]
-    inst xmem_inst: psram_word_model (
+    inst xmem_inst: psram_word_model #(
+        MAX_BURST_WORDS: soc_pkg::XMEM_MAX_BURST_WORDS,
+    ) (
         clk                       ,
         rst_n                     ,
         req_valid : xmem_req_valid,
@@ -339,7 +342,7 @@ pub module soc_top (
         req_addr  : xmem_addr     ,
         req_wdata : xmem_req_wdata,
         req_wstrb : xmem_req_wstrb,
-        req_len   : 1'b0          ,
+        req_len   : 3'd0          ,
         rsp_valid : xmem_rsp_valid,
         rsp_last  : _             ,
         rsp_rdata : xmem_rsp_rdata,
