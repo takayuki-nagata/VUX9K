@@ -732,6 +732,9 @@ XMEM_MAX_BURST_WORDS := $(shell sed -n 's/^ *const XMEM_MAX_BURST_WORDS *: *u32 
 ifeq ($(SOC_CLK_HZ),)
 $(error CLK_HZ not found in soc/soc_pkg.veryl)
 endif
+ifeq ($(XMEM_MAX_BURST_WORDS),)
+$(error XMEM_MAX_BURST_WORDS not found in soc/soc_pkg.veryl)
+endif
 
 # The unit tests with another random seed each day (test-slow); the seed is in the log
 sim-unit-random: veryl

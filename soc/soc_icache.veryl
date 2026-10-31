@@ -17,7 +17,7 @@
 //   goes to the CPU and fills the line in the same cycle.
 // - miss is a window fetch the cache doesn't hold (soc_dcache's probe_req). While fill_hold is
 //   high (soc_dcache's probe_dirty: the data cache holds the fetched word in a line not yet
-//   written back, which it then writes back, 8(W+1)+2 cycles) the miss waits instead of
+//   written back, which it then writes back in a burst, 51 cycles) the miss waits instead of
 //   going to the bridge, so it never reads a stale word. fill_hold only falls during a
 //   fetch, never rises under a request in flight: a line becomes dirty only by a store, and
 //   the CPU stores nothing while it fetches. fill_hold is combinational from fetch_addr

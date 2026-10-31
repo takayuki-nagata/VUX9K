@@ -17,9 +17,7 @@ lint_off -rule UNUSEDSIGNAL -file "*/soc_addr_decoder.sv" -match "*'addr'*"
 lint_off -rule UNUSEDSIGNAL -file "*/soc_top.sv" -match "*'win_fetch_addr'*"
 lint_off -rule UNUSEDSIGNAL -file "*/soc_top.sv" -match "*'win_data_waddr'*"
 lint_off -rule UNUSEDSIGNAL -file "*/tb_hex_runner.sv" -match "*'data_addr'*"
-// The data cache's probe (soc_icache's miss, at the fetch's word): used by the write-back
-// commit; while the cache writes through, probe_dirty is 0 and reads neither
-lint_off -rule UNUSEDSIGNAL -file "*/soc_dcache.sv" -match "*'probe_req'*"
+// The data cache's probe works on whole lines: it doesn't read the word bits [2:0]
 lint_off -rule UNUSEDSIGNAL -file "*/soc_dcache.sv" -match "*'probe_addr'*"
 // The window's size and latencies and the PSRAM's power-up length: the controller has
 // its own, these are the copies the simulation word model (sim/psram_word_model) reads

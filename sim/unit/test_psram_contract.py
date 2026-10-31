@@ -368,6 +368,10 @@ async def test_burst(dut):
         base -= base % words
         await b.burst_write(base, [random.getrandbits(32) for _ in range(words)], [0xF] + [0] * (words - 1))
         await b.burst_read(base, words)
+    # A single word raised in the cycles after a burst read's last word: held until ready
+    await b.burst_read(lines[0], MAX_BURST_WORDS)
+    await b.request(0, lines[0] << 2, limit=BURST_READ_FIRST + 2 + 2 * MAX_BURST_WORDS)
+    await b.wait_response()
     for wstrb in STROBES:
         await b.burst_write(lines[1], [random.getrandbits(32) for _ in range(2)], [random.choice(STROBES), wstrb])
         await b.burst_read(lines[1], 2, hold=False)

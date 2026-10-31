@@ -6,7 +6,8 @@
 // (data_sel, its mem_sel, with the fields it gives) into one request of the memory
 // controller's request/response contract (psram::psram_controller, its header) and tells the
 // cache when it completes: the fetch's requests are single words (req_len 0), the data
-// side's whole lines (an 8-word burst, req_len 7). Without a request instr_ready/data_ready are 1: everything else
+// side's whole lines (an 8-word burst, req_len 7). Without a request instr_ready/data_ready
+// are 1: everything else
 // answers in one cycle.
 // - The selects already hold the CPU's FETCH and data access (the caches' mem_sel is their
 //   window access gated by it), so the bridge needs neither.
