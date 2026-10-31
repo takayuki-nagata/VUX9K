@@ -5,7 +5,8 @@
 // segments in it): turns soc_icache's miss (fetch_sel, its mem_sel) or soc_dcache's access
 // (data_sel, its mem_sel, with the fields it gives) into one request of the memory
 // controller's request/response contract (psram::psram_controller, its header) and tells the
-// cache when it completes. Without a request instr_ready/data_ready are 1: everything else
+// cache when it completes: the fetch's requests are single words (req_len 0), the data
+// side's whole lines (an 8-word burst, req_len 7). Without a request instr_ready/data_ready are 1: everything else
 // answers in one cycle.
 // - The selects already hold the CPU's FETCH and data access (the caches' mem_sel is their
 //   window access gated by it), so the bridge needs neither.
@@ -19,8 +20,11 @@
 // - The request is raised in the first cycle of the access and held, with the same fields,
 //   until accepted: the CPU holds its address and data while it waits. A Hack M read and
 //   the write of the same instruction (HACK_WB) are two requests back to back.
-// - busy (accepted, no response yet) drops req_valid, so the access the CPU is still
-//   waiting on is never requested twice; the response's cycle completes it (ready).
+// - busy (accepted, the last response not yet in) drops req_valid, so the access the CPU is
+//   still waiting on is never requested twice; rsp_last ends it. Each response completes
+//   something: the fetch's single word; of the data side's read each word, of its write the
+//   one response (data_ready; soc_dcache counts the words). wdata_next (the burst write's
+//   next word, in the next cycle) only passes through to it, as data_wnext.
 // - ready comes from registers only (fetch_addr is pc_reg, data_addr the registered
 //   access address, rsp_valid, busy and busy_data registers), never from the CPU's
 //   next-PC or address adders: it gates the CPU's FSM.
@@ -43,18 +47,22 @@ pub module soc_xmem_bridge (
     data_wdata: input  logic<32>,
     data_wstrb: input  logic<4> ,
     data_ready: output logic    ,
+    data_wnext: output logic    , // the data side's write: the next cycle takes its next word
 
     rdata: output logic<32>, // the read word, valid in the cycle a window access completes
 
     // Memory controller side
-    req_valid: output logic    ,
-    req_ready: input  logic    ,
-    req_we   : output logic    ,
-    req_addr : output logic<21>, // the PSRAM word
-    req_wdata: output logic<32>,
-    req_wstrb: output logic<4> ,
-    rsp_valid: input  logic    ,
-    rsp_rdata: input  logic<32>,
+    req_valid : output logic    ,
+    req_ready : input  logic    ,
+    req_we    : output logic    ,
+    req_addr  : output logic<21>, // the PSRAM word
+    req_wdata : output logic<32>,
+    req_wstrb : output logic<4> ,
+    req_len   : output logic<3> , // words - 1
+    rsp_valid : input  logic    ,
+    rsp_last  : input  logic    ,
+    rsp_rdata : input  logic<32>,
+    wdata_next: input  logic    ,
 ) {
     var busy     : logic;
     var busy_data: logic; // the request in flight is the data side's
@@ -66,8 +74,10 @@ pub module soc_xmem_bridge (
     assign req_addr    = if data_sel ? data_addr : fetch_addr;
     assign req_wdata   = data_wdata;
     assign req_wstrb   = data_wstrb;
+    assign req_len     = if data_sel ? 3'd7 : 3'd0;
     assign instr_ready = !fetch_sel || (done && !busy_data);
     assign data_ready  = !data_sel || (done && busy_data);
+    assign data_wnext  = wdata_next;
     assign rdata       = rsp_rdata;
 
     always_ff (clk, rst) {
@@ -77,7 +87,7 @@ pub module soc_xmem_bridge (
         } else if req_valid && req_ready {
             busy      = 1'b1;
             busy_data = data_sel;
-        } else if rsp_valid {
+        } else if rsp_last {
             busy = 1'b0;
         }
     }

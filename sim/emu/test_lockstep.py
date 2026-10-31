@@ -33,11 +33,11 @@ DIFF_DIR = os.path.join(REPO_ROOT, "build", "sim", "diff")
 Instr = namedtuple("Instr", "cycle riscv pc regs writes trap")
 # Longest instruction in cycles: a Hack AMD=M+1 (FETCH, EXECUTE, MEM_WAIT, HACK_WB,
 # HACK_WR_D) whose fetch misses the instruction cache while the data cache holds its word in a
-# dirty line (the probe's write-back, then the read: XMEM_FETCH_PROBE, 317) and whose M read
+# dirty line (the probe's write-back, then the read: XMEM_FETCH_PROBE, 86) and whose M read
 # misses the data cache with a dirty victim (the write-back, then the fill: XMEM_LINE_DIRTY,
-# 571; its M write then hits); 5 + 317 + 571 = 893, longer than any RV32 one (a window load or
-# store fetched the same way: 3 + 317 + 571; an RV32M instruction fetched from the window:
-# 35 + 317), with room to spare
+# 99; its M write then hits); 5 + 86 + 99 = 190, longer than any RV32 one (a window load or
+# store fetched the same way: 3 + 86 + 99; an RV32M instruction fetched from the window:
+# 35 + 86), with room to spare
 LONGEST = 5 + XMEM_FETCH_PROBE + XMEM_LINE_DIRTY + 7
 
 

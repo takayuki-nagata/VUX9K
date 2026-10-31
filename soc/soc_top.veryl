@@ -76,21 +76,24 @@ pub module soc_top (
     var mem_write   : logic    ;
 
     // Wait-state window: the CPU's request phases, the bridge's readies and read word
-    var fetch_req     : logic    ;
-    var fetch_addr    : logic<32>;
-    var data_req      : logic    ;
-    var instr_ready   : logic    ;
-    var data_ready    : logic    ;
-    var xmem_rdata    : logic<32>;
-    var xmem_req_valid: logic    ;
-    var xmem_req_ready: logic    ;
-    var xmem_req_we   : logic    ;
-    var xmem_req_addr : logic<21>; // the PSRAM word
-    var xmem_req_wdata: logic<32>;
-    var xmem_req_wstrb: logic<4> ;
-    var xmem_rsp_valid: logic    ;
-    var xmem_rsp_rdata: logic<32>;
-    var xmem_fetch_sel: logic    ;
+    var fetch_req      : logic    ;
+    var fetch_addr     : logic<32>;
+    var data_req       : logic    ;
+    var instr_ready    : logic    ;
+    var data_ready     : logic    ;
+    var xmem_rdata     : logic<32>;
+    var xmem_req_valid : logic    ;
+    var xmem_req_ready : logic    ;
+    var xmem_req_we    : logic    ;
+    var xmem_req_addr  : logic<21>; // the PSRAM word
+    var xmem_req_wdata : logic<32>;
+    var xmem_req_wstrb : logic<4> ;
+    var xmem_req_len   : logic<3> ;
+    var xmem_rsp_valid : logic    ;
+    var xmem_rsp_last  : logic    ;
+    var xmem_rsp_rdata : logic<32>;
+    var xmem_wdata_next: logic    ;
+    var xmem_fetch_sel : logic    ;
 
     // The window's caches, between the CPU and the bridge: what they pass on (misses,
     // stores, with the data cache's request fields), the bridge's readies they complete
@@ -108,6 +111,7 @@ pub module soc_top (
     var dcache_rdata      : logic<32>;
     var bridge_instr_ready: logic    ;
     var bridge_data_ready : logic    ;
+    var bridge_data_wnext : logic    ;
 
     // Memory & MMIO Read Signals
     var rom_data_out  : logic<32>;
@@ -261,6 +265,7 @@ pub module soc_top (
         mem_wstrb  : dcache_mem_wstrb    ,
         mem_ready  : bridge_data_ready   ,
         mem_rdata  : xmem_rdata          ,
+        mem_wnext  : bridge_data_wnext   ,
         probe_req  : icache_miss         ,
         probe_addr : win_fetch_addr[22:2],
         probe_dirty: dcache_probe_dirty  ,
@@ -279,6 +284,7 @@ pub module soc_top (
         data_wdata : dcache_mem_wdata    ,
         data_wstrb : dcache_mem_wstrb    ,
         data_ready : bridge_data_ready   ,
+        data_wnext : bridge_data_wnext   ,
         rdata      : xmem_rdata          ,
         req_valid  : xmem_req_valid      ,
         req_ready  : xmem_req_ready      ,
@@ -286,8 +292,11 @@ pub module soc_top (
         req_addr   : xmem_req_addr       ,
         req_wdata  : xmem_req_wdata      ,
         req_wstrb  : xmem_req_wstrb      ,
+        req_len    : xmem_req_len        ,
         rsp_valid  : xmem_rsp_valid      ,
+        rsp_last   : xmem_rsp_last       ,
         rsp_rdata  : xmem_rsp_rdata      ,
+        wdata_next : xmem_wdata_next     ,
     );
 
     // The window's memory: 8 MB of PSRAM, at the bridge's PSRAM word (req_addr[1:0], which
@@ -307,47 +316,47 @@ pub module soc_top (
         CLK_HZ         : soc_pkg::CLK_HZ              ,
         MAX_BURST_WORDS: soc_pkg::XMEM_MAX_BURST_WORDS,
     ) (
-        clk                            ,
-        rst_n                          ,
-        req_valid      : xmem_req_valid,
-        req_ready      : xmem_req_ready,
-        req_we         : xmem_req_we   ,
-        req_addr       : xmem_addr     ,
-        req_wdata      : xmem_req_wdata,
-        req_wstrb      : xmem_req_wstrb,
-        req_len        : 3'd0          ,
-        rsp_valid      : xmem_rsp_valid,
-        rsp_last       : _             ,
-        rsp_rdata      : xmem_rsp_rdata,
-        wdata_next     : _             ,
-        init_done      : _             ,
-        O_psram_ck                     ,
-        O_psram_ck_n                   ,
-        O_psram_cs_n                   ,
-        O_psram_reset_n                ,
-        IO_psram_dq                    ,
-        IO_psram_rwds                  ,
-        dbg_sample     : _             ,
+        clk                             ,
+        rst_n                           ,
+        req_valid      : xmem_req_valid ,
+        req_ready      : xmem_req_ready ,
+        req_we         : xmem_req_we    ,
+        req_addr       : xmem_addr      ,
+        req_wdata      : xmem_req_wdata ,
+        req_wstrb      : xmem_req_wstrb ,
+        req_len        : xmem_req_len   ,
+        rsp_valid      : xmem_rsp_valid ,
+        rsp_last       : xmem_rsp_last  ,
+        rsp_rdata      : xmem_rsp_rdata ,
+        wdata_next     : xmem_wdata_next,
+        init_done      : _              ,
+        O_psram_ck                      ,
+        O_psram_ck_n                    ,
+        O_psram_cs_n                    ,
+        O_psram_reset_n                 ,
+        IO_psram_dq                     ,
+        IO_psram_rwds                   ,
+        dbg_sample     : _              ,
     );
 
     #[ifdef(VUX9K_PSRAM_MODEL)]
     inst xmem_inst: psram_word_model #(
         MAX_BURST_WORDS: soc_pkg::XMEM_MAX_BURST_WORDS,
     ) (
-        clk                       ,
-        rst_n                     ,
-        req_valid : xmem_req_valid,
-        req_ready : xmem_req_ready,
-        req_we    : xmem_req_we   ,
-        req_addr  : xmem_addr     ,
-        req_wdata : xmem_req_wdata,
-        req_wstrb : xmem_req_wstrb,
-        req_len   : 3'd0          ,
-        rsp_valid : xmem_rsp_valid,
-        rsp_last  : _             ,
-        rsp_rdata : xmem_rsp_rdata,
-        wdata_next: _             ,
-        init_done : _             ,
+        clk                        ,
+        rst_n                      ,
+        req_valid : xmem_req_valid ,
+        req_ready : xmem_req_ready ,
+        req_we    : xmem_req_we    ,
+        req_addr  : xmem_addr      ,
+        req_wdata : xmem_req_wdata ,
+        req_wstrb : xmem_req_wstrb ,
+        req_len   : xmem_req_len   ,
+        rsp_valid : xmem_rsp_valid ,
+        rsp_last  : xmem_rsp_last  ,
+        rsp_rdata : xmem_rsp_rdata ,
+        wdata_next: xmem_wdata_next,
+        init_done : _              ,
     );
 
     // Pins of the model build: no PSRAM attached; chip selects high (deselected) and

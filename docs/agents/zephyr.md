@@ -23,7 +23,7 @@ mtime +0x0 / mtimecmp +0x8 layout is `timer_core`'s, so Zephyr's in-tree
   board's reset) starts the first stage and the boot again. The tests can't press it, so
   the board tests (`test_hardware.py` 13 to 15, `hw_irq_echo.py`) load the bitstream afterwards.
   A fetch there that misses the instruction cache in front of the PSRAM waits ~35 cycles, a
-  load or store that misses the data cache (8-word lines, write-back) ~290 (~570 with a
+  load or store that misses the data cache (8-word lines, write-back) ~49 (~99 with a
   dirty line written back first), so a cycle budget depends on how the code and data fall
   into the caches.
 
@@ -171,11 +171,12 @@ hardware gives and what the driver makes up for:
   shared by the emulator, RTL and board tests; the emulator test prints the measurement and
   fails below a 2x margin). The overrun check (`err=1`, `UART_ERROR_OVERRUN`) now sends its
   line from irq_echo's first cycle, while it starts and before it enables RX: the FIFO keeps
-  32 bytes, and the reply is exactly those. The line is 34 bytes, not 64: with the
-  write-back data cache irq_echo enables RX after ~81k cycles (about 50 frame times), before
-  a 64-byte line has arrived. The emulator test checks that the app became ready only after
-  the whole line had arrived (its precondition); a faster start that breaks it needs a
-  shorter line, down to 33 bytes.
+  32 bytes, and the reply is exactly those. The line is 33 bytes, the shortest that overflows
+  the FIFO: with the data cache's burst lines irq_echo enables RX after ~58k cycles (a line up
+  to 37 bytes on the emulator; on the RTL, whose bridge sends two stop bits, its 33 bytes take
+  56.6k cycles and a 34th gets in), before a longer line has arrived. The emulator test checks
+  that the app became ready only after the whole line had arrived (its precondition). A start
+  faster still leaves no line to shorten: that test then needs another synchronization.
 
 A TX interrupt and an interrupt-enable register would only come with a later hardware
 revision, whose register map isn't bound by this one's (docs/APP_DEVELOPMENT.md, "Hardware

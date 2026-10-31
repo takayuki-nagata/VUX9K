@@ -522,7 +522,7 @@ fn t_xmem_time(_: u32) -> u32 {
 /// The line transfers' cycles over the same access to the ROM, as t_xmem_time measures
 /// them, 10 bits each: dirty miss << 20 | clean miss << 10 | probed fetch. A load that
 /// misses with a dirty victim waits XMEM_LINE_DIRTY (the emulator's soc.rs: the victim's 8
-/// words written back, then the 8 read), one with a clean victim XMEM_LINE_FILL, and a
+/// words written back in a burst, then the 8 read in one), one with a clean victim XMEM_LINE_FILL, and a
 /// fetch miss whose word the data cache holds dirty XMEM_FETCH_PROBE (the line written
 /// back first, without fence.i). By construction, in one asm block: a store 2 KB above y
 /// makes y's data line dirty under another tag, whatever it held; the load of y then
@@ -592,7 +592,7 @@ const TESTS: [(&str, Test, u32); 17] = [
     ("xmem_lanes", Pairs(t_xmem_lanes), 0x4490_6ED7),
     ("xmem_exec", Once(t_xmem_exec), 0x9273_B7CB),
     ("xmem_time", Once(t_xmem_time), 0x008C_0000),
-    ("xmem_time_line", Once(t_xmem_time_line), 0x23B4_893D),
+    ("xmem_time_line", Once(t_xmem_time_line), 0x0630_C456),
     ("muldiv", Pairs(t_muldiv), 0x180C_F09F),
 ];
 

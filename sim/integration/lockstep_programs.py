@@ -33,14 +33,15 @@ XMEM = 0x8000_0000  # the wait-state window: soc_pkg::RV_REGION_XMEM, 8 MB of PS
 XMEM_BYTES = 0x80_0000  # soc_pkg::XMEM_WORDS * 4: the window repeats every 8 MB of region 8
 XMEM_WAIT = 35  # soc_pkg::XMEM_READ_LATENCY: an uncached read's wait (an instruction-cache miss)
 XMEM_WRITE_WAIT = 34  # soc_pkg::XMEM_WRITE_LATENCY: a write's (the data cache's write-backs)
-# soc_dcache's line transfers, 8 one-word requests each (its header; the emulator's
+# soc_dcache's line transfers, one 8-word burst each (its header; the emulator's
 # XMEM_LINE_FILL/XMEM_LINE_DIRTY/XMEM_FETCH_PROBE): a data-cache miss with a clean or invalid
 # victim, one with a dirty victim, and an instruction-cache miss whose probe writes a dirty
 # data line back first
 XMEM_LINE_WORDS = 8
-XMEM_LINE_FILL = XMEM_LINE_WORDS * (XMEM_WAIT + 1) + 2
-XMEM_LINE_DIRTY = XMEM_LINE_WORDS * (XMEM_WRITE_WAIT + 1) + XMEM_LINE_FILL + 1
-XMEM_FETCH_PROBE = XMEM_LINE_WORDS * (XMEM_WRITE_WAIT + 1) + 2 + XMEM_WAIT
+XMEM_BURST_EXTRA = 2 * (XMEM_LINE_WORDS - 1)  # a burst's later words, 2 cycles each
+XMEM_LINE_FILL = XMEM_WAIT + XMEM_BURST_EXTRA  # 49
+XMEM_LINE_DIRTY = XMEM_WRITE_WAIT + XMEM_BURST_EXTRA + 2 + XMEM_LINE_FILL  # 99
+XMEM_FETCH_PROBE = XMEM_WRITE_WAIT + XMEM_BURST_EXTRA + 3 + XMEM_WAIT  # 86
 # Hack's segments in the window (soc_pkg::HACK_I_BASE/HACK_D_BASE): instructions at
 # HACK_I_BASE + pc[15:0], data word A at HACK_D_BASE + 4 * A[14:0]
 HACK_I_BASE = 0x8000_0000
@@ -614,7 +615,7 @@ def hack_soft_reset(key_by_addition: bool = True, mode_rv32: bool = False) -> li
     return a.assemble()
 
 
-XCACHE_HACK_CYCLES = 6_000  # its digit starts at cycle ~3,300
+XCACHE_HACK_CYCLES = 6_000  # its digit starts by cycle ~3,300
 
 
 def xcache_hack() -> list:

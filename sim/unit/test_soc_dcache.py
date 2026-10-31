@@ -7,9 +7,12 @@ is read a cycle ahead at rd_idx, in EXECUTE, then MEM_WAIT is held until data_re
 load and store back to back (AM=M+1), and between accesses the instruction cache's misses,
 which probe the cache (probe_req held at probe_addr until probe_dirty falls, then for the
 fetch's own miss). A memory model stands in for soc_xmem_bridge and the PSRAM controller:
-one request at a time, taken when raised (or after a random delay, the controller's
-req_ready low), its response a fixed (R/W, as the controller) or random number of cycles
-later as the bridge's data_ready; mem_ready is 1 without a request, as the bridge's.
+one 8-word burst a request, its address the line's first word, taken when raised (or after a
+random delay, the controller's req_ready low, also after a read until it is ready again). A
+read's words come one response each, a write takes word 0 at acceptance, each later word in
+the cycle after its wdata_next, and answers once, all in the controller's burst cycles
+(fixed) or at random distances; mem_ready is 1 without a request, as the bridge's, and
+mem_rdata is garbage outside a word's own cycle, so an early or late word fails.
 
 A cycle model of the cache (tags with valid/dirty, per-word byte masks, the FSM, the
 read-ahead and its stale guard; a read colliding with a write reads as unknown, as on the
@@ -35,9 +38,14 @@ NWORDS = LINES * 8
 R = 35  # soc_pkg::XMEM_READ_LATENCY
 W = 34  # soc_pkg::XMEM_WRITE_LATENCY
 # Cycles over a hit (measured by test_cycle_costs; the emulator mirrors them)
-CLEAN_MISS = 8 * (R + 1) + 2  # 290
-DIRTY_MISS = 8 * (W + 1) + 8 * (R + 1) + 3  # 571
-PROBE_WB = 8 * (W + 1) + 2  # 282 cycles of probe_dirty; the fetch's miss then takes R: 317
+# The controller's 8-word bursts, in cycles after the accepting one (psram_word_model's header)
+READ_WORD0 = R - 3  # a read's word k in READ_WORD0 + 2k, the last in 46
+READ_READY = R + 14  # 49, ready again
+WRITE_NEXT0 = W - 6  # wdata_next of word k in WRITE_NEXT0 + 2k, the word in the next cycle
+WRITE_RSP = W + 14  # 48, the one response, ready again
+CLEAN_MISS = READ_READY  # 49
+DIRTY_MISS = WRITE_RSP + 2 + READ_READY  # 99
+PROBE_WB = WRITE_RSP + 3  # 51 cycles of probe_dirty; the fetch's miss then takes R: 86
 
 IDLE, WB, FILL = "IDLE", "WB", "FILL"
 X: Any = object()  # a RAM read that collided with a write, or a word never written
@@ -60,9 +68,24 @@ def sample(kind, outcome, victim, word, ahead):
     pass
 
 
-# Per word written back: its strobes (the word's mask)
-@fcov.point("dcache.wb_strobe", ("0000", "partial", "1111"), xf=lambda strobe: strobe)
-def sample_wb(strobe):
+# Per word written back, in the cycle the burst takes it: its strobes (the word's mask), and
+# which word of the burst
+@fcov.point("dcache.wb_strobe", ("0000", "partial", "1111"), xf=lambda strobe, word: strobe)
+@fcov.point("dcache.wb_word", tuple(range(8)), xf=lambda strobe, word: word)
+def sample_wb(strobe, word):
+    pass
+
+
+# Per word of a fill burst, in its response's cycle
+@fcov.point("dcache.fill_word", tuple(range(8)), xf=lambda word: word)
+def sample_fill(word):
+    pass
+
+
+# Per request, how the memory took it: at once, or after keeping it waiting (req_ready low),
+# for a read also while it recovers from the burst before
+@fcov.point("dcache.accept", ("at_once", "after_wait"), xf=lambda accept: accept)
+def sample_accept(accept):
     pass
 
 
@@ -134,19 +157,19 @@ class Model:
             "probe_dirty": probe_dirty,
             "mem_sel": self.state == FILL or self.state == WB and self.primed,
             "mem_we": self.state == WB,
-            "mem_addr": self.tag_r << 9 | self.line_r << 3 | self.cnt,
+            "mem_addr": self.tag_r << 9 | self.line_r << 3,
         }
         if o["mem_sel"] and o["mem_we"]:
             assert self.word_q is not X and self.word_q[1] is not X, "write-back of an unknown word"
             o["mem_wstrb"], o["mem_wdata"] = self.word_q
         return o
 
-    def clock(self, i, o, mem_ready, mem_rdata):
+    def clock(self, i, o, mem_ready, mem_rdata, mem_wnext=False):
         idx, line, tag = i.addr & 0x1FF, i.addr >> 3 & 0x3F, i.addr >> 9
         win = i.req and i.sel
         done = o["mem_sel"] and mem_ready
         last = done and self.cnt == 7
-        cnt_next = (self.cnt + done) & 7
+        cnt_next = (self.cnt + (done or mem_wnext)) & 7
         ra = self.line_r << 3 | cnt_next if self.state == WB else i.rd_idx
         tag_w = word_w = None
         if not self.swept:
@@ -169,9 +192,6 @@ class Model:
             self.tags[tag_w[0]] = tag_w[1]
         if word_w:
             self.words[word_w[0]] = word_w[1]
-        if self.state == WB and done:
-            m = o["mem_wstrb"]
-            self.events.append(("wb", "0000" if m == 0 else "1111" if m == 0xF else "partial"))
         stale = (self.state != IDLE or tag_w is not None and tag_w[0] == i.rd_idx >> 3
                  or word_w is not None and word_w[0] == i.rd_idx)  # fmt: skip
         if not self.swept and i.clear:
@@ -204,53 +224,90 @@ class Model:
 
 
 class Memory:
-    """soc_xmem_bridge's data side and the PSRAM controller: one request at a time."""
+    """soc_xmem_bridge's data side and the PSRAM controller: one 8-word burst at a time."""
 
     def __init__(self, fixed):
-        self.fixed = fixed  # True: taken when raised, the response R/W cycles later
+        self.fixed = fixed  # True: the controller's cycles; else random distances
         self.psram = {}  # PSRAM word -> value
         self.reset()
 
     def reset(self):
         self.busy = False
-        self.due = None
-        self.rsp = 0
-        self.wait = None  # cycles until req_ready (random mode)
+        self.addr = 0  # the burst in flight: its first word
+        self.we = False
+        self.words = {}  # cycle -> a read's word k
+        self.wnext = set()  # cycles of a write's wdata_next
+        self.takes = {}  # cycle -> a write's word k
+        self.rsp_at = 0  # the write's response, or the read's last word
+        self.ready_at = 0  # the first cycle req_ready is high again
+        self.wait = 0  # cycles until req_ready (random mode)
         self.raised = None  # the fields of a request not yet taken
+        self.waited = False
 
     def word(self, w):
         if w not in self.psram:
             self.psram[w] = random.getrandbits(32)
         return self.psram[w]
 
+    def schedule(self, c, we):
+        """The cycles of the burst accepted in cycle c."""
+        self.words, self.takes, self.wnext = {}, {}, set()
+        if we:
+            t = c
+            for k in range(1, 8):
+                t = c + WRITE_NEXT0 + 2 * k if self.fixed else t + random.randint(1, 4)
+                self.wnext.add(t)
+                self.takes[t + 1] = k
+            self.rsp_at = c + WRITE_RSP if self.fixed else t + 1 + random.randint(1, 4)
+            self.ready_at = self.rsp_at
+        else:
+            t = c
+            for k in range(8):
+                t = c + READ_WORD0 + 2 * k if self.fixed else t + random.randint(1, 4)
+                self.words[t] = k
+            self.rsp_at = t
+            self.ready_at = c + READ_READY if self.fixed else t + random.randint(1, 3)
+
     def cycle(self, c, o, on_write):
-        """Returns (mem_ready, mem_rdata) for this cycle."""
+        """Returns (mem_ready, mem_rdata, mem_wnext) for this cycle."""
+        garbage = random.getrandbits(32)
         if not o["mem_sel"]:
             assert not self.busy and self.raised is None, f"cycle {c}: mem_sel dropped under a request"
-            return True, random.getrandbits(32)
+            return True, garbage, False
         if self.busy:
-            if c == self.due:
-                self.busy = False
-                return True, self.rsp
-            return False, random.getrandbits(32)
+            assert (o["mem_we"], o["mem_addr"]) == (self.we, self.addr), f"cycle {c}: the burst's fields changed"
+            if c in self.takes:
+                on_write(self.addr | self.takes[c], o["mem_wdata"], o["mem_wstrb"], self.takes[c])
+            if self.we:
+                if c == self.rsp_at:
+                    self.busy = False
+                    return True, garbage, False
+                return False, garbage, c in self.wnext
+            if c in self.words:
+                sample_fill(self.words[c])
+                self.busy = c != self.rsp_at
+                return True, self.word(self.addr | self.words[c]), False
+            return False, garbage, False
         fields = (o["mem_we"], o["mem_addr"], o.get("mem_wdata"), o.get("mem_wstrb"))
         if self.raised is None:
             self.raised = fields
             self.wait = 0 if self.fixed else random.choice((0, 0, 0, 1, 2))
+            self.waited = False
         assert fields == self.raised, f"cycle {c}: request fields changed before it was taken"
-        if self.wait:
-            self.wait -= 1
-            return False, random.getrandbits(32)
+        assert o["mem_addr"] & 7 == 0, f"cycle {c}: a burst not aligned to the line"
+        if self.wait or c < self.ready_at:
+            self.wait = max(self.wait - 1, 0)
+            self.waited = True
+            return False, garbage, False
+        assert not (self.fixed and self.waited), f"cycle {c}: a request waited on the controller's cycles"
+        sample_accept("after_wait" if self.waited else "at_once")
         self.raised = None
         we, addr, wdata, wstrb = fields
         if we:
-            on_write(addr, wdata, wstrb)
-            lat = W if self.fixed else random.randint(1, 6)
-        else:
-            self.rsp = self.word(addr)
-            lat = R if self.fixed else random.randint(1, 6)
-        self.busy, self.due = True, c + lat
-        return False, random.getrandbits(32)
+            on_write(addr, wdata, wstrb, 0)
+        self.schedule(c, we)
+        self.busy, self.we, self.addr = True, we, addr
+        return False, garbage, False
 
 
 class CocotbPort:
@@ -282,9 +339,10 @@ class CocotbPort:
         d.probe_req.value = int(i.probe)
         d.probe_addr.value = i.paddr
 
-    def drive_mem(self, ready, rdata):
+    def drive_mem(self, ready, rdata, wnext=False):
         self.dut.mem_ready.value = int(ready)
         self.dut.mem_rdata.value = rdata
+        self.dut.mem_wnext.value = int(wnext)
 
     async def settle(self):
         await Timer(1, unit="ns")
@@ -302,7 +360,7 @@ class ModelPort:
     def __init__(self):
         self.m = Model()
         self.i = Inputs()
-        self.ready, self.rdata = True, 0
+        self.ready, self.rdata, self.wnext = True, 0, False
         self.rst = 1
 
     async def start(self):
@@ -316,8 +374,8 @@ class ModelPort:
     def drive(self, i):
         self.i = i
 
-    def drive_mem(self, ready, rdata):
-        self.ready, self.rdata = ready, rdata
+    def drive_mem(self, ready, rdata, wnext=False):
+        self.ready, self.rdata, self.wnext = ready, rdata, wnext
 
     async def settle(self):
         pass
@@ -330,7 +388,7 @@ class ModelPort:
 
     async def edge(self):
         if self.rst:
-            self.m.clock(self.i, self.m.comb(self.i), self.ready, self.rdata)
+            self.m.clock(self.i, self.m.comb(self.i), self.ready, self.rdata, self.wnext)
         self.m.events.clear()
 
 
@@ -364,7 +422,9 @@ class Bench:
         await p.edge()
         p.set_rst(1)
 
-    def on_write(self, addr, wdata, wstrb):
+    def on_write(self, addr, wdata, wstrb, word):
+        sample_wb("0000" if wstrb == 0 else "1111" if wstrb == 0xF else "partial", word)
+        self.events.append(("wb", None))
         stored = self.stored.get(addr, 0)
         assert wstrb & ~stored == 0, f"write-back of {addr:06x}: strobes {wstrb:04b}, stored only {stored:04b}"
         view = self.value(addr)
@@ -393,8 +453,8 @@ class Bench:
             for name in ("mem_we", "mem_addr") + (("mem_wdata", "mem_wstrb") if o["mem_we"] else ()):
                 got = p.get(name)
                 assert got == o[name], f"{ctx}: {name}={got:x}, model {o[name]:x}"
-        ready, rdata = self.mem.cycle(c, o, self.on_write)
-        p.drive_mem(ready, rdata)
+        ready, rdata, wnext = self.mem.cycle(c, o, self.on_write)
+        p.drive_mem(ready, rdata, wnext)
         await p.settle()
         if i.req and i.sel and o["hit"]:
             if i.we:
@@ -404,11 +464,8 @@ class Bench:
                 got, want = p.get("rdata"), self.value(i.addr)
                 assert got == want, f"{ctx}: rdata {got:08x}, CPU's view {want:08x}"
         if m.state == FILL and o["mem_sel"] and ready:
-            assert rdata == self.mem.word(o["mem_addr"])
-        m.clock(i, o, ready, rdata)
-        for kind, arg in m.events:
-            if kind == "wb":
-                sample_wb(arg)
+            assert rdata == self.mem.word(o["mem_addr"] | m.cnt)
+        m.clock(i, o, ready, rdata, wnext)
         self.events += m.events
         m.events = []
         await p.edge()
@@ -636,7 +693,7 @@ async def cycle_costs(b):
     assert await b.access("store", w + (2 << 9), wstrb=0x1) == ("clean_miss", 1 + CLEAN_MISS)
     assert await b.load_then_store(w + (3 << 9)) == ("dirty_miss", 1)
     # The probe: none without a dirty match; a dirty match holds the fetch PROBE_WB cycles,
-    # after which its own miss takes R (317 in all)
+    # after which its own miss takes R (86 in all)
     assert await b.fetch_miss(w + (4 << 9), own=R) == 0
     assert await b.fetch_miss(w + (3 << 9), own=R) == PROBE_WB
     assert await b.access("load", w + (3 << 9)) == ("hit", 1)

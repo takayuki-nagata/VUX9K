@@ -31,7 +31,7 @@ button S1 (the board's reset) goes back to it and the boot.
 
 The CPU is RV32IM + Zicsr + Zifencei, machine mode only, running at 18 MHz. On `vux9k` a
 fetch that misses the 16 KB instruction cache waits ~35 cycles and a load or store that
-misses the 2 KB data cache (write-back, 8-word lines) ~290 (~570 when it writes a line back
+misses the 2 KB data cache (write-back, 8-word lines) ~49 (~99 when it writes a line back
 first); hits, stores included, take no longer than from the SoC's block RAMs, which
 `vux9k` leaves to the first stage. Big applications fit `vux9k` as well: bc_clone_rs on
 Zephyr (~260 KB, with a 64 KB heap and a 32 KB stack) runs there (its CPI to the first

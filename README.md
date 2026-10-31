@@ -132,7 +132,7 @@ Interrupts: timer (`MTI`, cause 7) from `mtime >= mtimecmp`, external (`MEI`, ca
 ### Hack Mode Address Space (16-bit word addresses)
 Hack's memory is in the PSRAM, in two segments, through the same caches and with the same
 waits as RV32's PSRAM accesses (a fetch that misses 35 cycles more, a load or store that
-misses the data cache 290 more, or 571 when its line is written back first; hits nothing
+misses the data cache 49 more, or 99 when its line is written back first; hits nothing
 more):
 - **Instructions**: the 64 KB at `0x8000_0000` (the I segment). The Hack PC is a byte address
   (an instruction is 2 bytes; a jump goes to `A * 2`) and its low 16 bits pick the byte, so

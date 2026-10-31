@@ -23,9 +23,10 @@ BURST = bytes(b"abcdefghijklmnopqrstuvwxyz0123456789"[i % 36] for i in range(64)
 ECHO = BURST.upper() + b"\nrx=64 drop=0 err=0\n"
 UART_ERROR_OVERRUN = 1  # Zephyr's enum uart_rx_stop_reason
 RX_FIFO = 32  # soc's UART RX FIFO
-# Sent from irq_echo's first cycle: overflows the RX FIFO and has arrived whole well before RX is
-# enabled (~81k cycles, 47 frame times of the bridge, from the PSRAM with the write-back data cache)
-EARLY = BURST[: RX_FIFO + 2]
+# Sent from irq_echo's first cycle: overflows the RX FIFO by one byte and has arrived whole before
+# RX is enabled (~58k cycles from the PSRAM with the data cache's burst lines; the bridge's 33
+# bytes take 56.6k, the 34th arrives after it)
+EARLY = BURST[: RX_FIFO + 1]
 BRIDGE_BYTE_BITS = 11  # VirtualSerialBridge sends two stop bits
 
 

@@ -69,21 +69,23 @@ pub const XMEM_READ_LATENCY: u32 = 35;
 /// Cycles of a write accepted by the controller until its response:
 /// soc_pkg::XMEM_WRITE_LATENCY.
 pub const XMEM_WRITE_LATENCY: u32 = 34;
-// soc_dcache's line transfers (its header): DCACHE_LINE_WORDS one-word requests, each taken
-// in the cycle it is raised, answered XMEM_*_LATENCY cycles later, the next raised the
-// cycle after; sim/unit/test_soc_dcache.py measures them.
-const LINE: u32 = crate::cache::DCACHE_LINE_WORDS as u32;
+// soc_dcache's line transfers (its header): one burst of DCACHE_LINE_WORDS words, taken in
+// the cycle it is raised; each later word takes 2 cycles more than a single one, a burst
+// read's last word comes 3 cycles before R + 2(N-1), and a burst write answers once, in
+// W + 2(N-1); sim/unit/test_soc_dcache.py measures them.
+const BURST_EXTRA: u32 = 2 * (crate::cache::DCACHE_LINE_WORDS as u32 - 1);
 /// Extra cycles of a window load or store that misses the data cache, its victim line
-/// invalid or clean: the line's fill, 8(R+1)+2 = 290.
-pub const XMEM_LINE_FILL: u32 = LINE * (XMEM_READ_LATENCY + 1) + 2;
-/// Extra cycles of a data-cache miss whose victim line is dirty: its write-back, then the
-/// fill, 8(W+1)+8(R+1)+3 = 571.
-pub const XMEM_LINE_DIRTY: u32 =
-    LINE * (XMEM_WRITE_LATENCY + 1) + LINE * (XMEM_READ_LATENCY + 1) + 3;
+/// invalid or clean: the line's fill, R+14 = 49 (accepted the cycle after the miss, the last
+/// word 46 later, a stale cycle, the hit).
+pub const XMEM_LINE_FILL: u32 = XMEM_READ_LATENCY + BURST_EXTRA;
+/// Extra cycles of a data-cache miss whose victim line is dirty: its write-back (word 0 read
+/// the cycle after the miss, accepted the next, its response W+14 later), then the fill,
+/// accepted the cycle after that: (W+14)+2+(R+14) = 99.
+pub const XMEM_LINE_DIRTY: u32 = XMEM_WRITE_LATENCY + BURST_EXTRA + 2 + XMEM_LINE_FILL;
 /// Extra cycles of a window fetch that misses the instruction cache while the data cache
 /// holds its word in a dirty line: the probe's write-back of the line, then the fetch,
-/// 8(W+1)+2+R = 317.
-pub const XMEM_FETCH_PROBE: u32 = LINE * (XMEM_WRITE_LATENCY + 1) + 2 + XMEM_READ_LATENCY;
+/// (W+14)+3+R = 86.
+pub const XMEM_FETCH_PROBE: u32 = XMEM_WRITE_LATENCY + BURST_EXTRA + 3 + XMEM_READ_LATENCY;
 /// The window's first address, where the board's RV32 applications are linked
 /// (fw_common::map::XMEM_BASE; the `vux9k` Zephyr board's flash).
 pub const XMEM_BASE: u32 = XMEM_REGION << 28;

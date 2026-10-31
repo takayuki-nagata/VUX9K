@@ -30,9 +30,10 @@ BURST = bytes(b"abcdefghijklmnopqrstuvwxyz0123456789"[i % 36] for i in range(64)
 ECHO = BURST.upper().decode() + "\nrx=64 drop=0 err=0\n"
 UART_ERROR_OVERRUN = 1  # Zephyr's enum uart_rx_stop_reason
 RX_FIFO = 32  # soc's UART RX FIFO
-# Sent from irq_echo's first cycle: overflows the RX FIFO and has arrived whole well before RX is
-# enabled (~81k cycles, 52 frame times, from the PSRAM with the write-back data cache)
-EARLY = BURST[: RX_FIFO + 2]
+# Sent from irq_echo's first cycle: overflows the RX FIFO by one byte and has arrived whole before
+# RX is enabled (~58k cycles from the PSRAM with the data cache's burst lines: a 37-byte line
+# still arrives first here, a 38th byte gets in; the RTL test's bridge is slower, 33 bytes at most)
+EARLY = BURST[: RX_FIFO + 1]
 
 
 @pytest.fixture(scope="module")
