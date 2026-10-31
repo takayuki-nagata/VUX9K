@@ -88,10 +88,10 @@ The RTL modules in this repository were originally authored in VHDL-2008 and hav
 - **UART Controller (`uart_controller`)**: Ported from [`takayuki-nagata/uart_controller`](https://github.com/takayuki-nagata/uart_controller)
   - Parameterized baud rate clock timer (18.0 MHz -> 115200 bps), 8N1 serial framing, and dual 32-entry synchronous TX/RX FIFOs.
 - **Arbitrary-Precision Math Engine & REPL (`vendor/bc_clone_rs`)**: Submodule from [`takayuki-nagata/bc_clone_rs`](https://github.com/takayuki-nagata/bc_clone_rs)
-  - Embedded `bc_core` arbitrary-precision arithmetic engine with 10/10 math test suite running atop Zephyr RTOS. At about 260 KB it runs on the board from the PSRAM (`make build-zephyr`, `\VUX9K\APPS\BC.BIN` started by the second stage's `run`), through the caches in front of it: about 2 s from its start to the first `bc> ` (36M cycles on the emulator, which the RTL matches cycle for cycle, measured with the earlier write-through data cache; 51M before RV32M).
+  - Embedded `bc_core` arbitrary-precision arithmetic engine with 10/10 math test suite running atop Zephyr RTOS. At about 260 KB it runs on the board from the PSRAM (`make build-zephyr`, `\VUX9K\APPS\BC.BIN` started by the second stage's `run`), through the caches in front of it: about 1 s from its start to the first `bc> ` (14.5M cycles on the emulator, which the RTL matches cycle for cycle).
 - **MicroPython (`make build-micropython`)**: [MicroPython](https://micropython.org)'s Zephyr port, from its release tarball (fetched into `vendor/`, not part of this repository)
-  - Its REPL on the board's UART, run from the PSRAM like bc (`\VUX9K\APPS\MPY.BIN`, ~357 KB): about 40 ms from its start to the first `>>> ` (0.73M cycles on the emulator, which the RTL matches cycle for cycle); Ctrl-C stops a running program. The port's full configuration less networking and sensors: arbitrary-precision integers, `time`, f-strings, a 256 KB heap.
-  - [bc_clone_py](https://github.com/takayuki-nagata/bc_clone_py), the bc calculator in pure Python, frozen into the image (fetched like MicroPython, at a pinned commit): `import bc_clone; bc_clone.repl(mathlib=True)` (`quit` returns to `>>> `), `import bc_selftest; bc_selftest.run()` (16 cases, ~21 s on the board). A bc line takes about 0.5 s (~8M cycles on the emulator; `4*a(1)` at scale 20 took 1.0 s on the board).
+  - Its REPL on the board's UART, run from the PSRAM like bc (`\VUX9K\APPS\MPY.BIN`, ~357 KB): about 20 ms from its start to the first `>>> ` (0.32M cycles on the emulator, which the RTL matches cycle for cycle); Ctrl-C stops a running program. The port's full configuration less networking and sensors: arbitrary-precision integers, `time`, f-strings, a 256 KB heap.
+  - [bc_clone_py](https://github.com/takayuki-nagata/bc_clone_py), the bc calculator in pure Python, frozen into the image (fetched like MicroPython, at a pinned commit): `import bc_clone; bc_clone.repl(mathlib=True)` (`quit` returns to `>>> `), `import bc_selftest; bc_selftest.run()` (16 cases, ~11 s on the board). A bc line takes about 0.2-0.5 s (4-9M cycles on the emulator; `4*a(1)` at scale 20 took 0.5 s on the board).
 - **Hack Toolchain & C Firmware (`hack_demo`)**: Powered by [`takayuki-nagata/hack_tools`](https://github.com/takayuki-nagata/hack_tools) (`has` assembler & `m2h` transpiler)
   - 16-bit C and Hack assembly firmware testing recursive arithmetic, Fibonacci, array manipulations, and MMIO UART output.
 
@@ -367,7 +367,7 @@ second stage's `run` loads its applications there and jumps to them, the first s
 in the ROM). `make build-zephyr-demo` builds the Rust demo
 (`zephyr_workspace/app/`, Zephyr + a Rust staticlib) for it; `make
 build-zephyr` builds bc_clone_rs for it too (`make apps`' `BC.BIN`, ~260 KB: the second
-stage's load takes about 3 s, and bc reaches its prompt about 3 s later on the board, as the emulator's cycles at 18 MHz say). `make build-micropython` builds MicroPython's port for it
+stage's load takes about 2 s, and bc reaches its prompt about 1 s later on the board, as the emulator's cycles at 18 MHz say). `make build-micropython` builds MicroPython's port for it
 (`make apps`' `MPY.BIN`, ~357 KB with bc_clone_py frozen in; `zephyr_workspace/micropython/`, the sources
 downloaded by `make micropython-src`). `make build-zephyr-irq-echo` builds
 `zephyr_workspace/irq_echo/`, an echo through the UART driver's interrupt-driven API

@@ -51,16 +51,16 @@ UART and SD chain: transfer v2 carries the second stage (35 KB, ~54M cycles at 1
 baud) to the first stage's `u` for a RAM boot, the second stage installs a new
 `\VUX9K\STAGE2.BIN` on the FAT32 card (`install`), and after its `reset` the first stage
 boots that file. The first stage's other commands are `test_soc_boot.py`'s. RTL reads the card
-at ~250 cycles a byte as the board does: the other SoC tests boot a 28-byte `STAGE2.BIN`
+at ~230 cycles a byte as the board does: the other SoC tests boot a 28-byte `STAGE2.BIN`
 (`soc_env.v4_file`), not the second stage.
 
 `test_soc_stage2.py` (`sim-stage2`) is the RTL test of the real second stage booted from the
 card (`soc_env.s2_card`: `STAGE2.BIN` and the demos of `make apps` in `\VUX9K\APPS\`): `ls`,
-`run HELLO.BIN` (the PSRAM, a0-a2, `r` back to the first stage; ~14M cycles) and `run
+`run HELLO.BIN` (the PSRAM, a0-a2, `r` back to the first stage; ~12.4M cycles) and `run
 HACK.BIN` (its PSRAM segment in Hack mode, then its soft reset back to the first stage;
-~18M cycles). The prompt alone takes ~12.1M cycles (the 35 KB
-file at ~250 cycles a byte), and `run` loads at ~180-220 cycles a byte (the second stage
-runs from the PSRAM, through its caches): the 13 KB Zephyr demo through it is ~19M cycles,
+~15.5M cycles). The prompt alone takes ~11.0M cycles (the 35 KB
+file at ~230 cycles a byte), and `run` loads at ~150 cycles a byte (the second stage
+runs from the PSRAM, through its caches): the 13 KB Zephyr demo through it is ~16.4M cycles,
 minutes on the netlist, so it runs there only in `sim-zephyr-demo-gls` (`test_soc_zephyr_s2.py`, test-slow);
 the RTL runs the Zephyr demos preloaded into the PSRAM (`soc_env.preload_psram_app`: the word
 model's words and a jump at ROM word 0, so Verilator RTL only). Cycle counts are the emulator's, which the

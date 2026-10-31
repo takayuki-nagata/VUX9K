@@ -32,10 +32,8 @@ bc_clone_rs (`make build-zephyr`: `vendor/bc_clone_rs/examples/zephyr_app`, its 
 `vendor/bc_clone_rs/crates/bc_zephyr/src/lib.rs`; ~260 KB) is built for `vux9k`
 like the demos; nothing of it is changed for this board (the submodule is upstream), and
 `make apps` makes it `BC.BIN`. It runs from the PSRAM through the caches: the second
-stage's `run` loads it in ~52M cycles (2.9 s), and its start to the first `bc> ` is ~36M
-(2.1 s; these two were measured with the earlier write-through data cache, whose every
-store waited 34 cycles, and change with the write-back one: re-measure with
-`sim/emu/test_zephyr_bc.py`; ~51M before RV32M, ~74M with the earlier 4 KB instruction cache, 314M, 17.4 s, without the caches). `sim/emu/test_zephyr_bc.py` loads it
+stage's `run` loads it in ~39M cycles (2.2 s), and its start to the first `bc> ` is ~14.5M
+(0.8 s; ~36M with the earlier write-through data cache of one-word lines, ~51M before RV32M, ~74M with the earlier 4 KB instruction cache, 314M, 17.4 s, without the caches). `sim/emu/test_zephyr_bc.py` loads it
 straight into the PSRAM for the self-tests and the REPL, starts it once through the second
 stage's `run` from a card (`s1_env.run_from_card(..., load_cycles=...)`), and prints the
 cycles and `minstret` (`Soc.instret`) to the first `bc> ` and per REPL line: the emulator is
@@ -53,7 +51,7 @@ default `--load-addr` for riscv) and the RTL (`sim-zephyr-demo-rtl`: `soc_env.pr
 writes the PSRAM word model and puts a jump to `0x8000_0000` at ROM word 0, so Verilator RTL
 only), and as the board starts it, the second stage's `run VUX9K/APPS/ZEPHYR.BIN` from the
 card: on the emulator (the same test, same expectations) and on the netlist
-(`sim-zephyr-demo-gls`, test-slow: the prompt at ~12.1M cycles, the 13 KB load ~3.5M, then
+(`sim-zephyr-demo-gls`, test-slow: the prompt at ~11.0M cycles, the 13 KB load ~2.5M, then
 the demo). Its `prj.conf` size settings, from the 14 KB I-RAM board it was first
 linked for, keep it small and so quick to load.
 
@@ -124,11 +122,11 @@ aren't obvious:
 `make apps` makes it `MPY.BIN` (~357 KB). `sim/emu/test_zephyr_micropython.py` loads it
 into the PSRAM and types at the REPL (an expression, `2**100`, a function, an exception,
 `time.sleep_ms(100)` against `ticks_ms`, Ctrl-C stopping a loop), runs bc_clone_py's
-self-test (each case timed; ~373M cycles in all, 9-56M a case (~470M before RV32M), its heap peaking at ~36 KB)
+self-test (each case timed; ~197M cycles in all, 5-29M a case (~373M with the earlier caches, ~470M before RV32M), its heap peaking at ~36 KB)
 and types at its REPL as a terminal does (`\r`; no error may show), starts it once through
-the second stage's `run` from a card, and prints cycles like bc's test: ~0.73M cycles (40 ms)
-from its start to the first `>>> `, 0.5-0.8M a short line, ~8M (0.45 s) a bc line, and ~82M
-from power-on through both stages and `run`'s load to its start. The interpreter runs at ~10 cycles an instruction
+the second stage's `run` from a card, and prints cycles like bc's test: ~0.32M cycles (20 ms)
+from its start to the first `>>> `, 0.2-0.4M a short line, 4-9M (0.2-0.5 s) a bc line, and ~65M
+from power-on through both stages and `run`'s load to its start. The interpreter runs at ~5 cycles an instruction
 from the PSRAM, so a few thousand bytecodes take milliseconds: the sleep test takes the
 interpreter's own time (the same line with `sleep_ms(0)`) off before it checks the 100 ms. On the board,
 `test_hardware.py` 15 puts and runs it, types three lines, runs bc_clone_py's self-test and a

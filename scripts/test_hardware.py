@@ -107,7 +107,7 @@ BC_LINES = (
 BC_PROMPT = "bc> "
 BC_REPL = (("2^32", "4294967296"), ("define cube(x) { return (x^3); }", ""), ("cube(5)", "125"))
 # bc is ~260 KB: on the board `put` at 115200 baud takes ~29 s, the second stage's load
-# from the card ~3 s (~200 cycles a byte) and the self-tests ~2 s to the prompt (~36M cycles), as the
+# from the card ~2 s (~150 cycles a byte) and the self-tests ~1 s to the prompt (~14.5M cycles), as the
 # emulator's cycles say (without the caches 67.5 s, 25.6 s and 17.4 s). Bounds with room;
 # the board's times are printed as [TIME]. The put's
 # bounds each transfer line and the card write after it (vux_tool.put)
@@ -116,7 +116,7 @@ BC_RUN_TIMEOUT = 120.0
 BC_BOOT_TIMEOUT = 300.0
 BC_LINE_TIMEOUT = 120.0
 # MicroPython's Zephyr port (sim/emu/test_zephyr_micropython.py): the banner, then lines
-# typed at the REPL with what they print. ~357 KB: put ~40 s, load ~4 s, start under 0.1 s
+# typed at the REPL with what they print. ~357 KB: put ~40 s, load ~3 s, start under 0.1 s
 # (the emulator's cycles); bounds with room, the board's times printed as [TIME]
 MPY_BANNER = "MicroPython v1.29.0"
 MPY_PROMPT = ">>> "
@@ -125,7 +125,7 @@ MPY_PUT_TIMEOUT = 90.0
 MPY_RUN_TIMEOUT = 120.0
 MPY_BOOT_TIMEOUT = 60.0
 MPY_LINE_TIMEOUT = 30.0
-# bc_clone_py, frozen into MPY.BIN: its self-test (~373M cycles, ~21 s on the emulator), then a
+# bc_clone_py, frozen into MPY.BIN: its self-test (~197M cycles, ~11 s on the emulator), then a
 # line at its REPL and `quit` back to MicroPython's prompt
 BC_PY_SELFTEST = "import bc_selftest; bc_selftest.run()"
 BC_PY_PASSED = "ALL BC SELF-TESTS PASSED"

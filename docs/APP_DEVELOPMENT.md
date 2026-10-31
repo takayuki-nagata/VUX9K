@@ -90,8 +90,8 @@ python3 tools/vux_tool.py run-app VUX9K/APPS/HELLO.BIN
 | `HELLO.BIN` | prints the first stage's a0-a2; `r` goes back to the first stage | the PSRAM at `0x8000_0000` |
 | `ZEPHYR.BIN` | the Zephyr Rust demo | the PSRAM at `0x8000_0000` (it never returns: S1 goes back to the first stage) |
 | `IRQECHO.BIN` | Zephyr's interrupt-driven UART echo | the PSRAM at `0x8000_0000` |
-| `BC.BIN` | [bc_clone_rs](https://github.com/takayuki-nagata/bc_clone_rs), an arbitrary-precision calculator (`bc`) on Zephyr: self-tests, then its `bc> ` prompt. ~260 KB: on the board `put` takes ~29 s, `run`'s load ~3 s, and bc reaches its prompt ~2 s later | the PSRAM at `0x8000_0000` (it never returns, like `ZEPHYR.BIN`) |
-| `MPY.BIN` | [MicroPython](https://micropython.org) 1.29.0's Zephyr port: its banner, then the `>>> ` prompt on the UART (Ctrl-C stops a running program; arbitrary-precision integers, `time`, f-strings, a 256 KB heap), with [bc_clone_py](https://github.com/takayuki-nagata/bc_clone_py) frozen in: `import bc_clone; bc_clone.repl(mathlib=True)` is bc (`quit` returns to `>>> `), `import bc_selftest; bc_selftest.run()` its self-test. ~357 KB: on the board `put` takes ~39 s, `run`'s load ~4 s, the self-test ~21 s, and a bc line from a fraction of a second (`4*a(1)` at scale 20: ~1 s) | the PSRAM at `0x8000_0000` (it never returns, like `ZEPHYR.BIN`) |
+| `BC.BIN` | [bc_clone_rs](https://github.com/takayuki-nagata/bc_clone_rs), an arbitrary-precision calculator (`bc`) on Zephyr: self-tests, then its `bc> ` prompt. ~260 KB: on the board `put` takes ~29 s, `run`'s load ~2 s, and bc reaches its prompt ~1 s later | the PSRAM at `0x8000_0000` (it never returns, like `ZEPHYR.BIN`) |
+| `MPY.BIN` | [MicroPython](https://micropython.org) 1.29.0's Zephyr port: its banner, then the `>>> ` prompt on the UART (Ctrl-C stops a running program; arbitrary-precision integers, `time`, f-strings, a 256 KB heap), with [bc_clone_py](https://github.com/takayuki-nagata/bc_clone_py) frozen in: `import bc_clone; bc_clone.repl(mathlib=True)` is bc (`quit` returns to `>>> `), `import bc_selftest; bc_selftest.run()` its self-test. ~357 KB: on the board `put` takes ~39 s, `run`'s load ~3 s, the self-test ~11 s, and a bc line a fraction of a second (`4*a(1)` at scale 20: ~0.5 s) | the PSRAM at `0x8000_0000` (it never returns, like `ZEPHYR.BIN`) |
 | `HACK.BIN` | the Hack C demo | Hack's segments in the PSRAM, in Hack mode; at its end it soft-resets back to the first stage |
 
 `demos/` holds the Zephyr and Hack demos' raw images for the emulator (section 4).
@@ -153,8 +153,8 @@ Use it as `west build` writes it: it carries the initial values of `.data`, whic
 image copies to its RAM at startup.
 
 - **C:** any Zephyr application; start from `samples/hello_world`. Size still costs time:
-  `run` loads a file at ~180-220 cycles a byte (on the emulator, which follows the RTL
-  cycle for cycle: ~0.2 s for 13 KB, ~3 s for `BC.BIN`'s 260 KB), so Zephyr's size options
+  `run` loads a file at ~150 cycles a byte (on the emulator, which follows the RTL
+  cycle for cycle: ~0.1 s for 13 KB, ~2 s for `BC.BIN`'s 260 KB), so Zephyr's size options
   still pay off.
 - **Rust:** `vux9k-zephyr-bsp/app/` is a template: a Zephyr application whose logic is a
   Rust `no_std` staticlib (`app/rust_demo`), called from `app/src/main.c` through small

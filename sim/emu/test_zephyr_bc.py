@@ -48,7 +48,7 @@ FLASH_BYTES = 4 * 1024 * 1024
 # hit: most of the cycles are waits, which the emulator adds in one step, not one by one.
 BOOT_CYCLES = 20_000_000_000
 LINE_CYCLES = 2_000_000_000
-# The second stage loads ~200 cycles a byte (s1_env.RUN_LOAD_CYCLES): ~52M for bc
+# The second stage loads ~150 cycles a byte (s1_env.RUN_LOAD_CYCLES): ~39M for bc
 BC_RUN_LOAD_CYCLES = 200_000_000
 
 # label -> (cycles, retired instructions, the caches' counts), in the order measured

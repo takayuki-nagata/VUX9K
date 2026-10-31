@@ -11,9 +11,9 @@ stage). The other commands and the
 refusals are sim/emu/test_stage2.py's; the Zephyr demo started this way runs on the
 netlist (test_soc_zephyr_s2.py, make sim-zephyr-demo-gls).
 
-Cycles (the emulator's, which the lockstep holds to the RTL's): the prompt at ~12.1M
-(the 35 KB STAGE2.BIN read at ~250 cycles a byte); the second stage, running from the
-PSRAM through its caches, loads a demo at ~180-220 cycles a byte.
+Cycles (the emulator's, which the lockstep holds to the RTL's): the prompt at ~11.0M
+(the 35 KB STAGE2.BIN read at ~230 cycles a byte); the second stage, running from the
+PSRAM through its caches, loads a demo at ~150 cycles a byte.
 """
 
 import re
@@ -28,7 +28,7 @@ def handoff(out: str, tag: str):
     return m.groups()
 
 
-# Boot ~12.1M, ls, the hello demo ~1.1M, the soft reset: ~14M cycles (0.8 s); room for 3x
+# Boot ~11.0M, ls, the hello demo ~0.9M, the soft reset: ~12.4M cycles (0.7 s); room for 3x
 @cocotb.test(timeout_time=2400, timeout_unit="ms")
 async def test_s2_ls_and_run_hello_from_the_psram(dut):
     """ls VUX9K/APPS, then run VUX9K/APPS/HELLO.BIN: a0-a2 as the second stage got them, and r back to S1"""
@@ -50,8 +50,8 @@ async def test_s2_ls_and_run_hello_from_the_psram(dut):
     dut._log.info("[PASS] r: soft reset back to the first stage")
 
 
-# Boot ~12.1M; the load, the data segment zeroed and the demo's first result ~3M, its end
-# and its soft reset to the first stage's banner ~2.5M more: ~18.3M cycles (1.0 s); room
+# Boot ~11.0M; the load, the data segment zeroed and the demo's first result ~3M, its end
+# and its soft reset to the first stage's banner ~1.5M more: ~15.5M cycles (0.9 s); room
 # for 4x
 @cocotb.test(timeout_time=4100, timeout_unit="ms")
 async def test_s2_run_hack_from_its_segment(dut):

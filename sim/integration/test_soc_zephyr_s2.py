@@ -9,7 +9,7 @@ links it, and jumps to it (fw_common::launch's PSRAM target), the first stage st
 the ROM. The same demo preloaded into the PSRAM is test_soc_zephyr_demo.py (RTL, test-sim); on
 the emulator both ways are sim/emu/test_zephyr_demo.py.
 
-Cycles (emulator): the prompt at ~12.1M, the 13 KB load ~3.5M (the second stage runs from
+Cycles (emulator): the prompt at ~11.0M, the 13 KB load ~2.5M (the second stage runs from
 the PSRAM, through its caches), then the demo: minutes on the netlist.
 """
 
