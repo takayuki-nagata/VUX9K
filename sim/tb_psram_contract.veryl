@@ -11,28 +11,35 @@
 // Gate-level builds (sim_runner defines VUX9K_GLS) take the controller's netlist from
 // `make synth-units` instead (build/synth/psram_controller_syn.v, synthesized at
 // soc_pkg::CLK_HZ): same module name and ports, but a netlist has no CLK_HZ parameter.
-module tb_psram_contract (
+module tb_psram_contract #(
+    const LEN_W: u32 = $clog2(soc_pkg::XMEM_MAX_BURST_WORDS),
+) (
     clk  : input clock          ,
     rst_n: input reset_async_low,
 
     // Host requests, fanned out to both
-    req_valid: input logic    ,
-    req_we   : input logic    ,
-    req_addr : input logic<24>,
-    req_wdata: input logic<32>,
-    req_wstrb: input logic<4> ,
+    req_valid: input logic       ,
+    req_we   : input logic       ,
+    req_addr : input logic<24>   ,
+    req_wdata: input logic<32>   ,
+    req_wstrb: input logic<4>    ,
+    req_len  : input logic<LEN_W>,
 
     // psram_controller
-    ctl_req_ready: output logic    ,
-    ctl_rsp_valid: output logic    ,
-    ctl_rsp_rdata: output logic<32>,
-    ctl_init_done: output logic    ,
+    ctl_req_ready : output logic    ,
+    ctl_rsp_valid : output logic    ,
+    ctl_rsp_last  : output logic    ,
+    ctl_rsp_rdata : output logic<32>,
+    ctl_wdata_next: output logic    ,
+    ctl_init_done : output logic    ,
 
     // psram_word_model
-    mdl_req_ready: output logic    ,
-    mdl_rsp_valid: output logic    ,
-    mdl_rsp_rdata: output logic<32>,
-    mdl_init_done: output logic    ,
+    mdl_req_ready : output logic    ,
+    mdl_rsp_valid : output logic    ,
+    mdl_rsp_last  : output logic    ,
+    mdl_rsp_rdata : output logic<32>,
+    mdl_wdata_next: output logic    ,
+    mdl_init_done : output logic    ,
 
     init_cycles: output logic<32>, // soc_pkg::PSRAM_INIT_CYCLES, for the test to read
 ) {
@@ -47,54 +54,55 @@ module tb_psram_contract (
 
     #[ifndef(VUX9K_GLS)]
     inst u_ctl: psram::psram_controller #(
-        CLK_HZ: soc_pkg::CLK_HZ,
+        CLK_HZ         : soc_pkg::CLK_HZ              ,
+        MAX_BURST_WORDS: soc_pkg::XMEM_MAX_BURST_WORDS,
     ) (
-        clk                           ,
-        rst_n                         ,
-        req_valid                     ,
-        req_ready      : ctl_req_ready,
-        req_we                        ,
-        req_addr                      ,
-        req_wdata                     ,
-        req_wstrb                     ,
-        req_len        : 1'b0         ,
-        rsp_valid      : ctl_rsp_valid,
-        rsp_last       : _            ,
-        rsp_rdata      : ctl_rsp_rdata,
-        wdata_next     : _            ,
-        init_done      : ctl_init_done,
-        O_psram_ck     : psram_ck     ,
-        O_psram_ck_n   : psram_ck_n   ,
-        O_psram_cs_n   : psram_cs_n   ,
-        O_psram_reset_n: psram_reset_n,
-        IO_psram_dq    : psram_dq     ,
-        IO_psram_rwds  : psram_rwds   ,
-        dbg_sample     : _            ,
+        clk                            ,
+        rst_n                          ,
+        req_valid                      ,
+        req_ready      : ctl_req_ready ,
+        req_we                         ,
+        req_addr                       ,
+        req_wdata                      ,
+        req_wstrb                      ,
+        req_len                        ,
+        rsp_valid      : ctl_rsp_valid ,
+        rsp_last       : ctl_rsp_last  ,
+        rsp_rdata      : ctl_rsp_rdata ,
+        wdata_next     : ctl_wdata_next,
+        init_done      : ctl_init_done ,
+        O_psram_ck     : psram_ck      ,
+        O_psram_ck_n   : psram_ck_n    ,
+        O_psram_cs_n   : psram_cs_n    ,
+        O_psram_reset_n: psram_reset_n ,
+        IO_psram_dq    : psram_dq      ,
+        IO_psram_rwds  : psram_rwds    ,
+        dbg_sample     : _             ,
     );
 
     #[ifdef(VUX9K_GLS)]
     inst u_ctl: $sv::psram_psram_controller (
-        clk                           ,
-        rst_n                         ,
-        req_valid                     ,
-        req_ready      : ctl_req_ready,
-        req_we                        ,
-        req_addr                      ,
-        req_wdata                     ,
-        req_wstrb                     ,
-        req_len        : 1'b0         ,
-        rsp_valid      : ctl_rsp_valid,
-        rsp_last       : _            ,
-        rsp_rdata      : ctl_rsp_rdata,
-        wdata_next     : _            ,
-        init_done      : ctl_init_done,
-        O_psram_ck     : psram_ck     ,
-        O_psram_ck_n   : psram_ck_n   ,
-        O_psram_cs_n   : psram_cs_n   ,
-        O_psram_reset_n: psram_reset_n,
-        IO_psram_dq    : psram_dq     ,
-        IO_psram_rwds  : psram_rwds   ,
-        dbg_sample     : _            ,
+        clk                            ,
+        rst_n                          ,
+        req_valid                      ,
+        req_ready      : ctl_req_ready ,
+        req_we                         ,
+        req_addr                       ,
+        req_wdata                      ,
+        req_wstrb                      ,
+        req_len                        ,
+        rsp_valid      : ctl_rsp_valid ,
+        rsp_last       : ctl_rsp_last  ,
+        rsp_rdata      : ctl_rsp_rdata ,
+        wdata_next     : ctl_wdata_next,
+        init_done      : ctl_init_done ,
+        O_psram_ck     : psram_ck      ,
+        O_psram_ck_n   : psram_ck_n    ,
+        O_psram_cs_n   : psram_cs_n    ,
+        O_psram_reset_n: psram_reset_n ,
+        IO_psram_dq    : psram_dq      ,
+        IO_psram_rwds  : psram_rwds    ,
+        dbg_sample     : _             ,
     );
 
     inst u_w955: $sv::w955d8mbya_model (
@@ -106,17 +114,22 @@ module tb_psram_contract (
         rwds   : psram_rwds   ,
     );
 
-    inst u_mdl: psram_word_model (
-        clk                     ,
-        rst_n                   ,
-        req_valid               ,
-        req_ready: mdl_req_ready,
-        req_we                  ,
-        req_addr                ,
-        req_wdata               ,
-        req_wstrb               ,
-        rsp_valid: mdl_rsp_valid,
-        rsp_rdata: mdl_rsp_rdata,
-        init_done: mdl_init_done,
+    inst u_mdl: psram_word_model #(
+        MAX_BURST_WORDS: soc_pkg::XMEM_MAX_BURST_WORDS,
+    ) (
+        clk                       ,
+        rst_n                     ,
+        req_valid                 ,
+        req_ready : mdl_req_ready ,
+        req_we                    ,
+        req_addr                  ,
+        req_wdata                 ,
+        req_wstrb                 ,
+        req_len                   ,
+        rsp_valid : mdl_rsp_valid ,
+        rsp_last  : mdl_rsp_last  ,
+        rsp_rdata : mdl_rsp_rdata ,
+        wdata_next: mdl_wdata_next,
+        init_done : mdl_init_done ,
     );
 }

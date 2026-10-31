@@ -723,11 +723,12 @@ synth-units: veryl
 	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/soc_xmem_bridge.sv; synth_gowin -top soc_xmem_bridge $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/soc_xmem_bridge_syn.v"
 	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/soc_icache.sv; synth_gowin -top soc_icache $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/soc_icache_syn.v"
 	$(YOSYS) -p "read_verilog -sv $(VERYL_OUT_DIR)/soc/soc_pkg.sv $(VERYL_OUT_DIR)/soc/soc_dcache.sv; synth_gowin -top soc_dcache $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/soc_dcache_syn.v"
-	$(YOSYS) -p "read_verilog -sv $(PSRAM_RTL_SRCS); chparam -set CLK_HZ $(SOC_CLK_HZ) psram_psram_controller; synth_gowin -top psram_psram_controller $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/psram_controller_syn.v"
+	$(YOSYS) -p "read_verilog -sv $(PSRAM_RTL_SRCS); chparam -set CLK_HZ $(SOC_CLK_HZ) -set MAX_BURST_WORDS $(XMEM_MAX_BURST_WORDS) psram_psram_controller; synth_gowin -top psram_psram_controller $(SYNTH_GOWIN_OPTS); write_verilog -noattr $(SYNTH_DIR)/psram_controller_syn.v"
 
 # soc_pkg::CLK_HZ, for the PSRAM controller's netlist above (soc_top's instance sets it; a
 # netlist keeps no parameters, so tb_psram_contract's GLS build can't)
 SOC_CLK_HZ := $(shell sed -n 's/^ *const CLK_HZ *: *u32 *= *\([0-9_]*\);.*/\1/p' soc/soc_pkg.veryl | tr -d _)
+XMEM_MAX_BURST_WORDS := $(shell sed -n 's/^ *const XMEM_MAX_BURST_WORDS *: *u32 *= *\([0-9]*\);.*/\1/p' soc/soc_pkg.veryl)
 ifeq ($(SOC_CLK_HZ),)
 $(error CLK_HZ not found in soc/soc_pkg.veryl)
 endif

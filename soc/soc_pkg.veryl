@@ -42,6 +42,8 @@ pub package soc_pkg {
     const XMEM_WORDS        : u32      = 1 << XMEM_ADDR_BITS;
     const XMEM_READ_LATENCY : u32      = 35;
     const XMEM_WRITE_LATENCY: u32      = 34;
+    // The longest burst the controller is built for (its MAX_BURST_WORDS): one cache line
+    const XMEM_MAX_BURST_WORDS: u32 = 8;
 
     // The window's data cache (soc_dcache): lines of 8 words (line addr[10:5], word
     // addr[4:2], tag addr[22:11]); the emulator copies it (emu/crates/vux9k_emu/src/cache.rs)

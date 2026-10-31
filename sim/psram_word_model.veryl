@@ -15,6 +15,12 @@
 //   flight; exactly one response per request, rsp_valid high for one cycle,
 //   XMEM_READ_LATENCY (read) or XMEM_WRITE_LATENCY (write) cycles after the accepting one,
 //   with rsp_rdata valid in that cycle for a read; req_ready is high again in that cycle.
+// - Bursts, N = req_len + 1 >= 2 words from req_addr upwards (the requester aligns it to 4N
+//   bytes), in cycles after the accepting one: a read answers word k in 32 + 2k with
+//   rsp_last on the last, and is ready again in 33 + 2N; a write takes word 0 at acceptance,
+//   raises wdata_next in 28 + 2k and takes word k (req_wdata, req_wstrb) in 29 + 2k, and
+//   gives its one response, with req_ready, in 32 + 2N. rsp_last is high with every other
+//   response. These are the cycles at 18 MHz, derived here from the two latencies.
 // - Addresses are byte addresses: req_addr[1:0] is ignored and the word index is the
 //   low log2(WORDS) bits of req_addr[22:2] (all of them for the default 8 MB). req_addr[23]
 //   (the controller's register space, which the SoC never addresses) is ignored too: such
@@ -26,38 +32,62 @@
 //   `veryl check` past 11 GB. rsp_rdata holds the last read word until the next read,
 //   like the controller's (it is unknown until the first read; the controller's is 0).
 pub module psram_word_model #(
-    param WORDS      : u32 = 1 << 21                   , // 32-bit words: 8 MB, both dies
-    param INIT_CYCLES: u32 = soc_pkg::PSRAM_INIT_CYCLES,
+    param WORDS          : u32 = 1 << 21                                              , // 32-bit words: 8 MB, both dies
+    param INIT_CYCLES    : u32 = soc_pkg::PSRAM_INIT_CYCLES                           ,
+    param MAX_BURST_WORDS: u32 = 1                                                    , // the controller's: 1, 2, 4, 8 or 16
+    const LEN_W          : u32 = if MAX_BURST_WORDS >: 1 ? $clog2(MAX_BURST_WORDS) : 1,
 ) (
-    clk      : input  clock              ,
-    rst_n    : input  reset_async_low    ,
-    req_valid: input  logic              ,
-    req_ready: output logic              ,
-    req_we   : input  logic              ,
-    req_addr : input  logic          <24>,
-    req_wdata: input  logic          <32>,
-    req_wstrb: input  logic          <4> ,
-    rsp_valid: output logic              ,
-    rsp_rdata: output logic          <32>,
-    init_done: output logic              ,
+    clk       : input  clock                 ,
+    rst_n     : input  reset_async_low       ,
+    req_valid : input  logic                 ,
+    req_ready : output logic                 ,
+    req_we    : input  logic                 ,
+    req_addr  : input  logic          <24>   ,
+    req_wdata : input  logic          <32>   ,
+    req_wstrb : input  logic          <4>    ,
+    req_len   : input  logic          <LEN_W>,
+    rsp_valid : output logic                 ,
+    rsp_last  : output logic                 ,
+    rsp_rdata : output logic          <32>   ,
+    wdata_next: output logic                 ,
+    init_done : output logic                 ,
 ) {
     // Two halves: Veryl refuses a single unpacked dimension of 2^21 elements
     const IDX_BITS: u32 = $clog2(WORDS);
     const ROW_BITS: u32 = IDX_BITS - 1;
-    // Counter loads: the response follows the cycle in which the count is 1
-    const READ_COUNT : logic<6> = (soc_pkg::XMEM_READ_LATENCY - 1) as 6;
-    const WRITE_COUNT: logic<6> = (soc_pkg::XMEM_WRITE_LATENCY - 1) as 6;
+    // Cycles after the accepting one
+    const READ_AT      : logic<7> = soc_pkg::XMEM_READ_LATENCY as 7; // a single read's response
+    const WRITE_AT     : logic<7> = soc_pkg::XMEM_WRITE_LATENCY as 7; // a single write's response
+    const BURST_READ_AT: logic<7> = (soc_pkg::XMEM_READ_LATENCY - 3) as 7; // a burst read's word 0
+    const WDATA_NEXT_AT: logic<7> = (soc_pkg::XMEM_WRITE_LATENCY - 6) as 7; // wdata_next of word k = 0 (never raised)
 
-    var mem       : logic<32> [2, WORDS / 2];
-    var init_count: logic<32>               ; // power-up cycles left
-    var busy      : logic                   ;
-    var count     : logic<6>                ;
-    var rdata     : logic<32>               ; // the last read word (no reset, like the array)
+    var mem       : logic<32>       [2, WORDS / 2];
+    var init_count: logic<32>                     ; // power-up cycles left
+    var busy      : logic                         ;
+    var elapsed   : logic<7>                      ; // cycles since acceptance
+    var we_q      : logic                         ;
+    var len_q     : logic<LEN_W>                  ;
+    var cursor    : logic<IDX_BITS>               ; // the word the next read or later write word is at
+    var take_word : logic                         ; // wdata_next last cycle: this cycle has the word
+    var rdata     : logic<32>                     ; // the last read word (no reset, like the array)
 
-    let idx   : logic<IDX_BITS> = req_addr[IDX_BITS + 1:2];
-    let half  : logic           = idx[IDX_BITS - 1];
-    let row   : logic<ROW_BITS> = idx[ROW_BITS - 1:0];
     let accept: logic           = req_valid && req_ready;
+    let idx   : logic<IDX_BITS> = req_addr[IDX_BITS + 1:2];
+    let at    : logic<IDX_BITS> = if accept ? idx : cursor;
+    let half  : logic           = at[IDX_BITS - 1];
+    let row   : logic<ROW_BITS> = at[ROW_BITS - 1:0];
+
+    let burst   : logic    = len_q != '0;
+    let twice   : logic<7> = (len_q as 7) << 1;
+    let next    : logic<7> = elapsed + 7'd1;
+    let ready_at: logic<7> = (if we_q ? WRITE_AT : READ_AT) + twice; // a burst's: 32 + 2N, 33 + 2N
+    let last_at : logic<7> = BURST_READ_AT + twice;
+
+    // What the next cycle has
+    let read_word: logic = busy && !we_q
+        && (if burst ? next >= BURST_READ_AT && next <= last_at && !next[0] : next == READ_AT);
+    let write_rsp: logic = busy && we_q && next == ready_at;
+    let word_due : logic = busy && we_q && burst && next >: WDATA_NEXT_AT && next <= WDATA_NEXT_AT + twice && !next[0];
 
     assign init_done = init_count == 32'd0;
     assign req_ready = init_done && !busy;
@@ -67,22 +97,36 @@ pub module psram_word_model #(
         if_reset {
             init_count = INIT_CYCLES;
             busy       = 1'b0;
-            count      = 6'd0;
+            elapsed    = 7'd0;
+            we_q       = 1'b0;
+            len_q      = '0;
+            cursor     = '0;
+            take_word  = 1'b0;
             rsp_valid  = 1'b0;
+            rsp_last   = 1'b0;
+            wdata_next = 1'b0;
         } else {
-            rsp_valid = 1'b0;
+            rsp_valid  = read_word || write_rsp;
+            rsp_last   = write_rsp || read_word && (!burst || next == last_at);
+            wdata_next = word_due;
+            take_word  = wdata_next;
             if init_count != 32'd0 {
                 init_count -= 32'd1;
             }
             if accept {
-                busy  = 1'b1;
-                count = if req_we ? WRITE_COUNT : READ_COUNT;
+                busy    = 1'b1;
+                elapsed = 7'd1;
+                we_q    = req_we;
+                len_q   = req_len;
+                cursor  = if req_we ? idx + 1'b1 : idx; // a write's word 0 is taken now
             } else if busy {
-                if count == 6'd1 {
-                    busy      = 1'b0;
-                    rsp_valid = 1'b1;
+                elapsed = next;
+                if next == ready_at {
+                    busy = 1'b0;
                 }
-                count -= 6'd1;
+                if read_word || take_word {
+                    cursor += 1'b1;
+                }
             }
         }
     }
@@ -90,22 +134,20 @@ pub module psram_word_model #(
     // The array is only touched here, never in a combinational read: Icarus makes such a
     // process sensitive to every word, and compiling it did not finish in minutes.
     always_ff (clk) {
-        if accept {
-            if !req_we {
-                rdata = mem[half][row];
-            } else {
-                if req_wstrb[0] {
-                    mem[half][row][7:0] = req_wdata[7:0];
-                }
-                if req_wstrb[1] {
-                    mem[half][row][15:8] = req_wdata[15:8];
-                }
-                if req_wstrb[2] {
-                    mem[half][row][23:16] = req_wdata[23:16];
-                }
-                if req_wstrb[3] {
-                    mem[half][row][31:24] = req_wdata[31:24];
-                }
+        if read_word {
+            rdata = mem[half][row];
+        } else if accept && req_we || take_word {
+            if req_wstrb[0] {
+                mem[half][row][7:0] = req_wdata[7:0];
+            }
+            if req_wstrb[1] {
+                mem[half][row][15:8] = req_wdata[15:8];
+            }
+            if req_wstrb[2] {
+                mem[half][row][23:16] = req_wdata[23:16];
+            }
+            if req_wstrb[3] {
+                mem[half][row][31:24] = req_wdata[31:24];
             }
         }
     }

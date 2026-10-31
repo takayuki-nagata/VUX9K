@@ -331,17 +331,20 @@ pub module soc_top (
 
     #[ifdef(VUX9K_PSRAM_MODEL)]
     inst xmem_inst: psram_word_model (
-        clk                      ,
-        rst_n                    ,
-        req_valid: xmem_req_valid,
-        req_ready: xmem_req_ready,
-        req_we   : xmem_req_we   ,
-        req_addr : xmem_addr     ,
-        req_wdata: xmem_req_wdata,
-        req_wstrb: xmem_req_wstrb,
-        rsp_valid: xmem_rsp_valid,
-        rsp_rdata: xmem_rsp_rdata,
-        init_done: _             ,
+        clk                       ,
+        rst_n                     ,
+        req_valid : xmem_req_valid,
+        req_ready : xmem_req_ready,
+        req_we    : xmem_req_we   ,
+        req_addr  : xmem_addr     ,
+        req_wdata : xmem_req_wdata,
+        req_wstrb : xmem_req_wstrb,
+        req_len   : 1'b0          ,
+        rsp_valid : xmem_rsp_valid,
+        rsp_last  : _             ,
+        rsp_rdata : xmem_rsp_rdata,
+        wdata_next: _             ,
+        init_done : _             ,
     );
 
     // Pins of the model build: no PSRAM attached; chip selects high (deselected) and

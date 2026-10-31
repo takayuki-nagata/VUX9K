@@ -115,7 +115,7 @@ whether the model or the RTL is wrong; an RTL bug gets `xfail(strict=True)` unti
 `vendor/psram_controller`) reduced to its host-side ports and cycle timing: the power-up
 (`req_ready`/`init_done` low for `soc_pkg::PSRAM_INIT_CYCLES`, counted down in `init_count`,
 which a test may deposit a smaller value into), then the 35/34-cycle read/write latency of
-the wait-state window's contract, byte strobes, 8 MB of words. It exists because the real
+the wait-state window's contract, the bursts' cycles up to its `MAX_BURST_WORDS`, byte strobes, 8 MB of words. It exists because the real
 controller needs a pin-level PSRAM model, and the only one, the IP's W955D8MBYA model
 (`vendor/psram_controller/sim/model/`), is timed in real time (`realtime`, `#` delays): it runs
 on Icarus, and on Verilator with `--timing` (tried 2026-10-13 for the gate-level SoC, where it
@@ -151,7 +151,7 @@ Synthesis, `lint-rtl` and `check-rtl-syntax` never define `VUX9K_PSRAM_MODEL`.
 `sim/unit/test_psram_contract.py` (`make sim-psram-contract`, in `test-sim`, fcov group
 `psram`) pins the word model to the controller: `sim/tb_psram_contract.veryl` drives both from
 the same requests, the controller on the W955 model, and the test checks every cycle that both
-agree on `req_ready`/`rsp_valid`/`init_done` and the read data, that the power-up is exactly
+agree on `req_ready`/`rsp_valid`/`rsp_last`/`wdata_next`/`init_done` and the read data, for single words and for bursts of every length up to `soc_pkg::XMEM_MAX_BURST_WORDS` (a write's later words only in their own cycles, with per-word strobes and X in the disabled bytes), that the power-up is exactly
 `PSRAM_INIT_CYCLES` (read from the tb's `init_cycles` output) and shorter than `soc_top`'s
 power-on reset, and that the W955 model's checkers counted no error. It runs on Icarus whatever
 `SIM` says (`sim_runner.ICARUS_ONLY`; `test_sim.py::test_psram_contract`), in its own run
@@ -163,7 +163,7 @@ follows the controller, not the other way round.
 
 The same test runs on the controller's netlist (`test_sim.py::test_psram_contract_gls`, in
 `make sim-psram-icarus`, test-slow): `make synth-units` synthesizes `psram_psram_controller`
-alone at `soc_pkg::CLK_HZ` (the Makefile reads it from `soc_pkg.veryl`, as `chparam`; a netlist
+alone at `soc_pkg::CLK_HZ` and `XMEM_MAX_BURST_WORDS` (the Makefile reads them from `soc_pkg.veryl`, as `chparam`; a netlist
 keeps no parameters) into `build/synth/psram_controller_syn.v`, and the GLS build defines
 `VUX9K_GLS`, under which `tb_psram_contract`'s `u_ctl` is that netlist without the `CLK_HZ`
 override; the word model, the W955 model and the tb stay RTL. Its run directory is the default
