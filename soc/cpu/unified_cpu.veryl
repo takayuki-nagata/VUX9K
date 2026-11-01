@@ -51,7 +51,7 @@ pub module unified_cpu #(
 
     var state        : CpuState    ;
     var r_load_we    : logic       ;
-    var r_hack_data  : logic   <32>;
+    var r_mem_data   : logic   <32>;
     var r_hack_d     : logic   <32>; // D value waiting for HACK_WR_D
     var is_riscv_mode: logic       ; // the ISA: RV32 from a hard reset, a soft reset's boot_mode
     // A data read completes in MEM_WAIT: an RV32 load, or a Hack comp reading M
@@ -355,7 +355,7 @@ pub module unified_cpu #(
                 }
             }
         } else {
-            let y_val: logic<32> = if h_use_mem ? r_hack_data : rf_rs2_data;
+            let y_val: logic<32> = if h_use_mem ? r_mem_data : rf_rs2_data;
             case h_op_a_sel {
                 2'd0   : alu_operand_a = rf_rs1_data; // D
                 2'd1   : alu_operand_a = y_val; // A or M
@@ -531,7 +531,7 @@ pub module unified_cpu #(
             r_store_we      = 1'b0;
             r_load_we       = 1'b0;
             r_hack_mem_we   = 1'b0;
-            r_hack_data     = 32'd0;
+            r_mem_data      = 32'd0;
             r_hack_d        = 32'd0;
             is_riscv_mode   = 1'b1;
         } else if soft_rst {
@@ -550,7 +550,7 @@ pub module unified_cpu #(
             r_store_we      = 1'b0;
             r_load_we       = 1'b0;
             r_hack_mem_we   = 1'b0;
-            r_hack_data     = 32'd0;
+            r_mem_data      = 32'd0;
             r_hack_d        = 32'd0;
             // The ISA the loader gave for this soft reset (gpio_controller register 0x8),
             // else RV32: Hack is entered only this way
@@ -635,8 +635,8 @@ pub module unified_cpu #(
                             state         = CpuState::FETCH;
                         } else {
                             // Latch memory read data for Hack ALU pipeline stage
-                            r_hack_data = data_in;
-                            state       = CpuState::HACK_WB;
+                            r_mem_data = data_in;
+                            state      = CpuState::HACK_WB;
                         }
                     }
                 }

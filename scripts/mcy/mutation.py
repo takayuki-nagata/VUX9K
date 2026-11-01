@@ -154,12 +154,12 @@ ACCEPTED: dict[str, dict[str, str]] = {
     },
     "unified_cpu": {
         # Re-keyed: MULDIV_WAIT (B6) moved MEM_WAIT's code 33 lines down (same cells)
-        "const0 B[23] @ unified_cpu.sv:638.25-646.28 unified_cpu.sv:638.29-638.42": "clears bit 23 of"
-        " r_hack_data in RV32 mode's MEM_WAIT. Only a Hack instruction with M as operand reads it, in"
+        "const0 B[23] @ unified_cpu.sv:638.25-646.28 unified_cpu.sv:638.29-638.41": "clears bit 23 of"
+        " r_mem_data in RV32 mode's MEM_WAIT. Only a Hack instruction with M as operand reads it, in"
         " HACK_WB, after its own MEM_WAIT has reloaded it from data_in; the ISA mode changes only through a"
         " reset, which zeroes it. Equivalent from reset, beyond dprove's reach on the whole CPU",
         "const0 A[30] @ unified_cpu.sv:635.21-647.24 unified_cpu.sv:635.25-635.35": "clears bit 30 of"
-        " r_hack_data while a MEM_WAIT waits (data_ready low). In RV32 mode the register is always 0 (reset"
+        " r_mem_data while a MEM_WAIT waits (data_ready low). In RV32 mode the register is always 0 (reset"
         " zeroes it, only a Hack MEM_WAIT loads it); in Hack mode it holds the previous M read's value then,"
         " and the MEM_WAIT's last cycle reloads it from data_in before HACK_WB reads it. Meanwhile it"
         " reaches only data_out without mem_write and the pc_out of a waiting MEM_WAIT, an instruction read"

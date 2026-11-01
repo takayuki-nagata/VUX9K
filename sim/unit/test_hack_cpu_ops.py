@@ -146,7 +146,7 @@ async def test_hack_cpu_comprehensive(dut):
     await Timer(1, unit="ns")
     dut.data_in.value = 100
     await ClockCycles(dut.clk, 1)  # EXECUTE -> MEM_WAIT
-    await ClockCycles(dut.clk, 1)  # MEM_WAIT -> HACK_WB (r_hack_data = 100, D = 30 -> ALU calculates M-D = 70)
+    await ClockCycles(dut.clk, 1)  # MEM_WAIT -> HACK_WB (r_mem_data = 100, D = 30 -> ALU calculates M-D = 70)
     await Timer(1, unit="ns")
     assert (int(dut.data_out.value) & 0xFFFF) == 70, f"Expected M-D=70, got {int(dut.data_out.value)}"
     await ClockCycles(dut.clk, 1)  # HACK_WB -> FETCH (D written with 70)
@@ -170,7 +170,7 @@ async def test_hack_cpu_comprehensive(dut):
     await Timer(1, unit="ns")
     dut.data_in.value = 42
     await ClockCycles(dut.clk, 1)  # EXECUTE -> MEM_WAIT
-    await ClockCycles(dut.clk, 1)  # MEM_WAIT -> HACK_WB (r_hack_data = 42 -> ALU calculates 0-M = -42)
+    await ClockCycles(dut.clk, 1)  # MEM_WAIT -> HACK_WB (r_mem_data = 42 -> ALU calculates 0-M = -42)
     await Timer(1, unit="ns")
     assert (int(dut.data_out.value) & 0xFFFF) == 0xFFD6, f"Expected -M=0xFFD6, got {hex(int(dut.data_out.value))}"
     await ClockCycles(dut.clk, 1)  # HACK_WB -> FETCH
@@ -206,7 +206,7 @@ async def test_hack_cpu_comprehensive(dut):
     await Timer(1, unit="ns")
     dut.data_in.value = 0x00FF
     await ClockCycles(dut.clk, 1)  # EXECUTE -> MEM_WAIT
-    await ClockCycles(dut.clk, 1)  # MEM_WAIT -> HACK_WB (r_hack_data = 0x00FF -> ALU calculates ~M)
+    await ClockCycles(dut.clk, 1)  # MEM_WAIT -> HACK_WB (r_mem_data = 0x00FF -> ALU calculates ~M)
     await Timer(1, unit="ns")
     assert (int(dut.data_out.value) & 0xFFFF) == 0xFF00, f"Expected !M=0xFF00, got {hex(int(dut.data_out.value))}"
     await ClockCycles(dut.clk, 1)  # HACK_WB -> FETCH
