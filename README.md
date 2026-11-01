@@ -116,12 +116,13 @@ The RTL modules in this repository were originally authored in VHDL-2008 and hav
 - Anything else reads as 0 and ignores writes, `0x2xxx_xxxx` included (an 8 KB data RAM until the hardware revision with the boot ROM; programs that used it, or wrote code into `0x0000_0000`, keep their data and code in the PSRAM now).
 
 ### RV32 CSRs
-The CPU is machine-mode only. Accessing any CSR not listed here raises an illegal-instruction exception (`mcause` 2), as does writing a read-only one:
+The CPU has machine and user modes, and no PMP: U-mode reaches all memory and MMIO. In U-mode every CSR access is illegal (`mcounteren` is 0, so also `cycle`, `time` and `instret`), as are MRET and, under `mstatus.TW`, WFI; ECALL from U is `mcause` 8, and M-level interrupts are taken whatever `mstatus.MIE` says. In M-mode, accessing any CSR not listed here raises an illegal-instruction exception (`mcause` 2), as does writing a read-only one:
 
 | CSRs | Notes |
 |:---|:---|
-| `mstatus` (`0x300`), `mie` (`0x304`), `mtvec` (`0x305`), `mscratch` (`0x340`), `mepc` (`0x341`), `mcause` (`0x342`), `mtval` (`0x343`) | `mstatus` keeps only MIE/MPIE (MPP reads as M); `mie` only MSIE/MTIE/MEIE; `mtvec` is direct mode only |
-| `misa` (`0x301`), `mip` (`0x344`) | Read-only in practice: writes are ignored. `misa` reads `0x4000_1100` (RV32, I and M; `0x4000_0100`, without M, before v0.4) |
+| `mstatus` (`0x300`), `mie` (`0x304`), `mtvec` (`0x305`), `mscratch` (`0x340`), `mepc` (`0x341`), `mcause` (`0x342`), `mtval` (`0x343`) | `mstatus` keeps MIE, MPIE, MPP (WARL: writing 3 selects M, anything else U; M after reset, U after an MRET), TW, and MPRV (kept without an effect: no PMP, no MMU; an MRET into U clears it); `mie` only MSIE/MTIE/MEIE; `mtvec` is direct mode only |
+| `mcounteren` (`0x306`), `menvcfg` (`0x30A`), `menvcfgh` (`0x31A`) | Read 0, writes ignored: the counters are M-only, and no `menvcfg` field applies |
+| `misa` (`0x301`), `mip` (`0x344`) | Read-only in practice: writes are ignored. `misa` reads `0x4010_1100` (RV32, I, M and U; `0x4000_0100`, without M and U, before v0.4) |
 | `mcycle`/`mcycleh`, `minstret`/`minstreth` (`0xB00`/`0xB80`/`0xB02`/`0xB82`) | 64-bit, writable; `minstret` counts RV32 instructions that complete without trapping |
 | `cycle`, `time`, `instret` and their `h` halves (`0xC00`-`0xC02`, `0xC80`-`0xC82`) | Read-only; `time` is the timer's `mtime` |
 | `mvendorid`, `marchid`, `mimpid`, `mhartid`, `mconfigptr` (`0xF11`-`0xF15`), `mstatush` (`0x310`), `tselect`/`tdata1`-`tdata3` (`0x7A0`-`0x7A3`) | Read 0 (no debug triggers); writes to `mstatush` and the trigger registers are ignored |

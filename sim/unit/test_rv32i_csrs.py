@@ -57,7 +57,7 @@ async def test_rv32i_csrs_basic(dut):
     # 2. Check Read of MISA
     dut.csr_addr.value = CSR_MISA
     await Timer(1, unit="ns")
-    assert int(dut.csr_rdata.value) == 0x40001100, f"Expected MISA=0x40001100, got {hex(int(dut.csr_rdata.value))}"
+    assert int(dut.csr_rdata.value) == 0x40101100, f"Expected MISA=0x40101100, got {hex(int(dut.csr_rdata.value))}"
 
     # 3. Test CSRRW (Write mtvec = 0x8000_0000)
     dut.csr_addr.value = CSR_MTVEC
@@ -214,11 +214,13 @@ async def csr_write(dut, addr, value):
 
 @cocotb.test()
 async def test_rv32i_csrs_warl(dut):
-    """M-mode-only WARL fields: mstatus keeps only MIE/MPIE with MPP reading as M,
+    """WARL fields: mstatus keeps MIE/MPIE/MPRV/TW, MPP is M only when written 3,
     mie only MSIE/MTIE/MEIE, mtvec and mepc drop their low two bits"""
     await csr_reset(dut)
-    assert await csr_write(dut, CSR_MSTATUS, 0xFFFF_FFFF) == 0x0000_1888
-    assert await csr_write(dut, CSR_MSTATUS, 0) == 0x0000_1800, "MPP must stay M after clearing"
+    assert await csr_write(dut, CSR_MSTATUS, 0xFFFF_FFFF) == 0x0022_1888
+    assert await csr_write(dut, CSR_MSTATUS, 0) == 0, "MPP = U after clearing"
+    for mpp, reads in ((1, 0), (2, 0), (3, 0x1800), (0, 0)):
+        assert await csr_write(dut, CSR_MSTATUS, mpp << 11) == reads, f"MPP written {mpp}"
     assert await csr_write(dut, CSR_MIE, 0xFFFF_FFFF) == 0x0000_0888
     assert await csr_write(dut, CSR_MTVEC, 0x0000_0203) == 0x0000_0200, "mtvec is direct-mode only"
     assert await csr_write(dut, CSR_MEPC, 0x0000_0307) == 0x0000_0304
@@ -322,7 +324,7 @@ class CsrModel:
     """rv32i_csrs as README "RV32 CSRs" describes it: WARL masks, trap entry/MRET, counters."""
 
     WRITE_MASK = {
-        CSR_MSTATUS: 0x0000_0088,
+        CSR_MSTATUS: 0x0022_0088,
         CSR_MIE: 0x0000_0888,
         CSR_MTVEC: 0xFFFF_FFFC,
         CSR_MSCRATCH: 0xFFFF_FFFF,
@@ -334,6 +336,7 @@ class CsrModel:
     def __init__(self, mcycle, minstret):
         self.regs = dict.fromkeys(self.WRITE_MASK, 0)
         self.mcycle, self.minstret = mcycle, minstret
+        self.priv_u, self.mpp_u = 0, 0
 
     def read(self, addr, irqs, mtime):
         timer, ext, sw = irqs
@@ -347,9 +350,9 @@ class CsrModel:
         }
         counters |= {a + 0x100: counters[a] for a in (0xB00, 0xB80, 0xB02, 0xB82)}  # cycle/instret views
         if addr == CSR_MSTATUS:
-            return self.regs[addr] | 0x1800
+            return self.regs[addr] | (0 if self.mpp_u else 0x1800)
         if addr == CSR_MISA:
-            return 0x4000_1100
+            return 0x4010_1100
         if addr == CSR_MIP:
             return timer << 7 | ext << 11 | sw << 3
         if addr in self.regs:
@@ -367,15 +370,20 @@ class CsrModel:
         if s["trap_entry"]:
             r[CSR_MEPC], r[CSR_MCAUSE], r[CSR_MTVAL] = s["trap_pc"], s["trap_cause"], s["trap_val"]
             mie = r[CSR_MSTATUS] >> 3 & 1
-            r[CSR_MSTATUS] = mie << 7  # MPIE <= MIE, MIE <= 0
+            r[CSR_MSTATUS] = r[CSR_MSTATUS] & 0x0022_0000 | mie << 7  # MPIE <= MIE, MIE <= 0
+            self.mpp_u, self.priv_u = self.priv_u, 0  # MPP <= the privilege, which becomes M
         elif s["trap_return"]:
-            r[CSR_MSTATUS] = 0x80 | (r[CSR_MSTATUS] >> 7 & 1) << 3  # MIE <= MPIE, MPIE <= 1
+            kept = r[CSR_MSTATUS] & (0x0020_0000 if self.mpp_u else 0x0022_0000)  # leaving M clears MPRV
+            r[CSR_MSTATUS] = kept | 0x80 | (r[CSR_MSTATUS] >> 7 & 1) << 3  # MIE <= MPIE, MPIE <= 1
+            self.priv_u, self.mpp_u = self.mpp_u, 1  # the privilege <= MPP, MPP <= U
         elif wr:
             op, d = s["csr_op"], s["csr_wdata"]
             value = {1: d, 5: d, 2: rdata | d, 6: rdata | d, 3: rdata & ~d, 7: rdata & ~d}.get(op, rdata)
             value &= 0xFFFF_FFFF
             if addr in self.WRITE_MASK:
                 r[addr] = value & self.WRITE_MASK[addr]
+                if addr == CSR_MSTATUS:
+                    self.mpp_u = int(value >> 11 & 3 != 3)
             elif addr in (0xB00, 0xB80):
                 shift = 32 if addr == 0xB80 else 0
                 self.mcycle = self.mcycle & ~(0xFFFF_FFFF << shift) | value << shift
@@ -396,6 +404,8 @@ async def test_rv32i_csrs_read_map(dut):
         value = rand32()
         await csr_write(dut, addr, value)
         model.regs[addr] = value & mask
+        if addr == CSR_MSTATUS:
+            model.mpp_u = int(value >> 11 & 3 != 3)
     irqs = (1, 1, 1)
     mtime = random.getrandbits(64)
     dut.timer_irq_in.value, dut.ext_irq_in.value, dut.sw_irq_in.value = irqs
@@ -418,22 +428,48 @@ async def test_rv32i_csrs_read_map(dut):
 _WRITABLE = (CSR_MSTATUS, CSR_MIE, CSR_MTVEC, CSR_MSCRATCH, CSR_MEPC, CSR_MCAUSE, CSR_MTVAL, 0xB00, 0xB80, 0xB02, 0xB82)
 
 
-def _irq(s, mstatus, mie):
-    """Which interrupt is pending and enabled (MEI > MSI > MTI), masked by mstatus.MIE or not."""
+def _irq(s, mstatus, mie, priv_u):
+    """Which interrupt is pending and enabled (MEI > MSI > MTI), masked by mstatus.MIE or not
+    (U-mode ignores MIE)."""
     pending = mie & (s["timer_irq_in"] << 7 | s["ext_irq_in"] << 11 | s["sw_irq_in"] << 3)
     if not pending:
         return None
     cause = "mei" if pending & 0x800 else "msi" if pending & 0x8 else "mti"
+    if priv_u and not mstatus & 0x8:
+        return "user_unmasked"
     return cause if mstatus & 0x8 else "masked"
+
+
+def _priv(s, priv_u, mpp_u, mstatus):
+    """A change of privilege: a trap from M or U; an MRET to M or U, MPRV set or not."""
+    if s["trap_entry"]:
+        return "trap_from_u" if priv_u else "trap_from_m"
+    if not s["trap_return"]:
+        return None
+    return ("mret_to_u" if mpp_u else "mret_to_m") + ("_mprv" if mstatus & 0x0002_0000 else "")
 
 
 # A write of every op to every writable CSR (the counters' halves included), a write in
 # the same cycle as a trap return, and each interrupt cause taken or masked
-@fcov.point("csrs.write", [(a, op) for a in _WRITABLE for op in (1, 2, 3, 5, 6, 7)],
-            xf=lambda s, mstatus, mie: (s["csr_addr"], s["csr_op"]) if s["csr_wr"] else None)  # fmt: skip
-@fcov.point("csrs.write_with_mret", (True,), xf=lambda s, mstatus, mie: bool(s["csr_wr"] and s["trap_return"]))
-@fcov.point("csrs.irq", ("mei", "msi", "mti", "masked"), xf=lambda s, mstatus, mie: _irq(s, mstatus, mie))
-def sample(s, mstatus, mie):
+@fcov.point(
+    "csrs.write",
+    [(a, op) for a in _WRITABLE for op in (1, 2, 3, 5, 6, 7)],
+    xf=lambda s, mstatus, mie, priv_u, mpp_u: (s["csr_addr"], s["csr_op"]) if s["csr_wr"] else None,
+)
+@fcov.point(
+    "csrs.write_with_mret", (True,), xf=lambda s, mstatus, mie, priv_u, mpp_u: bool(s["csr_wr"] and s["trap_return"])
+)
+@fcov.point(
+    "csrs.irq",
+    ("mei", "msi", "mti", "masked", "user_unmasked"),
+    xf=lambda s, mstatus, mie, priv_u, mpp_u: _irq(s, mstatus, mie, priv_u),
+)
+@fcov.point(
+    "csrs.priv",
+    ("trap_from_m", "trap_from_u", "mret_to_m", "mret_to_m_mprv", "mret_to_u", "mret_to_u_mprv"),
+    xf=lambda s, mstatus, mie, priv_u, mpp_u: _priv(s, priv_u, mpp_u, mstatus),
+)
+def sample(s, mstatus, mie, priv_u, mpp_u):
     pass
 
 
@@ -483,7 +519,7 @@ async def test_rv32i_csrs_random(dut):
         if i < len(writes):
             s |= {"csr_wr": 1, "trap_entry": 0, "trap_return": 0}
             s["csr_addr"], s["csr_op"] = writes[i]
-        sample(s, model.regs[CSR_MSTATUS], model.regs[CSR_MIE])
+        sample(s, model.regs[CSR_MSTATUS], model.regs[CSR_MIE], model.priv_u, model.mpp_u)
         for name, value in s.items():
             getattr(dut, name).value = value
         await Timer(1, unit="ns")
@@ -492,8 +528,10 @@ async def test_rv32i_csrs_random(dut):
         assert int(dut.csr_rdata.value) == rdata, f"read 0x{s['csr_addr']:03x}: {s}"
 
         pending = model.read(CSR_MIE, irqs, 0) & model.read(CSR_MIP, irqs, 0)
-        want_pending = int(bool(model.regs[CSR_MSTATUS] & 0x8) and bool(pending))
+        want_pending = int(bool(model.priv_u or model.regs[CSR_MSTATUS] & 0x8) and bool(pending))
         assert int(dut.irq_pending.value) == want_pending, f"irq_pending: {s}"
+        assert int(dut.priv_u.value) == model.priv_u, f"priv_u: {s}"
+        assert int(dut.tw.value) == model.regs[CSR_MSTATUS] >> 21 & 1, f"tw: {s}"
         if pending:
             cause = 0x8000_000B if pending & 0x800 else 0x8000_0003 if pending & 0x8 else 0x8000_0007
             assert int(dut.irq_cause.value) == cause, f"irq_cause: {s}"

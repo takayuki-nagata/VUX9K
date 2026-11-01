@@ -8,7 +8,7 @@
 //! `IsaTest` is the flat 256 KB RAM of sim/tb_hex_runner.veryl, used only to run
 //! riscv-tests.
 //! `Linux` is `Real` plus what a noMMU M-mode Linux kernel needs and the RTL doesn't have
-//! yet: the A extension (`Soc::a_ext`), U-mode (`Soc::u_mode`) with mcounteren, a
+//! yet: the A extension (`Soc::a_ext`), a
 //! CLINT-compatible block at 0x2000_0000 and a liteuart register view of the UART
 //! (crate::periph). It is ahead of the RTL: nothing proves it against the RTL, the
 //! lockstep (`make sim-lockstep`) covers `Real` only, and its devices and cycle costs are

@@ -17,9 +17,9 @@ from cocotb.triggers import ClockCycles, FallingEdge
 from rv32_asm import CSRS, Asm
 from test_unified_cpu_traps import expect_ok, run_program
 
-# (CSR, mask of the writable bits, bits that always read 1)
+# (CSR, mask of the writable bits, bits that read 1 after reset)
 WRITABLE = (
-    ("mstatus", 0x0000_0088, 0x0000_1800),  # MIE/MPIE; MPP reads as M
+    ("mstatus", 0x0022_0088, 0x0000_1800),  # MIE/MPIE/MPRV/TW; MPP is M after reset (see _mstatus_mpp)
     ("mie", 0x0000_0888, 0),
     ("mtvec", 0xFFFF_FFFC, 0),
     ("mscratch", 0xFFFF_FFFF, 0),
@@ -27,6 +27,13 @@ WRITABLE = (
     ("mcause", 0xFFFF_FFFF, 0),
     ("mtval", 0xFFFF_FFFF, 0),
 )
+
+
+def _mstatus_mpp(written):
+    """MPP as mstatus reads it after a write: WARL, 3 selects M, the rest U."""
+    return 0x1800 if written & 0x1800 == 0x1800 else 0
+
+
 PATTERNS = (0x5555_5555, 0xAAAA_AAAA, 0xFFFF_FFFF, 0x0F0F_F0F0, 0xF0F0_0F0F, 0x3333_CCCC, 0xCCCC_3333)
 MISA_READ = (0x301 << 20) | (2 << 12) | (5 << 7) | 0x73
 # Few enough instructions to have run since the counter was zero or written
@@ -72,15 +79,15 @@ def check_reset_values(a):
             a.csrr("t0", csr)
             expect(a, "t0", ones)
     a.word(MISA_READ)  # csrr t0, misa
-    expect(a, "t0", 0x4000_1100)  # RV32, I, M
+    expect(a, "t0", 0x4010_1100)  # RV32, I, M, U
 
 
 @cocotb.test()
 async def test_csrs_reset_and_hold_masked_writes(dut):
     """Reset values; then three rounds of writing a different pattern to every writable
     CSR and reading them all back (twice, a load in between: a register that flips while
-    it holds is caught whatever the hold time's parity). Masks: mstatus MIE/MPIE (MPP
-    reads M), mie the three enables, mtvec/mepc 4-byte aligned. mtvec, written last, holds
+    it holds is caught whatever the hold time's parity). Masks: mstatus MIE/MPIE/MPRV/TW (MPP
+    M only when written 3), mie the three enables, mtvec/mepc 4-byte aligned. mtvec, written last, holds
     each pattern while every other CSR is written."""
 
     def body(a):
@@ -99,7 +106,7 @@ async def test_csrs_reset_and_hold_masked_writes(dut):
                     if csr == "mtvec":
                         continue
                     a.csrr("t0", csr)
-                    expect(a, "t0", (v & mask) | ones)
+                    expect(a, "t0", (v & mask) | (_mstatus_mpp(v) if csr == "mstatus" else ones))
         # mtvec last (a trap now would land in the pattern, never at "ok"): held across
         # a load and across each write to another CSR, read after every one (a bit that
         # flips per write would be back after an even number)

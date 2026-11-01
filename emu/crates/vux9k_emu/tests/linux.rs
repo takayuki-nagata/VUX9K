@@ -273,17 +273,13 @@ fn misa_and_mstatus_per_profile() {
         soc.regs[5]
     };
     let mut real = new_soc(Profile::Real);
-    assert_eq!(read(&mut real, 0x301), 0x4000_1100, "Real: RV32IM");
-    assert_eq!(read(&mut real, 0x300), 0x1800, "MPP reads M");
-    // Real: clearing MPP changes nothing, it still reads M
-    real.regs[6] = 0x1800;
-    exec(&mut real, csr(3, 0, 0x300, 6));
-    assert_eq!(read(&mut real, 0x300), 0x1800);
-    real.regs[6] = 0x88;
+    assert_eq!(read(&mut real, 0x301), 0x4010_1100, "Real: RV32IMU");
+    assert_eq!(read(&mut real, 0x300), 0x1800, "MPP is M after reset");
+    real.regs[6] = 0x0022_1888; // TW, MPRV, MPP = M, MPIE, MIE (bits 12:11 and above kept)
     exec(&mut real, csr(1, 0, 0x300, 6));
-    assert_eq!(read(&mut real, 0x300), 0x1888);
+    assert_eq!(read(&mut real, 0x300), 0x0022_1888);
     let mut isa = new_soc(Profile::IsaTest);
-    assert_eq!(read(&mut isa, 0x301), 0x4000_1100);
+    assert_eq!(read(&mut isa, 0x301), 0x4010_1100);
     let mut linux = new_soc(Profile::Linux);
     assert_eq!(read(&mut linux, 0x301), 0x4010_1101, "Linux: RV32IMAU");
     assert_eq!(read(&mut linux, 0x300), 0x1800, "MPP is M after reset");
@@ -293,11 +289,11 @@ fn misa_and_mstatus_per_profile() {
         exec(&mut linux, csr(1, 0, 0x300, 6));
         assert_eq!(read(&mut linux, 0x300), reads, "MPP written {mpp}");
     }
-    // mcounteren exists on Linux only: reads 0, ignores writes
+    // mcounteren reads 0, ignores writes
     linux.regs[6] = 7;
     assert_eq!(exec(&mut linux, csr(1, 0, 0x306, 6)).trap, None);
     assert_eq!(read(&mut linux, 0x306), 0);
-    assert_eq!(exec(&mut real, csr(2, 5, 0x306, 0)).trap, Some(2));
+    assert_eq!(exec(&mut real, csr(2, 5, 0x306, 0)).trap, None);
 }
 
 // ----- U-mode -------------------------------------------------------------------------
@@ -623,7 +619,7 @@ fn linux_profile_switches() {
     assert!(soc.a_ext && soc.u_mode && soc.m_ext);
     for p in [Profile::Real, Profile::IsaTest] {
         let soc = Soc::new(p);
-        assert!(!soc.a_ext && !soc.u_mode, "{p:?}");
+        assert!(!soc.a_ext && soc.u_mode, "{p:?}");
     }
     assert_eq!(Profile::Linux.rom_bytes(), Profile::Real.rom_bytes());
     assert_eq!(Profile::Linux.xmem_bytes(), Profile::Real.xmem_bytes());

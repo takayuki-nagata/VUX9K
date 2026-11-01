@@ -8,6 +8,8 @@
 // gates register, CSR and memory writes with `trap_entry`.
 pub module rv32i_trap_unit (
     exec       : input  logic    , // RV32 mode, EXECUTE state
+    priv_u     : input  logic    , // the hart runs in U-mode (else M)
+    tw         : input  logic    , // mstatus.TW
     irq        : input  logic    , // interrupt sampled in FETCH
     irq_cause  : input  logic<32>,
     instr      : input  logic<32>,
@@ -47,14 +49,17 @@ pub module rv32i_trap_unit (
     always_comb {
         case csr_addr {
             // Implemented machine-mode CSRs (rv32i_csrs)
-            12'h300, 12'h301, 12'h304, 12'h305, 12'h340, 12'h341, 12'h342, 12'h343, 12'h344         : csr_exists = 1'b1;
+            // (mcounteren, 0x306, reads 0)
+            12'h300, 12'h301, 12'h304, 12'h305, 12'h306, 12'h340, 12'h341, 12'h342, 12'h343, 12'h344: csr_exists = 1'b1;
             // Counters: mcycle/minstret (+h) and the user-level cycle/time/instret (+h)
             12'hB00, 12'hB02, 12'hB80, 12'hB82, 12'hC00, 12'hC01, 12'hC02, 12'hC80, 12'hC81, 12'hC82: csr_exists = 1'b1;
             // Read as 0: mstatush, the machine information registers, and the debug
             // trigger registers (no triggers: riscv-tests' breakpoint test writes tselect
             // unguarded and expects it to read back 0)
             12'h310, 12'hF11, 12'hF12, 12'hF13, 12'hF14, 12'hF15, 12'h7A0, 12'h7A1, 12'h7A2, 12'h7A3: csr_exists = 1'b1;
-            // Read as 0 too: mcountinhibit (counters never inhibited)
+            // Read as 0 too: menvcfg/menvcfgh, which U-mode requires (no field applies here)
+            12'h30A, 12'h31A                                                                        : csr_exists = 1'b1;
+            // and mcountinhibit (counters never inhibited)
             12'h320                                                                                 : csr_exists = 1'b1;
             // and the HPM CSRs the privileged spec requires: mhpmevent3-31 (0x323-0x33F),
             // mhpmcounter3-31 (0xB03-0xB1F) and their high halves (0xB83-0xB9F)
@@ -84,10 +89,14 @@ pub module rv32i_trap_unit (
             rv32i_pkg::Opcode::FENCE : is_illegal = funct3[2:1] != 2'b00; // FENCE / FENCE.I (no-ops)
             rv32i_pkg::Opcode::SYSTEM: {
                 if funct3 == 3'b000 {
-                    // ECALL / EBREAK / MRET / WFI (WFI is a no-op)
-                    is_illegal = !(is_ecall || is_ebreak || is_mret || is_wfi);
+                    // ECALL / EBREAK / MRET / WFI (WFI is a no-op); U-mode has no MRET, nor a
+                    // WFI under TW
+                    is_illegal = !(is_ecall || is_ebreak || is_mret || is_wfi)
+                        || (priv_u && (is_mret || (tw && is_wfi)));
                 } else {
-                    is_illegal = funct3 == 3'b100 || csr_ro_wr || !csr_exists;
+                    // U-mode reaches no CSR: all but the user counters are M-level
+                    // (addr[9:8] == 3), and mcounteren (0) denies those
+                    is_illegal = funct3 == 3'b100 || csr_ro_wr || !csr_exists || priv_u;
                 }
             }
             default: is_illegal = 1'b1; // includes 0x0000_0000
@@ -129,7 +138,7 @@ pub module rv32i_trap_unit (
                 trap_val   = if op == rv32i_pkg::Opcode::JALR ? jalr_target : (pc as u32 + imm as u32) as u32;
             } else if is_ecall {
                 trap_entry = 1'b1;
-                trap_cause = 32'd11;
+                trap_cause = if priv_u ? 32'd8 : 32'd11;
             } else if is_ebreak {
                 trap_entry = 1'b1;
                 trap_cause = 32'd3;

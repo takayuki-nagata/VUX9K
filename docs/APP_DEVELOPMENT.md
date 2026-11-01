@@ -362,7 +362,9 @@ application that uses only what is documented, and a card prepared for an earlie
 release, keep working. (The v0.2.x releases, the previous revision, kept that promise for
 their slots, which this revision no longer reads.) v0.4.0 added RV32M to this revision: v0.3.x's
 applications and cards keep working on it, but software built for v0.4.0 or later needs its
-bitstream ("Upgrading from v0.3.x", section 2).
+bitstream ("Upgrading from v0.3.x", section 2). The same release added U-mode, which changes
+one thing for M-mode software: `mstatus.MPP` is real now, so an `mret` with MPP left at 0 (after
+writing `mstatus` without it, or a second `mret` without a trap between) lands in U-mode.
 
 A later hardware revision makes no such promise. Its memory map, registers, file format,
 SD card layout and loaders may all change, and its release says how to rebuild and

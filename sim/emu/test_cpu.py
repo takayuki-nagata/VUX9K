@@ -48,7 +48,7 @@ def test_csr_write_and_read_back():
 
     soc = run_program(prog, 9)
     assert soc.regs[10] == 0x8000
-    assert soc.regs[11] == 0x1808, "MIE set, MPP reads as M"
+    assert soc.regs[11] == 0x0008, "MIE set, MPP written as 0 reads U"
     assert soc.regs[12] == 0x80
 
 
@@ -218,14 +218,14 @@ def test_m_ext_switch():
     soc.load_app(image, "riscv", 0)
     for _ in range(4):
         soc.step()
-    assert (soc.regs[5], soc.regs[12], soc.mcause) == (0x4000_1100, 42, 0)
+    assert (soc.regs[5], soc.regs[12], soc.mcause) == (0x4010_1100, 42, 0)
     soc.m_ext = False
     soc.reset()
     assert not soc.m_ext, "kept across reset()"
     soc.load_app(image, "riscv", 0)
     for _ in range(4):
         soc.step()
-    assert (soc.regs[5], soc.regs[12], soc.mcause) == (0x4000_0100, 0, 2)
+    assert (soc.regs[5], soc.regs[12], soc.mcause) == (0x4010_0100, 0, 2)
 
 
 def test_load_app_into_the_psram():

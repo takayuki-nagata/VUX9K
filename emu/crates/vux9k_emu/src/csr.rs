@@ -4,7 +4,7 @@
 //! Machine-mode CSRs, as soc/cpu/rv32i_csrs.veryl implements them, and the CSR
 //! legality rule of soc/cpu/rv32i_trap_unit.veryl (`csr_exists`, `csr_ro_wr`).
 //!
-//! The Linux profile's U-mode (`Soc::u_mode`, ahead of the RTL) adds the current privilege
+//! U-mode (`Soc::u_mode`) adds the current privilege
 //! (`Csrs::user`) and a stored mstatus.MPP (`Csrs::mpp_u`); without it both stay false, so
 //! MPP reads as M and everything is as in the RTL.
 
@@ -12,7 +12,10 @@ pub const MSTATUS: u16 = 0x300;
 pub const MISA: u16 = 0x301;
 pub const MIE: u16 = 0x304;
 pub const MTVEC: u16 = 0x305;
-/// mcounteren: only with `Soc::u_mode` (Linux profile), hardwired to 0.
+/// menvcfg and menvcfgh: with `Soc::u_mode`, which requires them; no field applies, they read 0.
+pub const MENVCFG: u16 = 0x30A;
+pub const MENVCFGH: u16 = 0x31A;
+/// mcounteren: with `Soc::u_mode`, hardwired to 0.
 pub const MCOUNTEREN: u16 = 0x306;
 pub const MSTATUSH: u16 = 0x310;
 pub const MSCRATCH: u16 = 0x340;
@@ -36,10 +39,14 @@ pub const MISA_VALUE: u32 = 0x4000_1100; // RV32, I, M
 pub const MISA_M: u32 = 1 << 12;
 /// misa's A bit (set with `Soc::a_ext`, Linux profile).
 pub const MISA_A: u32 = 1 << 0;
-/// misa's U bit (set with `Soc::u_mode`, Linux profile).
+/// misa's U bit (set with `Soc::u_mode`).
 pub const MISA_U: u32 = 1 << 20;
 pub const MSTATUS_MIE: u32 = 1 << 3;
 pub const MSTATUS_MPIE: u32 = 1 << 7;
+/// mstatus.MPRV: kept, without an effect (no PMP, no MMU). U-mode only.
+pub const MSTATUS_MPRV: u32 = 1 << 17;
+/// mstatus.TW: WFI in U-mode is illegal. U-mode only.
+pub const MSTATUS_TW: u32 = 1 << 21;
 const MSTATUS_MPP_M: u32 = 0x1800; // reads as M unless `mpp_u` (U-mode only)
 const MSTATUS_MPP_SHIFT: u32 = 11;
 pub const MIP_MSIP: u32 = 1 << 3;
@@ -94,7 +101,7 @@ pub fn read_only(addr: u16) -> bool {
 /// stored counters with the cycle clock; see `Csrs::read`.
 #[derive(Clone, Debug, Default)]
 pub struct Csrs {
-    pub mstatus: u32, // only MIE (bit 3) and MPIE (bit 7) are stored
+    pub mstatus: u32, // only MIE, MPIE, and with U-mode MPRV and TW are stored
     pub mie: u32,     // only MSIE/MTIE/MEIE
     pub mtvec: u32,
     pub mscratch: u32,
@@ -152,11 +159,13 @@ impl Csrs {
         }
     }
 
-    /// mstatus.MPP from a value written to mstatus, with U-mode (`Soc::u_mode`): WARL
+    /// mstatus.MPRV, TW and MPP from a value written to mstatus, with U-mode (`Soc::u_mode`).
+    /// MPP is WARL
     /// {U, M}; 3 selects M, anything else U (as Spike legalizes S and the reserved 2 on a
     /// hart without S-mode).
     pub fn write_mpp(&mut self, value: u32) {
         self.mpp_u = (value >> MSTATUS_MPP_SHIFT) & 3 != 3;
+        self.mstatus |= value & (MSTATUS_MPRV | MSTATUS_TW);
     }
 
     /// Trap entry: save the context and disable interrupts; MPP <= the privilege, which
@@ -166,17 +175,22 @@ impl Csrs {
         self.mcause = cause;
         self.mtval = tval;
         let mie = self.mstatus & MSTATUS_MIE != 0;
-        self.mstatus = if mie { MSTATUS_MPIE } else { 0 };
+        self.mstatus &= MSTATUS_MPRV | MSTATUS_TW;
+        self.mstatus |= if mie { MSTATUS_MPIE } else { 0 };
         self.mpp_u = self.user;
         self.user = false;
     }
 
     /// MRET: MIE <= MPIE, MPIE <= 1; with U-mode (`u_mode`) also the privilege <= MPP and
-    /// MPP <= U (the least privileged mode).
+    /// MPP <= U (the least privileged mode), and MPRV clears when it leaves M.
     pub fn mret(&mut self, u_mode: bool) {
         let mpie = self.mstatus & MSTATUS_MPIE != 0;
-        self.mstatus = MSTATUS_MPIE | if mpie { MSTATUS_MIE } else { 0 };
+        self.mstatus &= MSTATUS_MPRV | MSTATUS_TW;
+        self.mstatus |= MSTATUS_MPIE | if mpie { MSTATUS_MIE } else { 0 };
         if u_mode {
+            if self.mpp_u {
+                self.mstatus &= !MSTATUS_MPRV;
+            }
             self.user = self.mpp_u;
             self.mpp_u = true;
         }

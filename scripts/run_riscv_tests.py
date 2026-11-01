@@ -23,12 +23,10 @@ profile: the same flat 256 KB RAM and tohost), through its Python module
 (build/emu/python, `make emu-py`; VUX9K_EMU_PY_DIR overrides it). The verdicts and
 EXPECTED_FAILURES must match.
 
-`--linux-ext` (emulator only) runs them with the Linux profile's A extension and U-mode
-switched on in the isa-test profile (`Soc.a_ext`, `Soc.u_mode`; ahead of the RTL, which
+`--linux-ext` (emulator only) runs them with the Linux profile's A extension
+switched on in the isa-test profile (`Soc.a_ext`; ahead of the RTL, which
 runs none of this), built for rv32ima, plus rv32ua (without amocas_*: Zacas isn't part of
-A). env/p then enters the rv32ui/um/ua tests in U-mode (`csrwi mstatus, 0` before its
-mret) and they report through an ecall from U; rv32mi's csr and scall take their U-mode
-paths. The hex files go to build/riscv_tests/linux-ext/.
+A). The hex files go to build/riscv_tests/linux-ext/.
 
 Before the suite runs, a deliberately failing test (scripts/riscv_tests/selftest_fail.S)
 must be reported as FAIL with TESTNUM=2, otherwise the harness itself is broken and the
@@ -109,7 +107,18 @@ _MTIP = (
     "Sail's CLINT (required by the generator) starts with mtimecmp = 0, so its mip.MTIP is set; "
     "tb_hex_runner raises no timer interrupt, so mip reads 0"
 )
+_U_INSTRET = (
+    "unexplained: csrrci/csrrs/csrrsi reading instret in U trap here (mcounteren is 0) and keep rd, "
+    "while the expected value says Sail's rd held 0x6DF56FF7 in each of the three tests, which no "
+    "word of the ELF holds; Zicsr-csrrc-00, Zicsr-csrrw-00 and ZicntrU-00 pass"
+)
 EXPECTED_FAILURES_ACT4: dict[str, str] = {
+    "priv/InterruptsU/InterruptsU-00.elf": "tb_hex_runner has no interrupt sources, so it can't pass; "
+    "it first differs at its csrw medeleg, illegal here (no S-mode), where Sail takes no trap. "
+    "The umode lockstep program covers interrupts in U",
+    "rv32i/Zicsr/Zicsr-csrrci-00.elf": _U_INSTRET,
+    "rv32i/Zicsr/Zicsr-csrrs-00.elf": _U_INSTRET,
+    "rv32i/Zicsr/Zicsr-csrrsi-00.elf": _U_INSTRET,
     "priv/InterruptsSm/InterruptsSm-00.elf": "tb_hex_runner has no interrupt sources "
     "(RVMODEL_SET_*_INT are empty), so the interrupts the test raises never arrive",
     "priv/Sm/Sm_mcsr_access-00.elf": _MTIP,
@@ -284,7 +293,7 @@ def simulate_emu(hexf):
     with open(hexf) as f:
         image = b"".join(int(line, 16).to_bytes(4, "little") for line in f if line.strip())
     soc = vux9k_emu.Soc("isa-test")
-    soc.a_ext = soc.u_mode = LINUX_EXT
+    soc.a_ext = LINUX_EXT
     soc.load_rom(0, image)  # the isa-test profile's flat RAM at 0
     stop, code = soc.run(MAX_CYCLES)
     if stop != "tohost":

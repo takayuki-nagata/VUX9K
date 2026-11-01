@@ -18,7 +18,7 @@
 //!   (soc/soc_icache.veryl, soc/soc_dcache.veryl; crate::cache).
 //!
 //! Except the Linux profile's additions, which are ahead of the RTL and mirror nothing yet
-//! (crate::profile): the A extension (`a_ext`), U-mode (`u_mode`), the CLINT block at
+//! (crate::profile): the A extension (`a_ext`), the CLINT block at
 //! region 2 (crate::periph::clint) and the UART's liteuart view (crate::periph::uart).
 //! With them off (Real, IsaTest) every path below is the RTL's.
 //!
@@ -191,8 +191,8 @@ pub struct Soc {
     /// profile turns it on (emulator only, ahead of the RTL). Kept across resets.
     pub a_ext: bool,
     /// The CPU has U-mode (mret to MPP = U, ecall from U, M-level CSRs and MRET illegal in
-    /// U, mcounteren hardwired to 0; misa.U). Off by default; the Linux profile turns it on
-    /// (emulator only, ahead of the RTL). Kept across resets.
+    /// U, mcounteren hardwired to 0; misa.U), as the RTL. On in every profile; kept across
+    /// resets.
     pub u_mode: bool,
     /// The A extension's reservation: the address of the last LR.W, until an SC.W or a trap.
     reservation: Option<u32>,
@@ -297,6 +297,8 @@ struct Legal {
     u_mode: bool,
     /// The hart is in U-mode now
     user: bool,
+    /// mstatus.TW
+    tw: bool,
 }
 
 /// rv32i_trap_unit's `is_illegal` for an RV32 instruction word (`m_ext`: RV32M is legal),
@@ -339,10 +341,12 @@ fn rv_illegal(i: u32, x: Legal) -> bool {
             if f3 == 0 {
                 !matches!(i, 0x0000_0073 | 0x0010_0073 | 0x3020_0073 | 0x1050_0073)
                     || (x.user && i == 0x3020_0073) // MRET in U
+                    || (x.user && i == 0x1050_0073 && x.tw) // WFI in U under TW
             } else {
                 let addr = (i >> 20) as u16;
                 let writes = f3 & 3 == 1 || rs1(i) != 0;
-                let exists = csr::exists(addr) || (x.u_mode && addr == csr::MCOUNTEREN);
+                let exists = csr::exists(addr)
+                    || (x.u_mode && matches!(addr, csr::MCOUNTEREN | csr::MENVCFG | csr::MENVCFGH));
                 // In U: the M-level CSRs, and the user counters, which mcounteren (0) denies
                 let denied =
                     x.user && ((addr >> 8) & 3 == 3 || matches!(addr & 0xF7F, 0xC00..=0xC02));
@@ -384,7 +388,7 @@ impl Soc {
             riscv_mode: true,
             m_ext: true,
             a_ext: profile == Profile::Linux,
-            u_mode: profile == Profile::Linux,
+            u_mode: true, // as the RTL
             reservation: None,
             steps: 0,
             rom: vec![0; rom_words],
@@ -906,6 +910,7 @@ impl Soc {
             m_ext: self.m_ext,
             a_ext: self.a_ext,
             u_mode: self.u_mode,
+            tw: self.csr.mstatus & csr::MSTATUS_TW != 0,
             user: self.csr.user,
         };
         if rv_illegal(i, legal) {

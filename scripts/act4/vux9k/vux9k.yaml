@@ -10,7 +10,7 @@ $schema: config_schema.json#
 kind: architecture configuration
 type: fully configured
 name: vux9k
-description: VUX9K unified_cpu, RV32IM M-mode only
+description: VUX9K unified_cpu, RV32IM with M and U modes
 implemented_extensions:
   - { name: I, version: "= 2.1" }
   - { name: M, version: "= 2.0" }
@@ -19,17 +19,22 @@ implemented_extensions:
   - { name: Zicntr, version: "= 2.0" }
   - { name: Zifencei, version: "= 2.0" }
   - { name: Sm, version: "= 1.12.0" }
+  - { name: U, version: "= 1.0.0" }
 
 params:
   MXLEN: 32
   PHYS_ADDR_WIDTH: 32
   M_MODE_ENDIANNESS: little
+  U_MODE_ENDIANNESS: little
+  UXLEN: [32]
 
-  # misa reads RV32IM; writes are ignored
+  # misa reads RV32IMU; writes are ignored
   MISA_CSR_IMPLEMENTED: true
   MUTABLE_MISA_M: false
+  MUTABLE_MISA_U: false
 
   TRAP_ON_ECALL_FROM_M: true
+  TRAP_ON_ECALL_FROM_U: true
   TRAP_ON_EBREAK: true
   TRAP_ON_UNIMPLEMENTED_INSTRUCTION: true
   TRAP_ON_RESERVED_INSTRUCTION: true
@@ -70,7 +75,7 @@ params:
   PMA_GRANULARITY: 2
 
   # Counters: mcycle/minstret and the time/cycle/instret views; the HPM counters and
-  # mcountinhibit exist and read 0; no mcounteren (M-mode only)
+  # mcountinhibit exist and read 0; mcounteren reads 0
   TIME_CSR_IMPLEMENTED: true
   HPM_COUNTER_EN: [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false]
   MCOUNTENABLE_EN: [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false]

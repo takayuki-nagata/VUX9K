@@ -606,6 +606,137 @@ def traps() -> list:
     return a.assemble()
 
 
+# --- U-mode ----------------------------------------------------------------------------
+UMODE_MPP = 0x1800
+UMODE_MPRV = 1 << 17
+UMODE_TW = 1 << 21
+
+
+def umode() -> list:
+    """mstatus's WARL fields, MRET into U (clearing MPRV), what traps there (CSRs, MRET, WFI
+    under TW, ECALL with cause 8), an interrupt taken in U with MIE clear, and back to M."""
+    a = Asm()
+    a.la("t0", "handler")
+    a.csrw("mtvec", "t0")
+    a.li("s2", 0x40001000)  # timer
+    # MPP is {U, M}: 3 selects M, the rest U; MPRV and TW read back
+    for value in (0, 0x0800, 0x1000, UMODE_MPP | UMODE_MPRV | UMODE_TW, 0xFFFF_FFFF, 0):
+        a.li("t0", value)
+        a.csrw("mstatus", "t0")
+        a.csrr("t1", "mstatus")
+    a.csrr("t2", "misa")
+    # mcounteren reads 0 and ignores writes (M only)
+    a.word((0x306 << 20) | (5 << 15) | (1 << 12) | (6 << 7) | 0x73)  # csrrw t1, mcounteren, t0
+    a.word(_csr_read(7, 0x306))
+    a.word(_csr_read(7, 0x30A))  # menvcfg and menvcfgh too
+    a.word(_csr_read(7, 0x31A))
+    # An MRET with MPP = M stays in M, and leaves MPP = U and MPRV alone
+    a.li("t0", UMODE_MPP | UMODE_MPRV)
+    a.csrw("mstatus", "t0")
+    a.la("t0", "in_m")
+    a.csrw("mepc", "t0")
+    a.mret()
+    a.label("in_m")
+    a.csrr("s6", "mstatus")
+    a.csrr("s7", "mscratch")  # legal: still M
+    # Now MPP = U: into U, which clears MPRV
+    a.la("t0", "user1")
+    a.csrw("mepc", "t0")
+    a.mret()
+
+    a.label("user1")
+    a.addi("s5", "s5", 1)
+    a.wfi()  # no TW: a no-op
+    a.word(_csr_read(8, 0x300))  # the CSRs: mstatus, mscratch, cycle, time, instret, mcounteren
+    a.word(_csr_read(8, 0x340))
+    a.word(_csr_read(8, 0xC00))
+    a.word(_csr_read(8, 0xC01))
+    a.word(_csr_read(8, 0xC02))
+    a.word(_csr_read(8, 0x306))
+    a.mret()  # illegal in U
+    a.ecall()  # cause 8: the handler returns to in_m2 in M
+    a.j("bad")
+
+    a.label("in_m2")
+    a.csrr("s6", "mstatus")  # MPP = U (the trap came from U), MPRV clear
+    a.li("t0", UMODE_TW)
+    a.csrs("mstatus", "t0")
+    a.wfi()  # TW doesn't touch M
+    a.li("t0", 0x1800)
+    a.csrc("mstatus", "t0")
+    a.la("t0", "user2")
+    a.csrw("mepc", "t0")
+    a.mret()
+
+    a.label("user2")
+    a.wfi()  # TW: illegal in U
+    a.ecall()  # the handler returns to in_m3
+
+    a.label("in_m3")
+    a.li("t0", UMODE_TW)
+    a.csrc("mstatus", "t0")
+    # The timer in 100 cycles, MTIE, MIE clear: masked in M, taken in U
+    a.li("t0", -1)
+    a.sw("t0", 0xC, "s2")
+    a.lw("t0", 0, "s2")
+    a.addi("t0", "t0", 100)
+    a.sw("t0", 8, "s2")
+    a.sw("zero", 0xC, "s2")
+    a.li("t0", 0x80)
+    a.csrw("mie", "t0")
+    a.li("t3", 80)
+    a.label("m_wait")
+    a.addi("t3", "t3", -1)
+    a.bnez("t3", "m_wait")  # the timer fires here: MIE clear, nothing happens in M
+    a.la("t0", "user3")
+    a.csrw("mepc", "t0")
+    a.li("s3", 0)
+    a.mret()
+
+    a.label("user3")  # taken right away, whatever MIE says
+    a.beqz("s3", "user3")
+    a.ecall()
+
+    a.label("done")
+    a.j("done")
+    a.label("bad")
+    a.j("bad")
+
+    a.label("handler")
+    a.csrr("s0", "mcause")
+    a.csrr("s4", "mtval")
+    a.csrr("s8", "mstatus")
+    a.li("t0", 8)
+    a.beq("s0", "t0", "from_ecall")
+    a.bltu("s0", "zero", "handler")  # never taken: a branch here
+    a.li("t0", 0x8000_0000)
+    a.bgeu("s0", "t0", "from_irq")
+    a.csrr("t0", "mepc")  # an illegal instruction: on past it, back in U
+    a.addi("t0", "t0", 4)
+    a.csrw("mepc", "t0")
+    a.mret()
+    a.label("from_irq")
+    a.li("t0", -1)
+    a.sw("t0", 0xC, "s2")  # disarm
+    a.li("s3", 1)
+    a.mret()  # back in U
+    a.label("from_ecall")  # back in M: the next stop of the program
+    a.addi("s9", "s9", 1)
+    a.li("t0", 0x1800)
+    a.csrs("mstatus", "t0")
+    a.li("t0", 1)
+    a.la("t1", "in_m2")
+    a.beq("s9", "t0", "go")
+    a.li("t0", 2)
+    a.la("t1", "in_m3")
+    a.beq("s9", "t0", "go")
+    a.la("t1", "done")
+    a.label("go")
+    a.csrw("mepc", "t1")
+    a.mret()
+    return a.assemble()
+
+
 def hack_soft_reset(key_by_addition: bool = True, mode_rv32: bool = False) -> list:
     """Hack (for its I segment, started by hack_stub): print 'R', store the soft-reset key to
     GPIO 0x600C, spin. Hack registers are 32 bits wide, so 0x255A + 0x4000 + 0x4000 is
@@ -1137,6 +1268,7 @@ def programs() -> list:
             needs=[STAGE2_FILE, HELLO_FILE],
         )
     )
+    progs.append(Program("umode", cycles=4_000, imem_words=umode()))
     seeds = os.environ.get("LOCKSTEP_SEEDS", "")
     for s in [int(x) for x in seeds.split(",") if x]:
         progs.append(Program(f"random_rv_{s}", cycles=200_000, imem_words=random_rv(s, blocks=1500), slow=True))

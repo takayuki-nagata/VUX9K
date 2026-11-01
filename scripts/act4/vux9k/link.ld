@@ -23,8 +23,11 @@ PROVIDE(__num_harts = NUM_HARTS);
 
 SECTIONS
 {
-  /* jal x0, TEST_BASE (0x4000) */
-  .boot RAM_ORIGIN : { LONG(0x0000406F) } > ram
+  /* csrrwi x0, minstret, 3; jal x0, TEST_BASE (0x4000). A test that reads instret after a
+   * trap from U holds an absolute count in its expected values, and with the jump alone (1)
+   * the CPU reads 3 fewer than Sail (measured on Zicsr-csrrc-00 and ZicntrU-00). The write
+   * replaces its own increment, and the jump makes the count 4 at the entry point. */
+  .boot RAM_ORIGIN : { LONG(0xB021D073) LONG(0x7FD0306F) } > ram
 
   .text.init   TEST_BASE : { *(.text.init) } > ram
   ASSERT(rvtest_entry_point == TEST_BASE, "the jump at 0 expects the entry point at TEST_BASE")

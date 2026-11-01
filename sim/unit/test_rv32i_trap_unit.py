@@ -18,14 +18,14 @@ OPCODES = (LUI, AUIPC, JAL, JALR, BRANCH, LOAD, STORE, OP_IMM, OP, FENCE, SYSTEM
 ECALL, EBREAK, MRET, WFI = 0x0000_0073, 0x0010_0073, 0x3020_0073, 0x1050_0073
 
 # README "RV32 CSRs": implemented, counters, and the ones that read as 0
-CSRS: tuple[int, ...] = (0x300, 0x301, 0x304, 0x305, 0x340, 0x341, 0x342, 0x343, 0x344)
+CSRS: tuple[int, ...] = (0x300, 0x301, 0x304, 0x305, 0x306, 0x340, 0x341, 0x342, 0x343, 0x344)
 CSRS += (0xB00, 0xB02, 0xB80, 0xB82, 0xC00, 0xC01, 0xC02, 0xC80, 0xC81, 0xC82)
-CSRS += (0x310, 0xF11, 0xF12, 0xF13, 0xF14, 0xF15, 0x7A0, 0x7A1, 0x7A2, 0x7A3)
+CSRS += (0x30A, 0x31A, 0x310, 0xF11, 0xF12, 0xF13, 0xF14, 0xF15, 0x7A0, 0x7A1, 0x7A2, 0x7A3)
 # mcountinhibit, mhpmevent3-31, mhpmcounter3-31(h): read 0
 CSRS += (0x320, *range(0x323, 0x340), *range(0xB03, 0xB20), *range(0xB83, 0xBA0))
 
 
-def illegal(w):
+def illegal(w, priv_u=0, tw=0):
     op, f3, rs1, f7, csr = w & 0x7F, (w >> 12) & 7, (w >> 15) & 0x1F, w >> 25, w >> 20
     if op in (LUI, AUIPC, JAL):
         return False
@@ -45,9 +45,9 @@ def illegal(w):
         return f3 not in (0, 1)
     if op == SYSTEM:
         if f3 == 0:
-            return w not in (ECALL, EBREAK, MRET, WFI)
+            return w not in (ECALL, EBREAK, MRET, WFI) or (priv_u and (w == MRET or (w == WFI and tw)))
         writes = f3 in (1, 5) or rs1 != 0
-        return f3 == 4 or csr not in CSRS or (csr >> 10 == 3 and writes)
+        return f3 == 4 or csr not in CSRS or (csr >> 10 == 3 and writes) or bool(priv_u)
     return True
 
 
@@ -59,13 +59,13 @@ def model(s):
     op, f3 = w & 0x7F, (w >> 12) & 7
     if s["irq"]:
         return 1, s["irq_cause"], 0, 0
-    if illegal(w):
+    if illegal(w, s["priv_u"], s["tw"]):
         return 1, 2, w, 0
     fetch_mis = {JAL: imm & 2, BRANCH: imm & 2 and s["branch_take"], JALR: s["addr_low"] & 2}.get(op, 0)
     if fetch_mis:
         return 1, 0, s["jalr_target"] if op == JALR else (s["pc"] + imm) & MASK, 0
     if w == ECALL:
-        return 1, 11, 0, 0
+        return 1, 8 if s["priv_u"] else 11, 0, 0
     if w == EBREAK:
         return 1, 3, s["pc"], 0
     if op in (LOAD, STORE) and ((f3 & 3 == 1 and s["addr_low"] & 1) or (f3 & 3 == 2 and s["addr_low"])):
@@ -92,6 +92,8 @@ def random_state():
     w = random_instr()
     return {
         "exec": random.random() < 0.9,
+        "priv_u": random.getrandbits(1),
+        "tw": random.getrandbits(1),
         "irq": random.random() < 0.1,
         "irq_cause": 0x8000_0000 | random.choice((3, 7, 11)),
         "instr": w,
@@ -110,14 +112,14 @@ def _outcome(s):
         return None
     if entry:
         # an interrupt that beats an illegal instruction counts on its own
-        return "irq_over_illegal" if s["irq"] and illegal(s["instr"]) else cause
+        return "irq_over_illegal" if s["irq"] and illegal(s["instr"], s["priv_u"], s["tw"]) else cause
     return "mret" if ret else "none"
 
 
 def _csr_access(s):
     """How an executed CSR instruction uses its CSR (README "RV32 CSRs")."""
     w = s["instr"]
-    if not s["exec"] or s["irq"] or w & 0x7F != SYSTEM or (w >> 12) & 7 in (0, 4):
+    if not s["exec"] or s["irq"] or s["priv_u"] or w & 0x7F != SYSTEM or (w >> 12) & 7 in (0, 4):
         return None
     csr, f3, rs1 = w >> 20, (w >> 12) & 7, (w >> 15) & 0x1F
     writes = f3 in (1, 5) or rs1 != 0
@@ -134,14 +136,29 @@ def _rv32m(s):
     return "irq" if s["irq"] else "legal"
 
 
+def _user(s):
+    """What U-mode changes, for an executed instruction without an interrupt."""
+    w = s["instr"]
+    if not s["exec"] or s["irq"] or not s["priv_u"]:
+        return None
+    if w == WFI:
+        return "wfi_tw" if s["tw"] else "wfi"
+    if w == MRET:
+        return "mret"
+    if w & 0x7F == SYSTEM and (w >> 12) & 7 not in (0, 4) and w >> 20 in CSRS:
+        return "listed_csr"
+    return None
+
+
 # Every trap cause and the cases without one, an interrupt beating an illegal instruction,
 # every kind of CSR access, and RV32M taken as legal
 @fcov.point(
     "trap.outcome",
-    (0, 2, 3, 4, 6, 11, 0x8000_0003, 0x8000_0007, 0x8000_000B, "irq_over_illegal", "mret", "none"),
+    (0, 2, 3, 4, 6, 8, 11, 0x8000_0003, 0x8000_0007, 0x8000_000B, "irq_over_illegal", "mret", "none"),
     xf=_outcome,
 )
 @fcov.point("trap.csr_access", ("unlisted", "rw_read", "rw_write", "ro_read", "ro_write"), xf=_csr_access)
+@fcov.point("trap.user", ("wfi_tw", "wfi", "mret", "listed_csr"), xf=_user)
 @fcov.point("trap.rv32m", ("legal", "irq"), xf=_rv32m)
 def sample(s):
     pass
@@ -161,12 +178,13 @@ async def check(dut, s):
 
 @cocotb.test()
 async def test_csr_legality(dut):
-    """Every CSR address with each access kind: illegal unless listed, and writing a
-    read-only one (addr[11:10] == 3) is illegal while reading it isn't"""
+    """Every CSR address with each access kind, from M: illegal unless listed, and writing a
+    read-only one (addr[11:10] == 3) is illegal while reading it isn't; from U: all illegal"""
     s = random_state() | {"exec": True, "irq": False}
     for csr in range(0x1000):
         for f3, rs1 in ((1, 0), (2, 0), (2, 5), (3, 0), (5, 0), (6, 0), (7, 3)):
-            await check(dut, s | {"instr": csr << 20 | rs1 << 15 | f3 << 12 | 1 << 7 | SYSTEM})
+            for priv_u in (0, 1):
+                await check(dut, s | {"priv_u": priv_u, "instr": csr << 20 | rs1 << 15 | f3 << 12 | 1 << 7 | SYSTEM})
     fcov.export()
 
 
@@ -195,6 +213,18 @@ async def test_system_near_misses(dut):
     for w in (ECALL, EBREAK, MRET, WFI):
         for bit in range(32):
             await check(dut, s | {"instr": w ^ 1 << bit})
+    fcov.export()
+
+
+@cocotb.test()
+async def test_user_mode_system(dut):
+    """From U: ECALL's cause is 8, MRET is illegal, WFI only under TW; from M none of that,
+    whatever TW says"""
+    s = random_state() | {"exec": True, "irq": False, "imm": 0, "addr_low": 0}
+    for w in (ECALL, EBREAK, MRET, WFI):
+        for priv_u in (0, 1):
+            for tw in (0, 1):
+                await check(dut, s | {"instr": w, "priv_u": priv_u, "tw": tw})
     fcov.export()
 
 

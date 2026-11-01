@@ -29,6 +29,7 @@ CSRS = {
     "mstatus": 0x300,
     "mie": 0x304,
     "mtvec": 0x305,
+    "misa": 0x301,
     "mscratch": 0x340,
     "mepc": 0x341,
     "mcause": 0x342,
@@ -214,6 +215,9 @@ class Asm:
     def mret(self):
         self._emit(0x30200073)
 
+    def wfi(self):
+        self._emit(0x10500073)
+
     def ecall(self):
         self._emit(0x00000073)
 
@@ -267,6 +271,9 @@ class Asm:
 
     def csrs(self, csr, rs):
         self.csrrs("zero", csr, rs)
+
+    def csrc(self, csr, rs):
+        self._emit(i_type(0, rs, 3, "zero", 0x73) | (CSRS[csr] << 20))
 
 
 def _lo12(value):

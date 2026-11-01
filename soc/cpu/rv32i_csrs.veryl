@@ -26,10 +26,14 @@ pub module rv32i_csrs (
     irq_cause   : output logic<32>,
     mtvec_out   : output logic<32>,
     mepc_out    : output logic<32>,
+    priv_u      : output logic    , // the hart runs in U-mode (else M)
+    tw          : output logic    , // mstatus.TW: WFI in U-mode is illegal
 ) {
-    // M-mode only: mstatus keeps just MIE/MPIE (MPP reads back as M), mie only the
-    // three standard enables, and mtvec is direct-mode only (WARL).
-    var mstatus : logic<32>; // [3]: MIE, [7]: MPIE
+    // M and U: mstatus keeps MIE/MPIE/MPRV/TW and MPP as one bit, mie only the three
+    // standard enables, and mtvec is direct-mode only (WARL). MPRV is only kept: without
+    // PMP or an MMU it changes nothing. mcounteren reads 0, so U-mode has no CSR at all.
+    var mstatus : logic<32>; // [3]: MIE, [7]: MPIE, [17]: MPRV, [21]: TW
+    var mpp_u   : logic    ; // mstatus.MPP is U (else M): WARL, 3 selects M, the rest U
     var mie     : logic<32>; // [7]: MTIE, [11]: MEIE, [3]: MSIE
     var mtvec   : logic<32>;
     var mscratch: logic<32>;
@@ -46,6 +50,7 @@ pub module rv32i_csrs (
 
     assign mtvec_out = mtvec;
     assign mepc_out  = mepc;
+    assign tw        = mstatus[21];
 
     // MIP generation from external interrupt inputs
     always_comb {
@@ -55,7 +60,8 @@ pub module rv32i_csrs (
         mip[3]  = sw_irq_in;
 
         pending = mie & mip;
-        if mstatus[3] && (pending[7] || pending[11] || pending[3]) {
+        // U-mode takes M-level interrupts whatever MIE says
+        if (priv_u || mstatus[3]) && (pending[7] || pending[11] || pending[3]) {
             irq_pending = 1'b1;
         } else {
             irq_pending = 1'b0;
@@ -74,8 +80,8 @@ pub module rv32i_csrs (
     // CSR Read Combinational Mux
     always_comb {
         case csr_addr {
-            12'h300         : read_val = mstatus | 32'h0000_1800; // MPP = M
-            12'h301         : read_val = 32'h4000_1100; // RV32, I and M
+            12'h300         : read_val = mstatus | (if mpp_u ? 32'd0 : 32'h0000_1800);
+            12'h301         : read_val = 32'h4010_1100; // RV32, I, M and U
             12'h304         : read_val = mie;
             12'h305         : read_val = mtvec;
             12'h340         : read_val = mscratch;
@@ -113,6 +119,8 @@ pub module rv32i_csrs (
     always_ff (clk, rst) {
         if_reset {
             mstatus  = 32'd0;
+            mpp_u    = 1'b0;
+            priv_u   = 1'b0;
             mie      = 32'd0;
             mtvec    = 32'd0;
             mscratch = 32'd0;
@@ -123,6 +131,8 @@ pub module rv32i_csrs (
             minstret = 64'd0;
         } else if soft_rst {
             mstatus  = 32'd0;
+            mpp_u    = 1'b0;
+            priv_u   = 1'b0;
             mie      = 32'd0;
             mtvec    = 32'd0;
             mscratch = 32'd0;
@@ -148,16 +158,26 @@ pub module rv32i_csrs (
                 mtval      = trap_val;
                 mstatus[7] = mstatus[3]; // MPIE <= MIE
                 mstatus[3] = 1'b0; // Disable MIE on trap entry
+                mpp_u      = priv_u; // MPP <= the privilege, which becomes M
+                priv_u     = 1'b0;
 
                 // 2. Trap Exit (MRET Instruction)
             } else if trap_return {
                 mstatus[3] = mstatus[7]; // MIE <= MPIE
                 mstatus[7] = 1'b1; // Set MPIE to 1
+                priv_u     = mpp_u; // The privilege <= MPP, MPP <= the least privileged
+                mpp_u      = 1'b1;
+                if mpp_u {
+                    mstatus[17] = 1'b0; // MPRV clears when MRET leaves M
+                }
 
                 // 3. Explicit CSR Write Instruction Execution
             } else if csr_wr {
                 case csr_addr {
-                    12'h300: mstatus         = write_val & 32'h0000_0088;
+                    12'h300: {
+                        mstatus = write_val & 32'h0022_0088;
+                        mpp_u   = write_val[12:11] != 2'b11;
+                    }
                     12'h304: mie             = write_val & 32'h0000_0888;
                     12'h305: mtvec           = write_val & 32'hffff_fffc;
                     12'h340: mscratch        = write_val;

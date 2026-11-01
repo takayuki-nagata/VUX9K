@@ -122,6 +122,8 @@ pub module unified_cpu #(
     var r_irq      : logic    ; // interrupt sampled in FETCH, taken in EXECUTE
     var r_irq_cause: logic<32>;
     var csr_access : logic    ;
+    var priv_u     : logic    ; // U-mode
+    var mstatus_tw : logic    ;
     var rv_retire  : logic    ; // an RV32 instruction retires this cycle (minstret)
 
     // Trap / next-PC helpers
@@ -269,6 +271,8 @@ pub module unified_cpu #(
         irq_cause   : irq_cause                                                ,
         mtvec_out   : mtvec_out                                                ,
         mepc_out    : mepc_out                                                 ,
+        priv_u      : priv_u                                                   ,
+        tw          : mstatus_tw                                               ,
     );
 
     // The cycle a Hack instruction writes its results: EXECUTE, or HACK_WB when the comp reads M
@@ -452,6 +456,8 @@ pub module unified_cpu #(
     let exec_rv: logic = is_riscv_mode && state == CpuState::EXECUTE;
     inst trap: rv32i_trap_unit (
         exec       : exec_rv       ,
+        priv_u     : priv_u        ,
+        tw         : mstatus_tw    ,
         irq        : r_irq         ,
         irq_cause  : r_irq_cause   ,
         instr      : ir_reg        ,

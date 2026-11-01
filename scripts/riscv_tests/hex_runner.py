@@ -36,7 +36,7 @@ async def trace(dut, start_ns):
     while True:
         await FallingEdge(dut.clk)
         cycle = int((get_sim_time("ns") - start_ns) // PERIOD_NS)
-        dut._log.info(f"[TRACE] {cycle} PC={int(dut.pc_out.value):08x} INSTR={int(dut.instr_in.value):08x}")
+        dut._log.info(f"[TRACE] {cycle} PC={_hex(dut.pc_out)} INSTR={_hex(dut.instr_in)}")
 
 
 async def console(dut, out):
@@ -56,6 +56,12 @@ def write_verdict(line):
     # Once, after the simulation has ended: nothing left for a blocking write to stall
     with open("verdict.txt", "w") as f:
         f.write(line + "\n")
+
+
+def _hex(signal):
+    """A signal's value for a log line: X bits (Icarus's unwritten registers) must not end the run."""
+    value = signal.value
+    return f"{int(value):08x}" if value.is_resolvable else str(value)
 
 
 @cocotb.test()
@@ -87,7 +93,7 @@ async def run_program(dut):
         else:
             verdict = f"[FAIL] tohost=0x{code:08x} (TESTNUM={code >> 1}) at cycle {cycles}"
     else:
-        verdict = f"[FAIL] Simulation timeout after {max_cycles} cycles at PC={int(dut.pc_out.value):08x}"
+        verdict = f"[FAIL] Simulation timeout after {max_cycles} cycles at PC={_hex(dut.pc_out)}"
     if waits:
         instr_waits, data_waits = int(dut.instr_waits.value), int(dut.data_waits.value)
         if instr_waits == 0:

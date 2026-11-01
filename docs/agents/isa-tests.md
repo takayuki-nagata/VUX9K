@@ -41,10 +41,11 @@ are easy to break without noticing:
   deliberately fails test case 2, and the run aborts unless it's reported as
   exactly `FAIL (TESTNUM=2)`. This is what proves the verdict plumbing works;
   don't remove it to "speed things up".
-- **The CPU is M-mode only, with WARL CSRs the `rv32mi` tests depend on.**
-  `mstatus` keeps only MIE/MPIE and reads MPP as M (`illegal`/`scall` write MPP
-  and read it back to detect S/U-mode; a fully writable `mstatus` makes them take
-  the S-mode path and fail), `mtvec` is direct-mode only, `misa` is read-only
+- **The CPU has M and U modes, with WARL CSRs the `rv32mi` tests depend on.**
+  `mstatus.MPP` is {U, M}: writing 3 selects M, anything else U (`illegal`/`scall` write MPP
+  and read it back to detect S/U-mode; an MPP that keeps S makes them take the S-mode path
+  and fail). So `env/p` enters the rv32ui/um tests in U-mode (`csrwi mstatus, 0` before its
+  `mret`) and they report through an ecall from U, cause 8. `mtvec` is direct-mode only, `misa` is read-only
   (so `ma_fetch` skips its RVC part). The Zicntr counters exist: `mcycle`/`minstret`
   (writable) with read-only `cycle`/`instret`, and `time` reads the timer's `mtime`;
   `minstret` counts RV32 instructions that complete without trapping (loads/stores
@@ -53,8 +54,8 @@ are easy to break without noticing:
   vacuously while the counters read 0). CSR writes happen only for CSRRW[I] or a
   non-zero rs1/uimm (`csr_wr`), so plain `csrr` reads have no side effects.
   **Accessing a CSR that isn't implemented is illegal** (as is writing a read-only
-  one, `addr[11:10] == 3`, e.g. `unimp`). The legal set is `csr_exists` in
-  `rv32i_trap_unit` (README, "RV32 CSRs"); it covers everything Zephyr and the
+  one, `addr[11:10] == 3`, e.g. `unimp`). The legal set in M-mode is `csr_exists` in
+  `rv32i_trap_unit` (README, "RV32 CSRs"; in U-mode nothing is legal); it covers everything Zephyr and the
   riscv-tests env touch, checked by disassembling them. A few are legal only to
   read 0: `mhartid` and the other machine information registers, `mstatush`, and
   the debug trigger registers (`rv32mi-p-breakpoint` writes `tselect` without a
@@ -119,7 +120,9 @@ to the testbench's console word (`console.txt` in the run directory). Things to 
   parameters, what tests are selected and how they check), `sail.json` (the reference
   model: memory map, mtvec/mtval/misaligned behavior, extensions) and
   `rvmodel_macros.h`/`link.ld` (the harness). The CPU starts at 0, the tests at
-  `TEST_BASE` 0x4000 (Sail keeps its device tree at 0x1000): `link.ld` puts a jump at 0.
+  `TEST_BASE` 0x4000 (Sail keeps its device tree at 0x1000): `link.ld` puts a jump at 0, after
+  a write that brings `minstret` to Sail's count at the entry point (4): a test that reads
+  `instret` after a trap from U holds that absolute count in its expected values.
   `sail.json` enables Zihpm although the UDB doesn't list it: with it off, Sail traps on
   `mhpmevent3`-`31`, which the spec requires and the CPU implements (read 0). Sail's CLINT
   must stay enabled (the generator requires it) even though the harness has no timer.
@@ -130,7 +133,10 @@ to the testbench's console word (`console.txt` in the run directory). Things to 
 - **`EXPECTED_FAILURES_ACT4`** works like `EXPECTED_FAILURES` (an XPASS fails the run);
   its entries are the places where this harness or CPU legally differs from the Sail
   configuration (no interrupt sources, Sail's CLINT setting MTIP, read-only-zero
-  `mcountinhibit`). The self-test (`scripts/act4/selftest_fail.S`, linked like the tests)
+  `mcountinhibit`). The exceptions are the entries whose reason says "unexplained" (three
+  Zicsr tests that read `instret` after U-mode, and `InterruptsU-00`): mismatches not yet traced
+  to a legal difference, pinned so that a change in them shows up. Don't add one without
+  that word. The self-test (`scripts/act4/selftest_fail.S`, linked like the tests)
   must report FAIL with TESTNUM=1 and its console line before the suite runs.
 - `tb_hex_runner` drives the `time` CSR from a cycle counter (as `timer_core` counts); the
   Zicntr tests need it to advance. The emulator's isa-test profile has no console: its
