@@ -78,6 +78,10 @@ caches joined `soc_top`). Notes:
   its registers as match points and fails too. Keep the variable's value quoted as one
   shell word all the way down (`EQY_NOMATCH="a b"`): a wrapper that splits it breaks the
   Makefile's command line.
+- A renamed register is state the two sides don't share until they are told it is the same:
+  `r_hack_data` -> `r_mem_data` left everything it feeds "equivalence unknown" (`main_alu.a`,
+  `main_alu.b`), with no counterexample. `EQY_RENAME="old=new"` pairs the flattened names
+  (`cpu_inst.old=cpu_inst.new` for `EQY_TOP=soc_top`).
 - Proofs are local to each partition, so a change that is only unreachable
   because of how *another* block drives it (e.g. `fifo_sync` accepting a write
   on an empty-and-read cycle, which `uart_controller` never produces) still

@@ -160,7 +160,13 @@ def check_ties(top: str, files: list[Path], ties: dict[str, str]) -> None:
 
 
 def eqy_config(
-    top: str, gold: list[Path], gate: list[Path], depth: int, nomatch: list[str], ties: dict[str, str]
+    top: str,
+    gold: list[Path],
+    gate: list[Path],
+    depth: int,
+    nomatch: list[str],
+    ties: dict[str, str],
+    renames: list[str],
 ) -> str:
     def side(name, files, ties):
         blackboxes = " ".join(BLACKBOX)
@@ -184,7 +190,11 @@ def eqy_config(
 
     # Names eqy must not use to pair up gold and gate nets, e.g. the ports of a newly
     # extracted instance, which alias existing nets and confuse the matching
-    match = "\n[match *]\n" + "".join(f"gold-nomatch {p}\ngate-nomatch {p}\n" for p in nomatch) if nomatch else ""
+    match = "".join(f"gold-nomatch {p}\ngate-nomatch {p}\n" for p in nomatch)
+    # A renamed net or register, gold's name paired with the gate's: left unpaired, a register
+    # is state the two sides don't share, and what it feeds can't be proved
+    match += "".join(f"gold-match {' '.join(r.split('=', 1))}\n" for r in renames)
+    match = "\n[match *]\n" + match if match else ""
     # No `insbuf -chain` before partitioning: it chains a buffer between every alias
     # name of a net so each can be a cut point, but the chain follows the netlist's
     # connection order, which differs between gold and gate whenever a refactor adds
@@ -216,6 +226,13 @@ def main():
         help="Net-name patterns not to match between gold and gate (e.g. 'wr_decode.*' for a new instance)",
     )
     parser.add_argument(
+        "--rename",
+        nargs="*",
+        default=[],
+        metavar="GOLD=GATE",
+        help="A net or register renamed by the refactor, as flattened names (e.g. cpu_inst.old=cpu_inst.new)",
+    )
+    parser.add_argument(
         "--gate-tie",
         nargs="*",
         default=[],
@@ -239,7 +256,7 @@ def main():
     gate = snapshot(gate_src, work / "gate")
     check_ties(args.top, gate, ties)
     config = work / f"{args.top}.eqy"
-    config.write_text(eqy_config(args.top, gold, gate, args.depth, args.nomatch, ties))
+    config.write_text(eqy_config(args.top, gold, gate, args.depth, args.nomatch, ties, args.rename))
 
     if ties:
         print(f"=== eqy: gate inputs tied: {', '.join(f'{n}={v}' for n, v in ties.items())} ===")

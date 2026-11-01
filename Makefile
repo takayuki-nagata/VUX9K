@@ -766,14 +766,16 @@ sim-sd-quirks: veryl firmware
 # behavior-preserving refactors: `make eqy EQY_BASE=<commit> EQY_TOP=unified_cpu|soc_top`.
 # soc_rom is a black box on both sides. Not part of test-sim (it depends on the base commit).
 # EQY_GATE_TIE="name=1 ..." ties new top inputs of the gate to constants (run_eqy.py --gate-tie).
+# EQY_RENAME="old=new ..." pairs a renamed register's flattened names (run_eqy.py --rename).
 EQY_BASE ?= HEAD
 EQY_TOP ?= unified_cpu
 EQY_NOMATCH ?=
 EQY_GATE_TIE ?=
+EQY_RENAME ?=
 
 eqy: veryl
 	$(PYTHON) scripts/run_eqy.py --base $(EQY_BASE) --top $(EQY_TOP) --veryl $(VERYL) $(if $(EQY_NOMATCH),--nomatch $(EQY_NOMATCH)) \
-		$(if $(EQY_GATE_TIE),--gate-tie $(EQY_GATE_TIE))
+		$(if $(EQY_GATE_TIE),--gate-tie $(EQY_GATE_TIE)) $(if $(EQY_RENAME),--rename $(EQY_RENAME))
 
 # Mutation testing with mcy (scripts/mcy/mutation.py): manual only, not in any tier.
 # `make mutation MCY_TOP=rv32i_alu` (or all); results in build/mcy/<module>/summary.md
