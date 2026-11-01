@@ -946,8 +946,8 @@ def stage2_card() -> dict:
 # The real second stage and the hello demo (make firmware hello), for s2_run_hello
 STAGE2_FILE = os.path.join(REPO_ROOT, "build", "firmware", "stage2", "STAGE2.BIN")
 HELLO_FILE = os.path.join(REPO_ROOT, "build", "firmware", "apps", "HELLO.BIN")
-# The second stage's prompt comes at cycle ~14.44M; the hello demo's last line (its
-# a0-a2 and the key it waits for) has left the UART by ~20.26M
+# The second stage's prompt comes at cycle ~11.0M; the hello demo's last line (its
+# a0-a2 and the key it waits for) has left the UART by ~15.5M, well inside the run
 S2_RUN_HELLO_AT = 14_600_000
 S2_RUN_HELLO_CYCLES = 20_300_000
 

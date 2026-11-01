@@ -119,7 +119,7 @@ aren't obvious:
   changes), compiles no `lib/` component (`make_dist.py`'s license note says so;
   check again when the configuration grows), and has no F instructions (RV32M since the SoC selects it).
 
-`make apps` makes it `MPY.BIN` (~357 KB). `sim/emu/test_zephyr_micropython.py` loads it
+`make apps` makes it `MPY.BIN` (~351 KB). `sim/emu/test_zephyr_micropython.py` loads it
 into the PSRAM and types at the REPL (an expression, `2**100`, a function, an exception,
 `time.sleep_ms(100)` against `ticks_ms`, Ctrl-C stopping a loop), runs bc_clone_py's
 self-test (each case timed; ~197M cycles in all, 5-29M a case (~373M with the earlier caches, ~470M before RV32M), its heap peaking at ~36 KB)

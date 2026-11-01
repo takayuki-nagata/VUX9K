@@ -23,7 +23,7 @@ IMAGE = os.path.join(LINUX_DIR, "arch", "riscv", "boot", "Image")
 DTB = os.path.join(LINUX_DIR, "vux9k-linux-emu.dtb")
 PROMPT = b"/ # "
 # Upper bounds, not measurements (test_record_measurements prints those): the boot to the
-# prompt took ~3.1G cycles and a command that executes busybox 0.2-0.5G (2026-10-25)
+# prompt took ~224M cycles and a command that executes busybox ~15M (2026-11-01)
 BOOT_CYCLES = 10_000_000_000
 COMMAND_CYCLES = 2_000_000_000
 

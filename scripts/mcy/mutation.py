@@ -212,6 +212,28 @@ ACCEPTED: dict[str, dict[str, str]] = {
         "cnot1 A[5] ctrl 4 @ soc_dcache.sv:246.13-251.16 soc_dcache.sv:246.17-246.32": "changes sweep_idx only"
         " where it holds: after swept, when nothing reads it, or before swept with clear low: soc_top"
         " raises clear (!raw_rst) with rst_n, and the bench holds only at index 0, where bit 4 is 0",
+        "const1 A[3] @ soc_dcache.sv:253.83-253.103": "the word half of stale_q. A real collision is"
+        " caught anyway: a store hit also writes the tag of the line rd_idx reads, and FILL is outside"
+        " IDLE. A false one needs a store hit while rd_idx is at another line and a lookup the next"
+        " cycle; the CPU holds rd_idx at the access's word and fetches after a store",
+        "const1 B[0] @ soc_dcache.sv:149.40-149.60": "the idle of lookup. Only the first cycle outside IDLE"
+        " has stale_q low. After a miss rd_idx is held, so the tag read again still mismatches and"
+        " the FSM uses miss only in IDLE; after the probe's start no data access is in the window (the"
+        " CPU is fetching)",
+        "cnot1 Y[5] ctrl 1 @ soc_dcache.sv:247.30-247.46": "the sweep counts in another order (0, 1, 34,"
+        " 3, 4, 5, 38, 7, ...): every line once in 64 cycles and 63 last (enumerated), so swept rises"
+        " at the same cycle",
+        "const0 A[2] @ soc_dcache.sv:267.30-272.24 soc_dcache.sv:267.34-267.42": "the value line_r or tag_r"
+        " keeps in IDLE. Both are loaded on leaving IDLE and read only outside it: the RAM writes they"
+        " address are enabled there",
+        "const1 B[4] @ soc_dcache.sv:253.83-253.103": "the word half of stale_q again, one address bit: as"
+        " the entry above for the same comparison",
+        "cnot1 A[1] ctrl 0 @ soc_dcache.sv:255.13-290.20 soc_dcache.sv:255.25-255.25": "state's compare with"
+        " IDLE, bit 1 flipped by bit 0: the states 0, 1, 2 read as 0, 3, 2, so only IDLE still matches",
+        "inv A[0] @ soc_dcache.sv:220.13-220.19 soc_dcache.sv:220.9-222.12": "bit 0 of a tag is written"
+        " every cycle at tag_waddr's default, tags[line_r] with tag_r[0]. Line_r's tag already has that"
+        " value in IDLE (its last transfer's tag). Outside IDLE no lookup or fetch reads it, and the"
+        " fill's end writes the whole tag",
     },
     "fifo_sync": {
         "const1 A[1] @ $auto$proc_dff.cc:proc_dff": "sets bit 1 of a memory word while rst is asserted. The"

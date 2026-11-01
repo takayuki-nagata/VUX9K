@@ -25,7 +25,7 @@ S2_PROMPT = b"s2> "
 STAGE2_BASE = 0x8070_0000
 FAT_LBA = vux_tool.FAT_PART_LBA
 # Power-on to the second stage's prompt, or to the first stage's after a failed boot: the
-# banner, the key window (100 ms), card init and a 16 KB second stage at ~230 cycles a byte
+# banner, the key window (100 ms), card init and a 35 KB second stage at ~230 cycles a byte
 BOOT_CYCLES = 40_000_000
 with open(os.path.join(REPO_ROOT, "firmware", "stage1", "src", "main.rs")) as _f:
     _m = re.search(r"const STAGE1_VERSION: u32 = (\d+);", _f.read())
