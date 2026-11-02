@@ -272,6 +272,102 @@ fn t_muldiv(a: u32, b: u32) -> u32 {
         .fold(0, |acc, &x| acc.rotate_left(4) ^ x)
 }
 
+/// RV32A: every AMO and an LR/SC pair on a word of the data cache, then an SC with no
+/// reservation (the target stays rv32im: the instructions are named for this block only)
+fn t_amo(a: u32, b: u32) -> u32 {
+    let mut word = a;
+    let p = &mut word as *mut u32;
+    let mut r = [0u32; 12];
+    unsafe {
+        asm!(
+            ".option push",
+            ".option arch, +a",
+            "amoadd.w {t}, {b}, ({p})", "sw {t}, 0({r})",
+            "amoswap.w {t}, {b}, ({p})", "sw {t}, 4({r})",
+            "amoxor.w {t}, {a}, ({p})", "sw {t}, 8({r})",
+            "amoor.w {t}, {b}, ({p})", "sw {t}, 12({r})",
+            "amoand.w {t}, {a}, ({p})", "sw {t}, 16({r})",
+            "amomin.w {t}, {b}, ({p})", "sw {t}, 20({r})",
+            "amomax.w {t}, {a}, ({p})", "sw {t}, 24({r})",
+            "amominu.w {t}, {b}, ({p})", "sw {t}, 28({r})",
+            "amomaxu.w {t}, {a}, ({p})", "sw {t}, 32({r})",
+            "lr.w {t}, ({p})", "sw {t}, 36({r})",
+            "sc.w {t}, {b}, ({p})", "sw {t}, 40({r})",
+            "sc.w {t}, {a}, ({p})", "sw {t}, 44({r})",
+            ".option pop",
+            t = out(reg) _, a = in(reg) a, b = in(reg) b, p = in(reg) p, r = in(reg) r.as_mut_ptr(),
+        )
+    };
+    r.iter().fold(word, |acc, &x| acc.rotate_left(4) ^ x)
+}
+
+// t_umode: into U-mode by mret, where the CSRs and mret trap, an LR/SC and an AMO work, and an
+// ecall comes back to M. Every trap folds mcause and mstatus into a0.
+global_asm!(
+    ".option push",
+    ".option arch, +a, +zicsr",
+    ".balign 4",
+    "umode_run:",
+    "csrr t6, mtvec",
+    "la t0, umode_trap",
+    "csrw mtvec, t0",
+    "la t0, umode_user",
+    "csrw mepc, t0",
+    "li t0, 0x1800",
+    "csrc mstatus, t0",
+    "mret",
+    "umode_user:",
+    "csrr t1, mstatus",
+    "csrr t1, cycle",
+    "csrr t1, mcounteren",
+    "mret",
+    "addi sp, sp, -4",
+    "sw a0, 0(sp)",
+    "lr.w t1, (sp)",
+    "addi t1, t1, 1",
+    "sc.w t2, t1, (sp)",
+    "amoadd.w t1, t1, (sp)",
+    "xor a0, a0, t1",
+    "xor a0, a0, t2",
+    "lw t2, 0(sp)",
+    "xor a0, a0, t2",
+    "addi sp, sp, 4",
+    "ecall",
+    "umode_back:",
+    "csrw mtvec, t6",
+    "ret",
+    ".balign 4",
+    "umode_trap:",
+    "csrr t0, mcause",
+    "slli t2, a0, 5",
+    "srli a0, a0, 27",
+    "or a0, a0, t2",
+    "xor a0, a0, t0",
+    "csrr t2, mstatus",
+    "xor a0, a0, t2",
+    "li t2, 8",
+    "beq t0, t2, 1f",
+    "csrr t0, mepc",
+    "addi t0, t0, 4",
+    "csrw mepc, t0",
+    "mret",
+    "1:",
+    "li t0, 0x1800",
+    "csrs mstatus, t0",
+    "la t0, umode_back",
+    "csrw mepc, t0",
+    "mret",
+    ".option pop",
+);
+
+extern "C" {
+    fn umode_run(seed: u32) -> u32;
+}
+
+fn t_umode(seed: u32) -> u32 {
+    unsafe { umode_run(seed) }
+}
+
 const XMEM_WORDS: usize = map::XMEM_BYTES / 4;
 
 fn xmem_word(i: usize) -> *mut u32 {
@@ -577,7 +673,7 @@ enum Test {
 use Test::{Once, Pairs};
 
 /// (name, test, checksum the emulator computes)
-const TESTS: [(&str, Test, u32); 17] = [
+const TESTS: [(&str, Test, u32); 19] = [
     ("add", Pairs(t_add), 0xC02B_9A30),
     ("sub", Pairs(t_sub), 0x1C9E_5AB3),
     ("logic", Pairs(t_logic), 0x0F9E_3961),
@@ -595,6 +691,8 @@ const TESTS: [(&str, Test, u32); 17] = [
     ("xmem_time", Once(t_xmem_time), 0x00C4_0000),
     ("xmem_time_line", Once(t_xmem_time_line), 0x0630_C464),
     ("muldiv", Pairs(t_muldiv), 0x180C_F09F),
+    ("amo", Pairs(t_amo), 0x29F4_9444),
+    ("umode", Once(t_umode), 0x4C42_10E8),
 ];
 
 #[no_mangle]
