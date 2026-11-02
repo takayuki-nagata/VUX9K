@@ -57,7 +57,7 @@ async def test_rv32i_csrs_basic(dut):
     # 2. Check Read of MISA
     dut.csr_addr.value = CSR_MISA
     await Timer(1, unit="ns")
-    assert int(dut.csr_rdata.value) == 0x40101100, f"Expected MISA=0x40101100, got {hex(int(dut.csr_rdata.value))}"
+    assert int(dut.csr_rdata.value) == 0x40101101, f"Expected MISA=0x40101101, got {hex(int(dut.csr_rdata.value))}"
 
     # 3. Test CSRRW (Write mtvec = 0x8000_0000)
     dut.csr_addr.value = CSR_MTVEC
@@ -352,7 +352,7 @@ class CsrModel:
         if addr == CSR_MSTATUS:
             return self.regs[addr] | (0 if self.mpp_u else 0x1800)
         if addr == CSR_MISA:
-            return 0x4010_1100
+            return 0x4010_1101
         if addr == CSR_MIP:
             return timer << 7 | ext << 11 | sw << 3
         if addr in self.regs:

@@ -57,6 +57,7 @@ TARGETS = (
     "rv32i_trap_unit",
     "rv32i_csrs",
     "rv32m_muldiv",
+    "rv32a_unit",
     "soc_addr_decoder",
     "sdcard_spi",
     "uart_rx",

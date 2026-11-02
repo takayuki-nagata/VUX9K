@@ -952,11 +952,11 @@ fn rv32m_off_traps_and_misa_says_so() {
     let misa = csr(2, 5, 0x301, 0); // csrr x5, misa
     let mut soc = load(Profile::Real, &[misa, r(1, 2, 1, 0, 4)]);
     run_n(&mut soc, 2);
-    assert_eq!(soc.regs[5], 0x4010_1100, "RV32, I, M, U");
+    assert_eq!(soc.regs[5], 0x4010_1101, "RV32, I, M, A, U");
     assert_eq!(soc.csr.mcause, 0, "mul is legal");
     let mut soc = load(Profile::Real, &[misa, r(1, 2, 1, 0, 4)]);
     soc.m_ext = false;
     run_n(&mut soc, 2);
-    assert_eq!(soc.regs[5], 0x4010_0100, "no M");
+    assert_eq!(soc.regs[5], 0x4010_0101, "no M");
     assert_eq!((soc.csr.mcause, soc.csr.mtval), (2, r(1, 2, 1, 0, 4)));
 }

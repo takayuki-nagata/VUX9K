@@ -737,6 +737,134 @@ def umode() -> list:
     return a.assemble()
 
 
+# --- RV32A -----------------------------------------------------------------------------
+AMO_LR, AMO_SC = 0b00010, 0b00011
+AMO_OPS = (0b00000, 0b00001, 0b00100, 0b01000, 0b01100, 0b10000, 0b10100, 0b11000, 0b11100)
+AMO_RX_CYCLE = 100  # the byte the AMO on the UART's data register pops
+AMO_DATA = XMEM + 0x7_0000  # two lines' worth, and the same line one data-cache size up
+XMEM_USED += [(AMO_DATA - XMEM, AMO_DATA - XMEM + 0x40), (AMO_DATA - XMEM + XCACHE_D_BYTES, AMO_DATA - XMEM + 0x840)]
+AMO_CODE = AMO_DATA + 0x20  # a routine on its data line: its fetch probes the dirty line
+
+
+def amo() -> list:
+    """All AMOs and LR/SC on the window (hit, miss, dirty victim, a fetch that probes the line an
+    AMO dirtied), the ROM and MMIO (the UART pops once and sends); rd = rs1, rd = rs2, rd = x0;
+    SC after a trap, without an LR, at another word; misaligned; minstret's single count."""
+    a = Asm()
+    a.la("t0", "handler")
+    a.csrw("mtvec", "t0")
+    a.li("s1", AMO_DATA)
+    a.li("s2", AMO_DATA + XCACHE_D_BYTES)
+    a.li("s3", 0x40000000)  # UART
+    # Every AMO on signed and unsigned orders; rd = the old word. The first misses the cache
+    for old, src in ((5, 9), (-5, 3), (7, 7), (0x7FFF_FFFF, 0x8000_0000)):
+        for op in AMO_OPS:
+            a.li("t1", old)
+            a.sw("t1", 0, "s1")
+            a.li("t2", src)
+            a.amo(op, "t3", "t2", "s1")
+            a.lw("t4", 0, "s1")
+    # rd = rs1, rd = rs2, rd = x0; the store goes to rs1's old value
+    a.mv("t3", "s1")
+    a.li("t2", 2)
+    a.amo(0, "t3", "t2", "t3")
+    a.amo(0, "t2", "t2", "s1")
+    a.amo(0, "zero", "t2", "s1")
+    a.lw("t4", 0, "s1")
+    # A miss with a dirty victim, and a miss with a clean one (the line just written back)
+    a.amo(0b00001, "t3", "t2", "s2")
+    a.amo(0b00001, "t3", "t2", "s1")
+    a.amo(AMO_LR, "t3", "zero", "s2")
+    a.lw("t4", 0, "s2")
+    # LR/SC: success, a second SC fails, another word fails, a word never reserved fails
+    a.amo(AMO_LR, "t3", "zero", "s1")
+    a.li("t2", 0x55)
+    a.amo(AMO_SC, "t5", "t2", "s1")
+    a.amo(AMO_SC, "t5", "t2", "s1")
+    a.amo(AMO_LR, "t3", "zero", "s1")
+    a.addi("t1", "s1", 4)
+    a.amo(AMO_SC, "t5", "t2", "t1")
+    a.amo(AMO_SC, "t5", "t2", "s1")
+    # A store doesn't clear the reservation; a trap does; rd = rs1 on an SC
+    a.amo(AMO_LR, "t3", "zero", "s1")
+    a.sw("t2", 8, "s1")
+    a.amo(AMO_SC, "t5", "t2", "s1")
+    a.amo(AMO_LR, "t3", "zero", "s1")
+    a.ecall()
+    a.amo(AMO_SC, "t5", "t2", "s1")
+    a.amo(AMO_LR, "t3", "zero", "s1")
+    a.mv("t5", "s1")
+    a.amo(AMO_SC, "t5", "t2", "t5")
+    # Misaligned: LR cause 4, SC and AMO cause 6, nothing written
+    a.addi("t1", "s1", 1)
+    a.amo(AMO_LR, "t3", "zero", "t1")
+    a.amo(AMO_SC, "t3", "t2", "t1")
+    a.addi("t1", "s1", 2)
+    a.amo(0, "t3", "t2", "t1")
+    # Illegal: another width, LR with rs2, an unknown funct5
+    a.word(0x0023_B1AF | (0b00000 << 27))  # amoadd.d
+    a.word((AMO_LR << 27) | (2 << 20) | (9 << 15) | (2 << 12) | (28 << 7) | 0x2F)  # lr.w with rs2 = x2
+    a.word((0b00101 << 27) | (7 << 20) | (9 << 15) | (2 << 12) | (28 << 7) | 0x2F)
+    # The ROM: reads it, the store is ignored; unassigned: reads 0
+    a.li("t1", 0x10)
+    a.amo(0, "t3", "t2", "t1")
+    a.amo(AMO_LR, "t3", "zero", "t1")
+    a.amo(AMO_SC, "t5", "t2", "t1")
+    a.li("t1", 0x20000000)
+    a.amo(0, "t3", "t2", "t1")
+    # A fetch that probes the line an AMO dirtied, with the routine on it: the store also
+    # drops the instruction line
+    a.li("t1", AMO_CODE)
+    a.li("t2", 0x0000_8067)  # ret
+    a.amo(0b00001, "t3", "t2", "t1")
+    a.jalr("ra", "t1", 0)
+    # minstret counts each once: an AMO, LR, SC, a failed SC between two reads
+    for op, rd in ((0, "t3"), (AMO_LR, "t3"), (AMO_SC, "t5"), (AMO_SC, "t5")):
+        a.csrr("a0", "minstret")
+        a.li("t2", 1)
+        a.amo(op, rd, "zero" if op == AMO_LR else "t2", "s1")
+        a.csrr("a1", "minstret")
+    # In U, after an interrupt-free trip: LR/SC work and an AMO too
+    a.la("t0", "user")
+    a.csrw("mepc", "t0")
+    a.li("t0", 0x1800)
+    a.csrc("mstatus", "t0")
+    a.mret()
+    a.label("user")
+    a.amo(AMO_LR, "t3", "zero", "s1")
+    a.amo(AMO_SC, "t5", "t2", "s1")
+    a.amo(0, "t3", "t2", "s1")
+    a.ecall()
+    # The UART: wait for the byte, an AMO pops it once and sends the sum
+    a.label("rx_wait")
+    a.lw("t1", 4, "s3")
+    a.andi("t1", "t1", 1)  # rx_empty
+    a.bnez("t1", "rx_wait")
+    a.li("t2", 1)
+    a.amo(0, "t3", "t2", "s3")
+    a.lw("t1", 4, "s3")
+    a.label("done")
+    a.j("done")
+
+    a.label("handler")
+    a.csrr("s4", "mcause")
+    a.csrr("s5", "mtval")
+    a.li("t0", 8)
+    a.beq("s4", "t0", "stay_m")
+    a.j("skip")
+    a.label("stay_m")
+    a.li("t0", 0x1800)
+    a.csrs("mstatus", "t0")
+    a.label("skip")
+    a.csrr("t0", "mepc")
+    a.addi("t0", "t0", 4)
+    a.csrw("mepc", "t0")
+    a.mret()
+    words = a.assemble()
+    assert len(words) <= 0x3800 // 4
+    return words
+
+
 def hack_soft_reset(key_by_addition: bool = True, mode_rv32: bool = False) -> list:
     """Hack (for its I segment, started by hack_stub): print 'R', store the soft-reset key to
     GPIO 0x600C, spin. Hack registers are 32 bits wide, so 0x255A + 0x4000 + 0x4000 is
@@ -1269,6 +1397,7 @@ def programs() -> list:
         )
     )
     progs.append(Program("umode", cycles=4_000, imem_words=umode()))
+    progs.append(Program("amo", cycles=9_000, imem_words=amo(), uart_rx=[(AMO_RX_CYCLE, b"Z")]))
     seeds = os.environ.get("LOCKSTEP_SEEDS", "")
     for s in [int(x) for x in seeds.split(",") if x]:
         progs.append(Program(f"random_rv_{s}", cycles=200_000, imem_words=random_rv(s, blocks=1500), slow=True))

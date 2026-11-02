@@ -37,7 +37,7 @@ pub const INSTRETH: u16 = 0xC82;
 pub const MISA_VALUE: u32 = 0x4000_1100; // RV32, I, M
 /// misa's M bit (clear on a CPU without RV32M, `Soc::m_ext`).
 pub const MISA_M: u32 = 1 << 12;
-/// misa's A bit (set with `Soc::a_ext`, Linux profile).
+/// misa's A bit (set with `Soc::a_ext`).
 pub const MISA_A: u32 = 1 << 0;
 /// misa's U bit (set with `Soc::u_mode`).
 pub const MISA_U: u32 = 1 << 20;

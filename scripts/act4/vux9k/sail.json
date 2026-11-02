@@ -96,9 +96,9 @@
         "vector": {
           "None": null
         },
-        "lrsc": "AccessFault",
+        "lrsc": "AlignmentException",
         "amo": {
-          "Some": "AccessFault"
+          "Some": "AlignmentException"
         }
       },
       "default_allowed_within_exp": 0,
@@ -135,12 +135,12 @@
             "vector": {
               "None": null
             },
-            "amo": "AccessFault"
+            "amo": "AlignmentException"
           },
-          "atomic_support": "AMONone",
+          "atomic_support": "AMOArithmetic",
           "misaligned_atomicity_granule_size_exp": 0,
           "vector_misaligned_atomicity_granule_size_exp": 0,
-          "reservability": "RsrvNone",
+          "reservability": "RsrvEventual",
           "supports_cbo_zero": false,
           "supports_pte_read": false,
           "supports_pte_write": false
@@ -193,8 +193,8 @@
     "hartid": 0,
     "cache_block_size_exp": 6,
     "reservation": {
-      "reservation_set_size_exp": 3,
-      "require_exact_reservation_addr": false,
+      "reservation_set_size_exp": 2,
+      "require_exact_reservation_addr": true,
       "invalidate_on_same_hart_store": false
     },
     "clint": {
@@ -217,7 +217,7 @@
       "supported": true
     },
     "A": {
-      "supported": false
+      "supported": true
     },
     "F": {
       "supported": false,
@@ -316,7 +316,7 @@
       "supported": true
     },
     "Zaamo": {
-      "supported": false
+      "supported": true
     },
     "Zabha": {
       "supported": false
@@ -325,7 +325,7 @@
       "supported": false
     },
     "Zalrsc": {
-      "supported": false
+      "supported": true
     },
     "Zama16b": {
       "supported": false

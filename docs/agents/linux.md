@@ -32,8 +32,8 @@ emulator's Linux profile. Index and the rules that apply everywhere: [`AGENTS.md
   these targets is in CI; `make test-isa-emu-linux` (the profile's A and U-mode on riscv-tests,
   seconds) is, in `test-sim`. The first buildroot run takes ~40 min on a 2-vCPU
   machine, a kernel rebuild ~6 min.
-- **The profile is ahead of the RTL.** It has the A extension, a CLINT block at
-  `0x2000_0000` and a liteuart register view of the UART, and the RTL has none of them. The
+- **The profile is ahead of the RTL.** It has a CLINT block at
+  `0x2000_0000` and a liteuart register view of the UART, and the RTL has neither. The
   lockstep covers `Real` only. Nothing here runs on the board, and no document may say it does.
 
 ## Things that are not obvious

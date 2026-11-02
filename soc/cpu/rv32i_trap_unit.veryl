@@ -27,6 +27,9 @@ pub module rv32i_trap_unit (
     let funct3   : logic<3>  = instr[14:12];
     let rs1      : logic<5>  = instr[19:15];
     let funct7   : logic<7>  = instr[31:25];
+    let funct5   : logic<5>  = instr[31:27];
+    let rs2      : logic<5>  = instr[24:20];
+    let is_lr    : logic     = funct5 == 5'b00010;
     let csr_addr : logic<12> = instr[31:20];
     let is_ecall : logic     = instr == 32'h0000_0073;
     let is_ebreak: logic     = instr == 32'h0010_0073;
@@ -87,6 +90,9 @@ pub module rv32i_trap_unit (
             rv32i_pkg::Opcode::R_TYPE: is_illegal = !(funct7 == 7'b000_0000 || funct7 == 7'b000_0001
                 || (funct7 == 7'b010_0000 && (funct3 == 3'b000 || funct3 == 3'b101)));
             rv32i_pkg::Opcode::FENCE : is_illegal = funct3[2:1] != 2'b00; // FENCE / FENCE.I (no-ops)
+            // RV32A: words only; LR has no rs2. ADD, SWAP, LR, SC and the rest at funct5[1:0] = 0
+            rv32i_pkg::Opcode::AMO   : is_illegal = funct3 != 3'b010 || (is_lr && rs2 != 5'd0)
+                || !(funct5[4:2] == 3'b000 || funct5[1:0] == 2'b00);
             rv32i_pkg::Opcode::SYSTEM: {
                 if funct3 == 3'b000 {
                     // ECALL / EBREAK / MRET / WFI (WFI is a no-op); U-mode has no MRET, nor a
@@ -110,7 +116,9 @@ pub module rv32i_trap_unit (
             rv32i_pkg::Opcode::JALR  : fetch_misalign = addr_low[1];
             default                  : fetch_misalign = 1'b0;
         }
-        if op == rv32i_pkg::Opcode::LOAD || op == rv32i_pkg::Opcode::STORE {
+        if op == rv32i_pkg::Opcode::AMO {
+            mem_misalign = addr_low != 2'b00;
+        } else if op == rv32i_pkg::Opcode::LOAD || op == rv32i_pkg::Opcode::STORE {
             case funct3[1:0] {
                 2'b01  : mem_misalign = addr_low[0]; // LH/LHU/SH
                 2'b10  : mem_misalign = addr_low != 2'b00; // LW/SW
@@ -145,7 +153,11 @@ pub module rv32i_trap_unit (
                 trap_val   = pc;
             } else if mem_misalign {
                 trap_entry = 1'b1;
-                trap_cause = if op == rv32i_pkg::Opcode::LOAD ? 32'd4 : 32'd6;
+                trap_cause = if op == rv32i_pkg::Opcode::LOAD || (op == rv32i_pkg::Opcode::AMO && is_lr) ?
+                    32'd4
+                :
+                    32'd6
+                ;
                 trap_val   = mem_addr;
             } else {
                 trap_return = is_mret;

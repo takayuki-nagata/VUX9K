@@ -84,7 +84,7 @@ bitstream works; test it on the board.
 The RTL modules in this repository were originally authored in VHDL-2008 and have been fully ported to modern Veryl:
 
 - **CPU Core (`unified_cpu`)**: Ported from [`takayuki-nagata/hack_cpu`](https://github.com/takayuki-nagata/hack_cpu)
-  - Unified datapath supporting both **RISC-V RV32IM** (32-bit) and **Nand2Tetris Hack** (16-bit) execution; the ISA is chosen at each soft reset (RV32 from power-on). Multiply and divide (`rv32m_muldiv`) take one bit per cycle: every M instruction takes 35 cycles, whatever its operands.
+  - Unified datapath supporting both **RISC-V RV32IMA** with machine and user modes (32-bit) and **Nand2Tetris Hack** (16-bit) execution; the ISA is chosen at each soft reset (RV32 from power-on). Multiply and divide (`rv32m_muldiv`) take one bit per cycle: every M instruction takes 35 cycles, whatever its operands.
 - **UART Controller (`uart_controller`)**: Ported from [`takayuki-nagata/uart_controller`](https://github.com/takayuki-nagata/uart_controller)
   - Parameterized baud rate clock timer (18.0 MHz -> 115200 bps), 8N1 serial framing, and dual 32-entry synchronous TX/RX FIFOs.
 - **Arbitrary-Precision Math Engine & REPL (`vendor/bc_clone_rs`)**: Submodule from [`takayuki-nagata/bc_clone_rs`](https://github.com/takayuki-nagata/bc_clone_rs)
@@ -116,13 +116,15 @@ The RTL modules in this repository were originally authored in VHDL-2008 and hav
 - Anything else reads as 0 and ignores writes, `0x2xxx_xxxx` included (an 8 KB data RAM until the hardware revision with the boot ROM; programs that used it, or wrote code into `0x0000_0000`, keep their data and code in the PSRAM now).
 
 ### RV32 CSRs
+RV32A is word-sized and atomic against everything, as the CPU is the only bus master: an AMO takes 5 cycles plus the data cache's wait for its load (its store then hits), LR a load's cycles, SC a store's, or 2 when it fails. The reservation is one word, compared exactly, cleared by any SC or trap; a store doesn't clear it. On MMIO an AMO reads and writes like a load and a store (the UART's data register pops one byte and sends one).
+
 The CPU has machine and user modes, and no PMP: U-mode reaches all memory and MMIO. In U-mode every CSR access is illegal (`mcounteren` is 0, so also `cycle`, `time` and `instret`), as are MRET and, under `mstatus.TW`, WFI; ECALL from U is `mcause` 8, and M-level interrupts are taken whatever `mstatus.MIE` says. In M-mode, accessing any CSR not listed here raises an illegal-instruction exception (`mcause` 2), as does writing a read-only one:
 
 | CSRs | Notes |
 |:---|:---|
 | `mstatus` (`0x300`), `mie` (`0x304`), `mtvec` (`0x305`), `mscratch` (`0x340`), `mepc` (`0x341`), `mcause` (`0x342`), `mtval` (`0x343`) | `mstatus` keeps MIE, MPIE, MPP (WARL: writing 3 selects M, anything else U; M after reset, U after an MRET), TW, and MPRV (kept without an effect: no PMP, no MMU; an MRET into U clears it); `mie` only MSIE/MTIE/MEIE; `mtvec` is direct mode only |
 | `mcounteren` (`0x306`), `menvcfg` (`0x30A`), `menvcfgh` (`0x31A`) | Read 0, writes ignored: the counters are M-only, and no `menvcfg` field applies |
-| `misa` (`0x301`), `mip` (`0x344`) | Read-only in practice: writes are ignored. `misa` reads `0x4010_1100` (RV32, I, M and U; `0x4000_0100`, without M and U, before v0.4) |
+| `misa` (`0x301`), `mip` (`0x344`) | Read-only in practice: writes are ignored. `misa` reads `0x4010_1101` (RV32, I, M, A and U; `0x4000_0100`, without M, A and U, before v0.4) |
 | `mcycle`/`mcycleh`, `minstret`/`minstreth` (`0xB00`/`0xB80`/`0xB02`/`0xB82`) | 64-bit, writable; `minstret` counts RV32 instructions that complete without trapping |
 | `cycle`, `time`, `instret` and their `h` halves (`0xC00`-`0xC02`, `0xC80`-`0xC82`) | Read-only; `time` is the timer's `mtime` |
 | `mvendorid`, `marchid`, `mimpid`, `mhartid`, `mconfigptr` (`0xF11`-`0xF15`), `mstatush` (`0x310`), `tselect`/`tdata1`-`tdata3` (`0x7A0`-`0x7A3`) | Read 0 (no debug triggers); writes to `mstatush` and the trigger registers are ignored |
@@ -593,6 +595,7 @@ VUX9K/
 │   │   ├── rv32i_trap_unit.veryl       # Exception/interrupt decision (illegal, misaligned, ECALL/EBREAK, MRET)
 │   │   ├── next_pc_unit.veryl          # Next-PC selection with the RV32I branch / Hack jump conditions
 │   │   ├── rv32m_muldiv.veryl          # M extension: iterative multiply/divide (one bit per cycle, fixed latency)
+│   │   ├── rv32a_unit.veryl            # A extension: funct5's decode, the LR/SC reservation, an AMO's new value
 │   │   └── unified_cpu.veryl           # Multi-cycle Dual-ISA CPU Top Module (FETCH, EXECUTE, MEM_WAIT, HACK_WB)
 │   ├── uart/                       # UART Controller & FIFOs
 │   │   ├── clk_timer.veryl             # Parameterized baud rate clock timer

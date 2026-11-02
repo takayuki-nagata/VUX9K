@@ -218,14 +218,14 @@ def test_m_ext_switch():
     soc.load_app(image, "riscv", 0)
     for _ in range(4):
         soc.step()
-    assert (soc.regs[5], soc.regs[12], soc.mcause) == (0x4010_1100, 42, 0)
+    assert (soc.regs[5], soc.regs[12], soc.mcause) == (0x4010_1101, 42, 0)
     soc.m_ext = False
     soc.reset()
     assert not soc.m_ext, "kept across reset()"
     soc.load_app(image, "riscv", 0)
     for _ in range(4):
         soc.step()
-    assert (soc.regs[5], soc.regs[12], soc.mcause) == (0x4010_0100, 0, 2)
+    assert (soc.regs[5], soc.regs[12], soc.mcause) == (0x4010_0101, 0, 2)
 
 
 def test_load_app_into_the_psram():

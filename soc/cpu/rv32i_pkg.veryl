@@ -16,6 +16,7 @@ pub package rv32i_pkg {
         AUIPC = 7'b001_0111,
         SYSTEM = 7'b111_0011,
         FENCE = 7'b000_1111,
+        AMO = 7'b010_1111,
     }
 
     // 3-bit Funct3 Enum

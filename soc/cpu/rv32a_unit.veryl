@@ -1,0 +1,67 @@
+// Copyright (c) 2026 Takayuki Nagata
+// SPDX-License-Identifier: MIT
+
+// RV32A's decisions for unified_cpu: what funct5 asks for, the reservation of LR.W/SC.W (one
+// hart, so one word, compared exactly), and an AMO's new value from the shared ALU. Any trap
+// and any SC clear the reservation; a store doesn't. The memory accesses are unified_cpu's.
+pub module rv32a_unit (
+    clk      : input  clock               ,
+    rst      : input  reset               ,
+    soft_rst : input  logic               ,
+    funct5   : input  logic           <5> ,
+    addr     : input  logic           <30>, // rs1's word
+    lr_exec  : input  logic               , // an LR in EXECUTE, not trapping
+    sc_exec  : input  logic               , // an SC in EXECUTE, not trapping
+    trap     : input  logic               ,
+    old_value: input  logic           <32>, // the word an AMO read
+    rs2      : input  logic           <32>,
+    alu_out  : input  logic           <32>, // of alu_op on old_value and rs2
+    is_lr    : output logic               ,
+    is_sc    : output logic               ,
+    sc_ok    : output logic               , // the reservation covers addr
+    alu_op   : output rv32i_pkg::AluOp    ,
+    new_value: output logic           <32>,
+) {
+    var resv_valid: logic    ;
+    var resv_addr : logic<30>;
+
+    assign is_lr = funct5 == 5'b00010;
+    assign is_sc = funct5 == 5'b00011;
+    assign sc_ok = resv_valid && resv_addr == addr;
+
+    always_comb {
+        case funct5[4:2] {
+            3'b001        : alu_op = rv32i_pkg::AluOp::XOR;
+            3'b010        : alu_op = rv32i_pkg::AluOp::OR;
+            3'b011        : alu_op = rv32i_pkg::AluOp::AND;
+            3'b100, 3'b101: alu_op = rv32i_pkg::AluOp::SLT; // MIN, MAX
+            3'b110, 3'b111: alu_op = rv32i_pkg::AluOp::SLTU; // MINU, MAXU
+            default       : {
+                // AMOADD, or AMOSWAP
+                if funct5[0] {
+                    alu_op = rv32i_pkg::AluOp::COPY_B;
+                } else {
+                    alu_op = rv32i_pkg::AluOp::ADD;
+                }
+            }
+        }
+    }
+
+    // MIN/MAX(U) (funct5[4]): the compare says old_value < rs2; funct5[2] is the MAX of the pair
+    assign new_value = if funct5[4] ? (if alu_out[0] != funct5[2] ? old_value : rs2) : alu_out;
+
+    always_ff (clk, rst) {
+        if_reset {
+            resv_valid = 1'b0;
+            resv_addr  = 30'd0;
+        } else if soft_rst {
+            resv_valid = 1'b0;
+            resv_addr  = 30'd0;
+        } else if trap || sc_exec {
+            resv_valid = 1'b0;
+        } else if lr_exec {
+            resv_valid = 1'b1;
+            resv_addr  = addr;
+        }
+    }
+}

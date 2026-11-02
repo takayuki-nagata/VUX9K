@@ -18,7 +18,7 @@
 //!   (soc/soc_icache.veryl, soc/soc_dcache.veryl; crate::cache).
 //!
 //! Except the Linux profile's additions, which are ahead of the RTL and mirror nothing yet
-//! (crate::profile): the A extension (`a_ext`), the CLINT block at
+//! (crate::profile): the CLINT block at
 //! region 2 (crate::periph::clint) and the UART's liteuart view (crate::periph::uart).
 //! With them off (Real, IsaTest) every path below is the RTL's.
 //!
@@ -187,8 +187,8 @@ pub struct Soc {
     /// The CPU has RV32M (true, the default). false models the CPU before it (the v0.3.x
     /// bitstreams): misa without M, and the M instructions illegal. Kept across resets.
     pub m_ext: bool,
-    /// The CPU has the A extension (LR.W/SC.W/AMO*.W; misa.A). Off by default; the Linux
-    /// profile turns it on (emulator only, ahead of the RTL). Kept across resets.
+    /// The CPU has the A extension (LR.W/SC.W/AMO*.W; misa.A), as the RTL. On in every
+    /// profile; kept across resets.
     pub a_ext: bool,
     /// The CPU has U-mode (mret to MPP = U, ecall from U, M-level CSRs and MRET illegal in
     /// U, mcounteren hardwired to 0; misa.U), as the RTL. On in every profile; kept across
@@ -291,7 +291,7 @@ const AMO_MAXU: u32 = 0x1C;
 struct Legal {
     /// RV32M
     m_ext: bool,
-    /// The A extension (Linux profile)
+    /// The A extension
     a_ext: bool,
     /// U-mode exists (Linux profile): mcounteren is a CSR
     u_mode: bool,
@@ -387,7 +387,7 @@ impl Soc {
             periph: Periph::default(),
             riscv_mode: true,
             m_ext: true,
-            a_ext: profile == Profile::Linux,
+            a_ext: true,  // as the RTL
             u_mode: true, // as the RTL
             reservation: None,
             steps: 0,
@@ -1123,10 +1123,9 @@ impl Soc {
     /// window with its caches, MMIO, the IsaTest RAM), so its waits and the caches' state
     /// are as for a load followed by a store. aq/rl are ignored (one hart, in order).
     ///
-    /// Cycle cost (a placeholder until the RTL has the A extension, L1): LR a load's
-    /// (3 + its data-cache wait), SC a store's (3 + its wait), or 3 when it fails (no
-    /// store), an AMO a load's plus a store's (6 + both waits: a load access, then a store
-    /// access to the same word, which hits the line the load made present).
+    /// Cycle cost (unified_cpu): LR a load's (3 + its data-cache wait), SC a store's (3 + its
+    /// wait), or 2 when it fails (it ends in EXECUTE), an AMO 5 + both waits (FETCH, EXECUTE,
+    /// the load, AMO_CALC, the store, which hits the line the load made present).
     fn exec_amo(&mut self, i: u32, r: &mut Retire) -> Option<u32> {
         let f5 = i >> 27;
         let addr = self.regs[rs1(i)];
@@ -1137,9 +1136,9 @@ impl Soc {
         let t = self.cycle;
         if f5 == AMO_SC {
             let ok = self.reservation.take() == Some(addr);
-            r.cycles = 3;
+            r.cycles = 2;
             if ok {
-                r.cycles += self.rv_write(addr, src, 0b1111, t);
+                r.cycles = 3 + self.rv_write(addr, src, 0b1111, t);
                 r.store = Some((addr, src, 0b1111));
             }
             self.write_rd(rd(i), !ok as u32, r);
@@ -1164,9 +1163,9 @@ impl Soc {
             AMO_MINU => old.min(src),
             _ => old.max(src), // AMO_MAXU; rv_illegal rejects the other funct5
         };
-        // The store as if made by a store instruction fetched right after the load part
+        // The store's cycle, after AMO_CALC
         let write_wait = self.rv_write(addr, new, 0b1111, t + r.cycles as u64);
-        r.cycles += 3 + write_wait;
+        r.cycles += 2 + write_wait;
         r.store = Some((addr, new, 0b1111));
         self.write_rd(rd(i), old, r);
         None

@@ -81,9 +81,9 @@ RISCV_TESTS_COMMIT = "793a5ff2d99a6d9fbd91e84c34b9a0437e313b88"
 RISCV_TEST_ENV_REPO = "https://github.com/riscv/riscv-test-env.git"
 RISCV_TEST_ENV_COMMIT = "6de71edb142be36319e380ce782c3d1830c65d68"
 
-SUITES = ("rv32ui", "rv32um", "rv32mi")
-# --linux-ext: also the A extension's tests; Zacas (amocas_*) isn't part of A
-SUITES_LINUX_EXT = (*SUITES, "rv32ua")
+# rv32ua without Zacas (amocas_*), which isn't part of A
+SUITES = ("rv32ui", "rv32um", "rv32ua", "rv32mi")
+SUITES_LINUX_EXT = SUITES
 NOT_A = ("amocas_w", "amocas_d")
 # Every rv32ui test finishes in well under 100k cycles; the cap only bounds hangs.
 # The ACT4 tests are longer (a branch test checks 400+ cases); main() sets their cap.
@@ -209,7 +209,7 @@ def build_hex(src, name):
     hexf = os.path.join(out, f"{name}.hex")
     cmd = [
         GCC_BIN,
-        "-march=rv32ima_zicsr_zifencei" if LINUX_EXT else "-march=rv32im_zicsr_zifencei",
+        "-march=rv32ima_zicsr_zifencei",
         "-mabi=ilp32",
         "-static",
         "-mcmodel=medany",
@@ -264,7 +264,7 @@ def build_act4_selftest():
     config = os.path.join(ACT4_HARNESS_DIR, "vux9k")
     elf = os.path.join(BUILD_DIR, "act4", "selftest_fail.elf")
     os.makedirs(os.path.dirname(elf), exist_ok=True)
-    cmd = [GCC_BIN, "-march=rv32im_zicsr_zifencei", "-mabi=ilp32", "-static", "-nostdlib", "-nostartfiles"]
+    cmd = [GCC_BIN, "-march=rv32ima_zicsr_zifencei", "-mabi=ilp32", "-static", "-nostdlib", "-nostartfiles"]
     cmd += ["-I", config, "-T", os.path.join(config, "link.ld"), src, "-o", elf]
     code, _, err = run_cmd(cmd)
     if code != 0:
@@ -293,7 +293,6 @@ def simulate_emu(hexf):
     with open(hexf) as f:
         image = b"".join(int(line, 16).to_bytes(4, "little") for line in f if line.strip())
     soc = vux9k_emu.Soc("isa-test")
-    soc.a_ext = LINUX_EXT
     soc.load_rom(0, image)  # the isa-test profile's flat RAM at 0
     stop, code = soc.run(MAX_CYCLES)
     if stop != "tohost":

@@ -13,8 +13,9 @@ from unit_models import rand32
 
 MASK = 0xFFFF_FFFF
 LUI, AUIPC, JAL, JALR, BRANCH, LOAD, STORE = 0x37, 0x17, 0x6F, 0x67, 0x63, 0x03, 0x23
-OP_IMM, OP, FENCE, SYSTEM = 0x13, 0x33, 0x0F, 0x73
-OPCODES = (LUI, AUIPC, JAL, JALR, BRANCH, LOAD, STORE, OP_IMM, OP, FENCE, SYSTEM)
+OP_IMM, OP, FENCE, SYSTEM, AMO = 0x13, 0x33, 0x0F, 0x73, 0x2F
+OPCODES = (LUI, AUIPC, JAL, JALR, BRANCH, LOAD, STORE, OP_IMM, OP, FENCE, SYSTEM, AMO)
+AMO_FUNCT5 = (0, 1, 2, 3, 4, 8, 12, 16, 20, 24, 28)  # 2: LR, 3: SC
 ECALL, EBREAK, MRET, WFI = 0x0000_0073, 0x0010_0073, 0x3020_0073, 0x1050_0073
 
 # README "RV32 CSRs": implemented, counters, and the ones that read as 0
@@ -43,6 +44,8 @@ def illegal(w, priv_u=0, tw=0):
         return not (f7 in (0, 1) or (f7 == 0x20 and f3 in (0, 5)))  # 1: RV32M
     if op == FENCE:
         return f3 not in (0, 1)
+    if op == AMO:
+        return f3 != 2 or w >> 27 not in AMO_FUNCT5 or (w >> 27 == 2 and (w >> 20) & 0x1F != 0)
     if op == SYSTEM:
         if f3 == 0:
             return w not in (ECALL, EBREAK, MRET, WFI) or (priv_u and (w == MRET or (w == WFI and tw)))
@@ -70,6 +73,8 @@ def model(s):
         return 1, 3, s["pc"], 0
     if op in (LOAD, STORE) and ((f3 & 3 == 1 and s["addr_low"] & 1) or (f3 & 3 == 2 and s["addr_low"])):
         return 1, 4 if op == LOAD else 6, s["mem_addr"], 0
+    if op == AMO and s["addr_low"]:
+        return 1, 4 if w >> 27 == 2 else 6, s["mem_addr"], 0
     return 0, 0, 0, int(w == MRET)
 
 
@@ -83,6 +88,10 @@ def random_instr():
         return csr << 20 | rs1 << 15 | random.randrange(8) << 12 | random.getrandbits(5) << 7 | SYSTEM
     if r < 0.3:
         return random.getrandbits(32)
+    if r < 0.4:  # an AMO, usually well-formed
+        f5 = random.choice(AMO_FUNCT5) if random.random() < 0.8 else random.getrandbits(5)
+        f3 = 2 if random.random() < 0.8 else random.randrange(8)
+        return f5 << 27 | random.getrandbits(7) << 20 | random.getrandbits(5) << 15 | f3 << 12 | 3 << 7 | AMO
     op = random.choice(OPCODES)
     f7 = random.choice((0, 1, 0x20, random.getrandbits(7)))  # 1: RV32M with OP
     return f7 << 25 | random.getrandbits(18) << 7 | op
@@ -136,6 +145,16 @@ def _rv32m(s):
     return "irq" if s["irq"] else "legal"
 
 
+def _amo(s):
+    """An executed RV32A word without an interrupt: legal or not, aligned or not, LR or the rest."""
+    w = s["instr"]
+    if not s["exec"] or s["irq"] or w & 0x7F != AMO:
+        return None
+    if illegal(w):
+        return "illegal"
+    return ("lr" if w >> 27 == 2 else "sc_amo") + ("_misaligned" if s["addr_low"] else "")
+
+
 def _user(s):
     """What U-mode changes, for an executed instruction without an interrupt."""
     w = s["instr"]
@@ -158,6 +177,7 @@ def _user(s):
     xf=_outcome,
 )
 @fcov.point("trap.csr_access", ("unlisted", "rw_read", "rw_write", "ro_read", "ro_write"), xf=_csr_access)
+@fcov.point("trap.amo", ("illegal", "lr", "sc_amo", "lr_misaligned", "sc_amo_misaligned"), xf=_amo)
 @fcov.point("trap.user", ("wfi_tw", "wfi", "mret", "listed_csr"), xf=_user)
 @fcov.point("trap.rv32m", ("legal", "irq"), xf=_rv32m)
 def sample(s):
@@ -213,6 +233,19 @@ async def test_system_near_misses(dut):
     for w in (ECALL, EBREAK, MRET, WFI):
         for bit in range(32):
             await check(dut, s | {"instr": w ^ 1 << bit})
+    fcov.export()
+
+
+@cocotb.test()
+async def test_amo_decode(dut):
+    """Every funct5 with each funct3, LR with rs2 or not, each address offset"""
+    s = random_state() | {"exec": True, "irq": False, "priv_u": 0, "imm": 0}
+    for f5 in range(32):
+        for f3 in range(8):
+            for rs2 in (0, 7):
+                for low in range(4):
+                    w = f5 << 27 | rs2 << 20 | 9 << 15 | f3 << 12 | 3 << 7 | AMO
+                    await check(dut, s | {"instr": w, "addr_low": low})
     fcov.export()
 
 

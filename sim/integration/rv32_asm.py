@@ -215,6 +215,10 @@ class Asm:
     def mret(self):
         self._emit(0x30200073)
 
+    def amo(self, funct5, rd, rs2, rs1):
+        """An RV32A instruction (aq = rl = 0): rs1 holds the address."""
+        self._emit(r_type(funct5 << 2, rs2, rs1, 2, rd, 0x2F))
+
     def wfi(self):
         self._emit(0x10500073)
 

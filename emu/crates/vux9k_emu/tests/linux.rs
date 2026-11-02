@@ -113,10 +113,10 @@ fn amo_cycles_and_caches_are_a_load_and_a_store() {
     let add = amo(0x00, 0, 0, 1, 3);
     assert_eq!(
         exec(&mut soc, add).cycles,
-        6 + fill,
+        5 + fill,
         "cold: a load miss, then the store hits the line"
     );
-    assert_eq!(exec(&mut soc, add).cycles, 6, "the line stays: hits");
+    assert_eq!(exec(&mut soc, add).cycles, 5, "the line stays: hits");
     assert_eq!(exec(&mut soc, amo(LR, 0, 0, 1, 3)).cycles, 3, "LR hits");
     assert_eq!(exec(&mut soc, amo(SC, 0, 0, 1, 3)).cycles, 3, "SC hits");
     let st = soc.caches.stats;
@@ -125,13 +125,13 @@ fn amo_cycles_and_caches_are_a_load_and_a_store() {
     // Another tag on the line (2 KB up): the AMO's load evicts the dirty line. An SC whose
     // line went since its LR misses on its store: here the AMO dirtied the line in between
     soc.regs[1] = A + 0x800;
-    assert_eq!(exec(&mut soc, add).cycles, 6 + dirty, "a dirty victim");
+    assert_eq!(exec(&mut soc, add).cycles, 5 + dirty, "a dirty victim");
     soc.regs[1] = A;
     assert_eq!(exec(&mut soc, amo(LR, 0, 0, 1, 3)).cycles, 3 + dirty);
     soc.regs[1] = A + 0x800;
     assert_eq!(
         exec(&mut soc, add).cycles,
-        6 + fill,
+        5 + fill,
         "the LR's line was clean"
     );
     soc.regs[1] = A;
@@ -139,12 +139,12 @@ fn amo_cycles_and_caches_are_a_load_and_a_store() {
     assert_eq!(soc.caches.stats.writebacks, 3);
     assert_eq!(
         exec(&mut soc, amo(SC, 0, 0, 1, 3)).cycles,
-        3,
-        "a failing SC stores nothing"
+        2,
+        "a failing SC ends in EXECUTE"
     );
     // Outside the window: no waits
     soc.regs[1] = 0x0000_0040;
-    assert_eq!(exec(&mut soc, add).cycles, 6);
+    assert_eq!(exec(&mut soc, add).cycles, 5);
     // A store into the window evicts the instruction-cache line at its index, as SW does
     let mut soc = new_soc(Profile::Linux);
     soc.load_xmem(0x8000_0000, &addi(0, 0, 0).to_le_bytes())
@@ -228,14 +228,14 @@ fn misaligned_atomics_trap() {
 
 #[test]
 fn atomics_are_illegal_without_a_ext() {
-    // Real: opcode 0x2F is illegal (mtval = the word)
+    // Without A: opcode 0x2F is illegal (mtval = the word)
     for word in [
         amo(LR, 0, 0, 1, 3),
         amo(SC, 0, 2, 1, 3),
         amo(0x00, 0, 2, 1, 3),
     ] {
         let mut soc = new_soc(Profile::Real);
-        assert!(!soc.a_ext);
+        soc.a_ext = false;
         soc.regs[1] = A;
         let r = exec(&mut soc, word);
         assert_eq!((r.trap, soc.csr.mtval), (Some(2), word));
@@ -252,13 +252,11 @@ fn atomics_are_illegal_without_a_ext() {
         let r = exec(&mut soc, word);
         assert_eq!(r.trap, Some(2), "{word:#010x}");
     }
-    // The switch alone decides: a_ext on Real makes them legal, off on Linux illegal
+    // The switch alone decides, and it stays across a reset
     let mut soc = new_soc(Profile::Real);
-    soc.a_ext = true;
     soc.regs[1] = A;
     assert_eq!(exec(&mut soc, amo(0x00, 0, 0, 1, 3)).trap, None);
     soc.reset();
-    assert!(soc.a_ext, "kept across reset");
     let mut soc = new_soc(Profile::Linux);
     soc.a_ext = false;
     assert_eq!(exec(&mut soc, amo(0x00, 0, 0, 1, 3)).trap, Some(2));
@@ -273,13 +271,13 @@ fn misa_and_mstatus_per_profile() {
         soc.regs[5]
     };
     let mut real = new_soc(Profile::Real);
-    assert_eq!(read(&mut real, 0x301), 0x4010_1100, "Real: RV32IMU");
+    assert_eq!(read(&mut real, 0x301), 0x4010_1101, "Real: RV32IMAU");
     assert_eq!(read(&mut real, 0x300), 0x1800, "MPP is M after reset");
     real.regs[6] = 0x0022_1888; // TW, MPRV, MPP = M, MPIE, MIE (bits 12:11 and above kept)
     exec(&mut real, csr(1, 0, 0x300, 6));
     assert_eq!(read(&mut real, 0x300), 0x0022_1888);
     let mut isa = new_soc(Profile::IsaTest);
-    assert_eq!(read(&mut isa, 0x301), 0x4010_1100);
+    assert_eq!(read(&mut isa, 0x301), 0x4010_1101);
     let mut linux = new_soc(Profile::Linux);
     assert_eq!(read(&mut linux, 0x301), 0x4010_1101, "Linux: RV32IMAU");
     assert_eq!(read(&mut linux, 0x300), 0x1800, "MPP is M after reset");
@@ -619,7 +617,7 @@ fn linux_profile_switches() {
     assert!(soc.a_ext && soc.u_mode && soc.m_ext);
     for p in [Profile::Real, Profile::IsaTest] {
         let soc = Soc::new(p);
-        assert!(!soc.a_ext && soc.u_mode, "{p:?}");
+        assert!(soc.a_ext && soc.u_mode, "{p:?}");
     }
     assert_eq!(Profile::Linux.rom_bytes(), Profile::Real.rom_bytes());
     assert_eq!(Profile::Linux.xmem_bytes(), Profile::Real.xmem_bytes());

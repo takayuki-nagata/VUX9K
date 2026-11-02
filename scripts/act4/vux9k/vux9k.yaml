@@ -10,11 +10,14 @@ $schema: config_schema.json#
 kind: architecture configuration
 type: fully configured
 name: vux9k
-description: VUX9K unified_cpu, RV32IM with M and U modes
+description: VUX9K unified_cpu, RV32IMA with M and U modes
 implemented_extensions:
   - { name: I, version: "= 2.1" }
   - { name: M, version: "= 2.0" }
   - { name: Zmmul, version: "= 1.0" } # required by M
+  - { name: A, version: "= 2.1" }
+  - { name: Zaamo, version: "= 1.0" } # required by A
+  - { name: Zalrsc, version: "= 1.0" } # required by A
   - { name: Zicsr, version: "= 2.0" }
   - { name: Zicntr, version: "= 2.0" }
   - { name: Zifencei, version: "= 2.0" }
@@ -28,10 +31,11 @@ params:
   U_MODE_ENDIANNESS: little
   UXLEN: [32]
 
-  # misa reads RV32IMU; writes are ignored
+  # misa reads RV32IMAU; writes are ignored
   MISA_CSR_IMPLEMENTED: true
   MUTABLE_MISA_M: false
   MUTABLE_MISA_U: false
+  MUTABLE_MISA_A: false
 
   TRAP_ON_ECALL_FROM_M: true
   TRAP_ON_ECALL_FROM_U: true
@@ -52,6 +56,13 @@ params:
   REPORT_VA_IN_MTVAL_ON_INSTRUCTION_ACCESS_FAULT: true
   REPORT_ENCODING_IN_MTVAL_ON_ILLEGAL_INSTRUCTION: true
   MTVAL_WIDTH: 32
+
+  # LR/SC: one reservation, of the exact word; misaligned LR, SC and AMOs trap
+  LRSC_RESERVATION_STRATEGY: reserve exactly enough to cover the access
+  LRSC_FAIL_ON_VA_SYNONYM: false
+  LRSC_FAIL_ON_NON_EXACT_LRSC: true
+  LRSC_MISALIGNED_BEHAVIOR: always raise misaligned exception
+  MISALIGNED_AMO: false
 
   # Misaligned loads/stores trap (EXPECTED_FAILURES' rv32ui-p-ma_data)
   MISALIGNED_LDST: false
