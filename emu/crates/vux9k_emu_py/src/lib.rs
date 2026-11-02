@@ -350,31 +350,7 @@ impl Soc {
         self.inner.m_ext = on;
     }
 
-    /// The CPU has the A extension (LR.W/SC.W/AMO*.W, misa.A): True on "linux", else False
-    /// (emulator only, ahead of the RTL). Kept across reset().
-    #[getter]
-    fn a_ext(&self) -> bool {
-        self.inner.a_ext
-    }
-
-    #[setter]
-    fn set_a_ext(&mut self, on: bool) {
-        self.inner.a_ext = on;
-    }
-
-    /// The CPU has U-mode (misa.U, mstatus.MPP {U, M}, mcounteren = 0): True on "linux",
-    /// else False (emulator only, ahead of the RTL). Kept across reset().
-    #[getter]
-    fn u_mode(&self) -> bool {
-        self.inner.u_mode
-    }
-
-    #[setter]
-    fn set_u_mode(&mut self, on: bool) {
-        self.inner.u_mode = on;
-    }
-
-    /// The hart runs in U-mode now (only ever with `u_mode`).
+    /// The hart runs in U-mode now.
     #[getter]
     fn user(&self) -> bool {
         self.inner.csr.user
@@ -410,7 +386,7 @@ impl Soc {
             .map_or_else(Vec::new, |c| c.iter().copied().collect())
     }
 
-    /// mstatus as a CSR read returns it (MPP reads as M without `u_mode`).
+    /// mstatus as a CSR read returns it.
     #[getter]
     fn mstatus(&self) -> u32 {
         self.inner.csr.read(emu_core::csr::MSTATUS, 0, 0)

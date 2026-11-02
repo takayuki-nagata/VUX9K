@@ -4,7 +4,7 @@
 //! Machine-mode CSRs, as soc/cpu/rv32i_csrs.veryl implements them, and the CSR
 //! legality rule of soc/cpu/rv32i_trap_unit.veryl (`csr_exists`, `csr_ro_wr`).
 //!
-//! U-mode (`Soc::u_mode`) adds the current privilege
+//! U-mode adds the current privilege
 //! (`Csrs::user`) and a stored mstatus.MPP (`Csrs::mpp_u`); without it both stay false, so
 //! MPP reads as M and everything is as in the RTL.
 
@@ -12,10 +12,10 @@ pub const MSTATUS: u16 = 0x300;
 pub const MISA: u16 = 0x301;
 pub const MIE: u16 = 0x304;
 pub const MTVEC: u16 = 0x305;
-/// menvcfg and menvcfgh: with `Soc::u_mode`, which requires them; no field applies, they read 0.
+/// menvcfg and menvcfgh, which U-mode requires; no field applies, they read 0.
 pub const MENVCFG: u16 = 0x30A;
 pub const MENVCFGH: u16 = 0x31A;
-/// mcounteren: with `Soc::u_mode`, hardwired to 0.
+/// mcounteren, hardwired to 0.
 pub const MCOUNTEREN: u16 = 0x306;
 pub const MSTATUSH: u16 = 0x310;
 pub const MSCRATCH: u16 = 0x340;
@@ -34,20 +34,16 @@ pub const CYCLEH: u16 = 0xC80;
 pub const TIMEH: u16 = 0xC81;
 pub const INSTRETH: u16 = 0xC82;
 
-pub const MISA_VALUE: u32 = 0x4000_1100; // RV32, I, M
+pub const MISA_VALUE: u32 = 0x4010_1101; // RV32, I, M, A, U
 /// misa's M bit (clear on a CPU without RV32M, `Soc::m_ext`).
 pub const MISA_M: u32 = 1 << 12;
-/// misa's A bit (set with `Soc::a_ext`).
-pub const MISA_A: u32 = 1 << 0;
-/// misa's U bit (set with `Soc::u_mode`).
-pub const MISA_U: u32 = 1 << 20;
 pub const MSTATUS_MIE: u32 = 1 << 3;
 pub const MSTATUS_MPIE: u32 = 1 << 7;
-/// mstatus.MPRV: kept, without an effect (no PMP, no MMU). U-mode only.
+/// mstatus.MPRV: kept, without an effect (no PMP, no MMU).
 pub const MSTATUS_MPRV: u32 = 1 << 17;
-/// mstatus.TW: WFI in U-mode is illegal. U-mode only.
+/// mstatus.TW: WFI in U-mode is illegal.
 pub const MSTATUS_TW: u32 = 1 << 21;
-const MSTATUS_MPP_M: u32 = 0x1800; // reads as M unless `mpp_u` (U-mode only)
+const MSTATUS_MPP_M: u32 = 0x1800; // reads as M unless `mpp_u`
 const MSTATUS_MPP_SHIFT: u32 = 11;
 pub const MIP_MSIP: u32 = 1 << 3;
 pub const MIP_MTIP: u32 = 1 << 7;
@@ -59,7 +55,10 @@ pub fn exists(addr: u16) -> bool {
     let hpm = matches!(addr & 0x1F, 3..=0x1F) && matches!(addr >> 5, 0x19 | 0x58 | 0x5C);
     hpm || matches!(
         addr,
-        0x300
+        MCOUNTEREN
+            | MENVCFG
+            | MENVCFGH
+            | 0x300
             | 0x301
             | 0x304
             | 0x305
@@ -110,10 +109,9 @@ pub struct Csrs {
     pub mtval: u32,
     pub mcycle: u64,
     pub minstret: u64,
-    /// The hart runs in U-mode (false: M). Only `Soc::u_mode` gets it set (by an MRET with
-    /// MPP = U).
+    /// The hart runs in U-mode (false: M). Set by an MRET with MPP = U.
     pub user: bool,
-    /// mstatus.MPP is U (false: M). Only set with `Soc::u_mode`.
+    /// mstatus.MPP is U (false: M).
     pub mpp_u: bool,
 }
 
@@ -159,7 +157,7 @@ impl Csrs {
         }
     }
 
-    /// mstatus.MPRV, TW and MPP from a value written to mstatus, with U-mode (`Soc::u_mode`).
+    /// mstatus.MPRV, TW and MPP from a value written to mstatus.
     /// MPP is WARL
     /// {U, M}; 3 selects M, anything else U (as Spike legalizes S and the reserved 2 on a
     /// hart without S-mode).
@@ -181,19 +179,17 @@ impl Csrs {
         self.user = false;
     }
 
-    /// MRET: MIE <= MPIE, MPIE <= 1; with U-mode (`u_mode`) also the privilege <= MPP and
+    /// MRET: MIE <= MPIE, MPIE <= 1; also the privilege <= MPP and
     /// MPP <= U (the least privileged mode), and MPRV clears when it leaves M.
-    pub fn mret(&mut self, u_mode: bool) {
+    pub fn mret(&mut self) {
         let mpie = self.mstatus & MSTATUS_MPIE != 0;
         self.mstatus &= MSTATUS_MPRV | MSTATUS_TW;
         self.mstatus |= MSTATUS_MPIE | if mpie { MSTATUS_MIE } else { 0 };
-        if u_mode {
-            if self.mpp_u {
-                self.mstatus &= !MSTATUS_MPRV;
-            }
-            self.user = self.mpp_u;
-            self.mpp_u = true;
+        if self.mpp_u {
+            self.mstatus &= !MSTATUS_MPRV;
         }
+        self.user = self.mpp_u;
+        self.mpp_u = true;
     }
 
     /// Whether M-level interrupts are globally enabled: mstatus.MIE in M-mode, always in

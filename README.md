@@ -348,10 +348,9 @@ Interactive modes run at the SoC's 18 MHz, so the firmware's timeouts behave as 
 hardware; `--trace FILE` logs every instruction. Profiles: `real` (default: the 16 KB
 boot ROM and the 8 MB PSRAM, as the board), `isa-test` (the riscv-tests
 harness' flat 256 KB RAM, `make test-isa-emu`) and `linux` (emulator only, ahead of the
-RTL: `real` plus the A extension, U-mode, a CLINT block at `0x2000_0000` and a liteuart
+RTL: `real` plus a CLINT block at `0x2000_0000` and a liteuart
 register view of the UART, for a noMMU kernel: `--linux Image --dtb DTB`, the device tree
-from `linux_workspace/dts/vux9k-linux-emu.dts`; `make test-isa-emu-linux` runs riscv-tests
-with A and U-mode). Python tests drive the emulator through
+from `linux_workspace/dts/vux9k-linux-emu.dts`). Python tests drive the emulator through
 the `vux9k_emu` module (`make emu-py`; helpers in `sim/emu/vux9k.py`).
 
 `make emu-bench` (`scripts/emu_bench.py`) measures how fast that runs (millions of

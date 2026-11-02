@@ -187,13 +187,6 @@ pub struct Soc {
     /// The CPU has RV32M (true, the default). false models the CPU before it (the v0.3.x
     /// bitstreams): misa without M, and the M instructions illegal. Kept across resets.
     pub m_ext: bool,
-    /// The CPU has the A extension (LR.W/SC.W/AMO*.W; misa.A), as the RTL. On in every
-    /// profile; kept across resets.
-    pub a_ext: bool,
-    /// The CPU has U-mode (mret to MPP = U, ecall from U, M-level CSRs and MRET illegal in
-    /// U, mcounteren hardwired to 0; misa.U), as the RTL. On in every profile; kept across
-    /// resets.
-    pub u_mode: bool,
     /// The A extension's reservation: the address of the last LR.W, until an SC.W or a trap.
     reservation: Option<u32>,
     /// Instructions executed (retired or trapped), for statistics.
@@ -291,10 +284,6 @@ const AMO_MAXU: u32 = 0x1C;
 struct Legal {
     /// RV32M
     m_ext: bool,
-    /// The A extension
-    a_ext: bool,
-    /// U-mode exists (Linux profile): mcounteren is a CSR
-    u_mode: bool,
     /// The hart is in U-mode now
     user: bool,
     /// mstatus.TW
@@ -334,7 +323,7 @@ fn rv_illegal(i: u32, x: Legal) -> bool {
                     | AMO_MINU
                     | AMO_MAXU
             );
-            !x.a_ext || f3 != 2 || !known || (f5 == AMO_LR && rs2(i) != 0)
+            f3 != 2 || !known || (f5 == AMO_LR && rs2(i) != 0)
         }
         OP_FENCE => f3 >> 1 != 0,
         OP_SYSTEM => {
@@ -345,8 +334,7 @@ fn rv_illegal(i: u32, x: Legal) -> bool {
             } else {
                 let addr = (i >> 20) as u16;
                 let writes = f3 & 3 == 1 || rs1(i) != 0;
-                let exists = csr::exists(addr)
-                    || (x.u_mode && matches!(addr, csr::MCOUNTEREN | csr::MENVCFG | csr::MENVCFGH));
+                let exists = csr::exists(addr);
                 // In U: the M-level CSRs, and the user counters, which mcounteren (0) denies
                 let denied =
                     x.user && ((addr >> 8) & 3 == 3 || matches!(addr & 0xF7F, 0xC00..=0xC02));
@@ -387,8 +375,6 @@ impl Soc {
             periph: Periph::default(),
             riscv_mode: true,
             m_ext: true,
-            a_ext: true,  // as the RTL
-            u_mode: true, // as the RTL
             reservation: None,
             steps: 0,
             rom: vec![0; rom_words],
@@ -908,8 +894,6 @@ impl Soc {
         }
         let legal = Legal {
             m_ext: self.m_ext,
-            a_ext: self.a_ext,
-            u_mode: self.u_mode,
             tw: self.csr.mstatus & csr::MSTATUS_TW != 0,
             user: self.csr.user,
         };
@@ -1040,13 +1024,13 @@ impl Soc {
             OP_SYSTEM => {
                 if f3 == 0 {
                     match i {
-                        // ECALL: from M 11, from U (`u_mode`) 8
+                        // ECALL: from M 11, from U 8
                         0x0000_0073 => {
                             return self.take_trap(if self.csr.user { 8 } else { 11 }, 0, r)
                         }
                         0x0010_0073 => return self.take_trap(3, pc, r), // EBREAK
                         0x3020_0073 => {
-                            self.csr.mret(self.u_mode);
+                            self.csr.mret();
                             next = self.csr.mepc;
                         }
                         _ => {} // WFI: no-op
@@ -1072,16 +1056,8 @@ impl Soc {
         let mut at_execute = self.csr.clone();
         at_execute.mcycle = at_execute.mcycle.wrapping_add(1);
         let mut old = at_execute.read(addr, self.mip(), self.mtime().wrapping_add(1));
-        if addr == csr::MISA {
-            if !self.m_ext {
-                old &= !csr::MISA_M;
-            }
-            if self.a_ext {
-                old |= csr::MISA_A;
-            }
-            if self.u_mode {
-                old |= csr::MISA_U;
-            }
+        if addr == csr::MISA && !self.m_ext {
+            old &= !csr::MISA_M;
         }
         let src = if f3 & 4 != 0 {
             rs1(i) as u32
@@ -1106,7 +1082,7 @@ impl Soc {
                     self.csr.write(addr, value);
                     counts = false;
                 }
-                csr::MSTATUS if self.u_mode => {
+                csr::MSTATUS => {
                     self.csr.write(addr, value);
                     self.csr.write_mpp(value);
                 }
@@ -1117,7 +1093,7 @@ impl Soc {
         counts
     }
 
-    /// An A-extension instruction (`a_ext`; rs1 is the address): LR.W, SC.W or an AMO*.W.
+    /// An A-extension instruction (rs1 is the address): LR.W, SC.W or an AMO*.W.
     /// Returns the cause of the trap a misaligned address takes instead (LR: 4, SC/AMO: 6;
     /// mtval is the address). The memory goes through the data path of LW/SW (the ROM, the
     /// window with its caches, MMIO, the IsaTest RAM), so its waits and the caches' state

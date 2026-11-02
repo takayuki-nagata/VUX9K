@@ -23,11 +23,6 @@ profile: the same flat 256 KB RAM and tohost), through its Python module
 (build/emu/python, `make emu-py`; VUX9K_EMU_PY_DIR overrides it). The verdicts and
 EXPECTED_FAILURES must match.
 
-`--linux-ext` (emulator only) runs them with the Linux profile's A extension
-switched on in the isa-test profile (`Soc.a_ext`; ahead of the RTL, which
-runs none of this), built for rv32ima, plus rv32ua (without amocas_*: Zacas isn't part of
-A). The hex files go to build/riscv_tests/linux-ext/.
-
 Before the suite runs, a deliberately failing test (scripts/riscv_tests/selftest_fail.S)
 must be reported as FAIL with TESTNUM=2, otherwise the harness itself is broken and the
 run aborts.
@@ -83,7 +78,6 @@ RISCV_TEST_ENV_COMMIT = "6de71edb142be36319e380ce782c3d1830c65d68"
 
 # rv32ua without Zacas (amocas_*), which isn't part of A
 SUITES = ("rv32ui", "rv32um", "rv32ua", "rv32mi")
-SUITES_LINUX_EXT = SUITES
 NOT_A = ("amocas_w", "amocas_d")
 # Every rv32ui test finishes in well under 100k cycles; the cap only bounds hangs.
 # The ACT4 tests are longer (a branch test checks 400+ cases); main() sets their cap.
@@ -202,7 +196,7 @@ def list_tests(suite):
 
 
 def build_hex(src, name):
-    out = os.path.join(BUILD_DIR, "linux-ext") if LINUX_EXT else BUILD_DIR
+    out = BUILD_DIR
     os.makedirs(out, exist_ok=True)
     elf = os.path.join(out, f"{name}.elf")
     binf = os.path.join(out, f"{name}.bin")
@@ -277,7 +271,6 @@ BACKEND = "rtl"
 GLS = False
 SUITE = "riscv-tests"
 WAITS = False
-LINUX_EXT = False
 
 
 def simulate(hexf, backend, gls):
@@ -431,7 +424,7 @@ def data_waits(results):
 
 
 def run_suite(only=None, jobs=1):
-    suites = SUITES_LINUX_EXT if LINUX_EXT else SUITES
+    suites = SUITES
     tests = [(s, t) for s in suites for t in list_tests(s) if not only or f"{s}-p-{t}" in only]
     results = run_parallel(run_one, tests, jobs)
     all_names = None if only else {f"{s}-p-{t}" for s in suites for t in list_tests(s)}
@@ -456,16 +449,12 @@ def main():
     parser.add_argument("-j", "--jobs", type=int, default=os.cpu_count(), help="parallel tests (default: CPUs)")
     parser.add_argument("--suite", choices=("riscv-tests", "act4"), default="riscv-tests")
     parser.add_argument("--waits", action="store_true", help="pseudo-random wait cycles on the CPU's buses")
-    parser.add_argument("--linux-ext", action="store_true", help="emulator only: with A and U-mode, plus rv32ua")
     args = parser.parse_args()
-    global BACKEND, GLS, SUITE, MAX_CYCLES, WAITS, LINUX_EXT
+    global BACKEND, GLS, SUITE, MAX_CYCLES, WAITS
     BACKEND = args.backend
     GLS = args.gls
     SUITE = args.suite
     WAITS = args.waits
-    LINUX_EXT = args.linux_ext
-    if LINUX_EXT and (BACKEND != "emu" or SUITE != "riscv-tests"):
-        parser.error("--linux-ext needs --backend emu and the riscv-tests suite")
     if SUITE == "act4":
         MAX_CYCLES = MAX_CYCLES_ACT4
     if WAITS:

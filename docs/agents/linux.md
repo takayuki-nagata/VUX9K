@@ -29,8 +29,7 @@ emulator's Linux profile. Index and the rules that apply everywhere: [`AGENTS.md
 - `make test-linux-emu` (`sim/emu/test_linux.py`) boots it on the emulator's Linux profile to
   busybox's shell and runs a few commands. It runs only with `VUX9K_LINUX_TEST=1`, which that
   target sets, so `test-emu` (`pytest sim/emu`, CI) skips it even where an Image exists. None of
-  these targets is in CI; `make test-isa-emu-linux` (the profile's A and U-mode on riscv-tests,
-  seconds) is, in `test-sim`. The first buildroot run takes ~40 min on a 2-vCPU
+  these targets is in CI. The first buildroot run takes ~40 min on a 2-vCPU
   machine, a kernel rebuild ~6 min.
 - **The profile is ahead of the RTL.** It has a CLINT block at
   `0x2000_0000` and a liteuart register view of the UART, and the RTL has neither. The

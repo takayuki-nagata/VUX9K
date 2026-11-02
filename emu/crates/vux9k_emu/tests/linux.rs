@@ -227,39 +227,19 @@ fn misaligned_atomics_trap() {
 }
 
 #[test]
-fn atomics_are_illegal_without_a_ext() {
-    // Without A: opcode 0x2F is illegal (mtval = the word)
-    for word in [
-        amo(LR, 0, 0, 1, 3),
-        amo(SC, 0, 2, 1, 3),
-        amo(0x00, 0, 2, 1, 3),
-    ] {
-        let mut soc = new_soc(Profile::Real);
-        soc.a_ext = false;
-        soc.regs[1] = A;
-        let r = exec(&mut soc, word);
-        assert_eq!((r.trap, soc.csr.mtval), (Some(2), word));
-    }
-    // Linux: LR with rs2 != 0, other widths (funct3 3 = .D) and unknown funct5 are illegal
+fn malformed_atomics_are_illegal() {
+    // LR with rs2 != 0, other widths (funct3 3 = .D) and unknown funct5 are illegal
     for word in [
         amo(LR, 0, 1, 1, 3),
         amo(0x00, 0, 2, 1, 3) & !(7 << 12) | (3 << 12),
         amo(0x05, 0, 2, 1, 3),
         amo(0x1F, 0, 2, 1, 3),
     ] {
-        let mut soc = new_soc(Profile::Linux);
+        let mut soc = new_soc(Profile::Real);
         soc.regs[1] = A;
         let r = exec(&mut soc, word);
         assert_eq!(r.trap, Some(2), "{word:#010x}");
     }
-    // The switch alone decides, and it stays across a reset
-    let mut soc = new_soc(Profile::Real);
-    soc.regs[1] = A;
-    assert_eq!(exec(&mut soc, amo(0x00, 0, 0, 1, 3)).trap, None);
-    soc.reset();
-    let mut soc = new_soc(Profile::Linux);
-    soc.a_ext = false;
-    assert_eq!(exec(&mut soc, amo(0x00, 0, 0, 1, 3)).trap, Some(2));
 }
 
 // ----- misa, mstatus ------------------------------------------------------------------
@@ -613,12 +593,7 @@ fn load_linux_sets_up_memory_and_registers() {
 
 #[test]
 fn linux_profile_switches() {
-    let soc = Soc::new(Profile::Linux);
-    assert!(soc.a_ext && soc.u_mode && soc.m_ext);
-    for p in [Profile::Real, Profile::IsaTest] {
-        let soc = Soc::new(p);
-        assert!(soc.a_ext && soc.u_mode, "{p:?}");
-    }
+    assert!(Soc::new(Profile::Linux).m_ext);
     assert_eq!(Profile::Linux.rom_bytes(), Profile::Real.rom_bytes());
     assert_eq!(Profile::Linux.xmem_bytes(), Profile::Real.xmem_bytes());
 }
