@@ -425,6 +425,36 @@ async def test_rv32i_csrs_read_map(dut):
         assert got == want, f"CSR 0x{addr:03x} read 0x{got:08x}, expected 0x{want:08x}"
 
 
+@cocotb.test()
+async def test_rv32i_csrs_soft_reset(dut):
+    """soft_rst (the Hack mode's entry) returns every CSR to its reset value from any state,
+    the privilege to M and MPP to M too"""
+    dut.retire.value = 1
+    dut.mtime_in.value = 0
+    await csr_reset(dut)
+    for addr in CsrModel.WRITE_MASK:
+        await csr_write(dut, addr, 0xFFFF_FFFF)
+    await csr_write(dut, CSR_MSTATUS, 0x0022_0088)  # MPP = U, MPRV, TW, MIE, MPIE
+    dut.trap_return.value = 1  # into U, which leaves MPP = U
+    await ClockCycles(dut.clk, 1)
+    dut.trap_return.value = 0
+    await Timer(1, unit="ns")
+    assert int(dut.priv_u.value) == 1
+
+    dut.soft_rst.value = 1
+    await ClockCycles(dut.clk, 1)
+    dut.soft_rst.value = 0
+    dut.retire.value = 0
+    await Timer(1, unit="ns")
+    assert int(dut.priv_u.value) == 0, "soft reset returns to M"
+    model = CsrModel(0, 0)
+    for addr in (0xB00, 0xB80, 0xB02, 0xB82, *CsrModel.WRITE_MASK):  # the counters within the cycle
+        dut.csr_addr.value = addr
+        await Timer(1, unit="ns")
+        want = model.read(addr, (0, 0, 0), 0)
+        assert int(dut.csr_rdata.value) == want, f"CSR 0x{addr:03x} after soft reset"
+
+
 _WRITABLE = (CSR_MSTATUS, CSR_MIE, CSR_MTVEC, CSR_MSCRATCH, CSR_MEPC, CSR_MCAUSE, CSR_MTVAL, 0xB00, 0xB80, 0xB02, 0xB82)
 
 

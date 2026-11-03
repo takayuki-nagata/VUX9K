@@ -146,6 +146,12 @@ ACCEPTED: dict[str, dict[str, str]] = {
         " shift register holds; CNT (434 here, 156 in the SoC) is even, so it is back to the right value on"
         " every rdy; data differs only without rdy",
     },
+    "rv32i_trap_unit": {
+        "const0 A[2] @ rv32i_trap_unit.sv:35.55-35.77": "equivalent: is_ebreak also matches 0x0010_0077,"
+        " whose opcode 0x77 is illegal (the opcode case's default), and illegal wins over EBREAK; the"
+        " comparison's other uses are under SYSTEM, where bit 2 is 0. Combinational, but not proven by the"
+        " equiv pass",
+    },
     "rv32m_muldiv": {
         # The step counter (31 down to 0) with bit 4 read inverted while bit 3 is 0: the values
         # read are a permutation of 31..0 that still ends at 0, so every operation takes 32
@@ -154,22 +160,14 @@ ACCEPTED: dict[str, dict[str, str]] = {
         " still 32 steps, count reads 0 only on the last; dprove times out",
     },
     "unified_cpu": {
-        # Re-keyed: MULDIV_WAIT (B6) moved MEM_WAIT's code 33 lines down (same cells)
-        "const0 B[23] @ unified_cpu.sv:638.25-646.28 unified_cpu.sv:638.29-638.41": "clears bit 23 of"
-        " r_mem_data in RV32 mode's MEM_WAIT. Only a Hack instruction with M as operand reads it, in"
-        " HACK_WB, after its own MEM_WAIT has reloaded it from data_in; the ISA mode changes only through a"
-        " reset, which zeroes it. Equivalent from reset, beyond dprove's reach on the whole CPU",
-        "const0 A[30] @ unified_cpu.sv:635.21-647.24 unified_cpu.sv:635.25-635.35": "clears bit 30 of"
-        " r_mem_data while a MEM_WAIT waits (data_ready low). In RV32 mode the register is always 0 (reset"
-        " zeroes it, only a Hack MEM_WAIT loads it); in Hack mode it holds the previous M read's value then,"
-        " and the MEM_WAIT's last cycle reloads it from data_in before HACK_WB reads it. Meanwhile it"
-        " reaches only data_out without mem_write and the pc_out of a waiting MEM_WAIT, an instruction read"
-        " no FETCH uses (HACK_WB comes next). Differs only outside the interface's contract",
-        "const0 B[1] @ unified_cpu.sv:587.30-630.24 unified_cpu.sv:587.34-587.60": "clears bit 1 of"
+        # Re-keyed: AMO_CALC and the SC branch (L1) moved EXECUTE's chain 55 lines down, and U-mode
+        # the CSRs' reset branch 8 (same cells). L1 also dropped two r_mem_data entries: an AMO
+        # loads that register in RV32 mode now, so their reasons no longer held
+        "const0 B[1] @ unified_cpu.sv:642.30-696.24 unified_cpu.sv:642.34-642.60": "clears bit 1 of"
         " r_load_byte_sel as EXECUTE goes to MULDIV_WAIT. It is read only through the LSU's load_val, which"
-        " only a load's MEM_WAIT writes back, and every load sets it in its EXECUTE first. Equivalent from"
-        " reset, beyond dprove's reach on the whole CPU",
-        "cnot1 A[27] ctrl 1 @ rv32i_csrs.sv:124.18-175.12 rv32i_csrs.sv:124.22-124.30": "flips bit 27 of"
+        " only a load's MEM_WAIT writes back, and every load (LR and the AMOs too) sets it in its EXECUTE"
+        " first. Equivalent from reset, beyond dprove's reach on the whole CPU",
+        "cnot1 A[27] ctrl 1 @ rv32i_csrs.sv:132.18-195.12 rv32i_csrs.sv:132.22-132.30": "flips bit 27 of"
         " mepc's next value when its bit 1 is set, which never happens: trap entry stores the PC of an RV32"
         " instruction (4-byte aligned; traps never happen in Hack mode, where pc_reg can have bit 1 set)"
         " and CSR writes mask mepc with 0xFFFF_FFFC. Equivalent from reset,"

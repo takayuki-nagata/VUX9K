@@ -83,8 +83,11 @@ one `ACCEPTED` as equivalent; after the waiting Hack M write, 3: 2 closed by tes
   256 KB window: what the upper address and PC bits do is the unit tests' job
   (`test_unified_cpu.py`, `test_unified_cpu_traps.py`, `test_hack_cpu_ops.py`).
 - `--replay <id>` reruns a module's tests on one mutant of the last run (`--node` picks
-  the pytest node), keeping `mutated.v` and the output in `replay/<id>/`; `--summarize`
-  rewrites the summaries after editing `ACCEPTED`. mcy's seed is fixed, so ids repeat
+  the pytest node), keeping `mutated.v` and the output in `replay/<id>/`. Without `--node` it
+  runs the node list the run wrote into its project, so a test file added since then needs
+  `--node` (a new `test_unified_cpu_amo.py` once "survived" a replay it never ran in).
+  `--summarize` rewrites the summaries after editing `ACCEPTED`; it reads the run's results,
+  not the replays', so a mutant a new test kills stays open there until the next run. mcy's seed is fixed, so ids repeat
   as long as the RTL doesn't change; compare by `summary.md`'s description otherwise.
 
 ## Code coverage: `make coverage` (Verilator line + toggle)

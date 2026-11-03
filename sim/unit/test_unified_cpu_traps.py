@@ -200,6 +200,20 @@ async def test_unknown_csr_is_illegal(dut):
 
 
 @cocotb.test()
+async def test_hpm_neighbors_are_illegal(dut):
+    """The addresses one bit away from the read-as-zero HPM blocks (mhpmevent at 0x323-0x33F,
+    mhpmcounter at 0xB03-0xB1F) are not CSRs: 0xB20-0xB3F differs from the first in bit 11"""
+    for i, csr in enumerate((0xB20, 0xB3F, 0x303, 0xB43)):
+        word = csr_read_word(csr)
+
+        def body(a, word=word):
+            a.label("insn")
+            a.word(word)
+
+        await expect_ok(dut, trap_program(body, 2, mtval=lambda a, r, word=word: a.li(r, word)), start_clock=i == 0)
+
+
+@cocotb.test()
 async def test_listed_csrs_do_not_trap(dut):
     """The read-as-zero M-mode CSRs, the debug trigger CSRs and the counters are legal"""
 
