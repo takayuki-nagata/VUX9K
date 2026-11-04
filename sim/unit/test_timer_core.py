@@ -76,6 +76,49 @@ async def test_reset_values(dut):
 
 
 @cocotb.test(timeout_time=1, timeout_unit="ms")
+async def test_reset_mid_run(dut):
+    """A reset after every flop has left its reset value brings each back, at once (it is
+    asynchronous) and without counting while held"""
+    await setup(dut)
+    await write(dut, MSIP, 1)
+    await write(dut, MTIME_HI, 5)
+    await write(dut, MTIMECMP, 0)
+    await write(dut, MTIMECMP_HI, 0)
+    dut.addr.value = MSIP
+    await ClockCycles(dut.clk, 2, rising=False)
+    assert (int(dut.msip.value), int(dut.timer_irq.value), int(dut.data_out.value)) == (1, 1, 1)
+    dut.rst.value = 0
+    await ClockCycles(dut.clk, 3, rising=False)
+    assert (int(dut.msip.value), int(dut.timer_irq.value), int(dut.data_out.value)) == (0, 0, 0)
+    dut.rst.value = 1
+    assert await read(dut, MTIME_HI) == 0
+    assert await read(dut, MTIME) < 8, "mtime restarts from 0 at the release"
+    assert await read(dut, MTIMECMP) == ALL_ONES
+    assert await read(dut, MTIMECMP_HI) == ALL_ONES
+
+
+@cocotb.test(timeout_time=1, timeout_unit="ms")
+async def test_every_address_bit_is_decoded(dut):
+    """Each register's offset with one bit of addr[15:2] flipped, where that is no register
+    (msip and mtimecmp are bit 14 apart, the halves bit 2), reads 0, and a write there
+    changes nothing"""
+    await setup(dut)
+    await write(dut, MSIP, 1)
+    await write(dut, MTIMECMP, 0x1234_5678)
+    await write(dut, MTIMECMP_HI, 0x9ABC_DEF0)
+    for base in CLINT_REGS:
+        for bit in range(2, 16):
+            off = base ^ (1 << bit)
+            if decode(off) is not None:
+                continue
+            assert await read(dut, off) == 0, f"0x{off:04X} (0x{base:04X} with bit {bit} flipped)"
+            await write(dut, off, 0)
+    assert int(dut.msip.value) == 1
+    assert await read(dut, MTIMECMP) == 0x1234_5678
+    assert await read(dut, MTIMECMP_HI) == 0x9ABC_DEF0
+
+
+@cocotb.test(timeout_time=1, timeout_unit="ms")
 async def test_mtime_counts_every_cycle(dut):
     """mtime advances by exactly one per clock"""
     await setup(dut)
