@@ -64,7 +64,8 @@ binaries land in the single shared `firmware/target/riscv32im-unknown-none-elf/`
   `.BIN` with a new `.OLD` boots `.OLD`, both old print one `[BOOT] STAGE2.BIN: too old, needs
   v9 (install-stage2): v<n>; STAGE2.OLD: ...` line and stay at `s1> `, where `install-stage2`
   (a RAM boot, then `install`) works; a RAM boot of an old one is refused before anything is
-  stored, and `i` shows the same reason. The second stage holds its `STAGE2_VERSION` to it
+  stored, and `i` shows the same reason; the second stage's `install` refuses it too
+  (`fat::stage2::install`), before writing. The second stage holds its `STAGE2_VERSION` to it
   (a const assert), the text spells out the number (a const assert in `boot.rs`), and the
   tests' second stages are v9 or later where they expect a boot (`soc_env.v4_file`'s
   default, `lockstep_programs.stage2_card`, `s1_env.MIN_STAGE2_VERSION`); `fw_common`'s FAT

@@ -22,6 +22,7 @@ from s1_env import (  # noqa: E402
     BANNER,
     BOOT_CYCLES,
     FAT_LBA,
+    MIN_STAGE2_VERSION,
     S1_PROMPT,
     S2_BANNER,
     S2_PROMPT,
@@ -506,6 +507,10 @@ def test_install_on_a_card_without_the_directory(tool):
     assert got and "[BOOT] STAGE2.OLD (STAGE2.BIN missing, broken or too old) v17 " in out, out
     with pytest.raises(vux_tool.UploadError, match=r"\[INSTALL\] loads outside 80700000-807FFFFF"):
         vux_tool.install_stage2(ser, stage2(load_addr=0x8000_0000))
+    # Nor one the first stage wouldn't start
+    old = MIN_STAGE2_VERSION - 1
+    with pytest.raises(vux_tool.UploadError, match=rf"\[INSTALL\] too old, needs v{MIN_STAGE2_VERSION} .*: v{old}$"):
+        vux_tool.install_stage2(ser, stage2(version=old))
 
 
 def test_unchecked_install_needs_the_directory(tool):

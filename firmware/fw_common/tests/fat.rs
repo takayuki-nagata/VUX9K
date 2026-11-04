@@ -558,7 +558,7 @@ mod write {
     use fw_common::fat::stage2::{
         self, install, load_file, select_boot, BootError, Which, Window, BIN, NEW, OLD,
     };
-    use fw_common::header::{ImageError, MODE_RISCV};
+    use fw_common::header::{ImageError, MODE_HACK, MODE_RISCV};
     use std::collections::BTreeSet;
 
     const PSRAM: Window = Window {
@@ -736,7 +736,7 @@ mod write {
             let (which, first, old_payload) = boot(img.clone()).unwrap();
             assert_eq!(which, Which::Bin);
             // Over 128 clusters on mkfs_s1: the chain crosses FAT sectors
-            let new = v4_image(70_000, 1, 7);
+            let new = v4_image(70_000, 1, 17);
             let mut vol = mount(img).unwrap();
             install(&mut vol, PSRAM, &new).unwrap();
             assert_eq!(file(&mut vol, &NEW), None);
@@ -744,7 +744,7 @@ mod write {
             consistent(&img, true);
             assert_eq!(
                 boot(img.clone()).unwrap(),
-                (Which::Bin, 7, new[HEADER_LEN..].to_vec())
+                (Which::Bin, 17, new[HEADER_LEN..].to_vec())
             );
             // The previous .BIN is .OLD now
             let mut vol = mount(img).unwrap();
@@ -754,18 +754,18 @@ mod write {
             assert_eq!(old.size as usize, old_payload.len() + HEADER_LEN);
 
             // Again: the first new one becomes .OLD, the previous .OLD's clusters are freed
-            let newer = v4_image(600, 2, 8);
+            let newer = v4_image(600, 2, 18);
             install(&mut vol, PSRAM, &newer).unwrap();
             let img = vol.device().img.clone();
             consistent(&img, true);
-            assert_eq!(boot(img.clone()).unwrap().1, 8);
+            assert_eq!(boot(img.clone()).unwrap().1, 18);
             let mut vol = mount(img).unwrap();
             let old = file(&mut vol, &OLD).unwrap();
             assert_eq!(
                 load_file(&mut vol, &old, PSRAM, &mut |_, _| ())
                     .unwrap()
                     .version,
-                7
+                17
             );
         }
     }
@@ -967,18 +967,24 @@ mod write {
 
     #[test]
     fn install_checks_the_image_before_writing() {
-        let good = v4_image(100, 4, 1);
+        let good = v4_image(100, 4, 11);
         let mut short = good.clone();
         short.pop();
         let mut bad_crc = good.clone();
         bad_crc[HEADER_LEN] ^= 1;
         let mut low = good.clone();
         low[16..20].copy_from_slice(&0x2000_0000u32.to_le_bytes());
+        // The first stage wouldn't start it (boot::check_stage2): too old, or Hack
+        let old = v4_image(100, 4, 8);
+        let mut hack = good.clone();
+        hack[8..12].copy_from_slice(&MODE_HACK.to_le_bytes());
         for (img, want) in [
             (&good[..10], BootError::NotV4),
             (&short[..], BootError::SizeMismatch),
             (&bad_crc[..], BootError::Crc),
             (&low[..], BootError::Image(ImageError::OutOfWindow)),
+            (&old[..], BootError::TooOld(8)),
+            (&hack[..], BootError::Image(ImageError::BadMode(MODE_HACK))),
         ] {
             let mut vol = mount(image("mkfs_s1")).unwrap();
             assert_eq!(install(&mut vol, PSRAM, img), Err(want));
@@ -1013,7 +1019,7 @@ mod write {
         })
         .unwrap();
         assert_eq!(
-            install(&mut vol, PSRAM, &v4_image(100, 5, 3)),
+            install(&mut vol, PSRAM, &v4_image(100, 5, 13)),
             Err(BootError::Fat(FatError::Verify))
         );
         assert_eq!(

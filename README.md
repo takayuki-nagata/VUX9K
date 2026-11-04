@@ -171,7 +171,8 @@ Too old is a v4 header version below 9 (`fw_common::boot::MIN_STAGE2_VERSION`): 
 stages read `mtime` at `0x4000_1000`, before the timer moved to the CLINT (that page is
 unassigned now). The first stage
 refuses them with `[BOOT] STAGE2.BIN: too old, needs v9 (install-stage2): v<n>`, also for a
-RAM boot, and stays at its prompt, from where `vux_tool.py install-stage2` works.
+RAM boot, and stays at its prompt, from where `vux_tool.py install-stage2` works. The
+second stage's `install` refuses them too.
 Its data and stack are in the PSRAM below the second stage (`0x806F_0000`-`0x806F_FFFF`).
 
 The **second stage** is a VUX9 v4 file of RV32 code that loads in the top 1 MB of the

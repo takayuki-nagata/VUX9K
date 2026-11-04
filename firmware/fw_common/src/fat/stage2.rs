@@ -163,8 +163,8 @@ pub fn select_boot<D: BlockDevice>(
 }
 
 /// Install `image` (a whole v4 file) as the second stage, keeping the current one as
-/// `.OLD` (module comment). The image is checked against `window` before anything is
-/// written.
+/// `.OLD` (module comment). The image is checked against `window` and with
+/// `boot::check_stage2` (what the first stage starts) before anything is written.
 #[cfg(feature = "fat-write")]
 pub fn install<D: BlockDevice>(
     vol: &mut Volume<D>,
@@ -176,6 +176,8 @@ pub fn install<D: BlockDevice>(
         return Err(BootError::SizeMismatch);
     }
     h.check(window.base, window.len).map_err(BootError::Image)?;
+    // Nothing the first stage would refuse to start
+    crate::boot::check_stage2(&h)?;
     if !h.crc_matches(&image[HEADER_LEN..]) {
         return Err(BootError::Crc);
     }

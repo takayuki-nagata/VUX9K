@@ -443,7 +443,7 @@ def test_fw_common_writes_pass_fsck(name, tmp_path, fat_host):
     if has_stage2:
         assert fat_host_run(fat_host, path, "cat", "VUX9K/STAGE2.BIN") == previous
     # Two installs: the first new image over 128 clusters (the chain crosses FAT sectors)
-    for version, size in ((7, 70_000), (8, 900)):
+    for version, size in ((17, 70_000), (18, 900)):
         new = stage2(size, version, seed=version)
         (tmp_path / "new.bin").write_bytes(new)
         fat_host_run(fat_host, path, "install", str(tmp_path / "new.bin"))
