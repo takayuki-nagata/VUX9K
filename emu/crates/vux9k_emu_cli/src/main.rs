@@ -35,7 +35,7 @@ const USAGE: &str = "\
 usage: vux9k-emu [options]
 
   --profile NAME      memory profile: real (default, the board), isa-test (riscv-tests) or
-                      linux (real + A, U-mode, CLINT, liteuart; emulator only)
+                      linux (real + liteuart; emulator only)
   --firmware DIR      preload the ROM from DIR/firmware.hex (default build/firmware;
                       none on the linux profile)
   --no-firmware       start with empty memories

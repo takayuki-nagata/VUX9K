@@ -2,15 +2,17 @@
 // SPDX-License-Identifier: MIT
 
 //! A CLINT-compatible block (SiFive's layout, Linux's `riscv,clint0`) at RV32 region 2
-//! (`CLINT_BASE`, decoded on addr[15:0] and repeating across the region), in the Linux
-//! profile only: emulator-only, ahead of the RTL, which leaves region 2 unassigned.
+//! (`CLINT_BASE`, decoded on addr[15:2] and repeating every 64 KB across the region):
+//! soc/timer_core.veryl's CLINT view (soc_pkg::RV_REGION_CLINT, `CLINT_*`), in the Real and
+//! Linux profiles. msip is reset only by a power-on reset, not by the CPU's soft reset.
 //!
 //! Registers (32-bit words; a byte or halfword access hits its word): 0x0000 msip (bit 0,
 //! the machine software interrupt, mip.MSIP), 0x4000/0x4004 mtimecmp lo/hi, 0xBFF8/0xBFFC
 //! mtime lo/hi; everything else reads 0 and ignores writes. mtime and mtimecmp are the
 //! machine timer's (crate::periph::Timer, also at 0x4000_1000), with its timing: a read
 //! returns the value during the load's EXECUTE cycle, a write takes effect at the end of
-//! the store's write cycle, and mtime is writable as there.
+//! the store's write cycle, and mtime is writable as there. msip is timer_core's flop:
+//! a store sets it at the end of its write cycle, and mip.MSIP shows it from the next.
 
 use super::timer::{Stepped, Timer};
 

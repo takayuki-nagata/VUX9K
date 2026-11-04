@@ -49,8 +49,8 @@ binaries land in the single shared `firmware/target/riscv32im-unknown-none-elf/`
   update it. It loads `\VUX9K\STAGE2.BIN` (else `STAGE2.OLD`) into the PSRAM and starts it
   with a0 = SDHC, a1 = the FAT32 partition's LBA (0: none mounted), a2 = `STAGE1_VERSION`;
   S2 held or a key within `AUTOBOOT_MS` of its banner keeps it at its prompt (`s1> `).
-  Its data and stack are in the PSRAM (`S1_RAM_BASE`): the ROM is read-only and region 2
-  (D-RAM until it went) is unassigned, both ignore stores. It doesn't write
+  Its data and stack are in the PSRAM (`S1_RAM_BASE`): the ROM is read-only (it
+  ignores stores), and region 2, D-RAM until it went, is the CLINT now. It doesn't write
   the card: installing a second stage is the second stage's job (`fat::stage2::install`),
   after a RAM boot (`u`) of it if need be. Keep it small: 14 KB of the 16 KB ROM, and a later
   ROM may be 8 KB. Its `t` and `d` commands were dropped for room; what a feature costs is

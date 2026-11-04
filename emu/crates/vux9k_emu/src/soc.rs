@@ -17,10 +17,12 @@
 //!   soc/soc_top.veryl (vendor/psram_controller), and the caches in front of it
 //!   (soc/soc_icache.veryl, soc/soc_dcache.veryl; crate::cache).
 //!
-//! Except the Linux profile's additions, which are ahead of the RTL and mirror nothing yet
-//! (crate::profile): the CLINT block at
-//! region 2 (crate::periph::clint) and the UART's liteuart view (crate::periph::uart).
-//! With them off (Real, IsaTest) every path below is the RTL's.
+//! - the CLINT at region 2 (crate::periph::clint): soc/timer_core.veryl's CLINT view, its
+//!   msip is mip.MSIP (Real and Linux; the IsaTest profile, like tb_hex_runner, has none)
+//!
+//! Except the Linux profile's addition, which is ahead of the RTL and mirrors nothing yet
+//! (crate::profile): the UART's liteuart view (crate::periph::uart). With it off (Real,
+//! IsaTest) every path below is the RTL's.
 //!
 //! Timing: `cycle` counts SoC clocks (18 MHz) since reset release. An instruction starts
 //! with its FETCH cycle; `Soc::step` executes one instruction and advances `cycle` by
@@ -201,7 +203,7 @@ pub struct Soc {
     rom_mask: u32,
     /// The IsaTest profile: one flat RAM, `TOHOST` (see `rv_read_word`/`rv_write`).
     isa_test: bool,
-    /// The Linux profile's devices: the CLINT block, the UART's liteuart view.
+    /// The Linux profile's device: the UART's liteuart view.
     linux: bool,
     /// IsaTest profile: the first value stored to `TOHOST`.
     pub tohost: Option<u32>,
@@ -652,8 +654,8 @@ impl Soc {
         match addr >> 28 {
             // The ROM, repeating every 16 KB across region 0
             0 => self.rom[((addr >> 2) & self.rom_mask) as usize],
-            // The Linux profile's CLINT block, sampled in EXECUTE like the timer
-            2 if self.linux => self.periph.clint.read(addr, &self.periph.timer, t + 1),
+            // The CLINT (timer_core's CLINT view), sampled in EXECUTE like the timer page
+            2 => self.periph.clint.read(addr, &self.periph.timer, t + 1),
             4 => self.mmio_read(addr, t),
             _ if self.in_xmem(addr) => self.xmem[Self::xmem_index(addr)],
             _ => 0,
@@ -675,7 +677,7 @@ impl Soc {
             return 0;
         }
         match addr >> 28 {
-            2 if self.linux => {
+            2 => {
                 self.periph
                     .clint
                     .write(addr, data, &mut self.periph.timer, t + 2);
@@ -788,7 +790,7 @@ impl Soc {
         if self.meip(c) {
             mip |= csr::MIP_MEIP;
         }
-        if self.linux && self.periph.clint.msip(c) {
+        if self.periph.clint.msip(c) {
             mip |= csr::MIP_MSIP;
         }
         mip
@@ -811,7 +813,7 @@ impl Soc {
         if enabled & csr::MIP_MEIP != 0 && self.meip(c) {
             mip |= csr::MIP_MEIP;
         }
-        if enabled & csr::MIP_MSIP != 0 && self.linux && self.periph.clint.msip(c) {
+        if enabled & csr::MIP_MSIP != 0 && self.periph.clint.msip(c) {
             mip |= csr::MIP_MSIP;
         }
         if enabled & csr::MIP_MTIP != 0 && self.periph.timer.irq(c) {

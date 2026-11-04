@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 //! The Linux profile (emulator only, ahead of the RTL): the A extension, U-mode, the CLINT
-//! block, the UART's liteuart view and `load_linux`; and that Real keeps none of them.
+//! block (also Real's, the RTL's timer_core), the UART's liteuart view and `load_linux`.
 
 use vux9k_emu::periph::uart::Uart;
 use vux9k_emu::soc::{
@@ -389,7 +389,13 @@ fn interrupts_are_on_in_user_mode_whatever_mie() {
 
 #[test]
 fn clint_registers_are_the_timer_and_msip() {
-    let mut soc = new_soc(Profile::Linux);
+    for profile in [Profile::Real, Profile::Linux] {
+        clint_registers(profile);
+    }
+}
+
+fn clint_registers(profile: Profile) {
+    let mut soc = new_soc(profile);
     let load = |soc: &mut Soc, addr: u32| {
         soc.regs[1] = addr;
         exec(soc, lw(5, 1, 0));
@@ -412,10 +418,13 @@ fn clint_registers_are_the_timer_and_msip() {
     assert_eq!(load(&mut soc, 0x4000_1008), 0xAABB_CCDD);
     assert_eq!(load(&mut soc, 0x4000_100C), 0x11);
     assert_eq!(load(&mut soc, 0x2000_4004), 0x11);
-    // Mirrored across region 2 (addr[15:0]); other offsets read 0
+    // Mirrored across region 2 (addr[15:2]); other offsets read 0
     assert_eq!(load(&mut soc, 0x2ABC_4000), 0xAABB_CCDD);
+    assert_eq!(load(&mut soc, 0x2001_4004), 0x11);
     assert_eq!(load(&mut soc, 0x2000_0004), 0);
     assert_eq!(load(&mut soc, 0x2000_8000), 0);
+    assert_eq!(load(&mut soc, 0x2000_4008), 0);
+    assert_eq!(load(&mut soc, 0x2000_BFF4), 0);
     // mtime is writable, as on the timer's page
     store(&mut soc, 0x2000_BFFC, 0);
     store(&mut soc, 0x2000_BFF8, 1000);
@@ -437,20 +446,17 @@ fn clint_registers_are_the_timer_and_msip() {
 }
 
 #[test]
-fn real_has_no_clint() {
-    let mut soc = new_soc(Profile::Real);
+fn isa_test_has_no_clint() {
+    // tb_hex_runner has none: a store to msip's address goes nowhere, mip.MSIP stays 0
+    let mut soc = new_soc(Profile::IsaTest);
     soc.regs[1] = 0x2000_0000;
     soc.regs[2] = 1;
     exec(&mut soc, sw(2, 1, 0));
-    exec(&mut soc, lw(5, 1, 0));
-    assert_eq!(soc.regs[5], 0);
+    exec(&mut soc, csr(2, 5, 0x344, 0));
+    assert_eq!(soc.regs[5] & 0x8, 0, "no MSIP source");
     soc.csr.mie = 1 << 3;
     soc.csr.mstatus = 1 << 3;
-    assert_eq!(exec(&mut soc, addi(0, 0, 0)).trap, None, "no MSIP source");
-    soc.regs[1] = 0x2000_BFF8;
-    soc.cycle = 5000;
-    exec(&mut soc, lw(5, 1, 0));
-    assert_eq!(soc.regs[5], 0);
+    assert_eq!(exec(&mut soc, addi(0, 0, 0)).trap, None);
 }
 
 // ----- the liteuart view ----------------------------------------------------------------

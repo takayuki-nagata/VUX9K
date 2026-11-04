@@ -23,7 +23,8 @@ from soc_env import check_psram_pins, load_imem, start_soc
 UART = 0x4000_0000  # +0 data, +4 status {frame_err, overrun, tx_full, rx_empty}
 TIMER = 0x4000_1000  # +0/+4 mtime lo/hi, +8/+C mtimecmp lo/hi
 GPIO = 0x4000_3000  # +0 LEDs, +4 button, +C soft-reset magic
-UNASSIGNED = 0x2000_0000  # region 2: D-RAM until it went, now reads 0 and ignores stores
+CLINT = 0x2000_0000  # region 2: +0 msip, +0x4000/+0x4004 mtimecmp lo/hi, +0xBFF8/+0xBFFC mtime lo/hi
+UNASSIGNED = 0x3000_0000  # region 3: reads 0 and ignores stores
 XMEM = 0x8000_0000  # wait-state window: the 8 MB PSRAM, repeating every 8 MB across region 8
 XMEM_BYTES = 0x80_0000
 GPIO_SOFT_RESET = 0x0000_A55A
@@ -79,8 +80,7 @@ def mmio_program() -> list[int]:
     a.li("t1", LED_PATTERN)
     a.beq("t0", "t1", "after_soft_reset")
 
-    # 1-3: region 2 (D-RAM until it went) is unassigned: a word and a byte stored, then
-    # every width reads 0
+    # 1-3: region 3 is unassigned: a word and a byte stored, then every width reads 0
     a.li("s2", UNASSIGNED + 0x100)
     a.li("t0", 0x11223344)
     a.sw("t0", 0, "s2")
@@ -193,12 +193,12 @@ def mmio_program() -> list[int]:
 
     # 15-17: aliasing, documented in README ("Address decoding and aliases"): data reads
     # of region 0 are the ROM repeating every 16 KB, up to its top (until D-RAM went, the
-    # region above 64 KB read D-RAM); region 2 reads 0 all over
+    # region above 64 KB read D-RAM); an unassigned region reads 0 all over
     a.li("t0", 0x0FFF_C000)
     a.add("t0", "t0", "s3")  # s3 = &table
     a.lw("t3", 0, "t0")
     _expect(a, "t3", 0xDEADBEEF, 15)
-    a.li("t0", 0x2400_0100)
+    a.li("t0", UNASSIGNED + 0x0400_0100)
     a.lw("t3", 0, "t0")
     _expect(a, "t3", 0, 16)
     a.li("t0", 0x4000)
@@ -275,6 +275,75 @@ def timer_irq_program() -> list[int]:
 
     _putc_routine(a)
     return a.assemble()
+
+
+def clint_program() -> list[int]:
+    """The CLINT at region 2: mtime and mtimecmp are the TIMER page's registers, and msip
+    raises the machine software interrupt (mcause 0x80000003); 'F<code>' or 'CLPASS'."""
+    a = Asm()
+    a.la("t0", "handler")
+    a.csrw("mtvec", "t0")
+    a.li("s2", CLINT)
+    a.li("s3", CLINT + 0x4000)  # mtimecmp
+    a.li("s4", CLINT + 0xBFF8)  # mtime
+    a.li("s5", TIMER)
+    # 1: mtime through the CLINT is the page's, a few cycles on
+    a.lw("t0", 0, "s5")
+    a.lw("t1", 0, "s4")
+    a.sub("t3", "t1", "t0")
+    a.li("a1", 1)
+    a.li("t2", 16)
+    a.bgeu("t3", "t2", "fail")
+    # 2: mtimecmp written through the CLINT reads back through the page
+    a.li("t0", 0x2468_ACE0)
+    a.sw("t0", 0, "s3")
+    a.lw("t3", 8, "s5")
+    _expect(a, "t3", 0x2468_ACE0, 2)
+    a.li("t0", -1)
+    a.sw("t0", 0, "s3")
+    # 3: msip reads back bit 0 only
+    a.sw("t0", 0, "s2")
+    a.lw("t3", 0, "s2")
+    _expect(a, "t3", 1, 3)
+    # 4: ... and is mip.MSIP
+    a.csrr("t3", "mip")
+    a.andi("t3", "t3", 8)
+    _expect(a, "t3", 8, 4)
+    # 5: with mie.MSIE and mstatus.MIE it traps; the handler clears msip
+    a.li("s1", 0)
+    a.li("t0", 8)
+    a.csrs("mie", "t0")
+    a.csrs("mstatus", "t0")
+    a.nop()
+    _expect(a, "s1", 1, 5)
+    # 6: msip is clear again
+    a.lw("t3", 0, "s2")
+    _expect(a, "t3", 0, 6)
+    _puts(a, "CLPASS\n")
+    a.label("halt")
+    a.j("halt")
+
+    a.label("handler")
+    a.csrr("t0", "mcause")
+    a.li("t1", 0x80000003)
+    a.li("a1", 7)
+    a.bne("t0", "t1", "fail")
+    a.sw("zero", 0, "s2")  # msip = 0: the interrupt deasserts
+    a.addi("s1", "s1", 1)
+    a.mret()
+
+    _putc_routine(a)
+    _fail_routine(a)
+    return a.assemble()
+
+
+@cocotb.test()
+async def test_soc_clint(dut):
+    """The CLINT at 0x2000_0000: mtime/mtimecmp shared with the TIMER page, msip raising MSI"""
+    program = clint_program()
+    ser, _ = await start_soc(dut, during_reset=lambda soc: load_imem(soc, program))
+    out = (await ser.wait_for(b"\n", timeout_cycles=200_000)).decode("ascii", errors="replace")
+    assert out.strip() == "CLPASS", f"CLINT check failed: {out!r} (see clint_program() codes)"
 
 
 def uart_status_program() -> list[int]:
@@ -441,7 +510,7 @@ async def test_soc_counters(dut):
 
 @cocotb.test()
 async def test_soc_mmio_map(dut):
-    """Address decoder, the unassigned region 2, the ROM's data port, timer, GPIO, UART RX and soft reset"""
+    """Address decoder, an unassigned region, the ROM's data port, timer, GPIO, UART RX and soft reset"""
     rv32_asm.selftest()
     program = mmio_program()
     ser, _ = await start_soc(dut, btn=0, during_reset=lambda soc: load_imem(soc, program))

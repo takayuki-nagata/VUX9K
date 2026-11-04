@@ -1,8 +1,8 @@
 // Copyright (c) 2026 Takayuki Nagata
 // SPDX-License-Identifier: MIT
 
-//! Timer and GPIO through the CPU: MMIO reads/writes, the timer interrupt, soft reset
-//! with and without a boot mode, LEDs and the button.
+//! Timer, CLINT and GPIO through the CPU: MMIO reads/writes, the timer interrupt, msip's
+//! software interrupt, soft reset with and without a boot mode, LEDs and the button.
 
 use vux9k_emu::{Isa, Profile, Soc};
 
@@ -86,6 +86,59 @@ fn timer_interrupt_traps_to_mtvec() {
     assert_eq!(soc.pc, handler as u32);
     assert_eq!(soc.csr.mcause, 0x8000_0007);
     assert_eq!(soc.csr.mepc, 0x28, "taken on the spin loop");
+}
+
+#[test]
+fn msip_interrupt_traps_on_the_next_fetch() {
+    // The CLINT's msip (0x2000_0000) is set at the end of the store's MEM_WAIT and mip.MSIP
+    // shows it from the next cycle, the next instruction's FETCH: that one is interrupted
+    let handler = 0x80;
+    let mut words = vec![
+        addi(1, 0, handler),
+        csrw(0x305, 1), // mtvec
+        addi(2, 0, 8),
+        csrw(0x304, 2), // mie.MSIE
+        csrw(0x300, 2), // mstatus.MIE
+        lui(1, 0x20000),
+        addi(2, 0, 1),
+        sw(2, 1, 0),   // msip = 1
+        addi(6, 0, 1), // at 0x20: interrupted before it runs
+    ];
+    words.resize(handler as usize / 4, 0x13);
+    words.extend([lw(3, 1, 0), sw(0, 1, 0), lw(4, 1, 0), J_SELF]);
+    let mut soc = load(&words);
+    for _ in 0..8 {
+        soc.step();
+    }
+    let r = soc.step();
+    assert_eq!(r.trap, Some(0x8000_0003), "the machine software interrupt");
+    assert_eq!((soc.csr.mepc, soc.pc), (0x20, handler as u32));
+    soc.run(10);
+    assert_eq!((soc.regs[3], soc.regs[4], soc.regs[6]), (1, 0, 0));
+}
+
+#[test]
+fn msip_survives_a_soft_reset() {
+    // Like mtime and mtimecmp, msip is reset only by a power-on reset
+    let mut soc = load(&[
+        lui(1, 0x20000),
+        addi(2, 0, 1),
+        sw(2, 1, 0), // msip = 1
+        lui(1, 0x40003),
+        lui(3, 0xA),       // 0xA000
+        addi(3, 3, 0x55A), // 0xA55A
+        sw(3, 1, 0xC),     // soft reset
+    ]);
+    for _ in 0..7 {
+        soc.step();
+    }
+    assert_eq!((soc.pc, soc.csr.mie), (0, 0), "soft reset taken");
+    assert!(soc.periph.clint.msip(soc.cycle));
+    soc.reset();
+    assert!(
+        !soc.periph.clint.msip(soc.cycle),
+        "a power-on reset clears it"
+    );
 }
 
 #[test]

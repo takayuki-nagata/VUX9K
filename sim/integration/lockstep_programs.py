@@ -805,12 +805,12 @@ def amo() -> list:
     a.word(0x0023_B1AF | (0b00000 << 27))  # amoadd.d
     a.word((AMO_LR << 27) | (2 << 20) | (9 << 15) | (2 << 12) | (28 << 7) | 0x2F)  # lr.w with rs2 = x2
     a.word((0b00101 << 27) | (7 << 20) | (9 << 15) | (2 << 12) | (28 << 7) | 0x2F)
-    # The ROM: reads it, the store is ignored; unassigned: reads 0
+    # The ROM: reads it, the store is ignored; unassigned (region 1): reads 0
     a.li("t1", 0x10)
     a.amo(0, "t3", "t2", "t1")
     a.amo(AMO_LR, "t3", "zero", "t1")
     a.amo(AMO_SC, "t5", "t2", "t1")
-    a.li("t1", 0x20000000)
+    a.li("t1", 0x10000000)
     a.amo(0, "t3", "t2", "t1")
     # A fetch that probes the line an AMO dirtied, with the routine on it: the store also
     # drops the instruction line
@@ -1280,8 +1280,8 @@ def muldiv() -> tuple:
 
 def rom_stores() -> list:
     """Stores the SoC ignores, read back: to the ROM (region 0; sw, sh, sb, at the word of
-    the next instruction too, which then runs as it was) and to the unassigned regions 2
-    (D-RAM until it went), 1 and 0xF, which read 0. Loads of the ROM through its aliases
+    the next instruction too, which then runs as it was) and to the unassigned regions 3,
+    1 and 0xF, which read 0. Loads of the ROM through its aliases
     (16 KB up, the top of region 0) return its words. Prints 'K' at the end."""
     a = Asm()
     a.li("s1", 0x4000_0000)  # UART
@@ -1306,8 +1306,8 @@ def rom_stores() -> list:
     a.label("next")
     a.addi("s4", "zero", 0x5A)
     a.lw("s5", 0, "t0")
-    # Region 2 (D-RAM until it went) and two other unassigned regions: stores ignored, 0 read
-    for base in (0x2000_0000, 0x2000_1FFC, 0x1000_0000, 0xF000_0000):
+    # Unassigned regions (region 2, D-RAM until it went, is the CLINT now): stores ignored, 0 read
+    for base in (0x3000_0000, 0x3000_1FFC, 0x1000_0000, 0xF000_0000):
         a.li("s6", base)
         a.lw("t2", 0, "s6")
         a.sw("t1", 0, "s6")
@@ -1319,6 +1319,161 @@ def rom_stores() -> list:
     _put_char(a, ord("K"), "wait")
     a.label("done")
     a.j("done")
+    return a.assemble()
+
+
+# --- the CLINT -------------------------------------------------------------------------
+CLINT = 0x2000_0000  # soc_pkg::RV_REGION_CLINT: timer_core's CLINT view, repeating every 64 KB
+CLINT_MTIMECMP = CLINT + 0x4000  # soc_pkg::CLINT_MTIMECMP (lo, hi at +4)
+CLINT_MTIME = CLINT + 0xBFF8  # soc_pkg::CLINT_MTIME (lo, hi at +4)
+CLINT_RX_CYCLE = 100  # the byte that makes MEI pending for the priority check
+CLINT_CYCLES = 4_000  # 'K' at ~1,900 (the RX byte's interrupt at ~1,600), then spins
+
+
+def clint() -> list:
+    """The CLINT at region 2: msip's bit 0 (word, byte and halfword stores, reads), the software
+    interrupt it raises on the very next fetch, mtimecmp lo/hi raising MTI, MEI > MSI > MTI when
+    all three are pending, offsets that read 0 and ignore writes, the 64 KB aliases, and that
+    mtime/mtimecmp are the TIMER page's registers (a write through either view, read through the
+    other). The handler counts interrupts in s6 and records their causes in s7, a byte each
+    (oldest highest). Prints 'K' at the end."""
+    a = Asm()
+    a.la("t0", "handler")
+    a.csrw("mtvec", "t0")
+    a.li("s1", 0x4000_0000)  # UART
+    a.li("s2", CLINT)  # msip
+    a.li("s3", CLINT_MTIMECMP)
+    a.li("s4", CLINT_MTIME)
+    a.li("s5", 0x4000_1000)  # the TIMER page
+    # msip: bit 0 only, word, byte and halfword stores, the whole word read
+    a.lw("t2", 0, "s2")
+    a.li("t1", -1)
+    a.sw("t1", 0, "s2")
+    a.lw("t2", 0, "s2")
+    a.lbu("t3", 0, "s2")
+    a.lbu("t4", 1, "s2")
+    a.csrr("t5", "mip")
+    a.li("t1", 2)
+    a.sw("t1", 0, "s2")  # bit 0 clear: msip = 0
+    a.lw("t2", 0, "s2")
+    a.csrr("t5", "mip")
+    a.li("t1", 1)
+    a.sb("t1", 2, "s2")  # a byte store hits the word
+    a.lw("t2", 0, "s2")
+    a.sh("zero", 2, "s2")
+    a.lw("t2", 0, "s2")
+    # The 64 KB aliases: msip and mtimecmp through other addresses of the region
+    a.li("t6", 0x2001_0000)
+    a.sw("t1", 0, "t6")
+    a.lw("t2", 0, "s2")
+    a.li("t6", 0x2ABC_0000)
+    a.sw("zero", 0, "t6")
+    a.lw("t2", 0, "s2")
+    # Offsets that are no register: read 0, stores ignored
+    for addr in (CLINT + 0x4, CLINT + 0x4008, CLINT + 0x8000, CLINT + 0xBFF4, CLINT + 0xFFFC, CLINT + 0x1000):
+        a.li("t6", addr)
+        a.lw("t2", 0, "t6")
+        a.li("t1", -1)
+        a.sw("t1", 0, "t6")
+        a.lw("t3", 0, "t6")
+    a.lw("t2", 0, "s2")
+    a.lw("t3", 0, "s3")
+    a.lw("t4", 4, "s3")
+    # mtime through both views and the alias at 0x2001_xxxx
+    a.lw("t2", 0, "s4")
+    a.lw("t3", 4, "s4")
+    a.lw("t4", 0, "s5")
+    a.li("t6", CLINT_MTIME + 0x1_0000)
+    a.lw("t5", 0, "t6")
+    # mtimecmp written through the CLINT, read through the page and back
+    a.li("t1", 0x1234_5678)
+    a.sw("t1", 0, "s3")
+    a.li("t1", 0x9ABC_DEF0)
+    a.sw("t1", 4, "s3")
+    a.lw("t2", 8, "s5")
+    a.lw("t3", 0xC, "s5")
+    a.lw("t4", 0, "s3")
+    a.li("t1", -1)
+    a.sw("t1", 4, "s3")  # far away again
+    # The software interrupt: taken on the fetch right after the store that sets msip
+    a.li("t1", 8)
+    a.csrw("mie", "t1")  # MSIE
+    a.csrs("mstatus", "t1")
+    a.li("t1", 1)
+    a.sw("t1", 0, "s2")
+    a.addi("s8", "zero", 1)  # interrupted before it runs, then runs
+    a.li("t1", 1)
+    a.label("wait_msi")
+    a.bltu("s6", "t1", "wait_msi")
+    # The timer interrupt from mtimecmp written through the CLINT (lo first, hi = 0 arms it);
+    # the handler disarms it through the TIMER page
+    a.li("t1", 0x80)
+    a.csrw("mie", "t1")  # MTIE
+    a.lw("t1", 0, "s4")
+    a.addi("t1", "t1", 150)
+    a.sw("t1", 0, "s3")
+    a.sw("zero", 4, "s3")
+    a.li("t1", 2)
+    a.label("wait_mti")
+    a.bltu("s6", "t1", "wait_mti")
+    a.lw("t2", 4, "s3")
+    # All three pending with mstatus.MIE off: the RX byte, msip, mtimecmp = 0; then taken in
+    # priority order MEI, MSI, MTI
+    a.li("t1", 8)
+    a.csrc("mstatus", "t1")
+    a.label("rx_wait")
+    a.lw("t1", 4, "s1")
+    a.andi("t1", "t1", 1)  # rx_empty
+    a.bnez("t1", "rx_wait")
+    a.li("t1", 1)
+    a.sw("t1", 0, "s2")
+    a.sw("zero", 0, "s3")
+    a.sw("zero", 4, "s3")
+    a.li("t1", 0x888)
+    a.csrw("mie", "t1")  # MEIE | MTIE | MSIE
+    a.csrr("t5", "mip")
+    a.li("t1", 8)
+    a.csrs("mstatus", "t1")
+    a.li("t1", 5)
+    a.label("wait_all")
+    a.bltu("s6", "t1", "wait_all")
+    a.li("t1", 8)
+    a.csrc("mstatus", "t1")
+    # mtime written through the CLINT (hi, then lo just below the carry), the carry seen
+    # through both views
+    a.li("t1", 3)
+    a.sw("t1", 4, "s4")
+    a.li("t1", -20)
+    a.sw("t1", 0, "s4")
+    a.lw("t2", 0, "s4")
+    a.lw("t3", 4, "s5")
+    for _ in range(6):
+        a.nop()
+    a.lw("t4", 0, "s5")
+    a.lw("t5", 4, "s4")
+    _put_char(a, ord("K"), "wait")
+    a.label("done")
+    a.j("done")
+
+    a.label("handler")  # count, record the cause, clear its source
+    a.csrr("s0", "mcause")
+    a.addi("s6", "s6", 1)
+    a.slli("s7", "s7", 8)
+    a.andi("t0", "s0", 0xFF)
+    a.add("s7", "s7", "t0")
+    a.li("t0", 0x8000_000B)
+    a.beq("s0", "t0", "h_ext")
+    a.li("t0", 0x8000_0003)
+    a.beq("s0", "t0", "h_sw")
+    a.li("t0", -1)
+    a.sw("t0", 0xC, "s5")  # timer: mtimecmp hi = max, through the page
+    a.mret()
+    a.label("h_sw")
+    a.sw("zero", 0, "s2")
+    a.mret()
+    a.label("h_ext")
+    a.lw("t0", 0, "s1")  # UART RX: pop the byte
+    a.mret()
     return a.assemble()
 
 
@@ -1398,6 +1553,8 @@ def programs() -> list:
     )
     progs.append(Program("umode", cycles=4_000, imem_words=umode()))
     progs.append(Program("amo", cycles=9_000, imem_words=amo(), uart_rx=[(AMO_RX_CYCLE, b"Z")]))
+    # The CLINT: done by cycle ~1,900, then spins
+    progs.append(Program("clint", cycles=CLINT_CYCLES, imem_words=clint(), uart_rx=[(CLINT_RX_CYCLE, b"Z")]))
     seeds = os.environ.get("LOCKSTEP_SEEDS", "")
     for s in [int(x) for x in seeds.split(",") if x]:
         progs.append(Program(f"random_rv_{s}", cycles=200_000, imem_words=random_rv(s, blocks=1500), slow=True))

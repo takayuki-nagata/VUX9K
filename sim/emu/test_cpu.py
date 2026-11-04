@@ -118,15 +118,16 @@ def test_byte_and_halfword_stores_to_the_psram():
 
 
 def test_stores_to_the_rom_and_unassigned_regions_are_ignored():
-    """The ROM (region 0) takes no stores, and region 2 (D-RAM until it went) is unassigned:
-    stores ignored, loads 0 (lockstep_programs.rom_stores checks the same against the RTL)."""
+    """The ROM (region 0) takes no stores, and region 3 is unassigned: stores ignored, loads 0
+    (lockstep_programs.rom_stores checks the same against the RTL; region 2, D-RAM until it
+    went, is the CLINT now)."""
 
     def prog(a):
         a.li("x3", -1)
         a.sw("x3", 0x100, "zero")
         a.sb("x3", 0x101, "zero")
         a.lw("x4", 0x100, "zero")
-        a.li("x1", 0x2000_0000)
+        a.li("x1", 0x3000_0000)
         a.sw("x3", 0, "x1")
         a.sh("x3", 2, "x1")
         a.lw("x5", 0, "x1")

@@ -26,6 +26,6 @@ pub struct Periph {
     pub gpio: Gpio,
     pub uart: Uart,
     pub sd: SdSpi,
-    /// The Linux profile's CLINT block (its msip; mtime/mtimecmp are `timer`'s).
+    /// The CLINT (its msip; mtime/mtimecmp are `timer`'s).
     pub clint: Clint,
 }

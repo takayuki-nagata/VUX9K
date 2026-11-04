@@ -4,24 +4,24 @@
 //! Memory profiles: what the emulated board looks like.
 //!
 //! `Real` is the SoC as synthesized (soc/soc_rom.veryl, soc/soc_addr_decoder.veryl,
-//! the wait-state window: 8 MB of PSRAM behind soc/soc_xmem_bridge.veryl).
+//! the CLINT at 0x2000_0000, the wait-state window: 8 MB of PSRAM behind
+//! soc/soc_xmem_bridge.veryl).
 //! `IsaTest` is the flat 256 KB RAM of sim/tb_hex_runner.veryl, used only to run
 //! riscv-tests.
 //! `Linux` is `Real` plus what a noMMU M-mode Linux kernel needs and the RTL doesn't have
-//! yet: a
-//! CLINT-compatible block at 0x2000_0000 and a liteuart register view of the UART
-//! (crate::periph). It is ahead of the RTL: nothing proves it against the RTL, the
-//! lockstep (`make sim-lockstep`) covers `Real` only, and its devices and cycle costs are
-//! placeholders until the RTL has them. linux_workspace/dts/vux9k-linux-emu.dts describes it.
+//! yet: a liteuart register view of the UART (crate::periph). It is ahead of the RTL:
+//! nothing proves that view against the RTL, the lockstep (`make sim-lockstep`) covers
+//! `Real` only, and its cycle costs are placeholders until the RTL has it. linux_workspace/dts/vux9k-linux-emu.dts describes it.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Profile {
-    /// The Tang Nano 9K SoC: the 16 KB boot ROM, 8 MB PSRAM in the wait-state window.
+    /// The Tang Nano 9K SoC: the 16 KB boot ROM, the CLINT, 8 MB PSRAM in the wait-state
+    /// window.
     Real,
     /// riscv-tests harness: one flat RAM at 0 for code and data, no MMIO; a store to
     /// `TOHOST` ends the run.
     IsaTest,
-    /// `Real` plus A, U-mode, the CLINT block and the liteuart view (emulator only).
+    /// `Real` plus the liteuart view (emulator only).
     Linux,
 }
 
@@ -49,8 +49,7 @@ impl Profile {
             Profile::Real => "real (Tang Nano 9K SoC: 16 KB boot ROM, 8 MB PSRAM)".to_string(),
             Profile::IsaTest => "isa-test (flat 256 KB RAM, riscv-tests only)".to_string(),
             Profile::Linux => {
-                "linux (real + A, U-mode, CLINT, liteuart; emulator only, ahead of the RTL)"
-                    .to_string()
+                "linux (real + liteuart; emulator only, ahead of the RTL)".to_string()
             }
         }
     }

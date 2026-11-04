@@ -4,8 +4,8 @@
 """soc_addr_decoder: the data-address map of README ("Memory & MMIO Register Map", "Address
 decoding and aliases"), in RV32 and Hack mode, against a model; at most one select is ever
 active. Hack's RAM (below 0x6000) is the wait-state window (xmem), which soc_top maps into
-Hack's D segment; Hack never selects rom. Region 0 is the boot ROM (rom), region 2 (D-RAM
-until it went) selects nothing."""
+Hack's D segment; Hack never selects rom. Region 0 is the boot ROM (rom), region 2 the CLINT
+(timer, as is MMIO page 1)."""
 
 import random
 
@@ -27,6 +27,8 @@ def model(addr, hack):
     region, page = addr >> 28, (addr >> 12) & 0xF
     if region == 0x0:
         return "rom"
+    if region == 0x2:  # the CLINT: timer_core's other view
+        return "timer"
     if region == 0x4:
         return {0: "uart", 1: "timer", 2: "sd", 3: "gpio"}.get(page)
     if region == 0x8:  # the wait-state window

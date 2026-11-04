@@ -244,7 +244,7 @@ fn real_profile_rom_aliases_and_ignored_stores() {
             s(1, 2, 5, 0),       // sb: ignored
             lui(6, 0x01235),     // 0x0123_5000 = the ROM's 0x1000 (16 KB aliases)
             i(0x03, 0, 6, 2, 7), // lw x7
-            lui(1, 0x20000),     // 0x2000_0000: region 2, unassigned (D-RAM until it went)
+            lui(1, 0x30000),     // 0x3000_0000: region 3, unassigned (region 2 is the CLINT)
             s(0, 2, 1, 2),       // sw: ignored
             i(0x03, 0, 1, 2, 4), // lw x4 = 0
             lui(3, 0xF0000),     // region 0xF, unassigned

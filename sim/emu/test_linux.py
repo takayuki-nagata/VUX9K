@@ -3,8 +3,8 @@
 
 """
 noMMU Linux (make linux: linux_workspace/, the kernel with buildroot's busybox initramfs built
-in) on the emulator's Linux profile, which is ahead of the RTL (A, U-mode, the CLINT block, the
-liteuart view; docs/agents/linux.md): the kernel Image and the device tree loaded into the PSRAM
+in) on the emulator's Linux profile, which is ahead of the RTL (the liteuart view;
+docs/agents/linux.md): the kernel Image and the device tree loaded into the PSRAM
 (Soc.load_linux), the boot to busybox's shell on the console, then commands typed at it, one of
 them a builtin and the others busybox executed again (FLAT, copied into RAM at each exec).
 

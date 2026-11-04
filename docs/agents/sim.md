@@ -100,7 +100,7 @@ whether the model or the RTL is wrong; an RTL bug gets `xfail(strict=True)` unti
   tests there): use the module's default value in the test, not `dut.PARAM`.
 - **Functional coverage** (cocotb-coverage, `sim/unit/fcov.py`) counts which cases of the
   spec the stimulus reached: the random tests of the ALU, decoder, LSU, next-PC, trap
-  unit, CSRs, multiply/divide, FIFO, UART RX, SD SPI, the wait-state window and its caches, and the CPU's stall tests,
+  unit, CSRs, multiply/divide, FIFO, UART RX, SD SPI, the timer's CLINT view, the wait-state window and its caches, and the CPU's stall tests,
   sample cover points from the function that applies one stimulus, and export `fcov.yml`
   at the end of each test. `make
   coverage-fcov` (test-sim) checks each group against `coverage/thresholds.toml`'s

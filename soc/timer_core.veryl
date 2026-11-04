@@ -1,15 +1,22 @@
 // Copyright (c) 2026 Takayuki Nagata
 // SPDX-License-Identifier: MIT
 
-// Veryl System Timer Core (mtime / mtimecmp)
+// Veryl System Timer Core (mtime / mtimecmp, msip), seen two ways (`clint`):
+// - the CLINT view (RV32 region 2): addr[15:2] decoded in full, soc_pkg::CLINT_MSIP,
+//   CLINT_MTIMECMP (+4: hi), CLINT_MTIME (+4: hi); a byte or halfword store hits its word
+// - the TIMER page (0x4000_1000): addr[3:0] 0x0/0x4 mtime lo/hi, 0x8/0xC mtimecmp lo/hi
+// Any other address reads 0 and ignores writes. A write stores the whole word (no byte
+// enables). msip, like mtime and mtimecmp, is reset only by rst, not by the CPU's soft reset.
 module timer_core (
     clk      : input  clock    ,
     rst      : input  reset    ,
-    addr     : input  logic<4> ,
+    addr     : input  logic<16>,
+    clint    : input  logic    , // 1: the CLINT view, 0: the TIMER page
     data_in  : input  logic<32>,
     data_out : output logic<32>,
     we       : input  logic    ,
     timer_irq: output logic    ,
+    msip     : output logic    , // mip.MSIP
     mtime_out: output logic<64>, // for the CPU's time CSR
 ) {
     var mtime   : logic<64>;
@@ -17,29 +24,57 @@ module timer_core (
 
     assign mtime_out = mtime;
 
+    // The addressed register: msip, or mtime/mtimecmp (sel_cmp) and its half (sel_hi)
+    var sel_msip : logic;
+    var sel_timer: logic;
+    var sel_cmp  : logic;
+    var sel_hi   : logic;
+
+    always_comb {
+        sel_hi = addr[2];
+        if clint {
+            sel_msip  = addr[15:2] == soc_pkg::CLINT_MSIP[15:2];
+            sel_cmp   = addr[15:3] == soc_pkg::CLINT_MTIMECMP[15:3];
+            sel_timer = sel_cmp || addr[15:3] == soc_pkg::CLINT_MTIME[15:3];
+        } else {
+            sel_msip  = 1'b0;
+            sel_cmp   = addr[3];
+            sel_timer = addr[1:0] == 2'b00;
+        }
+    }
+
     always_ff (clk, rst) {
         if_reset {
             mtime     = 64'd0;
             mtimecmp  = 64'hffff_ffff_ffff_ffff;
+            msip      = 1'b0;
             data_out  = 32'd0;
             timer_irq = 1'b0;
         } else {
             mtime = mtime + 1'b1;
             if we {
-                case addr {
-                    4'h0   : mtime           = {mtime[63:32], data_in}; // no carry from this edge's +1
-                    4'h4   : mtime[63:32]    = data_in;
-                    4'h8   : mtimecmp[31:0]  = data_in;
-                    4'hc   : mtimecmp[63:32] = data_in;
-                    default: {}
+                if sel_msip {
+                    msip = data_in[0];
+                } else if sel_timer {
+                    switch {
+                        !sel_cmp && !sel_hi: mtime           = {mtime[63:32], data_in}; // no carry from this edge's +1
+                        !sel_cmp && sel_hi : mtime[63:32]    = data_in;
+                        sel_cmp && !sel_hi : mtimecmp[31:0]  = data_in;
+                        default            : mtimecmp[63:32] = data_in;
+                    }
                 }
             }
-            case addr {
-                4'h0   : data_out = mtime[31:0];
-                4'h4   : data_out = mtime[63:32];
-                4'h8   : data_out = mtimecmp[31:0];
-                4'hc   : data_out = mtimecmp[63:32];
-                default: data_out = 32'd0;
+            if sel_msip {
+                data_out = {31'd0, msip};
+            } else if sel_timer {
+                switch {
+                    !sel_cmp && !sel_hi: data_out = mtime[31:0];
+                    !sel_cmp && sel_hi : data_out = mtime[63:32];
+                    sel_cmp && !sel_hi : data_out = mtimecmp[31:0];
+                    default            : data_out = mtimecmp[63:32];
+                }
+            } else {
+                data_out = 32'd0;
             }
             timer_irq = if mtime >= mtimecmp ? 1'b1 : 1'b0;
         }
