@@ -17,7 +17,7 @@ import random
 import cocotb
 import fcov
 from cocotb.clock import Clock
-from cocotb.triggers import ClockCycles, FallingEdge
+from cocotb.triggers import ClockCycles, FallingEdge, Timer
 from unit_models import rand32
 
 ALL_ONES = 0xFFFFFFFF
@@ -88,6 +88,8 @@ async def test_reset_mid_run(dut):
     await ClockCycles(dut.clk, 2, rising=False)
     assert (int(dut.msip.value), int(dut.timer_irq.value), int(dut.data_out.value)) == (1, 1, 1)
     dut.rst.value = 0
+    await Timer(1, unit="ns")  # before the next rising edge
+    assert (int(dut.msip.value), int(dut.timer_irq.value), int(dut.data_out.value)) == (0, 0, 0)
     await ClockCycles(dut.clk, 3, rising=False)
     assert (int(dut.msip.value), int(dut.timer_irq.value), int(dut.data_out.value)) == (0, 0, 0)
     dut.rst.value = 1
