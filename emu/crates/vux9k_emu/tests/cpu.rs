@@ -562,6 +562,7 @@ fn hpm_csrs_exist_in_their_ranges() {
 }
 
 // ----- the wait-state window (soc_xmem_bridge + the 8 MB PSRAM, RV32 region 8) --------
+use vux9k_emu::periph::TimerReg;
 use vux9k_emu::soc::{XMEM_FETCH_FILL, XMEM_FETCH_PROBE, XMEM_LINE_DIRTY, XMEM_LINE_FILL};
 
 /// lui + addi loading `v` into `rd`.
@@ -688,8 +689,12 @@ fn xmem_fetch_samples_the_interrupt_in_its_last_cycle() {
         let w = XMEM_FETCH_PROBE as u64; // the first fetch of the stored routine
                                          // timer_irq in cycle c is mtime(c-1) >= mtimecmp, and mtime(c) == c here
         let cmp = c0 + w - 1 + late;
-        soc.periph.timer.write(0xC, (cmp >> 32) as u32, c0 - 3);
-        soc.periph.timer.write(0x8, cmp as u32, c0 - 2);
+        soc.periph
+            .timer
+            .write(TimerReg::MtimecmpHi, (cmp >> 32) as u32, c0 - 3);
+        soc.periph
+            .timer
+            .write(TimerReg::MtimecmpLo, cmp as u32, c0 - 2);
         let r = soc.step();
         assert_eq!(
             r.trap.is_some(),

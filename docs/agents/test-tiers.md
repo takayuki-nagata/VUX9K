@@ -127,5 +127,5 @@ clock-and-board.md, "Board UART output that is noise: ModemManager and the bridg
   this tree's first stage, which refuses that second stage (older than `MIN_STAGE2_VERSION`)
   and stays at `s1> `, then docs/APP_DEVELOPMENT.md's upgrade steps with this tree's
   `vux_tool` (`install-stage2` from there, `put`, `run-app`, `r` back to the new second
-  stage), and v0.3.0's first stage on a CPU without M (`m_ext`) booting this tree's second
-  stage.
+  stage), and v0.3.0's first stage on a CPU without M (`m_ext`) and with the TIMER page
+  (`timer_page`) booting this tree's second stage.

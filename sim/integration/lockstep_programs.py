@@ -1328,7 +1328,7 @@ def rom_stores() -> list:
 
 
 # --- the CLINT -------------------------------------------------------------------------
-CLINT = 0x2000_0000  # soc_pkg::RV_REGION_CLINT: timer_core's CLINT view, repeating every 64 KB
+CLINT = 0x2000_0000  # soc_pkg::RV_REGION_CLINT: timer_core, repeating every 64 KB
 CLINT_MTIMECMP = CLINT + 0x4000  # soc_pkg::CLINT_MTIMECMP (lo, hi at +4)
 CLINT_MTIME = CLINT + 0xBFF8  # soc_pkg::CLINT_MTIME (lo, hi at +4)
 CLINT_RX_CYCLE = 100  # the byte that makes MEI pending for the priority check
@@ -1339,8 +1339,8 @@ def clint() -> list:
     """The CLINT at region 2: msip's bit 0 (word, byte and halfword stores, reads), the software
     interrupt it raises on the very next fetch, mtimecmp lo/hi raising MTI, MEI > MSI > MTI when
     all three are pending, offsets that read 0 and ignore writes, the 64 KB aliases, and that
-    mtime/mtimecmp are the TIMER page's registers (a write through either view, read through the
-    other). The handler counts interrupts in s6 and records their causes in s7, a byte each
+    MMIO page 1 (the TIMER page until the CLINT replaced it) is unassigned: it reads 0 and a
+    store there leaves mtimecmp alone. The handler counts interrupts in s6 and records their causes in s7, a byte each
     (oldest highest). Prints 'K' at the end."""
     a = Asm()
     a.la("t0", "handler")
@@ -1349,7 +1349,7 @@ def clint() -> list:
     a.li("s2", CLINT)  # msip
     a.li("s3", CLINT_MTIMECMP)
     a.li("s4", CLINT_MTIME)
-    a.li("s5", 0x4000_1000)  # the TIMER page
+    a.li("s5", 0x4000_1000)  # MMIO page 1, unassigned
     # msip: bit 0 only, word, byte and halfword stores, the whole word read
     a.lw("t2", 0, "s2")
     a.li("t1", -1)
@@ -1384,17 +1384,19 @@ def clint() -> list:
     a.lw("t2", 0, "s2")
     a.lw("t3", 0, "s3")
     a.lw("t4", 4, "s3")
-    # mtime through both views and the alias at 0x2001_xxxx
+    # mtime, page 1 (reads 0) and the alias at 0x2001_xxxx
     a.lw("t2", 0, "s4")
     a.lw("t3", 4, "s4")
     a.lw("t4", 0, "s5")
     a.li("t6", CLINT_MTIME + 0x1_0000)
     a.lw("t5", 0, "t6")
-    # mtimecmp written through the CLINT, read through the page and back
+    # mtimecmp written through the CLINT; page 1's old mtimecmp offsets read 0 and a store
+    # there is ignored
     a.li("t1", 0x1234_5678)
     a.sw("t1", 0, "s3")
     a.li("t1", 0x9ABC_DEF0)
     a.sw("t1", 4, "s3")
+    a.sw("t1", 8, "s5")
     a.lw("t2", 8, "s5")
     a.lw("t3", 0xC, "s5")
     a.lw("t4", 0, "s3")
@@ -1411,7 +1413,7 @@ def clint() -> list:
     a.label("wait_msi")
     a.bltu("s6", "t1", "wait_msi")
     # The timer interrupt from mtimecmp written through the CLINT (lo first, hi = 0 arms it);
-    # the handler disarms it through the TIMER page
+    # the handler disarms it
     a.li("t1", 0x80)
     a.csrw("mie", "t1")  # MTIE
     a.lw("t1", 0, "s4")
@@ -1445,16 +1447,16 @@ def clint() -> list:
     a.li("t1", 8)
     a.csrc("mstatus", "t1")
     # mtime written through the CLINT (hi, then lo just below the carry), the carry seen
-    # through both views
+    # in both halves
     a.li("t1", 3)
     a.sw("t1", 4, "s4")
     a.li("t1", -20)
     a.sw("t1", 0, "s4")
     a.lw("t2", 0, "s4")
-    a.lw("t3", 4, "s5")
+    a.lw("t3", 4, "s4")
     for _ in range(6):
         a.nop()
-    a.lw("t4", 0, "s5")
+    a.lw("t4", 0, "s4")
     a.lw("t5", 4, "s4")
     _put_char(a, ord("K"), "wait")
     a.label("done")
@@ -1471,7 +1473,7 @@ def clint() -> list:
     a.li("t0", 0x8000_0003)
     a.beq("s0", "t0", "h_sw")
     a.li("t0", -1)
-    a.sw("t0", 0xC, "s5")  # timer: mtimecmp hi = max, through the page
+    a.sw("t0", 4, "s3")  # timer: mtimecmp hi = max
     a.mret()
     a.label("h_sw")
     a.sw("zero", 0, "s2")

@@ -19,6 +19,8 @@ lint_off -rule UNUSEDSIGNAL -file "*/soc_top.sv" -match "*'win_data_waddr'*"
 lint_off -rule UNUSEDSIGNAL -file "*/tb_hex_runner.sv" -match "*'data_addr'*"
 // The data cache's probe works on whole lines: it doesn't read the word bits [2:0]
 lint_off -rule UNUSEDSIGNAL -file "*/soc_dcache.sv" -match "*'probe_addr'*"
+// The CLINT's registers are whole words: timer_core decodes addr[15:2]
+lint_off -rule UNUSEDSIGNAL -file "*/timer_core.sv" -match "*'addr'*"
 // The window's size and latencies and the PSRAM's power-up length: the controller has
 // its own, these are the copies the simulation word model (sim/psram_word_model) reads
 lint_off -rule UNUSEDPARAM -file "*/soc_pkg.sv" -match "*'PSRAM_INIT_CYCLES'*"

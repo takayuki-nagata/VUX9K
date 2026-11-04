@@ -4,8 +4,8 @@
 //! Machine timer, soc/timer_core.veryl: 64-bit `mtime` counting every clock,
 //! `mtimecmp`, and a registered `timer_irq = mtime >= mtimecmp`.
 //!
-//! Registers (addr[3:0]): 0x0/0x4 mtime lo/hi, 0x8/0xC mtimecmp lo/hi. A read returns
-//! the value during the cycle the CPU presents the address (the load's EXECUTE
+//! Its registers are the CLINT's (crate::periph::clint maps its offsets onto [`Reg`]). A
+//! read returns the value during the cycle the CPU presents the address (the load's EXECUTE
 //! cycle; `data_out` is registered at its end). A write takes effect at the end of the
 //! write cycle: writing mtime's low half drops that edge's +1, writing the high half
 //! keeps the low half's +1 (no carry).
@@ -44,6 +44,15 @@ impl<T: Copy> Stepped<T> {
     }
 }
 
+/// A 32-bit half of mtime or mtimecmp.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reg {
+    MtimeLo,
+    MtimeHi,
+    MtimecmpLo,
+    MtimecmpHi,
+}
+
 #[derive(Clone, Debug)]
 pub struct Timer {
     /// mtime during cycle k is `k + offset` (wrapping), for k after the last write.
@@ -73,32 +82,26 @@ impl Timer {
         c > 0 && self.mtime(c - 1) >= self.mtimecmp.at(c - 1)
     }
 
-    pub fn read(&self, addr: u32, c: u64) -> u32 {
-        match addr & 0xF {
-            0x0 => self.mtime(c) as u32,
-            0x4 => (self.mtime(c) >> 32) as u32,
-            0x8 => self.mtimecmp.at(c) as u32,
-            0xC => (self.mtimecmp.at(c) >> 32) as u32,
-            _ => 0,
+    /// `reg` during cycle `c`.
+    pub fn read(&self, reg: Reg, c: u64) -> u32 {
+        match reg {
+            Reg::MtimeLo => self.mtime(c) as u32,
+            Reg::MtimeHi => (self.mtime(c) >> 32) as u32,
+            Reg::MtimecmpLo => self.mtimecmp.at(c) as u32,
+            Reg::MtimecmpHi => (self.mtimecmp.at(c) >> 32) as u32,
         }
     }
 
     /// Write at the end of cycle `c`.
-    pub fn write(&mut self, addr: u32, v: u32, c: u64) {
+    pub fn write(&mut self, reg: Reg, v: u32, c: u64) {
         let lo = 0xFFFF_FFFFu64;
         let now = self.mtime(c);
-        match addr & 0xF {
-            0x0 => self.set_mtime(c + 1, (now & !lo) | v as u64),
-            0x4 => self.set_mtime(c + 1, ((v as u64) << 32) | (now.wrapping_add(1) & lo)),
-            0x8 => {
-                let cmp = self.mtimecmp.at(c);
-                self.mtimecmp.set(c + 1, (cmp & !lo) | v as u64);
-            }
-            0xC => {
-                let cmp = self.mtimecmp.at(c);
-                self.mtimecmp.set(c + 1, (cmp & lo) | ((v as u64) << 32));
-            }
-            _ => {}
+        let cmp = self.mtimecmp.at(c);
+        match reg {
+            Reg::MtimeLo => self.set_mtime(c + 1, (now & !lo) | v as u64),
+            Reg::MtimeHi => self.set_mtime(c + 1, ((v as u64) << 32) | (now.wrapping_add(1) & lo)),
+            Reg::MtimecmpLo => self.mtimecmp.set(c + 1, (cmp & !lo) | v as u64),
+            Reg::MtimecmpHi => self.mtimecmp.set(c + 1, (cmp & lo) | ((v as u64) << 32)),
         }
     }
 

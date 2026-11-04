@@ -407,18 +407,14 @@ pub module soc_top (
 
     let periph_addr: logic<4> = if mem_write ? data_waddr[3:0] : data_addr[3:0];
 
-    // The timer is also the CLINT (RV32 region 2), which decodes addr[15:2]; the region
-    // tells timer_core which view an access uses (only regions 2 and 4 select it)
-    let timer_addr  : logic<16> = if mem_write ? data_waddr[15:0] : data_addr[15:0];
-    let timer_region: logic<4>  = if mem_write ? data_waddr[31:28] : data_addr[31:28];
-    let timer_clint : logic     = timer_region == soc_pkg::RV_REGION_CLINT;
+    // The timer is the CLINT (RV32 region 2), which decodes addr[15:2]
+    let timer_addr: logic<16> = if mem_write ? data_waddr[15:0] : data_addr[15:0];
 
     // Instantiate System Timer Core (Veryl)
     inst timer_inst: timer_core (
         clk      : clk           ,
         rst      : rst           ,
         addr     : timer_addr    ,
-        clint    : timer_clint   ,
         data_in  : cpu_data_out  ,
         data_out : timer_data_out,
         we       : timer_we      ,

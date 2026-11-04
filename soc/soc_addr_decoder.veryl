@@ -5,9 +5,9 @@
 // (data_waddr) addresses. Only the bits needed to tell the regions apart are
 // decoded, so regions repeat (README, "Address decoding and aliases"); an address
 // matching nothing selects nothing (reads 0, writes are ignored). rom is RV32 region 0,
-// the boot ROM (soc_rom; soc_top reads it, nothing writes it). timer is timer_core, in
-// RV32 region 2 (its CLINT view) and MMIO page 1 (its TIMER page). xmem is the wait-state
-// window (soc_xmem_bridge serves it): RV32 region 8, and Hack's data below
+// the boot ROM (soc_rom; soc_top reads it, nothing writes it). timer is timer_core, the
+// CLINT in RV32 region 2 (MMIO page 1, once its TIMER page, is unassigned). xmem is the
+// wait-state window (soc_xmem_bridge serves it): RV32 region 8, and Hack's data below
 // HACK_MMIO_BASE, which soc_top maps into the window's D segment.
 pub module soc_addr_decoder (
     addr     : input  logic<32>,
@@ -43,14 +43,13 @@ pub module soc_addr_decoder (
             if region == soc_pkg::RV_REGION_ROM {
                 rom = 1'b1;
             } else if region == soc_pkg::RV_REGION_CLINT {
-                timer = 1'b1; // timer_core's CLINT view (its TIMER page is in region 4)
+                timer = 1'b1; // timer_core, the CLINT
             } else if region == soc_pkg::RV_REGION_MMIO {
                 switch {
-                    page == soc_pkg::MMIO_PAGE_UART : uart  = 1'b1;
-                    page == soc_pkg::MMIO_PAGE_TIMER: timer = 1'b1;
-                    page == soc_pkg::MMIO_PAGE_SD   : sd    = 1'b1;
-                    page == soc_pkg::MMIO_PAGE_GPIO : gpio  = 1'b1;
-                    default                         : {}
+                    page == soc_pkg::MMIO_PAGE_UART: uart = 1'b1;
+                    page == soc_pkg::MMIO_PAGE_SD  : sd   = 1'b1;
+                    page == soc_pkg::MMIO_PAGE_GPIO: gpio = 1'b1;
+                    default                        : {}
                 }
             } else if region == soc_pkg::RV_REGION_XMEM {
                 xmem = 1'b1;

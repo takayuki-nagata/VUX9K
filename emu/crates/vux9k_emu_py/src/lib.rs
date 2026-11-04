@@ -350,6 +350,19 @@ impl Soc {
         self.inner.m_ext = on;
     }
 
+    /// The v0.3.x bitstreams' TIMER page at MMIO page 1 in place of the CLINT, region 2
+    /// then unassigned (default False: the RTL's CLINT, page 1 unassigned); with m_ext
+    /// False it models those bitstreams for their first stage. Kept across reset().
+    #[getter]
+    fn timer_page(&self) -> bool {
+        self.inner.timer_page
+    }
+
+    #[setter]
+    fn set_timer_page(&mut self, on: bool) {
+        self.inner.timer_page = on;
+    }
+
     /// The hart runs in U-mode now.
     #[getter]
     fn user(&self) -> bool {

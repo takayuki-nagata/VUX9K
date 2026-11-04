@@ -3,18 +3,18 @@
 
 //! A CLINT-compatible block (SiFive's layout, Linux's `riscv,clint0`) at RV32 region 2
 //! (`CLINT_BASE`, decoded on addr[15:2] and repeating every 64 KB across the region):
-//! soc/timer_core.veryl's CLINT view (soc_pkg::RV_REGION_CLINT, `CLINT_*`), in the Real and
+//! soc/timer_core.veryl (soc_pkg::RV_REGION_CLINT, `CLINT_*`), in the Real and
 //! Linux profiles. msip is reset only by a power-on reset, not by the CPU's soft reset.
 //!
 //! Registers (32-bit words; a byte or halfword access hits its word): 0x0000 msip (bit 0,
 //! the machine software interrupt, mip.MSIP), 0x4000/0x4004 mtimecmp lo/hi, 0xBFF8/0xBFFC
 //! mtime lo/hi; everything else reads 0 and ignores writes. mtime and mtimecmp are the
-//! machine timer's (crate::periph::Timer, also at 0x4000_1000), with its timing: a read
+//! machine timer's (crate::periph::Timer), with its timing: a read
 //! returns the value during the load's EXECUTE cycle, a write takes effect at the end of
 //! the store's write cycle, and mtime is writable as there. msip is timer_core's flop:
 //! a store sets it at the end of its write cycle, and mip.MSIP shows it from the next.
 
-use super::timer::{Stepped, Timer};
+use super::timer::{Reg, Stepped, Timer};
 
 /// The block's base address (RV32 region 2).
 pub const CLINT_BASE: u32 = 0x2000_0000;
@@ -35,13 +35,13 @@ impl Default for Clint {
     }
 }
 
-/// The machine timer's register (`Timer::read`/`write`'s addr[3:0]) at CLINT offset `off`.
-fn timer_reg(off: u32) -> Option<u32> {
+/// The machine timer's register at CLINT offset `off`.
+fn timer_reg(off: u32) -> Option<Reg> {
     match off {
-        MTIME => Some(0x0),
-        0xBFFC => Some(0x4),
-        MTIMECMP => Some(0x8),
-        0x4004 => Some(0xC),
+        MTIME => Some(Reg::MtimeLo),
+        0xBFFC => Some(Reg::MtimeHi),
+        MTIMECMP => Some(Reg::MtimecmpLo),
+        0x4004 => Some(Reg::MtimecmpHi),
         _ => None,
     }
 }

@@ -412,12 +412,38 @@ fn clint_registers(profile: Profile) {
     let c = soc.cycle;
     assert_eq!(load(&mut soc, 0x2000_BFF8), (c + 1) as u32);
     assert_eq!(load(&mut soc, 0x2000_BFFC), 1);
-    // mtimecmp written through the CLINT is the timer's (its old page at 0x4000_1008)
+    // mtimecmp written through the CLINT
     store(&mut soc, 0x2000_4000, 0xAABB_CCDD);
     store(&mut soc, 0x2000_4004, 0x11);
+    assert_eq!(load(&mut soc, 0x2000_4000), 0xAABB_CCDD);
+    assert_eq!(load(&mut soc, 0x2000_4004), 0x11);
+    // MMIO page 1 (the TIMER page until the CLINT replaced it) is unassigned: reads 0,
+    // ignores writes
+    assert_eq!(load(&mut soc, 0x4000_1000), 0);
+    assert_eq!(load(&mut soc, 0x4000_1008), 0);
+    store(&mut soc, 0x4000_1008, 0x1234_5678);
+    assert_eq!(load(&mut soc, 0x4000_1008), 0);
+    assert_eq!(load(&mut soc, 0x2000_4000), 0xAABB_CCDD);
+    // The v0.3.x bitstreams' TIMER page, when asked for: the same timer at its offsets
+    soc.timer_page = true;
     assert_eq!(load(&mut soc, 0x4000_1008), 0xAABB_CCDD);
     assert_eq!(load(&mut soc, 0x4000_100C), 0x11);
-    assert_eq!(load(&mut soc, 0x2000_4004), 0x11);
+    assert_eq!(
+        load(&mut soc, 0x4000_1FF8),
+        0xAABB_CCDD,
+        "repeating every 16 bytes"
+    );
+    let c = soc.cycle;
+    assert_eq!(load(&mut soc, 0x4000_1000), (c + 1) as u32);
+    // ... and no CLINT then: region 2 reads 0 and ignores stores
+    assert_eq!(load(&mut soc, 0x2000_4000), 0);
+    store(&mut soc, 0x2000_4000, 0);
+    store(&mut soc, 0x4000_1008, 0x1234_5678);
+    soc.timer_page = false;
+    assert_eq!(load(&mut soc, 0x2000_4000), 0x1234_5678, "the same timer");
+    soc.timer_page = true;
+    store(&mut soc, 0x4000_1008, 0xAABB_CCDD);
+    soc.timer_page = false;
     // Mirrored across region 2 (addr[15:2]); other offsets read 0
     assert_eq!(load(&mut soc, 0x2ABC_4000), 0xAABB_CCDD);
     assert_eq!(load(&mut soc, 0x2001_4004), 0x11);
@@ -425,7 +451,7 @@ fn clint_registers(profile: Profile) {
     assert_eq!(load(&mut soc, 0x2000_8000), 0);
     assert_eq!(load(&mut soc, 0x2000_4008), 0);
     assert_eq!(load(&mut soc, 0x2000_BFF4), 0);
-    // mtime is writable, as on the timer's page
+    // mtime is writable
     store(&mut soc, 0x2000_BFFC, 0);
     store(&mut soc, 0x2000_BFF8, 1000);
     let mt = soc.periph.timer.mtime(soc.cycle);

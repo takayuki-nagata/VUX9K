@@ -1,17 +1,15 @@
 // Copyright (c) 2026 Takayuki Nagata
 // SPDX-License-Identifier: MIT
 
-// Veryl System Timer Core (mtime / mtimecmp, msip), seen two ways (`clint`):
-// - the CLINT view (RV32 region 2): addr[15:2] decoded in full, soc_pkg::CLINT_MSIP,
-//   CLINT_MTIMECMP (+4: hi), CLINT_MTIME (+4: hi); a byte or halfword store hits its word
-// - the TIMER page (0x4000_1000): addr[3:0] 0x0/0x4 mtime lo/hi, 0x8/0xC mtimecmp lo/hi
-// Any other address reads 0 and ignores writes. A write stores the whole word (no byte
-// enables). msip, like mtime and mtimecmp, is reset only by rst, not by the CPU's soft reset.
+// Veryl System Timer Core (mtime / mtimecmp, msip): the CLINT (RV32 region 2), addr[15:2]
+// decoded in full: soc_pkg::CLINT_MSIP, CLINT_MTIMECMP (+4: hi), CLINT_MTIME (+4: hi); a
+// byte or halfword store hits its word. Any other offset reads 0 and ignores writes. A
+// write stores the whole word (no byte enables). msip, like mtime and mtimecmp, is reset
+// only by rst, not by the CPU's soft reset.
 module timer_core (
     clk      : input  clock    ,
     rst      : input  reset    ,
     addr     : input  logic<16>,
-    clint    : input  logic    , // 1: the CLINT view, 0: the TIMER page
     data_in  : input  logic<32>,
     data_out : output logic<32>,
     we       : input  logic    ,
@@ -31,16 +29,10 @@ module timer_core (
     var sel_hi   : logic;
 
     always_comb {
-        sel_hi = addr[2];
-        if clint {
-            sel_msip  = addr[15:2] == soc_pkg::CLINT_MSIP[15:2];
-            sel_cmp   = addr[15:3] == soc_pkg::CLINT_MTIMECMP[15:3];
-            sel_timer = sel_cmp || addr[15:3] == soc_pkg::CLINT_MTIME[15:3];
-        } else {
-            sel_msip  = 1'b0;
-            sel_cmp   = addr[3];
-            sel_timer = addr[1:0] == 2'b00;
-        }
+        sel_hi    = addr[2];
+        sel_msip  = addr[15:2] == soc_pkg::CLINT_MSIP[15:2];
+        sel_cmp   = addr[15:3] == soc_pkg::CLINT_MTIMECMP[15:3];
+        sel_timer = sel_cmp || addr[15:3] == soc_pkg::CLINT_MTIME[15:3];
     }
 
     always_ff (clk, rst) {

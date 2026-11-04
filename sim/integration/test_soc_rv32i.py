@@ -21,7 +21,7 @@ from rv32_asm import Asm
 from soc_env import check_psram_pins, load_imem, start_soc
 
 UART = 0x4000_0000  # +0 data, +4 status {frame_err, overrun, tx_full, rx_empty}
-TIMER = 0x4000_1000  # the TIMER page: +0/+4 mtime lo/hi, +8/+C mtimecmp lo/hi (the CLINT's)
+PAGE1 = 0x4000_1000  # MMIO page 1, the TIMER page until the CLINT replaced it: unassigned
 GPIO = 0x4000_3000  # +0 LEDs, +4 button, +C soft-reset magic
 CLINT = 0x2000_0000  # region 2: +0 msip, +0x4000/+0x4004 mtimecmp lo/hi, +0xBFF8/+0xBFFC mtime lo/hi
 CLINT_MTIMECMP = CLINT + 0x4000  # lo, hi at +4
@@ -282,27 +282,37 @@ def timer_irq_program() -> list[int]:
 
 
 def clint_program() -> list[int]:
-    """The CLINT at region 2: mtime and mtimecmp are the TIMER page's registers, and msip
-    raises the machine software interrupt (mcause 0x80000003); 'F<code>' or 'CLPASS'."""
+    """The CLINT at region 2: mtimecmp reads back, MMIO page 1 (the old TIMER page) reads 0
+    and ignores stores, and msip raises the machine software interrupt (mcause 0x80000003);
+    'F<code>' or 'CLPASS'."""
     a = Asm()
     a.la("t0", "handler")
     a.csrw("mtvec", "t0")
     a.li("s2", CLINT)
     a.li("s3", CLINT + 0x4000)  # mtimecmp
     a.li("s4", CLINT + 0xBFF8)  # mtime
-    a.li("s5", TIMER)
-    # 1: mtime through the CLINT is the page's, a few cycles on
-    a.lw("t0", 0, "s5")
+    a.li("s5", PAGE1)
+    # 1: mtime counts: two reads through the CLINT, a few cycles apart
+    a.lw("t0", 0, "s4")
     a.lw("t1", 0, "s4")
     a.sub("t3", "t1", "t0")
     a.li("a1", 1)
     a.li("t2", 16)
     a.bgeu("t3", "t2", "fail")
-    # 2: mtimecmp written through the CLINT reads back through the page
+    a.beqz("t3", "fail")
+    # 2: page 1 reads 0 where mtime was
+    a.lw("t3", 0, "s5")
+    _expect(a, "t3", 0, 2)
+    # 8: mtimecmp written through the CLINT reads back; a store to page 1 where mtimecmp
+    # was is ignored, and page 1 reads 0 there
     a.li("t0", 0x2468_ACE0)
     a.sw("t0", 0, "s3")
+    a.li("t1", 0x1357_9BDF)
+    a.sw("t1", 8, "s5")
+    a.lw("t3", 0, "s3")
+    _expect(a, "t3", 0x2468_ACE0, 8)
     a.lw("t3", 8, "s5")
-    _expect(a, "t3", 0x2468_ACE0, 2)
+    _expect(a, "t3", 0, 8)
     a.li("t0", -1)
     a.sw("t0", 0, "s3")
     # 3: msip reads back bit 0 only
@@ -343,7 +353,7 @@ def clint_program() -> list[int]:
 
 @cocotb.test()
 async def test_soc_clint(dut):
-    """The CLINT at 0x2000_0000: mtime/mtimecmp shared with the TIMER page, msip raising MSI"""
+    """The CLINT at 0x2000_0000: mtime, mtimecmp, msip raising MSI; MMIO page 1 unassigned"""
     program = clint_program()
     ser, _ = await start_soc(dut, during_reset=lambda soc: load_imem(soc, program))
     out = (await ser.wait_for(b"\n", timeout_cycles=200_000)).decode("ascii", errors="replace")

@@ -17,8 +17,8 @@
 //!   soc/soc_top.veryl (vendor/psram_controller), and the caches in front of it
 //!   (soc/soc_icache.veryl, soc/soc_dcache.veryl; crate::cache).
 //!
-//! - the CLINT at region 2 (crate::periph::clint): soc/timer_core.veryl's CLINT view, its
-//!   msip is mip.MSIP (Real and Linux; the IsaTest profile, like tb_hex_runner, has none)
+//! - the CLINT at region 2 (crate::periph::clint): soc/timer_core.veryl; MMIO page 1 is
+//!   unassigned, as in soc_addr_decoder. Its msip is mip.MSIP (Real and Linux; the IsaTest profile, like tb_hex_runner, has none)
 //!
 //! Except the Linux profile's addition, which is ahead of the RTL and mirrors nothing yet
 //! (crate::profile): the UART's liteuart view (crate::periph::uart). With it off (Real,
@@ -189,6 +189,12 @@ pub struct Soc {
     /// The CPU has RV32M (true, the default). false models the CPU before it (the v0.3.x
     /// bitstreams): misa without M, and the M instructions illegal. Kept across resets.
     pub m_ext: bool,
+    /// The TIMER page at MMIO page 1 (mtime +0/+4, mtimecmp +8/+C: the CLINT's timer at
+    /// other addresses) in place of the CLINT, region 2 then unassigned. false, the
+    /// default, is the RTL, where page 1 is unassigned; true models the v0.3.x bitstreams'
+    /// timer (with `m_ext` false, their CPU), for their first stage
+    /// (sim/emu/test_upgrade.py). Kept across resets.
+    pub timer_page: bool,
     /// The A extension's reservation: the address of the last LR.W, until an SC.W or a trap.
     reservation: Option<u32>,
     /// Instructions executed (retired or trapped), for statistics.
@@ -377,6 +383,7 @@ impl Soc {
             periph: Periph::default(),
             riscv_mode: true,
             m_ext: true,
+            timer_page: false,
             reservation: None,
             steps: 0,
             rom: vec![0; rom_words],
@@ -654,8 +661,8 @@ impl Soc {
         match addr >> 28 {
             // The ROM, repeating every 16 KB across region 0
             0 => self.rom[((addr >> 2) & self.rom_mask) as usize],
-            // The CLINT (timer_core's CLINT view), sampled in EXECUTE like the timer page
-            2 => self.periph.clint.read(addr, &self.periph.timer, t + 1),
+            // The CLINT (timer_core), sampled in EXECUTE like the registered MMIO pages
+            2 if !self.timer_page => self.periph.clint.read(addr, &self.periph.timer, t + 1),
             4 => self.mmio_read(addr, t),
             _ if self.in_xmem(addr) => self.xmem[Self::xmem_index(addr)],
             _ => 0,
@@ -677,7 +684,7 @@ impl Soc {
             return 0;
         }
         match addr >> 28 {
-            2 => {
+            2 if !self.timer_page => {
                 self.periph
                     .clint
                     .write(addr, data, &mut self.periph.timer, t + 2);
@@ -699,13 +706,16 @@ impl Soc {
     }
 
     /// MMIO read by the instruction fetched in cycle `t`. The registered peripherals
-    /// (timer, SD, GPIO) sample in its EXECUTE cycle, t + 1; the UART is read
+    /// (SD, GPIO, the `timer_page`) sample in its EXECUTE cycle, t + 1; the UART is read
     /// combinationally in MEM_WAIT, t + 2.
     fn mmio_read(&mut self, addr: u32, t: u64) -> u32 {
         match (addr >> 12) & 0xF {
             periph::PAGE_UART if self.linux => self.periph.uart.lite_read(addr, t + 2),
             periph::PAGE_UART => self.periph.uart.read(addr, t + 2),
-            periph::PAGE_TIMER => self.periph.timer.read(addr, t + 1),
+            periph::PAGE_TIMER if self.timer_page => match periph::timer_page_reg(addr) {
+                Some(reg) => self.periph.timer.read(reg, t + 1),
+                None => 0,
+            },
             periph::PAGE_SD => self.periph.sd.read(addr, t + 1),
             periph::PAGE_GPIO => self.periph.gpio.read(addr, t + 1),
             _ => 0,
@@ -717,7 +727,11 @@ impl Soc {
         match (addr >> 12) & 0xF {
             periph::PAGE_UART if self.linux => self.periph.uart.lite_write(addr, data, edge),
             periph::PAGE_UART => self.periph.uart.write(addr, data, edge),
-            periph::PAGE_TIMER => self.periph.timer.write(addr, data, edge),
+            periph::PAGE_TIMER if self.timer_page => {
+                if let Some(reg) = periph::timer_page_reg(addr) {
+                    self.periph.timer.write(reg, data, edge)
+                }
+            }
             periph::PAGE_SD => self.periph.sd.write(addr, data, edge),
             periph::PAGE_GPIO => self.periph.gpio.write(addr, data, edge),
             _ => {}

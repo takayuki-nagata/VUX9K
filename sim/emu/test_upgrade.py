@@ -122,11 +122,12 @@ def test_upgrade_from_the_previous_release(prev, monkeypatch, capsys, tmp_path):
 
 def test_the_card_before_the_bitstream_stops_the_second_stage(prev):
     """The new second stage on the card while the flash still holds the previous release's
-    bitstream (its first stage, a CPU without M): the second stage says what to do and stops
-    before its first M instruction. The card is left as it is: programming the bitstream then
-    is the whole fix."""
+    bitstream (its first stage; a CPU without M, the timer at the TIMER page): the second stage
+    says what to do and stops before its first M instruction. The card is left as it is:
+    programming the bitstream then is the whole fix."""
     soc = new_soc()
     soc.m_ext = False
+    soc.timer_page = True
     preload_firmware(soc, os.path.join(PREV_DIR, "emu", "firmware"))
     image = card({"VUX9K/STAGE2.BIN": stage2(), "VUX9K/APPS/HELLO.BIN": app("HELLO.BIN")})
     soc.sd_insert(image)

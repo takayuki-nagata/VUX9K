@@ -32,8 +32,7 @@ emulator's Linux profile. Index and the rules that apply everywhere: [`AGENTS.md
   these targets is in CI. The first buildroot run takes ~40 min on a 2-vCPU
   machine, a kernel rebuild ~6 min.
 - **The profile is ahead of the RTL.** It has a liteuart register view of the UART, which the
-  RTL doesn't. Its CLINT at `0x2000_0000` (`periph/clint.rs`) is the RTL's (`timer_core`'s CLINT
-  view) and `Real`'s too, held to the RTL by the lockstep program `clint`. The lockstep covers
+  RTL doesn't. Its CLINT at `0x2000_0000` (`periph/clint.rs`) is the RTL's (`timer_core`) and `Real`'s too, held to the RTL by the lockstep program `clint`. The lockstep covers
   `Real` only. Nothing here runs on the board, and no document may say it does.
 
 ## Things that are not obvious

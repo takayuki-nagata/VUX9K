@@ -56,7 +56,7 @@
 		};
 
 		/*
-		 * soc/timer_core.veryl's CLINT view (RV32 region 2): msip at +0x0, mtimecmp at
+		 * soc/timer_core.veryl, the CLINT (RV32 region 2): msip at +0x0, mtimecmp at
 		 * +0x4000, mtime at +0xbff8, SiFive's layout, which Zephyr's riscv_machine_timer
 		 * driver serves; it takes the timer interrupt from the second entry (MSI, MTI).
 		 */

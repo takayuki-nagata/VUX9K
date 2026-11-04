@@ -100,7 +100,8 @@ python3 tools/vux_tool.py run-app VUX9K/APPS/HELLO.BIN
 **Upgrading from v0.3.x.** This release's CPU has the M extension (RV32IM), and its second
 stage and applications use it; v0.3.x's CPU traps those instructions. Its timer moved too:
 `mtime` and `mtimecmp` are the CLINT's (`0x2000_0000`), not at `0x4000_1000` any more, so
-v0.3.x's second stage and its applications that use the timer don't run on this bitstream.
+v0.3.x's second stage and its applications that use the timer don't run on this bitstream
+(`0x4000_1000` is unassigned now: it reads 0 and ignores writes).
 Write the new bitstream to the flash first, then the card: the new first stage doesn't start
 a second stage older than v9 (`[BOOT] STAGE2.BIN: too old, needs v9 (install-stage2): v7`)
 and stays at its `s1> ` prompt, from where `install-stage2` works; and v0.3.x's bitstream
@@ -370,7 +371,8 @@ applications and cards keep working on it, but software built for v0.4.0 or late
 bitstream ("Upgrading from v0.3.x", section 2). The same release moved the timer to the
 CLINT (`0x2000_0000`) and broke that promise for the timer: v0.3.x's second stage doesn't
 start on it (the first stage refuses second stages before v9), and v0.3.x's applications
-that use the timer at `0x4000_1000` must be rebuilt. The same release added U-mode, which changes
+that use the timer at `0x4000_1000` must be rebuilt: that page is gone (it reads 0 and
+ignores writes, as an unassigned address does). The same release added U-mode, which changes
 one thing for M-mode software: `mstatus.MPP` is real now, so an `mret` with MPP left at 0 (after
 writing `mstatus` without it, or a second `mret` without a trap between) lands in U-mode.
 

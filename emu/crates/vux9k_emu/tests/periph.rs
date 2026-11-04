@@ -36,8 +36,8 @@ fn load(words: &[u32]) -> Soc {
 
 #[test]
 fn mtime_counts_clocks_and_reads_in_execute() {
-    // lui x1, 0x40001 (timer); lw x2, 0(x1) is fetched at cycle 2, reads in cycle 3
-    let mut soc = load(&[lui(1, 0x40001), lw(2, 1, 0), lw(3, 1, 0)]);
+    // lui x1, 0x2000C (the CLINT); lw x2, mtime is fetched at cycle 2, reads in cycle 3
+    let mut soc = load(&[lui(1, 0x2000C), lw(2, 1, -8), lw(3, 1, -8)]);
     soc.step();
     soc.step();
     soc.step();
@@ -49,11 +49,11 @@ fn mtime_counts_clocks_and_reads_in_execute() {
 fn mtime_low_write_replaces_that_edges_increment() {
     // lui c0, addi c2, sw fetched at c4 (MEM_WAIT c6): mtime is 100 during c7, not 101
     let mut soc = load(&[
-        lui(1, 0x40001),
+        lui(1, 0x2000C), // the CLINT's mtime at -8 (0xBFF8), its high half at -4
         addi(2, 0, 100),
-        sw(2, 1, 0),
-        lw(3, 1, 4),
-        lw(4, 1, 0),
+        sw(2, 1, -8),
+        lw(3, 1, -4),
+        lw(4, 1, -8),
     ]);
     for _ in 0..5 {
         soc.step();
@@ -68,11 +68,11 @@ fn timer_interrupt_traps_to_mtvec() {
     let handler = 0x80;
     let mut words = vec![
         addi(1, 0, handler),
-        csrw(0x305, 1), // mtvec
-        lui(1, 0x40001),
-        sw(0, 1, 0xC), // mtimecmp hi = 0
+        csrw(0x305, 1),  // mtvec
+        lui(1, 0x20004), // the CLINT's mtimecmp
+        sw(0, 1, 4),     // mtimecmp hi = 0
         addi(2, 0, 60),
-        sw(2, 1, 8), // mtimecmp lo = 60
+        sw(2, 1, 0), // mtimecmp lo = 60
         addi(2, 0, 0x80),
         csrw(0x304, 2), // mie.MTIE
         addi(2, 0, 8),

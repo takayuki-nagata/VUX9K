@@ -370,7 +370,8 @@ fn t_umode(seed: u32) -> u32 {
 
 // t_clint: the CLINT (map::CLINT_BASE). mtime read hi, lo, lo, hi (hi is 0 in a run's
 // first 238 s, the lo reads a fixed number of cycles apart); mtimecmp written and read back;
-// msip set (read back, mip.MSIP), then taken as the machine software interrupt (cause 3),
+// MMIO page 1 (UNASSIGNED_PAGE, the TIMER page before the CLINT) read after a store there
+// (0) and mtimecmp read again (unchanged); msip set (read back, mip.MSIP), then taken as the machine software interrupt (cause 3),
 // whose handler clears it; then mtimecmp a little ahead of mtime and the machine timer
 // interrupt (cause 7), whose handler moves mtimecmp out of reach, waited for at most
 // 100,000 loops. Every trap folds mcause into a0 and counts in a4; the other values are
@@ -407,6 +408,16 @@ global_asm!(
     "lw t1, 0(a2)",
     "clint_fold t1",
     "lw t1, 4(a2)",
+    "clint_fold t1",
+    // MMIO page 1: unassigned
+    "li t2, {page1}",
+    "li t1, -1",
+    "sw t1, 8(t2)",
+    "lw t1, 0(t2)",
+    "clint_fold t1",
+    "lw t1, 8(t2)",
+    "clint_fold t1",
+    "lw t1, 0(a2)",
     "clint_fold t1",
     // msip
     "li a4, 0",
@@ -489,7 +500,11 @@ global_asm!(
     msip = const map::CLINT_MSIP,
     mtimecmp = const map::MTIMECMP_LO,
     mtime = const map::MTIME_LO,
+    page1 = const UNASSIGNED_PAGE,
 );
+
+/// MMIO page 1: unassigned (reads 0, ignores stores) since the CLINT replaced the TIMER page.
+const UNASSIGNED_PAGE: usize = 0x4000_1000;
 
 extern "C" {
     fn clint_run(seed: u32) -> u32;
@@ -824,7 +839,7 @@ const TESTS: [(&str, Test, u32); 20] = [
     ("muldiv", Pairs(t_muldiv), 0x180C_F09F),
     ("amo", Pairs(t_amo), 0x29F4_9444),
     ("umode", Once(t_umode), 0x4C42_10E8),
-    ("clint", Once(t_clint), 0xDB11_8CAF),
+    ("clint", Once(t_clint), 0x26A2_6E4C),
 ];
 
 #[no_mangle]

@@ -22,20 +22,20 @@ pub package soc_pkg {
     const SD_CLK_DIV_MIN : u32 = 3;
 
     // RV32 data address map: region = addr[31:28], MMIO page = addr[15:12]
-    // (region 0: the boot ROM, soc_rom; region 2: the CLINT, timer_core)
+    // (region 0: the boot ROM, soc_rom; region 2: the CLINT, timer_core). MMIO page 1 is
+    // unassigned (it was the TIMER page until the CLINT replaced it).
     const RV_REGION_ROM  : logic<4> = 4'h0;
     const RV_REGION_CLINT: logic<4> = 4'h2;
     const RV_REGION_MMIO : logic<4> = 4'h4;
     const MMIO_PAGE_UART : logic<4> = 4'h0;
-    const MMIO_PAGE_TIMER: logic<4> = 4'h1;
     const MMIO_PAGE_SD   : logic<4> = 4'h2;
     const MMIO_PAGE_GPIO : logic<4> = 4'h3;
 
     // RV32 region 2: a CLINT-compatible block (SiFive's layout, Linux's riscv,clint0),
     // decoded on addr[15:2] and repeating every 64 KB across the region. Byte offsets of
-    // its 32-bit registers: msip (bit 0, mip.MSIP), mtimecmp lo/hi, mtime lo/hi (the same
-    // registers as the TIMER page); every other offset reads 0 and ignores writes. The
-    // emulator copies them (emu/crates/vux9k_emu/src/periph/clint.rs).
+    // its 32-bit registers: msip (bit 0, mip.MSIP), mtimecmp lo/hi, mtime lo/hi; every
+    // other offset reads 0 and ignores writes. The emulator copies them
+    // (emu/crates/vux9k_emu/src/periph/clint.rs).
     const CLINT_MSIP    : logic<16> = 16'h0000;
     const CLINT_MTIMECMP: logic<16> = 16'h4000;
     const CLINT_MTIME   : logic<16> = 16'hBFF8;
