@@ -368,6 +368,137 @@ fn t_umode(seed: u32) -> u32 {
     unsafe { umode_run(seed) }
 }
 
+// t_clint: the CLINT (map::CLINT_BASE). mtime read hi, lo, lo, hi (hi is 0 in a run's
+// first 238 s, the lo reads a fixed number of cycles apart); mtimecmp written and read back;
+// msip set (read back, mip.MSIP), then taken as the machine software interrupt (cause 3),
+// whose handler clears it; then mtimecmp a little ahead of mtime and the machine timer
+// interrupt (cause 7), whose handler moves mtimecmp out of reach, waited for at most
+// 100,000 loops. Every trap folds mcause into a0 and counts in a4; the other values are
+// folded as they are read. a1-a3: msip, mtimecmp, mtime.
+global_asm!(
+    ".option push",
+    ".option arch, +zicsr",
+    ".macro clint_fold r",
+    "slli t0, a0, 5",
+    "srli a0, a0, 27",
+    "or a0, a0, t0",
+    "xor a0, a0, \\r",
+    ".endm",
+    ".balign 4",
+    "clint_run:",
+    "csrr t6, mtvec",
+    "la t0, clint_trap",
+    "csrw mtvec, t0",
+    "li a1, {msip}",
+    "li a2, {mtimecmp}",
+    "li a3, {mtime}",
+    "lw t1, 4(a3)",
+    "lw t2, 0(a3)",
+    "lw t3, 0(a3)",
+    "lw t4, 4(a3)",
+    "sub t3, t3, t2",
+    "clint_fold t1",
+    "clint_fold t3",
+    "clint_fold t4",
+    "li t1, -1",
+    "sw t1, 4(a2)",
+    "li t1, 0x12345678",
+    "sw t1, 0(a2)",
+    "lw t1, 0(a2)",
+    "clint_fold t1",
+    "lw t1, 4(a2)",
+    "clint_fold t1",
+    // msip
+    "li a4, 0",
+    "lw t1, 0(a1)",
+    "clint_fold t1",
+    "li t1, 8",
+    "csrw mie, t1",
+    "li t1, 1",
+    "sw t1, 0(a1)",
+    "nop",
+    "lw t1, 0(a1)",
+    "clint_fold t1",
+    "csrr t1, mip",
+    "andi t1, t1, 8",
+    "clint_fold t1",
+    "csrsi mstatus, 8",
+    "nop",
+    "csrci mstatus, 8",
+    "lw t1, 0(a1)",
+    "clint_fold t1",
+    "csrr t1, mip",
+    "andi t1, t1, 8",
+    "clint_fold t1",
+    "clint_fold a4",
+    // mtimecmp -> MTI
+    "li a4, 0",
+    "li t1, 0x80",
+    "csrw mie, t1",
+    "lw t2, 0(a3)",
+    "lw t3, 4(a3)",
+    "addi t4, t2, 2000",
+    "sltu t1, t4, t2",
+    "add t3, t3, t1",
+    "li t1, -1",
+    "sw t1, 4(a2)",
+    "sw t4, 0(a2)",
+    "sw t3, 4(a2)",
+    "csrr t1, mip",
+    "andi t1, t1, 0x80",
+    "clint_fold t1",
+    "li t5, 100000",
+    "csrsi mstatus, 8",
+    "1:",
+    "bnez a4, 2f",
+    "addi t5, t5, -1",
+    "bnez t5, 1b",
+    "2:",
+    "csrci mstatus, 8",
+    "snez t5, t5",
+    "clint_fold t5",
+    "clint_fold a4",
+    "csrr t1, mip",
+    "andi t1, t1, 0x80",
+    "clint_fold t1",
+    "csrw mie, zero",
+    "csrw mtvec, t6",
+    "ret",
+    ".balign 4",
+    "clint_trap:",
+    "csrr t1, mcause",
+    "clint_fold t1",
+    "addi a4, a4, 1",
+    "li t2, 0x80000003",
+    "bne t1, t2, 1f",
+    "sw zero, 0(a1)",
+    "mret",
+    "1:",
+    "li t2, 0x80000007",
+    "bne t1, t2, 1f",
+    "li t2, -1",
+    "sw t2, 4(a2)",
+    "mret",
+    "1:",
+    "csrr t1, mepc",
+    "addi t1, t1, 4",
+    "csrw mepc, t1",
+    "mret",
+    ".purgem clint_fold",
+    ".option pop",
+    msip = const map::CLINT_MSIP,
+    mtimecmp = const map::MTIMECMP_LO,
+    mtime = const map::MTIME_LO,
+);
+
+extern "C" {
+    fn clint_run(seed: u32) -> u32;
+}
+
+fn t_clint(seed: u32) -> u32 {
+    unsafe { clint_run(seed) }
+}
+
 const XMEM_WORDS: usize = map::XMEM_BYTES / 4;
 
 fn xmem_word(i: usize) -> *mut u32 {
@@ -673,7 +804,7 @@ enum Test {
 use Test::{Once, Pairs};
 
 /// (name, test, checksum the emulator computes)
-const TESTS: [(&str, Test, u32); 19] = [
+const TESTS: [(&str, Test, u32); 20] = [
     ("add", Pairs(t_add), 0xC02B_9A30),
     ("sub", Pairs(t_sub), 0x1C9E_5AB3),
     ("logic", Pairs(t_logic), 0x0F9E_3961),
@@ -693,6 +824,7 @@ const TESTS: [(&str, Test, u32); 19] = [
     ("muldiv", Pairs(t_muldiv), 0x180C_F09F),
     ("amo", Pairs(t_amo), 0x29F4_9444),
     ("umode", Once(t_umode), 0x4C42_10E8),
+    ("clint", Once(t_clint), 0xDB11_8CAF),
 ];
 
 #[no_mangle]

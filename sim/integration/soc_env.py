@@ -33,6 +33,11 @@ with open(os.path.join(REPO_ROOT, "firmware", "stage1", "src", "main.rs")) as _f
     assert _m, "STAGE1_VERSION not found in main.rs"
     STAGE1_VERSION = int(_m.group(1))
 BANNER = f"VUX9K Stage 1 (v{STAGE1_VERSION})"
+with open(os.path.join(REPO_ROOT, "firmware", "fw_common", "src", "boot.rs")) as _f:
+    _m = re.search(r"const MIN_STAGE2_VERSION: u32 = (\d+);", _f.read())
+    assert _m, "MIN_STAGE2_VERSION not found in boot.rs"
+    # The oldest second stage the first stage starts
+    MIN_STAGE2_VERSION = int(_m.group(1))
 S1_PROMPT = b"s1> "
 S2_PROMPT = b"s2> "
 STAGE2_BASE = 0x8070_0000
@@ -73,15 +78,16 @@ def mbr_sector() -> bytes:
     return bytes(mbr)
 
 
-def v4_file(payload: bytes = HASH_PAYLOAD, version: int = 1, **kw) -> bytes:
+def v4_file(payload: bytes = HASH_PAYLOAD, version: int = MIN_STAGE2_VERSION, **kw) -> bytes:
     """A VUX9 v4 file loading at the second stage's address: by default a tiny one that
-    prints '#' (RTL reads a card at ~230 cycles a byte: keep what tests boot small)."""
+    prints '#' (RTL reads a card at ~230 cycles a byte: keep what tests boot small), of a
+    version the first stage starts."""
     kw.setdefault("load_addr", STAGE2_BASE)
     data, _ = vux_tool.build_vux9_v4_image(payload, name="test", version=version, **kw)
     return data
 
 
-def stage2_file(version: int = 1) -> bytes:
+def stage2_file(version: int = MIN_STAGE2_VERSION) -> bytes:
     """The second stage (35 KB) as a v4 file, as `make firmware` builds it."""
     with open(STAGE2_RAW, "rb") as f:
         return v4_file(f.read(), version)

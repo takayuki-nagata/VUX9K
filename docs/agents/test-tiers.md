@@ -123,6 +123,9 @@ clock-and-board.md, "Board UART output that is noise: ModemManager and the bridg
   it), which stops at its RV32M check; then the tree's `pack.fs`, its first stage booting the
   same second stage to `s2> `; no card writes. The output before the port reopens after a load
   may be cut, so step 1 waits only for the second stage's message. The card half is
-  `sim/emu/test_upgrade.py` in `test-emu`: a card with v0.3.0's second stage and demos through
-  docs/APP_DEVELOPMENT.md's upgrade steps with this tree's `vux_tool`, and v0.3.0's first stage
-  on a CPU without M (`m_ext`) booting this tree's second stage.
+  `sim/emu/test_upgrade.py` in `test-emu`: a card with v0.3.0's second stage and demos given to
+  this tree's first stage, which refuses that second stage (older than `MIN_STAGE2_VERSION`)
+  and stays at `s1> `, then docs/APP_DEVELOPMENT.md's upgrade steps with this tree's
+  `vux_tool` (`install-stage2` from there, `put`, `run-app`, `r` back to the new second
+  stage), and v0.3.0's first stage on a CPU without M (`m_ext`) booting this tree's second
+  stage.

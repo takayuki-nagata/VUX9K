@@ -21,7 +21,16 @@ import sys
 import cocotb
 
 sys.path.append(os.path.dirname(__file__))
-from soc_env import S1_PROMPT, STAGE2_BASE, fat_sectors, hash_program, send_and_wait, start_soc, v4_file
+from soc_env import (
+    MIN_STAGE2_VERSION,
+    S1_PROMPT,
+    STAGE2_BASE,
+    fat_sectors,
+    hash_program,
+    send_and_wait,
+    start_soc,
+    v4_file,
+)
 
 
 def addressing_violations(sd_model):
@@ -44,5 +53,5 @@ async def test_sdsc_card_across_soft_reset(dut):
     ser, sd_model = await start_soc(dut, sd_sectors=card, sd_card={"sdhc": False, "strict": True})
     for boot in range(2):
         resp = await send_and_wait(ser, "", "#".encode(), timeout_cycles=8_000_000, settle_bits=0)
-        assert '[BOOT] STAGE2.BIN v1 "test"' in resp, f"boot {boot}: {resp!r}"
+        assert f'[BOOT] STAGE2.BIN v{MIN_STAGE2_VERSION} "test"' in resp, f"boot {boot}: {resp!r}"
     assert not addressing_violations(sd_model), "; ".join(addressing_violations(sd_model))

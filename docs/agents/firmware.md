@@ -56,6 +56,20 @@ binaries land in the single shared `firmware/target/riscv32im-unknown-none-elf/`
   ROM may be 8 KB. Its `t` and `d` commands were dropped for room; what a feature costs is
   measured by building without it, and `Volume::open`'s path parsing alone cost 1.3 KB (the
   stage finds `\VUX9K\` with `stage2::dir`, by its 8.3 name).
+- **The first stage starts no second stage older than `boot::MIN_STAGE2_VERSION`** (9, the
+  v4 header's version): those read mtime at the TIMER page (`0x4000_1000`), before the
+  timer moved to the CLINT (`map::MTIME_LO`), and on a bitstream without the page their
+  delays and timeouts never end. `boot::check_stage2` (RV32, not too old) is part of
+  choosing (`select_boot`'s `accept`, checked on the header before the payload loads): an old
+  `.BIN` with a new `.OLD` boots `.OLD`, both old print one `[BOOT] STAGE2.BIN: too old, needs
+  v9 (install-stage2): v<n>; STAGE2.OLD: ...` line and stay at `s1> `, where `install-stage2`
+  (a RAM boot, then `install`) works; a RAM boot of an old one is refused before anything is
+  stored, and `i` shows the same reason. The second stage holds its `STAGE2_VERSION` to it
+  (a const assert), the text spells out the number (a const assert in `boot.rs`), and the
+  tests' second stages are v9 or later where they expect a boot (`soc_env.v4_file`'s
+  default, `lockstep_programs.stage2_card`, `s1_env.MIN_STAGE2_VERSION`); `fw_common`'s FAT
+  fixtures hold v1/v2, which the host tests boot with an `accept` that takes any. Raising it
+  is a first-stage change that strands cards: only when old second stages can't work.
 - **Raise `STAGE1_VERSION` with every first-stage change** (`firmware/stage1/src/main.rs`):
   the second stage gets it in a2, `make dist` puts it in MANIFEST.json, and the tests read it
   from there (`sim/emu/s1_env.py`, `sim/integration/soc_env.py`, `scripts/test_hardware.py`);

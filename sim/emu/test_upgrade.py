@@ -1,9 +1,11 @@
 # Copyright (c) 2026 Takayuki Nagata
 # SPDX-License-Identifier: MIT
 
-"""The upgrade from the previous release (v0.3.x: the two-stage boot on a CPU without RV32M)
-on the emulator: a card as v0.3.x left it, its \\VUX9K\\ from that release's dist, given to
-this tree's first stage on a CPU with M (the new bitstream, written first); then
+"""The upgrade from the previous release (v0.3.x: the two-stage boot on a CPU without RV32M,
+its timer at the TIMER page) on the emulator: a card as v0.3.x left it, its \\VUX9K\\ from
+that release's dist, given to this tree's first stage on a CPU with M (the new bitstream,
+written first), which refuses the old second stage (older than MIN_STAGE2_VERSION: it reads
+mtime where the CLINT replaced the page) and stays at its prompt; then
 docs/APP_DEVELOPMENT.md's "Upgrading from v0.3.x" with this tree's tools/vux_tool.py, command
 by command (`main()` on an EmuSerial, in emulated time). And the wrong order, the card first:
 the previous release's first stage on a CPU without M boots the new second stage, which says
@@ -17,7 +19,19 @@ import re
 import sys
 
 import pytest
-from s1_env import BOOT_CYCLES, FAT_LBA, S2_BANNER, S2_PROMPT, STAGE1_VERSION, app, card, stage2, start
+from s1_env import (
+    BOOT_CYCLES,
+    FAT_LBA,
+    MIN_STAGE2_VERSION,
+    S1_PROMPT,
+    S2_BANNER,
+    S2_PROMPT,
+    STAGE1_VERSION,
+    app,
+    card,
+    stage2,
+    start,
+)
 from test_hello_demo import LAST_LINE, hello_regs
 from vux9k import REPO_ROOT, EmuClock, EmuSerial, new_soc, preload_firmware, vux_tool, wait_for
 
@@ -72,16 +86,14 @@ def test_upgrade_from_the_previous_release(prev, monkeypatch, capsys, tmp_path):
         vux_tool.main()
         return capsys.readouterr().out
 
-    # The new bitstream first: its first stage boots the old second stage, which has no M
-    # instruction, and that starts the old applications
-    out = wait_for(soc, S2_PROMPT, BOOT_CYCLES)
-    assert f"VUX9K Stage 2 (v{prev['stage2_version']})" in out, out
-    mark = len(soc.uart_received())
-    assert "[RUN] " in tool("run-app", "VUX9K/APPS/HELLO.BIN")
-    out = wait_for(soc, LAST_LINE, BOOT_CYCLES, start=mark)
-    assert hello_regs(out) == (1, FAT_LBA, STAGE1_VERSION)
-    soc.uart_send(b"r")
-    wait_for(soc, S2_PROMPT, S2_BOOT_CYCLES, start=len(soc.uart_received()))
+    # The new bitstream first: its first stage doesn't start the old second stage (its timer
+    # is gone), says why and stays at its prompt
+    old = prev["stage2_version"]
+    assert old < MIN_STAGE2_VERSION
+    out = wait_for(soc, S1_PROMPT, BOOT_CYCLES)
+    want = f"[BOOT] STAGE2.BIN: too old, needs v{MIN_STAGE2_VERSION} (install-stage2): v{old}; STAGE2.OLD: not found\n"
+    assert want in out, out
+    assert "VUX9K Stage 2" not in out, out
 
     # The documented steps, the files as the dist ships them
     stage2_bin = tmp_path / "STAGE2.BIN"

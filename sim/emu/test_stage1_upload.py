@@ -10,7 +10,19 @@ sim/integration/test_soc_hardware_flow.py.
 """
 
 import pytest
-from s1_env import BANNER, FAT_LBA, S2_NAME, STAGE1_VERSION, STAGE2_BASE, STAGE2_VERSION, card, handoff, stage2, start
+from s1_env import (
+    BANNER,
+    FAT_LBA,
+    MIN_STAGE2_VERSION,
+    S2_NAME,
+    STAGE1_VERSION,
+    STAGE2_BASE,
+    STAGE2_VERSION,
+    card,
+    handoff,
+    stage2,
+    start,
+)
 from vux9k import EmuClock, EmuSerial, vux_tool
 
 BIN = "VUX9K/STAGE2.BIN"
@@ -39,7 +51,7 @@ def test_enter_s1_from_power_on_and_from_stage2(tool):
 def test_ram_boot(tool):
     soc, ser = tool({})  # nothing on the card
     vux_tool.enter_s1(ser)
-    out = vux_tool.ram_boot(ser, stage2(version=7))
+    out = vux_tool.ram_boot(ser, stage2(version=17))
     assert out.startswith("[OK] ")
     assert f"[BOOT] Starting at 0x{STAGE2_BASE:08X}" in out
     assert handoff(out) == (1, FAT_LBA, STAGE1_VERSION)
@@ -60,8 +72,9 @@ def test_ram_boot_without_a_card(tool):
         (stage2(mode="hack"), "not RV32, mode 0"),
         (stage2(crc_override=0), "CRC mismatch"),
         (stage2(entry_point=STAGE2_BASE + 2), "bad entry point 80700002"),
+        (stage2(version=MIN_STAGE2_VERSION - 1), f"too old, needs v9 \\(install-stage2\\): v{MIN_STAGE2_VERSION - 1}"),
     ],
-    ids=["magic", "window", "hack", "crc", "entry"],
+    ids=["magic", "window", "hack", "crc", "entry", "old"],
 )
 def test_ram_boot_refusals(tool, file, reason):
     soc, ser = tool()
@@ -75,16 +88,16 @@ def test_ram_boot_refusals(tool, file, reason):
 def test_install_keeps_the_previous_as_old(tool):
     soc, ser = tool()
     vux_tool.enter_s1(ser)
-    vux_tool.ram_boot(ser, stage2(version=2))
-    assert vux_tool.install_stage2(ser, stage2(version=2)) == "[INSTALL] OK"
-    assert vux_tool.install_stage2(ser, stage2(version=3)) == "[INSTALL] OK"
+    vux_tool.ram_boot(ser, stage2(version=12))
+    assert vux_tool.install_stage2(ser, stage2(version=12)) == "[INSTALL] OK"
+    assert vux_tool.install_stage2(ser, stage2(version=13)) == "[INSTALL] OK"
     # Back to the first stage, which boots the new one
     ser.write(b"reset\r")
     got, out = vux_tool.read_until(ser, ("s2> ",), 5.0)
-    assert got and f'[BOOT] STAGE2.BIN v3 "{S2_NAME}"' in out, out
+    assert got and f'[BOOT] STAGE2.BIN v13 "{S2_NAME}"' in out, out
     vux_tool.enter_s1(ser)
     out = vux_tool.send_cmd_and_wait(ser, "i", prompt="s1> ")
-    assert "STAGE2.BIN: v3 " in out and "STAGE2.OLD: v2 " in out, out
+    assert "STAGE2.BIN: v13 " in out and "STAGE2.OLD: v12 " in out, out
 
 
 def test_install_refuses_a_bad_file(tool):
@@ -101,21 +114,21 @@ def test_install_makes_the_directory(tool):
     soc, ser = tool({"README.TXT": b"x"})
     vux_tool.enter_s1(ser)
     vux_tool.ram_boot(ser, stage2())
-    assert vux_tool.install_stage2(ser, stage2(version=6)) == "[INSTALL] OK"
+    assert vux_tool.install_stage2(ser, stage2(version=16)) == "[INSTALL] OK"
     ser.write(b"reset\r")
     got, out = vux_tool.read_until(ser, ("s2> ",), 5.0)
-    assert got and "[BOOT] STAGE2.BIN v6 " in out, out
+    assert got and "[BOOT] STAGE2.BIN v16 " in out, out
 
 
 def test_broken_bin_boots_old(tool):
     soc, ser = tool()
     vux_tool.enter_s1(ser)
     vux_tool.ram_boot(ser, stage2())
-    vux_tool.install_stage2(ser, stage2(version=4))  # the RAM-booted one becomes .OLD
-    assert vux_tool.install_stage2(ser, stage2(version=5, crc_override=0), unchecked=True) == "[UNCHECKED] OK"
+    vux_tool.install_stage2(ser, stage2(version=14))  # the RAM-booted one becomes .OLD
+    assert vux_tool.install_stage2(ser, stage2(version=15, crc_override=0), unchecked=True) == "[UNCHECKED] OK"
     ser.write(b"reset\r")
     got, out = vux_tool.read_until(ser, ("s2> ",), 5.0)
-    assert got and f"[BOOT] STAGE2.OLD (STAGE2.BIN missing or broken) v{STAGE2_VERSION} " in out, out
+    assert got and f"[BOOT] STAGE2.OLD (STAGE2.BIN missing, broken or too old) v{STAGE2_VERSION} " in out, out
 
 
 def test_ram_boot_transfer_errors(tool):

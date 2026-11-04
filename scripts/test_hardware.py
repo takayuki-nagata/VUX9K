@@ -443,12 +443,13 @@ def run_hardware_test_suite(port="auto", baud=115200, loader=None, reload=True):
         record(name, ok, msg)
 
         # 4. What the first stage refuses to start
-        name = "4. RAM boot refusals (magic, CRC, load window)"
+        name = "4. RAM boot refusals (magic, CRC, load window, version)"
         vux_tool.enter_s1(ser)
         cases = [
-            (with_version(stage2, 1, magic_override=0x12345678), "not a VUX9 v4 file"),
-            (with_version(stage2, 1, crc_override=0), "CRC mismatch"),
-            (with_version(stage2, 1, load_addr=vux_tool.XMEM_BASE, entry_point=vux_tool.XMEM_BASE), "loads outside"),
+            (with_version(stage2, v_a, magic_override=0x12345678), "not a VUX9 v4 file"),
+            (with_version(stage2, v_a, crc_override=0), "CRC mismatch"),
+            (with_version(stage2, v_a, load_addr=vux_tool.XMEM_BASE, entry_point=vux_tool.XMEM_BASE), "loads outside"),
+            (with_version(stage2, 1), "too old, needs v"),
         ]
         bad = []
         for data, reason in cases:
@@ -495,7 +496,7 @@ def run_hardware_test_suite(port="auto", baud=115200, loader=None, reload=True):
             ser.write(b"reset\r")
             ser.flush()
             got, out = vux_tool.read_until(ser, (vux_tool.S2_PROMPT,), 20.0)
-            ok = got is not None and f"[BOOT] STAGE2.OLD (STAGE2.BIN missing or broken) v{v_a} " in out
+            ok = got is not None and f"[BOOT] STAGE2.OLD (STAGE2.BIN missing, broken or too old) v{v_a} " in out
             msg = f"booted STAGE2.OLD v{v_a}" if ok else fail_msg("No fall back.", out)
         except (vux_tool.UploadError, TimeoutError) as e:
             ok, msg = False, str(e)

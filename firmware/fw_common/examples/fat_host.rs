@@ -148,8 +148,8 @@ fn run(args: &[String]) -> Result<(), String> {
             changed = true;
         }
         "boot" => {
-            let (which, h) =
-                select_boot(&mut vol, PSRAM, &mut |_, _| ()).map_err(|e| format!("boot: {e:?}"))?;
+            let (which, h) = select_boot(&mut vol, PSRAM, &mut |_, _| (), |_| Ok(()))
+                .map_err(|e| format!("boot: {e:?}"))?;
             let which = if which == Which::Bin { "BIN" } else { "OLD" };
             println!("{which} {}", h.version);
         }

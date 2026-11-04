@@ -13,7 +13,7 @@ pub mod zephyr_ffi;
 use zephyr_ffi::{zephyr_print_c, zephyr_print_int, zephyr_sleep_ms, zephyr_uptime_ms};
 
 /// Sleep of the timer check: k_msleep() must take this long by k_uptime_get_32(),
-/// which counts the SoC's mtime at 18 MHz.
+/// which counts the CLINT's mtime (0x2000_BFF8) at 18 MHz.
 const SLEEP_MS: i32 = 100;
 
 #[no_mangle]

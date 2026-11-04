@@ -11,6 +11,7 @@ from s1_env import (
     BANNER,
     BOOT_CYCLES,
     FAT_LBA,
+    MIN_STAGE2_VERSION,
     S1_PROMPT,
     S2_BANNER,
     S2_NAME,
@@ -33,6 +34,8 @@ from vux9k import UART_BIT, ms, wait_for
 
 BIN = "VUX9K/STAGE2.BIN"
 OLD = "VUX9K/STAGE2.OLD"
+# What the first stage says of a second stage older than MIN_STAGE2_VERSION, before its version
+TOO_OLD = f"too old, needs v{MIN_STAGE2_VERSION} (install-stage2): v"
 
 
 def broken(data: bytes) -> bytes:
@@ -83,10 +86,15 @@ def test_prompt_commands():
 
 
 def test_falls_back_to_old():
-    soc, out = boot(files={BIN: broken(stage2(version=2)), OLD: stage2(version=1)})
-    assert "[BOOT] STAGE2.OLD (STAGE2.BIN missing or broken) v1 " in out, out
-    soc, out = boot(files={OLD: stage2(version=1)})
-    assert "[BOOT] STAGE2.OLD (STAGE2.BIN missing or broken) v1 " in out, out
+    soc, out = boot(files={BIN: broken(stage2(version=12)), OLD: stage2(version=11)})
+    assert "[BOOT] STAGE2.OLD (STAGE2.BIN missing, broken or too old) v11 " in out, out
+    soc, out = boot(files={OLD: stage2(version=11)})
+    assert "[BOOT] STAGE2.OLD (STAGE2.BIN missing, broken or too old) v11 " in out, out
+    # A .BIN older than the first stage starts (MIN_STAGE2_VERSION): .OLD, if it is new enough
+    old = MIN_STAGE2_VERSION - 1
+    soc, out = boot(files={BIN: stage2(version=old), OLD: stage2(version=MIN_STAGE2_VERSION)})
+    want = f"[BOOT] STAGE2.OLD (STAGE2.BIN missing, broken or too old) v{MIN_STAGE2_VERSION} "
+    assert want in out, out
 
 
 def test_reports_why_nothing_starts():
@@ -99,6 +107,10 @@ def test_reports_why_nothing_starts():
             {BIN: stage2(load_addr=0x8000_0000)},
             "STAGE2.BIN: loads outside 80700000-807FFFFF; STAGE2.OLD: not found",
         ),
+        # Second stages before v9 read mtime at the TIMER page, which the CLINT replaces
+        ({BIN: stage2(version=8)}, f"STAGE2.BIN: {TOO_OLD}8; STAGE2.OLD: not found"),
+        ({BIN: stage2(version=7), OLD: stage2(version=0)}, f"STAGE2.BIN: {TOO_OLD}7; STAGE2.OLD: {TOO_OLD}0"),
+        ({BIN: stage2(mode="hack")}, "STAGE2.BIN: not RV32, mode 0; STAGE2.OLD: not found"),
     ]
     for files, want in cases:
         soc = start(files=files)
@@ -107,11 +119,10 @@ def test_reports_why_nothing_starts():
 
 
 def test_starts_rv32_only():
+    """A Hack .BIN is not chosen: .OLD starts instead."""
     hack = stage2(mode="hack", load_addr=STAGE2_BASE)
-    soc = start(files={BIN: hack})
-    out = wait_for(soc, S1_PROMPT, BOOT_CYCLES)
-    assert f"[BOOT] STAGE2.BIN v{STAGE2_VERSION} " in out
-    assert "[BOOT] not RV32, mode 0\n" in out, out
+    soc, out = boot(files={BIN: hack, OLD: stage2()})
+    assert f"[BOOT] STAGE2.OLD (STAGE2.BIN missing, broken or too old) v{STAGE2_VERSION} " in out, out
 
 
 def test_cards_without_a_fat32_volume():
@@ -143,14 +154,18 @@ def test_no_card():
 
 
 def test_sd_info():
-    soc = start(files={BIN: stage2(version=3), OLD: broken(stage2())})
+    soc = start(files={BIN: stage2(version=13), OLD: broken(stage2())})
     to_prompt(soc)
     out = cmd(soc, "i")
     assert "[SD] SDHC card\n" in out
     assert f"[FAT] FAT32 at LBA {FAT_LBA}, 512 B clusters\n" in out
-    assert f'[FAT] \\VUX9K\\STAGE2.BIN: v3 "{S2_NAME}" ' in out
+    assert f'[FAT] \\VUX9K\\STAGE2.BIN: v13 "{S2_NAME}" ' in out
     assert " B [OK]\n" in out
     assert "[FAT] \\VUX9K\\STAGE2.OLD: CRC mismatch\n" in out
+    # A file the first stage wouldn't start is not [OK]
+    soc = start(files={BIN: stage2(version=8)})
+    to_prompt(soc)
+    assert f"[FAT] \\VUX9K\\STAGE2.BIN: {TOO_OLD}8\n" in cmd(soc, "i")
     soc = start(bytes(1024 * 1024))
     to_prompt(soc)
     assert "[FAT] no 55AA signature" in cmd(soc, "i")
@@ -218,7 +233,8 @@ def test_finds_files_past_long_names_and_cluster_ends():
     soc = start(bytes(img))
     to_prompt(soc)
     out = cmd(soc, "i")
-    assert '[FAT] \\VUX9K\\STAGE2.BIN: v2 "Stage2" 1500 B [OK]' in out, out
+    # (its second stages, v2 and v1, are older than the first stage starts)
+    assert f"[FAT] \\VUX9K\\STAGE2.BIN: {TOO_OLD}2\n" in out, out
     assert "[FAT] \\VUX9K\\STAGE2.OLD: not found" in out
 
 

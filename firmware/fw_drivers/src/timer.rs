@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Takayuki Nagata
 // SPDX-License-Identifier: MIT
 
-// MMIO Machine Timer Driver (mtime, low word)
+// MMIO Machine Timer Driver (mtime's low word, at the CLINT)
 
 use fw_common::map;
 

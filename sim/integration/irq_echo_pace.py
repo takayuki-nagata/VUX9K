@@ -46,7 +46,7 @@ def hold_words(target: int) -> list[int]:
     what the line left them for the application to find."""
     assert target % 4096 == 0, hex(target)
     a = Asm()
-    a.li("t0", 0x4000_1000)  # mtime
+    a.li("t0", 0x2000_BFF8)  # mtime lo (the CLINT, fw_common::map::MTIME_LO)
     a.li("t1", HOLD_CYCLES)
     a.lw("t2", 0, "t0")
     a.add("t1", "t1", "t2")

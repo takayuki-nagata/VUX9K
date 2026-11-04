@@ -67,7 +67,7 @@ def _csr_read(rd, csr):
 
 
 # --- constrained-random RV32IM ---------------------------------------------------------
-# x2 (sp) = base for loads/stores (RV_DATA in the window by default), x30 = timer base, x31 = loop
+# x2 (sp) = base for loads/stores (RV_DATA in the window by default), x30 = the CLINT's mtime, x31 = loop
 # counter; the rest are random. No traps: aligned accesses only, branches only forward or
 # counted loops. An R-type is RV32M (funct7 = 1) a third of the time.
 _R_OPS = [(0, 0), (0x20, 0), (0, 1), (0, 2), (0, 3), (0, 4), (0, 5), (0x20, 5), (0, 6), (0, 7)]
@@ -81,7 +81,7 @@ def random_rv(seed: int, blocks: int = 300, base: int = 0) -> list:
     rnd = random.Random(seed)
     a = Asm()
     a.li("sp", base)
-    a.li("x30", 0x40001000)
+    a.li("x30", CLINT_MTIME)
     for r in _DEST:
         a.li(r, rnd.getrandbits(32))
 
@@ -144,7 +144,7 @@ def random_rv(seed: int, blocks: int = 300, base: int = 0) -> list:
             if rnd.random() < 0.5:
                 a.word(_csr_read(int(reg()[1:]), rnd.choice([0xB00, 0xB02, 0xC00, 0xC01, 0xC02, 0xB80, 0xC81])))
             else:
-                a.lw(reg(), rnd.choice([0, 4, 8]), "x30")
+                a.lw(reg(), rnd.choice([0, 4, 8]), "x30")  # mtime lo, hi, an offset that reads 0
     a.label("end")
     a.j("end")
     words = a.assemble()
@@ -260,7 +260,8 @@ def xmem() -> list:
     a = Asm()
     a.li("s0", XMEM)
     a.li("s1", 0x4000_0000)  # UART
-    a.li("s2", 0x4000_1000)  # timer
+    a.li("s2", CLINT_MTIMECMP)  # mtimecmp lo, hi at +4
+    a.li("a6", CLINT_MTIME)  # mtime lo
     a.li("s10", XMEM_ASIDE)  # another window word, for a store in between
     # Stores of every size, loads back, an alias 8 MB up and one at the top of the region
     a.li("t0", 0x1122_3344)
@@ -297,7 +298,7 @@ def xmem() -> list:
     # The routine, assembled at its window address
     r = Asm(origin=XMEM + 0x100)
     r.sb("a0", 0, "s1")  # UART TX
-    r.lw("t0", 0, "s2")  # mtime, read in the EXECUTE cycle after the wait
+    r.lw("t0", 0, "a6")  # mtime, read in the EXECUTE cycle after the wait
     r.csrr("t1", "mcycle")
     r.lw("t2", 0x40, "s0")  # window load from window code
     r.sw("t1", 0x48, "s0")
@@ -333,11 +334,11 @@ def xmem() -> list:
 
     a.label("arm")  # mtimecmp = mtime + s7
     a.li("t0", -1)
-    a.sw("t0", 0xC, "s2")
-    a.lw("t0", 0, "s2")
+    a.sw("t0", 4, "s2")
+    a.lw("t0", 0, "a6")
     a.add("t0", "t0", "s7")
-    a.sw("t0", 8, "s2")
-    a.sw("zero", 0xC, "s2")
+    a.sw("t0", 0, "s2")
+    a.sw("zero", 4, "s2")
     a.ret()
 
     a.label("handler")  # count, re-arm a little further away, back into the window
@@ -389,7 +390,8 @@ def xcache() -> list:
     evicts the data line (written back as a victim) makes the next fetch a plain fill."""
     a = Asm()
     a.li("s0", XMEM)
-    a.li("s2", 0x4000_1000)  # timer
+    a.li("s2", CLINT_MTIMECMP)  # mtimecmp lo, hi at +4
+    a.li("a6", CLINT_MTIME)  # mtime lo
 
     r = Asm(origin=XMEM + XCACHE_A)
     r.label("loop")
@@ -453,11 +455,11 @@ def xcache() -> list:
     a.la("t0", "handler")
     a.csrw("mtvec", "t0")
     a.li("t0", -1)
-    a.sw("t0", 0xC, "s2")
-    a.lw("t0", 0, "s2")
+    a.sw("t0", 4, "s2")
+    a.lw("t0", 0, "a6")
     a.addi("t0", "t0", 523)
-    a.sw("t0", 8, "s2")
-    a.sw("zero", 0xC, "s2")
+    a.sw("t0", 0, "s2")
+    a.sw("zero", 4, "s2")
     a.li("t0", 0x80)  # MTIE
     a.csrw("mie", "t0")
     a.li("t0", 8)
@@ -502,7 +504,7 @@ def xcache() -> list:
     a.csrr("s10", "mepc")
     a.addi("s9", "s9", 1)
     a.li("t0", -1)
-    a.sw("t0", 0xC, "s2")
+    a.sw("t0", 4, "s2")
     a.mret()
     words = a.assemble()
     assert len(words) <= 0x3800 // 4
@@ -521,7 +523,8 @@ def traps() -> list:
     a.csrw("mtvec", "t0")
     a.li("sp", RV_DATA)
     a.li("s1", 0x40000000)  # UART
-    a.li("s2", 0x40001000)  # timer
+    a.li("s2", CLINT_MTIMECMP)  # mtimecmp lo, hi at +4
+    a.li("a6", CLINT_MTIME)  # mtime lo
     # Exceptions: the handler adds 4 to mepc and keeps mcause in s0
     a.ecall()
     a.ebreak()
@@ -558,10 +561,10 @@ def traps() -> list:
         a.sw("t1", 0, "s1")
     a.lw("t1", 4, "s1")
     # Timer interrupt: mtimecmp = mtime + 200
-    a.lw("t1", 0, "s2")
+    a.lw("t1", 0, "a6")
     a.addi("t1", "t1", 200)
-    a.sw("zero", 0xC, "s2")
-    a.sw("t1", 8, "s2")
+    a.sw("zero", 4, "s2")
+    a.sw("t1", 0, "s2")
     a.li("t1", 0x880)  # MEIE | MTIE
     a.csrw("mie", "t1")
     a.li("t1", 8)
@@ -598,7 +601,7 @@ def traps() -> list:
     a.li("t0", 0x8000000B)
     a.beq("s0", "t0", "ext")
     a.li("t0", -1)
-    a.sw("t0", 0xC, "s2")  # timer: mtimecmp hi = max
+    a.sw("t0", 4, "s2")  # timer: mtimecmp hi = max
     a.mret()
     a.label("ext")
     a.lw("s5", 0, "s1")  # UART RX: pop the byte
@@ -618,7 +621,8 @@ def umode() -> list:
     a = Asm()
     a.la("t0", "handler")
     a.csrw("mtvec", "t0")
-    a.li("s2", 0x40001000)  # timer
+    a.li("s2", CLINT_MTIMECMP)  # mtimecmp lo, hi at +4
+    a.li("a6", CLINT_MTIME)  # mtime lo
     # MPP is {U, M}: 3 selects M, the rest U; MPRV and TW read back
     for value in (0, 0x0800, 0x1000, UMODE_MPP | UMODE_MPRV | UMODE_TW, 0xFFFF_FFFF, 0):
         a.li("t0", value)
@@ -677,11 +681,11 @@ def umode() -> list:
     a.csrc("mstatus", "t0")
     # The timer in 100 cycles, MTIE, MIE clear: masked in M, taken in U
     a.li("t0", -1)
-    a.sw("t0", 0xC, "s2")
-    a.lw("t0", 0, "s2")
+    a.sw("t0", 4, "s2")
+    a.lw("t0", 0, "a6")
     a.addi("t0", "t0", 100)
-    a.sw("t0", 8, "s2")
-    a.sw("zero", 0xC, "s2")
+    a.sw("t0", 0, "s2")
+    a.sw("zero", 4, "s2")
     a.li("t0", 0x80)
     a.csrw("mie", "t0")
     a.li("t3", 80)
@@ -717,7 +721,7 @@ def umode() -> list:
     a.mret()
     a.label("from_irq")
     a.li("t0", -1)
-    a.sw("t0", 0xC, "s2")  # disarm
+    a.sw("t0", 4, "s2")  # disarm
     a.li("s3", 1)
     a.mret()  # back in U
     a.label("from_ecall")  # back in M: the next stop of the program
@@ -1197,8 +1201,9 @@ def _card_sectors(files: dict) -> dict:
 
 
 def stage2_card() -> dict:
-    """A FAT32 card with \\VUX9K\\STAGE2.BIN printing '#', as {lba: sector}."""
-    data, _ = _vux_tool().build_vux9_v4_image(hash_program(STAGE2_BASE), name="test", load_addr=STAGE2_BASE)
+    """A FAT32 card with \\VUX9K\\STAGE2.BIN printing '#', as {lba: sector}: v9, the oldest the
+    first stage starts (fw_common::boot::MIN_STAGE2_VERSION)."""
+    data, _ = _vux_tool().build_vux9_v4_image(hash_program(STAGE2_BASE), name="test", load_addr=STAGE2_BASE, version=9)
     return _card_sectors({"VUX9K/STAGE2.BIN": data})
 
 

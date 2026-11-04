@@ -39,6 +39,9 @@ pub enum BootError {
     Image(ImageError),
     /// The payload's CRC isn't the header's.
     Crc,
+    /// A second stage older than the first stage starts (`boot::MIN_STAGE2_VERSION`):
+    /// the header's version.
+    TooOld(u32),
 }
 
 impl From<FatError> for BootError {
@@ -91,6 +94,18 @@ pub fn load_file<D: BlockDevice>(
     window: Window,
     load: &mut dyn FnMut(u32, &[u8]),
 ) -> Result<ImageHeader, BootError> {
+    load_accepted(vol, file, window, load, |_| Ok(()))
+}
+
+/// `load_file`, with `accept` (the first stage's `boot::check_stage2`) as the last check
+/// of the header, before any payload is loaded.
+pub fn load_accepted<D: BlockDevice>(
+    vol: &mut Volume<D>,
+    file: &DirEntry,
+    window: Window,
+    load: &mut dyn FnMut(u32, &[u8]),
+    accept: fn(&ImageHeader) -> Result<(), BootError>,
+) -> Result<ImageHeader, BootError> {
     let mut header: Option<Result<ImageHeader, BootError>> = None;
     let mut crc = 0xFFFF_FFFF;
     let mut at = 0u32;
@@ -105,8 +120,9 @@ pub fn load_file<D: BlockDevice>(
                 }
                 Some(h) => h
                     .check(window.base, window.len)
-                    .map(|()| h)
-                    .map_err(BootError::Image),
+                    .map_err(BootError::Image)
+                    .and_then(|()| accept(&h))
+                    .map(|()| h),
             });
             payload = &data[HEADER_LEN.min(data.len())..];
         }
@@ -123,16 +139,18 @@ pub fn load_file<D: BlockDevice>(
     Ok(h)
 }
 
-/// Load the second stage: `.BIN`, or `.OLD` when `.BIN` is missing or broken. Errors:
+/// Load the second stage: `.BIN`, or `.OLD` when `.BIN` is missing, broken or not one
+/// `accept` takes (the first stage's `boot::check_stage2`: RV32, not too old). Errors:
 /// `.BIN`'s and `.OLD`'s.
 pub fn select_boot<D: BlockDevice>(
     vol: &mut Volume<D>,
     window: Window,
     load: &mut dyn FnMut(u32, &[u8]),
+    accept: fn(&ImageHeader) -> Result<(), BootError>,
 ) -> Result<(Which, ImageHeader), (BootError, BootError)> {
     let mut try_one = |name: &[u8; 11]| -> Result<ImageHeader, BootError> {
         let file = find_file(vol, name)?;
-        load_file(vol, &file, window, load)
+        load_accepted(vol, &file, window, load, accept)
     };
     let bin = match try_one(&BIN) {
         Ok(h) => return Ok((Which::Bin, h)),

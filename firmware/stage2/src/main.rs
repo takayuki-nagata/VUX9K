@@ -31,7 +31,9 @@ use fw_drivers::uart::Uart;
 /// Raise it with every change of the second stage: its v4 header carries it (the
 /// Makefile's mkv4 reads it from here), `info` and the banner show it, and the tests
 /// read it from here.
-const STAGE2_VERSION: u32 = 8;
+const STAGE2_VERSION: u32 = 9;
+// The first stage starts no second stage older than this (it reads mtime at the CLINT)
+const _: () = assert!(STAGE2_VERSION >= fw_common::boot::MIN_STAGE2_VERSION);
 
 #[no_mangle]
 pub extern "C" fn main(a0: u32, a1: u32, a2: u32) -> ! {

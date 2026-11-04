@@ -167,7 +167,11 @@ reset it prints its banner and then, unless Button S2 is held or a key arrives w
 100 ms, loads `\VUX9K\STAGE2.BIN` from the card's first partition (FAT32; 8.3 names) into
 the PSRAM, checks its header and CRC, and starts it with `a0` = 1 on an SDHC card (else 0),
 `a1` = the FAT32 partition's first LBA (0 if none was mounted), `a2` = the first stage's
-version. When `STAGE2.BIN` is missing or broken it starts `STAGE2.OLD`, the previous one.
+version. When `STAGE2.BIN` is missing, broken or too old it starts `STAGE2.OLD`, the previous one.
+Too old is a v4 header version below 9 (`fw_common::boot::MIN_STAGE2_VERSION`): those second
+stages read `mtime` at `0x4000_1000`, before the timer moved to the CLINT. The first stage
+refuses them with `[BOOT] STAGE2.BIN: too old, needs v9 (install-stage2): v<n>`, also for a
+RAM boot, and stays at its prompt, from where `vux_tool.py install-stage2` works.
 Its data and stack are in the PSRAM below the second stage (`0x806F_0000`-`0x806F_FFFF`).
 
 The **second stage** is a VUX9 v4 file of RV32 code that loads in the top 1 MB of the
@@ -186,7 +190,7 @@ one formatted without a partition table is refused). What VUX9K uses is in the d
 | Path | What |
 |:---|:---|
 | `\VUX9K\STAGE2.BIN` | The second stage the first stage boots (a release ships it as `sd/VUX9K/STAGE2.BIN`; a PC can copy it there, or `vux_tool.py install-stage2` installs it and makes `\VUX9K\` if it is missing) |
-| `\VUX9K\STAGE2.OLD` | The previous one, booted when `STAGE2.BIN` is missing or broken |
+| `\VUX9K\STAGE2.OLD` | The previous one, booted when `STAGE2.BIN` is missing, broken or too old |
 | `\VUX9K\APPS\` | Applications as VUX9 v4 files, started by the second stage's `run` (a release ships the demos as `sd/VUX9K/APPS/`) |
 
 The second stage reads FAT32 only, with 8.3 and long names (long names are read only, and
@@ -271,9 +275,9 @@ its `s1> ` prompt (115200 bps 8N1):
 | Command | Key | Description |
 |:---|:---|:---|
 | Help | `h` or `?` | The command list |
-| Boot | `b` | Load and start `\VUX9K\STAGE2.BIN` (`STAGE2.OLD` if it is broken), as at power-on |
+| Boot | `b` | Load and start `\VUX9K\STAGE2.BIN` (`STAGE2.OLD` if it is broken or too old), as at power-on |
 | RAM boot | `u` | Receive a second stage over the UART (transfer v2: `vux_tool.send_upload_v2`) into its window and start it, without writing the card |
-| SD info | `i` | Initialize the card again; SDHC/SDSC, the FAT32 volume, and both files checked as a boot would (version, name, size, CRC) |
+| SD info | `i` | Initialize the card again; SDHC/SDSC, the FAT32 volume, and both files checked as a boot would (version, name, size, CRC; mode and too old) |
 | Soft reset | `r` | Start over (and boot, unless a key or S2 stops it again) |
 
 What keeps a second stage from starting is one `[BOOT] ...` line (e.g. `STAGE2.BIN: CRC
@@ -365,7 +369,7 @@ one machine.
 ### Zephyr board
 
 `zephyr_workspace/boards/vux9k/` has one target, `vux9k`, the real board (18 MHz, the
-SoC timer as `andestech,machine-timer`, tickless at 1000 ticks/s, linked into the PSRAM: the
+CLINT as `sifive,clint0`, tickless at 1000 ticks/s, linked into the PSRAM: the
 image runs in place from `0x8000_0000`, 4 MB, and its RAM is the 3 MB from `0x8040_0000`; the
 second stage's `run` loads its applications there and jumps to them, the first stage staying
 in the ROM). `make build-zephyr-demo` builds the Rust demo
@@ -536,7 +540,7 @@ stage under test as `STAGE2.BIN` and `STAGE2.OLD`:
 1. **First stage prompt and banner** (`vux_tool.enter_s1`, then a soft reset: the banner with the expected version)
 2. **SD card and FAT32 volume** (`i`: card type and the partition's LBA)
 3. **RAM boot of the second stage** (`u` / `vux_tool.ram_boot`: `a0`-`a2` as expected)
-4. **RAM boot refusals** (bad magic, bad CRC, a load address outside the window: refused, still at the prompt)
+4. **RAM boot refusals** (bad magic, bad CRC, a load address outside the window, a version older than the first stage starts: refused, still at the prompt)
 5. **Install STAGE2.BIN twice** (versions 9001 and 9002, through the second stage's `install`)
 6. **Soft reset to the first stage**, which boots version 9002
 7. **The card as the first stage sees it** (`i`: `.BIN` 9002 and `.OLD` 9001)
@@ -567,7 +571,8 @@ branches, dependent sub/branch loops, back-to-back dependencies, loads/stores of
 width, all registers) and four on the PSRAM (its 21 address lines walking one and zero,
 the hidden register space, the first and last 2 KB written and read back twice, its 8 MB
 aliases, byte/halfword lanes, code copied there and run, the cycles each access waits) and
-one of RV32M's eight operations, against the values the emulator computes, one line each, then
+one of RV32M's eight operations, RV32A's, U-mode's traps, and the CLINT's (mtime, mtimecmp
+read back, msip and mtimecmp each taken as their interrupt), against the values the emulator computes, one line each, then
 `RESULT PASS|FAIL <passed>/<total> <failure mask>`, repeated every 2 s: the host's
 USB-UART bridge drops output when another full-speed device shares its USB hub
 (see `docs/APP_DEVELOPMENT.md`), and the repeated line alone carries the verdict. Its LEDs: 0x01 from the first instruction, the test number while

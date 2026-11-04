@@ -10,9 +10,12 @@ Read before changing `zephyr_workspace/`. Index and the rules that apply everywh
 ## Zephyr: the board `vux9k`
 
 `zephyr_workspace/boards/vux9k/` defines one HWMv2 target on `vux9k-common.dtsi`
-(18 MHz, `vux9k,uart`, and the SoC timer as `andestech,machine-timer`, whose
-mtime +0x0 / mtimecmp +0x8 layout is `timer_core`'s, so Zephyr's in-tree
-`riscv_machine_timer` driver serves it):
+(18 MHz, `vux9k,uart`, and the CLINT, `timer_core`'s view at `0x2000_0000`, as
+`sifive,clint0`, whose mtimecmp +0x4000 / mtime +0xBFF8 Zephyr's in-tree
+`riscv_machine_timer` driver uses, its timer interrupt the node's second
+`interrupts-extended` entry (MSI 3, then MTI 7); until B2 of the CLINT's work the board used
+the TIMER page at `0x4000_1000` as `andestech,machine-timer`, which a v0.3.x image still
+expects):
 - `vux9k`: the real board, linked into the PSRAM: flash = `0x8000_0000`, 4 MB (the image,
   run in place, XIP), sram = `0x8040_0000`, 3 MB (to `0x806F_FFFF`; its top 64 KB is the
   first stage's data, which the first stage sets up again at every start). The nodes are in

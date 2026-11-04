@@ -62,13 +62,13 @@ async def test_soc_hardware_flow(dut):
     # Install: the `install` line, then a small STAGE2.BIN that prints '#'
     ser.reset_input_buffer()
     ser.write(b"install\r")
-    await upload_v2(ser, v4_file(version=7))
+    await upload_v2(ser, v4_file(version=17))
     resp = await send_and_wait(ser, "", S2_PROMPT, timeout_cycles=20_000_000, settle_bits=0)
     assert "[INSTALL] OK" in resp, resp
     dut._log.info("[PASS] 3: STAGE2.BIN installed on the card")
 
     # Soft reset (`reset`): the first stage boots the installed file
     resp = await send_and_wait(ser, "reset\r", "[BOOT] Starting at 0x80700000".encode(), timeout_cycles=10_000_000)
-    assert '[BOOT] STAGE2.BIN v7 "test" 28 B' in resp, resp
+    assert '[BOOT] STAGE2.BIN v17 "test" 28 B' in resp, resp
     await ser.wait_for(b"#", timeout_cycles=500_000)
     dut._log.info("[PASS] 4: soft reset, the first stage booted the installed STAGE2.BIN ('#')")

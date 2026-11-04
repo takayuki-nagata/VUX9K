@@ -3,7 +3,7 @@
 
 //! The first stage (the bitstream's boot ROM, at 0x0): loads `\VUX9K\STAGE2.BIN` from the
 //! card's FAT32 partition into the PSRAM and starts it (`STAGE2.OLD` when `.BIN` is
-//! missing or broken), unless S2 is held or a key arrives right after the banner; then
+//! missing, broken or older than `MIN_STAGE2_VERSION`), unless S2 is held or a key arrives right after the banner; then
 //! it stays at its prompt, which can also start a second stage sent over the UART (a RAM
 //! boot). The second stage starts with a0 = 1 on an SDHC card (else 0), a1 = the FAT32
 //! partition's LBA (0 if none was mounted), a2 = STAGE1_VERSION.
@@ -17,7 +17,7 @@ use core::panic::PanicInfo;
 global_asm!(include_str!("../bootstrap/start.s"));
 
 use fw_common::boot::{check_stage2, put_boot_error, RamBoot, RAM_BOOT_MAX, STAGE2_WINDOW};
-use fw_common::fat::stage2::{self, load_file, select_boot, BootError, Which};
+use fw_common::fat::stage2::{self, load_accepted, select_boot, BootError, Which};
 use fw_common::fat::Volume;
 use fw_common::header::ImageHeader;
 use fw_common::map;
@@ -29,7 +29,7 @@ use fw_drivers::uart::Uart;
 
 /// Raise it with every change of the first stage: the second stage gets it in a2, and
 /// the tests read it from here.
-const STAGE1_VERSION: u32 = 2;
+const STAGE1_VERSION: u32 = 3;
 /// After the banner, a key within this keeps the first stage at its prompt (as S2 held
 /// does): vux_tool.py sends keys until the prompt answers.
 const AUTOBOOT_MS: u32 = 100;
@@ -120,22 +120,16 @@ fn boot() {
     let Some(mut vol) = mount() else {
         return;
     };
-    match select_boot(&mut vol, STAGE2_WINDOW, &mut store) {
+    match select_boot(&mut vol, STAGE2_WINDOW, &mut store, check_stage2) {
         Ok((which, h)) => {
             Uart::print_str(if which == Which::Bin {
                 "STAGE2.BIN "
             } else {
-                "STAGE2.OLD (STAGE2.BIN missing or broken) "
+                "STAGE2.OLD (STAGE2.BIN missing, broken or too old) "
             });
             print_header(&h);
             Uart::print_str("\n");
-            match check_stage2(&h) {
-                Ok(()) => start(h.entry_point, vol.partition_lba()),
-                Err(e) => {
-                    Uart::print_str("[BOOT] ");
-                    print_error(e);
-                }
-            }
+            start(h.entry_point, vol.partition_lba());
         }
         Err((bin, old)) => {
             Uart::print_str("STAGE2.BIN: ");
@@ -180,7 +174,7 @@ fn show_file(vol: &mut Volume<SdCard>, name: &[u8; 11]) {
     Uart::print_str(": ");
     let mut check = || -> Result<ImageHeader, BootError> {
         let file = stage2::find_file(vol, name)?;
-        load_file(vol, &file, STAGE2_WINDOW, &mut |_, _| ())
+        load_accepted(vol, &file, STAGE2_WINDOW, &mut |_, _| (), check_stage2)
     };
     match check() {
         Ok(h) => {

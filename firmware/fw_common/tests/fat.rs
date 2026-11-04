@@ -554,6 +554,7 @@ fn errors_at_a_chains_end_and_in_directories() {
 #[cfg(feature = "fat-write")]
 mod write {
     use super::*;
+    use fw_common::boot::check_stage2;
     use fw_common::fat::stage2::{
         self, install, load_file, select_boot, BootError, Which, Window, BIN, NEW, OLD,
     };
@@ -583,18 +584,31 @@ mod write {
         f
     }
 
-    /// What select_boot starts on this image: which file, its version and payload.
+    /// What select_boot starts on this image: which file, its version and payload (any
+    /// version: the fixtures' second stages are older than the first stage's gate).
     fn boot(img: Vec<u8>) -> Result<(Which, u32, Vec<u8>), (BootError, BootError)> {
+        boot_accepting(img, |_| Ok(()))
+    }
+
+    fn boot_accepting(
+        img: Vec<u8>,
+        accept: fn(&ImageHeader) -> Result<(), BootError>,
+    ) -> Result<(Which, u32, Vec<u8>), (BootError, BootError)> {
         let mut vol = mount(img).unwrap();
         let mut payload = Vec::new();
-        let (which, h) = select_boot(&mut vol, PSRAM, &mut |addr, d| {
-            if addr == S2 {
-                // .OLD after a .BIN that failed part way
-                payload.clear();
-            }
-            assert_eq!((addr - S2) as usize, payload.len());
-            payload.extend_from_slice(d);
-        })?;
+        let (which, h) = select_boot(
+            &mut vol,
+            PSRAM,
+            &mut |addr, d| {
+                if addr == S2 {
+                    // .OLD after a .BIN that failed part way
+                    payload.clear();
+                }
+                assert_eq!((addr - S2) as usize, payload.len());
+                payload.extend_from_slice(d);
+            },
+            accept,
+        )?;
         Ok((which, h.version, payload))
     }
 
@@ -1064,6 +1078,24 @@ mod write {
                 assert_eq!(got.err(), Some(want), "case {n}");
             }
         }
+    }
+
+    #[test]
+    fn select_boot_skips_what_accept_refuses() {
+        // mkfs_s1: .BIN v2, .OLD v1
+        let img = image("mkfs_s1");
+        assert_eq!(boot(img.clone()).unwrap().0, Which::Bin);
+        let (which, version, _) = boot_accepting(img.clone(), |h| match h.version {
+            1 => Ok(()),
+            v => Err(BootError::TooOld(v)),
+        })
+        .unwrap();
+        assert_eq!((which, version), (Which::Old, 1));
+        // The first stage's gate takes neither
+        assert_eq!(
+            boot_accepting(img, check_stage2).err(),
+            Some((BootError::TooOld(2), BootError::TooOld(1)))
+        );
     }
 
     #[test]

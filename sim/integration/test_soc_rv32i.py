@@ -21,9 +21,11 @@ from rv32_asm import Asm
 from soc_env import check_psram_pins, load_imem, start_soc
 
 UART = 0x4000_0000  # +0 data, +4 status {frame_err, overrun, tx_full, rx_empty}
-TIMER = 0x4000_1000  # +0/+4 mtime lo/hi, +8/+C mtimecmp lo/hi
+TIMER = 0x4000_1000  # the TIMER page: +0/+4 mtime lo/hi, +8/+C mtimecmp lo/hi (the CLINT's)
 GPIO = 0x4000_3000  # +0 LEDs, +4 button, +C soft-reset magic
 CLINT = 0x2000_0000  # region 2: +0 msip, +0x4000/+0x4004 mtimecmp lo/hi, +0xBFF8/+0xBFFC mtime lo/hi
+CLINT_MTIMECMP = CLINT + 0x4000  # lo, hi at +4
+CLINT_MTIME = CLINT + 0xBFF8  # lo, hi at +4
 UNASSIGNED = 0x3000_0000  # region 3: reads 0 and ignores stores
 XMEM = 0x8000_0000  # wait-state window: the 8 MB PSRAM, repeating every 8 MB across region 8
 XMEM_BYTES = 0x80_0000
@@ -154,7 +156,7 @@ def mmio_program() -> list[int]:
     _expect(a, "a2", 0x5A, 20)
 
     # 8-9: mtime advances; mtimecmp reads back
-    a.li("s4", TIMER)
+    a.li("s4", CLINT_MTIME)
     a.lw("t4", 0, "s4")
     for _ in range(4):
         a.nop()
@@ -163,12 +165,13 @@ def mmio_program() -> list[int]:
     a.bltu("t4", "t5", "timer_ok")
     a.j("fail")
     a.label("timer_ok")
+    a.li("s4", CLINT_MTIMECMP)
     a.li("t0", 0x12345678)
-    a.sw("t0", 8, "s4")
-    a.lw("t3", 8, "s4")
+    a.sw("t0", 0, "s4")
+    a.lw("t3", 0, "s4")
     _expect(a, "t3", 0x12345678, 9)
     a.li("t0", 0xFFFFFFFF)
-    a.sw("t0", 8, "s4")
+    a.sw("t0", 0, "s4")
 
     # 10-11: GPIO LED readback; button (held by the testbench) reads 1
     a.li("t0", LED_CHECK)
@@ -235,13 +238,14 @@ def timer_irq_program() -> list[int]:
     a = Asm()
     a.la("t0", "handler")
     a.csrw("mtvec", "t0")
-    a.li("s4", TIMER)
+    a.li("s4", CLINT_MTIMECMP)
     a.li("t0", 0xFFFFFFFF)
-    a.sw("t0", 0xC, "s4")  # mtimecmp hi first, so no spurious match while updating
-    a.lw("t1", 0, "s4")
+    a.sw("t0", 4, "s4")  # mtimecmp hi first, so no spurious match while updating
+    a.li("t1", CLINT_MTIME)
+    a.lw("t1", 0, "t1")
     a.addi("t1", "t1", 200)
-    a.sw("t1", 8, "s4")
-    a.sw("zero", 0xC, "s4")
+    a.sw("t1", 0, "s4")
+    a.sw("zero", 4, "s4")
     a.li("t0", 0x80)  # mie.MTIE
     a.csrs("mie", "t0")
     a.li("t0", 0x8)  # mstatus.MIE
@@ -265,7 +269,7 @@ def timer_irq_program() -> list[int]:
     a.li("t1", 0x80000007)
     a.bne("t0", "t1", "bad_cause")
     a.li("t0", 0xFFFFFFFF)
-    a.sw("t0", 0xC, "s4")  # push mtimecmp out of reach -> deassert the interrupt
+    a.sw("t0", 4, "s4")  # push mtimecmp out of reach -> deassert the interrupt
     a.li("s1", 1)
     a.mret()
     a.label("bad_cause")
@@ -449,7 +453,7 @@ def counters_program() -> list[int]:
     """cycle/instret/time CSRs and a writable mcycle; 'F<code>' or 'CPASS'."""
     a = Asm()
     a.li("s0", XMEM + 0x300)
-    a.li("s1", TIMER)
+    a.li("s1", CLINT_MTIME)
     # 1: instret counts retired instructions, loads/stores once each: the second csrr
     # sees the first csrr, sw, lw and 8 nops retired
     a.csrr("t0", "instret")

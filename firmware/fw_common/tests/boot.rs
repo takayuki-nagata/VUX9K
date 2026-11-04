@@ -9,7 +9,9 @@ use std::collections::{BTreeMap, VecDeque};
 use std::string::String;
 use std::vec::Vec;
 
-use fw_common::boot::{check_stage2, put_boot_error, RamBoot, RAM_BOOT_MAX, STAGE2_WINDOW};
+use fw_common::boot::{
+    check_stage2, put_boot_error, RamBoot, MIN_STAGE2_VERSION, RAM_BOOT_MAX, STAGE2_WINDOW,
+};
 use fw_common::crc32_update;
 use fw_common::fat::stage2::BootError;
 use fw_common::fat::FatError;
@@ -35,8 +37,15 @@ impl Host for FakeHost {
     fn drain(&mut self) {}
 }
 
+/// The version `v4` gives its files: the first stage's oldest.
+const V: u32 = MIN_STAGE2_VERSION;
+
 /// A VUX9 v4 file: `n` payload bytes, loading and starting at `load`.
 fn v4(n: usize, mode: u32, load: u32) -> Vec<u8> {
+    v4_version(n, mode, load, V)
+}
+
+fn v4_version(n: usize, mode: u32, load: u32, version: u32) -> Vec<u8> {
     let payload: Vec<u8> = (0..n).map(|i| (i as u8).wrapping_mul(7) ^ 0x5A).collect();
     let mut f = std::vec![0u8; HEADER_LEN];
     let mut put = |at: usize, v: u32| f[at..at + 4].copy_from_slice(&v.to_le_bytes());
@@ -47,7 +56,7 @@ fn v4(n: usize, mode: u32, load: u32) -> Vec<u8> {
     put(16, load);
     put(20, load);
     put(24, crc32_update(&payload, 0xFFFF_FFFF) ^ 0xFFFF_FFFF);
-    put(28, 3);
+    put(28, version);
     f.extend_from_slice(&payload);
     f
 }
@@ -98,7 +107,7 @@ fn ram_boot_loads_the_payload_at_its_address() {
         let r = ram_boot(&file, None);
         assert_eq!(r.len, Some(file.len() as u32), "{n}: {}", r.out);
         let h = r.header.expect("header");
-        assert_eq!((h.size, h.load_addr, h.version), (n as u32, S2, 3));
+        assert_eq!((h.size, h.load_addr, h.version), (n as u32, S2, V));
         assert_eq!(r.error, None);
         let want: BTreeMap<u32, u8> = file[HEADER_LEN..]
             .iter()
@@ -118,8 +127,12 @@ fn ram_boot_refuses_before_storing_anything() {
     bad_magic[0] ^= 1;
     let mut short = v4(16, MODE_RISCV, S2);
     short[12] = 15;
-    let cases: [(Vec<u8>, BootError); 5] = [
+    let cases: [(Vec<u8>, BootError); 6] = [
         (bad_magic, BootError::NotV4),
+        (
+            v4_version(16, MODE_RISCV, S2, V - 1),
+            BootError::TooOld(V - 1),
+        ),
         (short, BootError::SizeMismatch),
         (
             v4(16, MODE_RISCV, 0x8000_0000),
@@ -174,6 +187,28 @@ fn stage2_is_rv32_only() {
     );
 }
 
+#[test]
+fn stage2_is_not_older_than_the_gate() {
+    // Before v9 a second stage reads mtime at the TIMER page, not at the CLINT
+    assert_eq!(MIN_STAGE2_VERSION, 9);
+    for (version, want) in [
+        (0, Err(BootError::TooOld(0))),
+        (8, Err(BootError::TooOld(8))),
+        (9, Ok(())),
+        (10, Ok(())),
+        (u32::MAX, Ok(())),
+    ] {
+        let h = ImageHeader::parse(&v4_version(4, MODE_RISCV, S2, version)).unwrap();
+        assert_eq!(check_stage2(&h), want, "v{version}");
+    }
+    // The mode is checked first
+    let h = ImageHeader::parse(&v4_version(4, MODE_HACK, S2, 1)).unwrap();
+    assert_eq!(
+        check_stage2(&h),
+        Err(BootError::Image(ImageError::BadMode(MODE_HACK)))
+    );
+}
+
 struct Buf(Vec<u8>);
 impl Sink for Buf {
     fn put(&mut self, b: u8) {
@@ -183,7 +218,7 @@ impl Sink for Buf {
 
 #[test]
 fn boot_errors_read_as_text() {
-    let cases: [(BootError, &str); 18] = [
+    let cases: [(BootError, &str); 19] = [
         (FatError::Io(2048).into(), "card error at LBA 2048"),
         (
             FatError::NoSignature.into(),
@@ -214,6 +249,10 @@ fn boot_errors_read_as_text() {
         ),
         (BootError::Image(ImageError::BadMode(0)), "not RV32, mode 0"),
         (BootError::Crc, "CRC mismatch"),
+        (
+            BootError::TooOld(7),
+            "too old, needs v9 (install-stage2): v7",
+        ),
     ];
     for (e, want) in cases {
         let mut b = Buf(Vec::new());

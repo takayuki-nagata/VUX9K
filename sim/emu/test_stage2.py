@@ -496,14 +496,14 @@ def test_no_card(tool):
 def test_install_on_a_card_without_the_directory(tool):
     soc, ser = tool(lfn_card(), ram_boot=True)
     assert "VUX9K" not in vux_tool.s2_cmd(ser, "ls")
-    assert vux_tool.install_stage2(ser, stage2(version=7)) == "[INSTALL] OK"
+    assert vux_tool.install_stage2(ser, stage2(version=17)) == "[INSTALL] OK"
     assert ls_line("STAGE2.BIN", len(stage2())) in vux_tool.s2_cmd(ser, "ls VUX9K")
-    # Unchecked (tests): a broken one, the first stage then boots STAGE2.OLD (v7 again)
-    assert vux_tool.install_stage2(ser, stage2(version=7)) == "[INSTALL] OK"
+    # Unchecked (tests): a broken one, the first stage then boots STAGE2.OLD (v17 again)
+    assert vux_tool.install_stage2(ser, stage2(version=17)) == "[INSTALL] OK"
     assert vux_tool.install_stage2(ser, stage2(crc_override=0), unchecked=True) == "[UNCHECKED] OK"
     ser.write(b"reset\r")
     got, out = vux_tool.read_until(ser, (S2_PROMPT.decode(),), 10.0)
-    assert got and "[BOOT] STAGE2.OLD (STAGE2.BIN missing or broken) v7 " in out, out
+    assert got and "[BOOT] STAGE2.OLD (STAGE2.BIN missing, broken or too old) v17 " in out, out
     with pytest.raises(vux_tool.UploadError, match=r"\[INSTALL\] loads outside 80700000-807FFFFF"):
         vux_tool.install_stage2(ser, stage2(load_addr=0x8000_0000))
 
@@ -716,10 +716,10 @@ def test_crc_of_a_put_file_matches(tool):
     written file is the sender's (the second stage wrote what arrived)"""
     soc, ser = tool(card({S2: stage2()}))
     data = bytes((i * 31) & 0xFF for i in range(2600))
-    vux_tool.put(ser, "VUX9K/STAGE2.OLD", v4(data, load_addr=0x8070_0000, name="old"))
+    vux_tool.put(ser, "VUX9K/STAGE2.OLD", v4(data, load_addr=0x8070_0000, name="old", version=11))
     vux_tool.enter_s1(ser)
     out = vux_tool.send_cmd_and_wait(ser, "i", prompt=S1_PROMPT.decode())
-    assert f'STAGE2.OLD: v1 "old" {len(data)} B [OK]' in out, out
+    assert f'STAGE2.OLD: v11 "old" {len(data)} B [OK]' in out, out
 
 
 # ----- what only the second stage's own runs reach -------------------------------------
@@ -792,16 +792,16 @@ def test_big_clusters():
 
 def test_install_over_leftovers(tool):
     """An install cut before it renamed STAGE2.NEW, and one over a broken STAGE2.BIN."""
-    soc, ser = tool(card({S2: stage2(version=2)}))
+    soc, ser = tool(card({S2: stage2(version=12)}))
     vux_tool.put(ser, "VUX9K/STAGE2.NEW", b"stale")
-    assert vux_tool.install_stage2(ser, stage2(version=3)) == "[INSTALL] OK"
+    assert vux_tool.install_stage2(ser, stage2(version=13)) == "[INSTALL] OK"
     assert "STAGE2.NEW" not in vux_tool.s2_cmd(ser, "ls VUX9K")
     vux_tool.install_stage2(ser, stage2(crc_override=0), unchecked=True)
-    assert vux_tool.install_stage2(ser, stage2(version=4)) == "[INSTALL] OK"
+    assert vux_tool.install_stage2(ser, stage2(version=14)) == "[INSTALL] OK"
     vux_tool.enter_s1(ser)
     out = vux_tool.send_cmd_and_wait(ser, "i", prompt=S1_PROMPT.decode())
-    # The broken .BIN was replaced without touching .OLD (v2)
-    assert "STAGE2.BIN: v4 " in out and "STAGE2.OLD: v2 " in out, out
+    # The broken .BIN was replaced without touching .OLD (v12)
+    assert "STAGE2.BIN: v14 " in out and "STAGE2.OLD: v12 " in out, out
 
 
 def test_put_transfer_errors(tool):

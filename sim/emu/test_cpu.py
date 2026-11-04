@@ -82,10 +82,10 @@ def test_timer_interrupt():
     def prog(a):
         a.li("t0", 0x200)
         a.csrw("mtvec", "t0")
-        a.li("t1", 0x40001000)
-        a.sw("zero", 0xC, "t1")
+        a.li("t1", 0x2000_4000)  # the CLINT's mtimecmp
+        a.sw("zero", 4, "t1")
         a.li("t0", 150)
-        a.sw("t0", 0x8, "t1")
+        a.sw("t0", 0, "t1")
         a.li("t0", 0x80)
         a.csrw("mie", "t0")
         a.li("t0", 0x8)

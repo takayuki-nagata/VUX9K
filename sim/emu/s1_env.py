@@ -37,6 +37,11 @@ with open(os.path.join(REPO_ROOT, "firmware", "stage2", "src", "main.rs")) as _f
     assert _m, "STAGE2_VERSION not found in main.rs"
     STAGE2_VERSION = int(_m.group(1))
 S2_BANNER = f"VUX9K Stage 2 (v{STAGE2_VERSION})"
+with open(os.path.join(REPO_ROOT, "firmware", "fw_common", "src", "boot.rs")) as _f:
+    _m = re.search(r"const MIN_STAGE2_VERSION: u32 = (\d+);", _f.read())
+    assert _m, "MIN_STAGE2_VERSION not found in boot.rs"
+    # The oldest second stage the first stage starts (older ones read mtime at the TIMER page)
+    MIN_STAGE2_VERSION = int(_m.group(1))
 # The second stage's v4 name (the Makefile's mkv4)
 S2_NAME = "VUX9K stage 2"
 # The banner's last line: the key window starts after it

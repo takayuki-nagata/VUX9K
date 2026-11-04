@@ -69,7 +69,8 @@ python3 tools/vux_tool.py run sd/VUX9K/STAGE2.BIN                 # start it wit
 
 `install-stage2` starts the given second stage from the serial port (a RAM boot) and has
 it write itself to the card as `STAGE2.BIN`, keeping the previous one as `STAGE2.OLD`: when
-`STAGE2.BIN` is missing or broken, the first stage starts `STAGE2.OLD`. `run` is the RAM boot
+`STAGE2.BIN` is missing, broken or older than the first stage starts (v9, below), the first
+stage starts `STAGE2.OLD`. `run` is the RAM boot
 alone, for trying a second stage or recovering a card. `monitor` opens a plain terminal.
 
 The second stage is a file manager and launcher (`help` lists its commands; the README's
@@ -97,13 +98,16 @@ python3 tools/vux_tool.py run-app VUX9K/APPS/HELLO.BIN
 `demos/` holds the Zephyr and Hack demos' raw images for the emulator (section 4).
 
 **Upgrading from v0.3.x.** This release's CPU has the M extension (RV32IM), and its second
-stage and applications use it; v0.3.x's CPU traps those instructions. Write the new
-bitstream to the flash first, then the card: the new first stage still boots v0.3.x's second
-stage and starts its applications (they are RV32I, which this release runs as before), but
-v0.3.x's bitstream can't run the new second stage, which then says "needs a CPU with RV32M:
-program the v0.4.0 bitstream or later" and stops (program the flash then; the card stays as
-it is). The card's format and the v4 files are unchanged: install the second stage and put
-the new applications over the old ones:
+stage and applications use it; v0.3.x's CPU traps those instructions. Its timer moved too:
+`mtime` and `mtimecmp` are the CLINT's (`0x2000_0000`), not at `0x4000_1000` any more, so
+v0.3.x's second stage and its applications that use the timer don't run on this bitstream.
+Write the new bitstream to the flash first, then the card: the new first stage doesn't start
+a second stage older than v9 (`[BOOT] STAGE2.BIN: too old, needs v9 (install-stage2): v7`)
+and stays at its `s1> ` prompt, from where `install-stage2` works; and v0.3.x's bitstream
+can't run the new second stage, which then says "needs a CPU with RV32M: program the v0.4.0
+bitstream or later" and stops (program the flash then; the card stays as it is). The card's
+format and the v4 files are unchanged: install the second stage and put the new
+applications over the old ones:
 
 ```sh
 openFPGALoader -b tangnano9k -f bitstream/pack.fs                 # first
@@ -165,8 +169,9 @@ image copies to its RAM at startup.
 - The console is the SoC's UART. Its driver also has the interrupt-driven API
   (`CONFIG_UART_INTERRUPT_DRIVEN`): RX on the machine external interrupt, TX refilled
   from a kernel timer since the UART has no TX interrupt (`vux9k-zephyr-bsp/README.md`,
-  "UART"; `vux9k-zephyr-bsp/irq_echo/` is an example). The system timer is the SoC timer
-  (`mtime`, 18 ticks per microsecond); the board runs the kernel tickless at 1000
+  "UART"; `vux9k-zephyr-bsp/irq_echo/` is an example). The system timer is the CLINT's
+  `mtime` (`0x2000_0000`, SiFive's `riscv,clint0` layout: `mtimecmp` at `+0x4000`, `mtime`
+  at `+0xBFF8`; 18 ticks per microsecond); the board runs the kernel tickless at 1000
   ticks/s, so timeouts have 1 ms resolution.
 
 ### Hack (C)
@@ -362,7 +367,10 @@ application that uses only what is documented, and a card prepared for an earlie
 release, keep working. (The v0.2.x releases, the previous revision, kept that promise for
 their slots, which this revision no longer reads.) v0.4.0 added RV32M to this revision: v0.3.x's
 applications and cards keep working on it, but software built for v0.4.0 or later needs its
-bitstream ("Upgrading from v0.3.x", section 2). The same release added U-mode, which changes
+bitstream ("Upgrading from v0.3.x", section 2). The same release moved the timer to the
+CLINT (`0x2000_0000`) and broke that promise for the timer: v0.3.x's second stage doesn't
+start on it (the first stage refuses second stages before v9), and v0.3.x's applications
+that use the timer at `0x4000_1000` must be rebuilt. The same release added U-mode, which changes
 one thing for M-mode software: `mstatus.MPP` is real now, so an `mret` with MPP left at 0 (after
 writing `mstatus` without it, or a second `mret` without a trap between) lands in U-mode.
 

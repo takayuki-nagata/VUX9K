@@ -11,8 +11,17 @@ pub const UART_STATUS: usize = 0x4000_0004;
 pub const UART_RX_EMPTY: u32 = 1 << 0;
 pub const UART_TX_FULL: u32 = 1 << 1;
 
-// ----- Timer (0x4000_1000) --------------------------------------------------------
-pub const MTIME_LO: usize = 0x4000_1000;
+// ----- CLINT (0x2000_0000, RV32 region 2; soc_pkg::RV_REGION_CLINT) ----------------
+/// The core-local interruptor's layout (riscv,clint0): msip, mtimecmp, mtime. Each 32-bit
+/// word on its own; the 64 KB repeat across the region.
+pub const CLINT_BASE: usize = 0x2000_0000;
+/// Bit 0: the machine software interrupt (mip.MSIP).
+pub const CLINT_MSIP: usize = CLINT_BASE;
+pub const MTIMECMP_LO: usize = CLINT_BASE + 0x4000;
+pub const MTIMECMP_HI: usize = CLINT_BASE + 0x4004;
+/// mtime counts SoC clocks (`TICKS_PER_US`).
+pub const MTIME_LO: usize = CLINT_BASE + 0xBFF8;
+pub const MTIME_HI: usize = CLINT_BASE + 0xBFFC;
 
 // ----- SD SPI master (0x4000_2000) ------------------------------------------------
 pub const SD_DATA: usize = 0x4000_2000;
