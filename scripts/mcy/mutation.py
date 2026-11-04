@@ -59,6 +59,7 @@ TARGETS = (
     "rv32m_muldiv",
     "rv32a_unit",
     "soc_addr_decoder",
+    "timer_core",
     "sdcard_spi",
     "uart_rx",
     "fifo_sync",
