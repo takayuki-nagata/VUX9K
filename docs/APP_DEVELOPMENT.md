@@ -347,7 +347,9 @@ formed by addition such as `0x255A + 0x4000 + 0x4000` (an `@n` holds at most `0x
 without writing `0x6008` first: a soft reset without a mode starts RV32, the first stage (the
 Hack demo ends this way).
 The UART, timer, GPIO and SD SPI master keep their state across it
-([Memory & MMIO Register Map](../README.md#memory--mmio-register-map)).
+([Memory & MMIO Register Map](../README.md#memory--mmio-register-map)); so does the CLINT's
+`msip`: clear it before the soft reset if you set it, or the next program takes a machine
+software interrupt as soon as it enables `mie.MSIE`.
 
 **If output stops after ~128 bytes** or arrives seconds late: the Tang Nano 9K's on-board
 USB-UART bridge (BL702) does this when another full-speed USB device is busy on the same
