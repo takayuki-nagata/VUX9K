@@ -15,9 +15,8 @@ fn parse_profile(name: &str) -> PyResult<Profile> {
     match name {
         "real" => Ok(Profile::Real),
         "isa-test" => Ok(Profile::IsaTest),
-        "linux" => Ok(Profile::Linux),
         _ => Err(PyValueError::new_err(format!(
-            "unknown profile {name:?} (real, isa-test, linux)"
+            "unknown profile {name:?} (real, isa-test)"
         ))),
     }
 }
@@ -84,7 +83,7 @@ impl Soc {
             .map_err(PyValueError::new_err)
     }
 
-    /// Start a Linux kernel on the "linux" profile: `image` (the kernel's Image) at
+    /// Start a Linux kernel on the "real" profile: `image` (the kernel's Image) at
     /// 0x8000_0000, the device tree `dtb` (at most 64 KB) at 0x807F_0000, the CPU in RV32
     /// M-mode at 0x8000_0000 with a0 = 0 and a1 = the device tree. Call it after `reset()`.
     fn load_linux(&mut self, image: &[u8], dtb: &[u8]) -> PyResult<()> {

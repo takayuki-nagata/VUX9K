@@ -3,8 +3,8 @@
 
 //! A CLINT-compatible block (SiFive's layout, Linux's `riscv,clint0`) at RV32 region 2
 //! (`CLINT_BASE`, decoded on addr[15:2] and repeating every 64 KB across the region):
-//! soc/timer_core.veryl (soc_pkg::RV_REGION_CLINT, `CLINT_*`), in the Real and
-//! Linux profiles. msip is reset only by a power-on reset, not by the CPU's soft reset.
+//! soc/timer_core.veryl (soc_pkg::RV_REGION_CLINT, `CLINT_*`), in the Real profile. msip
+//! is reset only by a power-on reset, not by the CPU's soft reset.
 //!
 //! Registers (32-bit words; a byte or halfword access hits its word): 0x0000 msip (bit 0,
 //! the machine software interrupt, mip.MSIP), 0x4000/0x4004 mtimecmp lo/hi, 0xBFF8/0xBFFC

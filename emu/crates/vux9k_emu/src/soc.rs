@@ -18,7 +18,7 @@
 //!   (soc/soc_icache.veryl, soc/soc_dcache.veryl; crate::cache).
 //!
 //! - the CLINT at region 2 (crate::periph::clint): soc/timer_core.veryl; MMIO page 1 is
-//!   unassigned, as in soc_addr_decoder. Its msip is mip.MSIP (Real and Linux; the IsaTest profile, like tb_hex_runner, has none)
+//!   unassigned, as in soc_addr_decoder. Its msip is mip.MSIP (Real; the IsaTest profile, like tb_hex_runner, has none)
 //! - the UART's registers (liteuart's layout, crate::periph::uart): soc/uart/uart_regs.veryl,
 //!   the same in every profile
 //!
@@ -121,9 +121,10 @@ pub enum Isa {
     Hack,
 }
 
-/// Where `load_linux` puts the device tree: the top 64 KB of the PSRAM, all of which the Linux
-/// profile's device tree gives the kernel (linux_workspace/dts/vux9k-linux-emu.dts: the stages'
-/// memory is free once the kernel runs; the kernel keeps the device tree's own pages).
+/// Where `load_linux` puts the device tree: the top 64 KB of the PSRAM, all of which the
+/// emulator's Linux device tree gives the kernel (linux_workspace/dts/vux9k-linux-emu.dts:
+/// the stages' memory is free once the kernel runs; the kernel keeps the device tree's own
+/// pages).
 pub const LINUX_DTB_ADDR: u32 = 0x807F_0000;
 /// The largest device tree `load_linux` takes.
 pub const LINUX_DTB_MAX: usize = 64 * 1024;
@@ -212,8 +213,6 @@ pub struct Soc {
     rom_mask: u32,
     /// The IsaTest profile: one flat RAM, `TOHOST` (see `rv_read_word`/`rv_write`).
     isa_test: bool,
-    /// The Linux profile (`load_linux` takes a kernel).
-    linux: bool,
     /// IsaTest profile: the first value stored to `TOHOST`.
     pub tohost: Option<u32>,
     /// mcycle value set by a CSR write in the current instruction (replaces the count)
@@ -394,7 +393,6 @@ impl Soc {
             caches: Caches::default(),
             rom_mask: (rom_words - 1) as u32,
             isa_test: profile == Profile::IsaTest,
-            linux: profile == Profile::Linux,
             tohost: None,
             mcycle_written: None,
             cov: None,
@@ -554,14 +552,14 @@ impl Soc {
         Ok(())
     }
 
-    /// Start a Linux kernel (the Linux profile, no firmware): the kernel's `Image` at
+    /// Start a Linux kernel (the Real profile, no firmware): the kernel's `Image` at
     /// 0x8000_0000 and the flattened device tree `dtb` at `LINUX_DTB_ADDR`, written into the
     /// PSRAM directly; the caches start cold. The CPU starts in RV32 M-mode at 0x8000_0000
     /// with a0 = 0 (the hart id) and a1 = the device tree, as RISC-V boot loaders hand over.
     /// Call it after `reset` (or on a new `Soc`).
     pub fn load_linux(&mut self, image: &[u8], dtb: &[u8]) -> Result<(), String> {
-        if !self.linux {
-            return Err("a Linux kernel needs the linux profile".into());
+        if self.isa_test {
+            return Err("a Linux kernel needs the PSRAM (profile real)".into());
         }
         if dtb.is_empty() || dtb.len() > LINUX_DTB_MAX {
             return Err(format!(

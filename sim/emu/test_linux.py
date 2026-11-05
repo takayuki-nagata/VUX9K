@@ -3,10 +3,10 @@
 
 """
 noMMU Linux (make linux: linux_workspace/, the kernel with buildroot's busybox initramfs built
-in) on the emulator's Linux profile, the real SoC (the liteuart registers are the RTL's;
-docs/agents/linux.md): the kernel Image and the device tree loaded into the PSRAM
-(Soc.load_linux), the boot to busybox's shell on the console, then commands typed at it, one of
-them a builtin and the others busybox executed again (FLAT, copied into RAM at each exec).
+in) on the emulator's real profile, the SoC as synthesized (docs/agents/linux.md): the kernel
+Image and the device tree loaded into the PSRAM (Soc.load_linux), the boot to busybox's shell
+on the console, then commands typed at it, one of them a builtin and the others busybox executed
+again (FLAT, copied into RAM at each exec).
 
 The cycles, retired instructions and the caches' hit rates to the prompt and for each command
 are printed by test_record_measurements. Nothing here runs on the board.
@@ -37,7 +37,7 @@ def linux():
     for path in (IMAGE, DTB):
         if not os.path.exists(path):
             pytest.skip(f"{path} missing (make linux)")
-    soc = new_soc("linux")
+    soc = new_soc()
     with open(IMAGE, "rb") as image, open(DTB, "rb") as dtb:
         soc.load_linux(image.read(), dtb.read())
     meter = Meter(soc, MEASURED)
@@ -93,7 +93,7 @@ def test_record_measurements(record_property, capsys):
     if not MEASURED:
         pytest.skip("nothing measured")
     with capsys.disabled():
-        print(f"\nnoMMU Linux on the emulator's Linux profile (18 MHz: {CLK_HZ:,} cycles a second)")
+        print(f"\nnoMMU Linux on the emulator (18 MHz: {CLK_HZ:,} cycles a second)")
         for label, (cycles, instret, stats) in MEASURED.items():
             cpi = cycles / max(instret, 1)
             secs = cycles / CLK_HZ

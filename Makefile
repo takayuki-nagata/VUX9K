@@ -568,7 +568,7 @@ coverage-fcov: sim-unit sim-psram-contract
 test-isa-emu: emu-py
 	$(PYTHON) scripts/run_riscv_tests.py --backend emu
 
-# noMMU Linux to busybox's shell on the emulator's Linux profile (sim/emu/test_linux.py, which
+# noMMU Linux to busybox's shell on the emulator's real profile (sim/emu/test_linux.py, which
 # skips without make linux's Image): by hand, not in test-sim (make linux builds buildroot)
 test-linux-emu: emu-py linux
 	VUX9K_LINUX_TEST=1 $(PYTHON) -m pytest -s sim/emu/test_linux.py

@@ -1,8 +1,8 @@
 // Copyright (c) 2026 Takayuki Nagata
 // SPDX-License-Identifier: MIT
 
-// The emulator's Linux profile (vux9k-emu --profile linux): the real SoC, whose CLINT block and
-// liteuart registers are the RTL's (docs/agents/linux.md). The memory is all of the
+// noMMU Linux on the emulator's real profile (vux9k-emu --linux): the SoC as synthesized, its
+// CLINT block and liteuart registers the RTL's (docs/agents/linux.md). The memory is all of the
 // PSRAM: the stages' memory (0x806F_0000 up) is free once the kernel runs. The DTB sits in its
 // top 64 KB (0x807F_0000), which the kernel keeps.
 /dts-v1/;
@@ -10,7 +10,7 @@
 / {
 	#address-cells = <1>;
 	#size-cells = <1>;
-	model = "VUX9K (emulator, Linux profile)";
+	model = "VUX9K (emulator)";
 	compatible = "vux9k,linux-emu";
 
 	chosen {

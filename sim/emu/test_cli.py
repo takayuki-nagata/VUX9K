@@ -125,7 +125,7 @@ def test_load_addr_errors(args, error):
 
 
 def linux_handoff() -> bytes:
-    """An RV32 "kernel" that prints L when it starts as a kernel does on the Linux profile: hart
+    """An RV32 "kernel" that prints L when it starts as a kernel does on the real profile: hart
     0 in a0, the device tree in a1 (its first word, read back, is the DTB magic's)."""
     from rv32_asm import Asm
 
@@ -146,11 +146,12 @@ def linux_handoff() -> bytes:
     return b"".join(w.to_bytes(4, "little") for w in a.assemble())
 
 
-def test_linux_starts_the_kernel_with_the_device_tree(tmp_path):
+@pytest.mark.parametrize("profile", [[], ["--profile", "real"]], ids=["default", "real"])
+def test_linux_starts_the_kernel_with_the_device_tree(tmp_path, profile):
     image, dtb = tmp_path / "Image", tmp_path / "dtb"
     image.write_bytes(linux_handoff())
     dtb.write_bytes(bytes.fromhex("d00dfeed") + bytes(60))
-    r = run("--linux", str(image), "--dtb", str(dtb), "--until", "L", "--cycles", "100000")
+    r = run(*profile, "--linux", str(image), "--dtb", str(dtb), "--until", "L", "--cycles", "100000")
     assert r.returncode == 0, r.stderr
     assert r.stdout == b"L"
 
@@ -160,12 +161,14 @@ def test_linux_starts_the_kernel_with_the_device_tree(tmp_path):
     [
         (["--dtb", "x"], b"--dtb needs --linux"),
         (["--linux", "x"], b"--linux needs --dtb"),
-        (["--linux", "x", "--dtb", "y", "--profile", "real"], b"--profile linux only"),
+        (["--linux", "x", "--dtb", "y", "--profile", "isa-test"], b"--profile real only"),
         (["--linux", "x", "--dtb", "y", "--firmware", "build/firmware"], b"without firmware"),
         (["--linux", "x", "--dtb", "y", "--hex", "z"], b"excludes --load and --hex"),
         (["--linux", "missing-image", "--dtb", "missing-dtb"], b"missing-image"),
+        # The emulator-only linux profile is gone: --linux runs on real
+        (["--profile", "linux"], b"unknown profile"),
     ],
-    ids=["dtb-alone", "no-dtb", "profile", "firmware", "hex", "missing"],
+    ids=["dtb-alone", "no-dtb", "profile", "firmware", "hex", "missing", "no-linux-profile"],
 )
 def test_linux_errors(args, error):
     r = run(*args)

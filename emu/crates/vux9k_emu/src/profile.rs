@@ -8,10 +8,10 @@
 //! soc/soc_xmem_bridge.veryl).
 //! `IsaTest` is the flat 256 KB RAM of sim/tb_hex_runner.veryl, used only to run
 //! riscv-tests.
-//! `Linux` is the same SoC as `Real` (its liteuart register view of the UART, once ahead of
-//! the RTL, is the RTL's and `Real`'s now, held to it by the lockstep program `liteuart`);
-//! it only lets `Soc::load_linux` start a kernel. linux_workspace/dts/vux9k-linux-emu.dts
-//! describes it.
+//! A noMMU Linux kernel runs on `Real` (`Soc::load_linux`, described by
+//! linux_workspace/dts/vux9k-linux-emu.dts): the emulator-only `Linux` profile that once ran
+//! it ahead of the RTL had nothing left that `Real` lacks once the CLINT and the liteuart
+//! registers were the RTL's.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Profile {
@@ -21,15 +21,13 @@ pub enum Profile {
     /// riscv-tests harness: one flat RAM at 0 for code and data, no MMIO; a store to
     /// `TOHOST` ends the run.
     IsaTest,
-    /// `Real`, for `Soc::load_linux` (emulator only).
-    Linux,
 }
 
 impl Profile {
-    /// The memory at 0: the boot ROM (Real, Linux: empty unless loaded), the flat RAM (IsaTest).
+    /// The memory at 0: the boot ROM (Real: empty unless loaded), the flat RAM (IsaTest).
     pub fn rom_bytes(self) -> usize {
         match self {
-            Profile::Real | Profile::Linux => 16 * 1024,
+            Profile::Real => 16 * 1024,
             Profile::IsaTest => 256 * 1024,
         }
     }
@@ -38,7 +36,7 @@ impl Profile {
     /// has none.
     pub fn xmem_bytes(self) -> usize {
         match self {
-            Profile::Real | Profile::Linux => crate::soc::XMEM_WORDS * 4,
+            Profile::Real => crate::soc::XMEM_WORDS * 4,
             Profile::IsaTest => 0,
         }
     }
@@ -48,7 +46,6 @@ impl Profile {
         match self {
             Profile::Real => "real (Tang Nano 9K SoC: 16 KB boot ROM, 8 MB PSRAM)".to_string(),
             Profile::IsaTest => "isa-test (flat 256 KB RAM, riscv-tests only)".to_string(),
-            Profile::Linux => "linux (real, for a Linux kernel; emulator only)".to_string(),
         }
     }
 }

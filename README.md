@@ -354,9 +354,9 @@ build/emu/target/release/vux9k-emu --no-firmware --load build/zephyr-demo/zephyr
 Interactive modes run at the SoC's 18 MHz, so the firmware's timeouts behave as on
 hardware; `--trace FILE` logs every instruction. Profiles: `real` (default: the 16 KB
 boot ROM and the 8 MB PSRAM, as the board), `isa-test` (the riscv-tests
-harness' flat 256 KB RAM, `make test-isa-emu`) and `linux` (emulator only: `real`, for a
-noMMU kernel: `--linux Image --dtb DTB`, the device tree from
-`linux_workspace/dts/vux9k-linux-emu.dts`). Python tests drive the emulator through
+harness' flat 256 KB RAM, `make test-isa-emu`). `--linux Image --dtb DTB` starts a noMMU
+kernel on `real` without firmware, the device tree from
+`linux_workspace/dts/vux9k-linux-emu.dts`. Python tests drive the emulator through
 the `vux9k_emu` module (`make emu-py`; helpers in `sim/emu/vux9k.py`).
 
 `make emu-bench` (`scripts/emu_bench.py`) measures how fast that runs (millions of

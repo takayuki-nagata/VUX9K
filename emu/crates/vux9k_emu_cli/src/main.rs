@@ -12,9 +12,9 @@
 //! starts it (`--load-addr`: RV32 in the PSRAM at 0x8000_0000; Hack at an offset in its
 //! instruction segment in the PSRAM, 0 by default).
 //!
-//! `--linux IMAGE --dtb DTB` starts a noMMU Linux kernel on the emulator-only Linux profile
-//! (`--profile linux`, the real SoC): no firmware, the kernel in the PSRAM at
-//! 0x8000_0000 and its device tree in the PSRAM's top 64 KB (`Soc::load_linux`).
+//! `--linux IMAGE --dtb DTB` starts a noMMU Linux kernel on the real profile: no firmware,
+//! the kernel in the PSRAM at 0x8000_0000 and its device tree in the PSRAM's top 64 KB
+//! (`Soc::load_linux`). The isa-test profile has no PSRAM, so it refuses `--linux`.
 //!
 //! The UART is connected to stdout (batch), the terminal (`--stdio`), or a TCP
 //! client (`--tcp PORT`, e.g. `vux_tool.py --port socket://localhost:PORT`).
@@ -34,10 +34,9 @@ use vux9k_emu::{hexfile, Isa, Profile, Soc, Stop};
 const USAGE: &str = "\
 usage: vux9k-emu [options]
 
-  --profile NAME      memory profile: real (default, the board), isa-test (riscv-tests) or
-                      linux (real, for --linux; emulator only)
+  --profile NAME      memory profile: real (default, the board) or isa-test (riscv-tests)
   --firmware DIR      preload the ROM from DIR/firmware.hex (default build/firmware;
-                      none on the linux profile)
+                      none with --linux)
   --no-firmware       start with empty memories
   --load FILE         raw binary into the ROM at address 0
   --mode riscv|hack   with --load: FILE is an application image (hack: big-endian
@@ -49,7 +48,7 @@ usage: vux9k-emu [options]
                       board links), else 0. hack: the offset in Hack's 64 KB
                       instruction segment (word-aligned; default 0); it starts at 0
   --hex FILE          $readmemh words into the ROM from word 0 (RV32 code)
-  --linux IMAGE       start a Linux kernel Image at 0x80000000 (implies --profile linux and
+  --linux IMAGE       start a Linux kernel Image at 0x80000000 on the real profile (implies
                       --no-firmware; needs --dtb)
   --dtb DTB           with --linux: the flattened device tree, put at 0x807f0000 (a1)
   --sd IMAGE          raw SD image (sector n at byte 512 n; vux_tool.py mkfat makes FAT32
@@ -67,8 +66,6 @@ usage: vux9k-emu [options]
 
 struct Opts {
     profile: Profile,
-    /// --profile was given
-    profile_set: bool,
     /// --firmware or --no-firmware was given
     firmware_set: bool,
     linux: Option<String>,
@@ -93,7 +90,6 @@ struct Opts {
 fn parse_args() -> Result<Opts, String> {
     let mut o = Opts {
         profile: Profile::Real,
-        profile_set: false,
         firmware_set: false,
         linux: None,
         dtb: None,
@@ -121,10 +117,8 @@ fn parse_args() -> Result<Opts, String> {
                 o.profile = match val("--profile")?.as_str() {
                     "real" => Profile::Real,
                     "isa-test" => Profile::IsaTest,
-                    "linux" => Profile::Linux,
                     p => return Err(format!("unknown profile {p:?}")),
                 };
-                o.profile_set = true;
             }
             "--firmware" => {
                 o.firmware = Some(val("--firmware")?);
@@ -195,8 +189,8 @@ fn parse_args() -> Result<Opts, String> {
         if o.dtb.is_none() {
             return Err("--linux needs --dtb".into());
         }
-        if o.profile_set && o.profile != Profile::Linux {
-            return Err("--linux runs on --profile linux only".into());
+        if o.profile != Profile::Real {
+            return Err("--linux runs on --profile real only (isa-test has no PSRAM)".into());
         }
         if o.firmware_set && o.firmware.is_some() {
             return Err("--linux runs without firmware (--firmware)".into());
@@ -204,11 +198,6 @@ fn parse_args() -> Result<Opts, String> {
         if o.load.is_some() || o.hex.is_some() {
             return Err("--linux excludes --load and --hex".into());
         }
-        o.profile = Profile::Linux;
-        o.firmware = None;
-    }
-    // The Linux profile boots no first stage: its ROM stays empty unless asked for
-    if o.profile == Profile::Linux && !o.firmware_set {
         o.firmware = None;
     }
     Ok(o)

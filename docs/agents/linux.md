@@ -9,10 +9,10 @@ paths:
   - "emu/crates/vux9k_emu/tests/linux.rs"
 ---
 
-# noMMU Linux (linux_workspace/, the emulator's Linux profile)
+# noMMU Linux (linux_workspace/, the kernel on the emulator)
 
-Read before changing `linux_workspace/`, `make linux-src`, `linux-rootfs`, `linux` or the
-emulator's Linux profile. Index and the rules that apply everywhere: [`AGENTS.md`](../../AGENTS.md).
+Read before changing `linux_workspace/`, `make linux-src`, `linux-rootfs`, `linux` or how
+the emulator starts a kernel (`Soc::load_linux`, `vux9k-emu --linux`). Index and the rules that apply everywhere: [`AGENTS.md`](../../AGENTS.md).
 
 ## What exists, and where it runs
 
@@ -26,15 +26,17 @@ emulator's Linux profile. Index and the rules that apply everywhere: [`AGENTS.md
   `rv32_nommu_virt_defconfig` with `linux_workspace/kernel/vux9k_nommu.config` merged over it,
   the cpio built in uncompressed (`Image`), and the device tree
   `linux_workspace/dts/vux9k-linux-emu.dts` (`vux9k-linux-emu.dtb`).
-- `make test-linux-emu` (`sim/emu/test_linux.py`) boots it on the emulator's Linux profile to
+- `make test-linux-emu` (`sim/emu/test_linux.py`) boots it on the emulator's `real` profile to
   busybox's shell and runs a few commands. It runs only with `VUX9K_LINUX_TEST=1`, which that
   target sets, so `test-emu` (`pytest sim/emu`, CI) skips it even where an Image exists. None of
   these targets is in CI. The first buildroot run takes ~40 min on a 2-vCPU
   machine, a kernel rebuild ~6 min.
-- **The profile is the real SoC.** Its UART's liteuart registers (`periph/uart.rs`) are the
-  RTL's (`uart_regs`) and `Real`'s, held to the RTL by the lockstep program `liteuart`, as its
-  CLINT at `0x2000_0000` (`periph/clint.rs`, `timer_core`) is by `clint`; the profile differs
-  from `Real` only in letting `load_linux` start a kernel. Nothing here has run on the board
+- **The kernel runs on the real SoC (`Profile::Real`).** Its UART's liteuart registers
+  (`periph/uart.rs`) are the RTL's (`uart_regs`), held to the RTL by the lockstep program
+  `liteuart`, as its CLINT at `0x2000_0000` (`periph/clint.rs`, `timer_core`) is by `clint`.
+  There is no Linux profile any more: the emulator-only one that had both ahead of the RTL
+  was removed once the RTL had them. `load_linux` (`--linux`) only puts the kernel and the DTB
+  into the PSRAM and starts it without firmware; `isa-test` refuses it (no PSRAM). Nothing here has run on the board
   yet, and no document may say it does.
 
 ## Things that are not obvious

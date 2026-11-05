@@ -284,3 +284,15 @@ def test_load_app_into_the_psram():
         soc.load_xmem(0x2000_0000, image)
     # No window in the riscv-tests profile
     assert Soc("isa-test").xmem_word(XMEM_BASE) == 0
+
+
+def test_profiles():
+    """real and isa-test; the emulator-only "linux" profile is gone, a kernel starts on real."""
+    with pytest.raises(ValueError, match="unknown profile"):
+        Soc("linux")
+    dtb = bytes.fromhex("d00dfeed")
+    real = Soc("real")
+    real.load_linux(b"\x13\x00\x00\x00", dtb)
+    assert real.pc == XMEM_BASE
+    with pytest.raises(ValueError, match="needs the PSRAM"):
+        Soc("isa-test").load_linux(b"\x13\x00\x00\x00", dtb)

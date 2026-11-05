@@ -1,9 +1,8 @@
 // Copyright (c) 2026 Takayuki Nagata
 // SPDX-License-Identifier: MIT
 
-//! What noMMU Linux needs (the Linux profile, the real SoC for `load_linux`): the A
-//! extension, U-mode, the CLINT block (also Real's, the RTL's timer_core), the UART's
-//! liteuart registers (Real's too, the RTL's uart_regs) and `load_linux`.
+//! What noMMU Linux needs on the real SoC: the A extension, U-mode, the CLINT block (the
+//! RTL's timer_core), the UART's liteuart registers (the RTL's uart_regs) and `load_linux`.
 
 use vux9k_emu::soc::{
     LINUX_DTB_ADDR, LINUX_DTB_MAX, XMEM_FETCH_FILL, XMEM_LINE_DIRTY, XMEM_LINE_FILL,
@@ -81,7 +80,7 @@ fn amo_ops_return_the_old_value_and_store_the_result() {
     ];
     for (f5, mem, src, after) in cases {
         for aqrl in [0, 3] {
-            let mut soc = new_soc(Profile::Linux);
+            let mut soc = new_soc(Profile::Real);
             soc.load_xmem(A, &mem.to_le_bytes()).unwrap();
             soc.regs[1] = A;
             soc.regs[2] = src;
@@ -97,7 +96,7 @@ fn amo_ops_return_the_old_value_and_store_the_result() {
         }
     }
     // rd = rs2: the old value lands in rd after rs2 was read
-    let mut soc = new_soc(Profile::Linux);
+    let mut soc = new_soc(Profile::Real);
     soc.load_xmem(A, &10u32.to_le_bytes()).unwrap();
     soc.regs[1] = A;
     soc.regs[2] = 5;
@@ -108,7 +107,7 @@ fn amo_ops_return_the_old_value_and_store_the_result() {
 #[test]
 fn amo_cycles_and_caches_are_a_load_and_a_store() {
     let (rw, fill, dirty) = (XMEM_FETCH_FILL, XMEM_LINE_FILL, XMEM_LINE_DIRTY);
-    let mut soc = new_soc(Profile::Linux);
+    let mut soc = new_soc(Profile::Real);
     soc.regs[1] = A;
     let add = amo(0x00, 0, 0, 1, 3);
     assert_eq!(
@@ -146,7 +145,7 @@ fn amo_cycles_and_caches_are_a_load_and_a_store() {
     soc.regs[1] = 0x0000_0040;
     assert_eq!(exec(&mut soc, add).cycles, 5);
     // A store into the window evicts the instruction-cache line at its index, as SW does
-    let mut soc = new_soc(Profile::Linux);
+    let mut soc = new_soc(Profile::Real);
     soc.load_xmem(0x8000_0000, &addi(0, 0, 0).to_le_bytes())
         .unwrap();
     let fetch = |soc: &mut Soc| {
@@ -167,7 +166,7 @@ fn amo_cycles_and_caches_are_a_load_and_a_store() {
 #[test]
 fn lr_sc_reservation() {
     let b = A + 0x40;
-    let mut soc = new_soc(Profile::Linux);
+    let mut soc = new_soc(Profile::Real);
     soc.load_xmem(A, &7u32.to_le_bytes()).unwrap();
     soc.regs[1] = A;
     soc.regs[2] = b;
@@ -194,7 +193,7 @@ fn lr_sc_reservation() {
     exec(&mut soc, amo(SC, 0, 4, 1, 5));
     assert_eq!((soc.regs[5], soc.xmem_word(A)), (1, 0x55));
     // Without one, an SC fails from reset
-    let mut soc = new_soc(Profile::Linux);
+    let mut soc = new_soc(Profile::Real);
     soc.regs[1] = A;
     exec(&mut soc, amo(SC, 0, 0, 1, 5));
     assert_eq!(soc.regs[5], 1);
@@ -209,7 +208,7 @@ fn misaligned_atomics_trap() {
             (amo(0x00, 0, 2, 1, 3), 6),
             (amo(0x01, 0, 2, 1, 3), 6),
         ] {
-            let mut soc = new_soc(Profile::Linux);
+            let mut soc = new_soc(Profile::Real);
             soc.load_xmem(A, &7u32.to_le_bytes()).unwrap();
             soc.regs[1] = A + off;
             soc.regs[2] = 9;
@@ -258,20 +257,16 @@ fn misa_and_mstatus_per_profile() {
     assert_eq!(read(&mut real, 0x300), 0x0022_1888);
     let mut isa = new_soc(Profile::IsaTest);
     assert_eq!(read(&mut isa, 0x301), 0x4010_1101);
-    let mut linux = new_soc(Profile::Linux);
-    assert_eq!(read(&mut linux, 0x301), 0x4010_1101, "Linux: RV32IMAU");
-    assert_eq!(read(&mut linux, 0x300), 0x1800, "MPP is M after reset");
-    // Linux: MPP is WARL {U, M}: 3 is M, everything else U
+    // MPP is WARL {U, M}: 3 is M, everything else U
     for (mpp, reads) in [(0, 0), (1, 0), (2, 0), (3, 0x1800)] {
-        linux.regs[6] = mpp << 11;
-        exec(&mut linux, csr(1, 0, 0x300, 6));
-        assert_eq!(read(&mut linux, 0x300), reads, "MPP written {mpp}");
+        real.regs[6] = mpp << 11;
+        exec(&mut real, csr(1, 0, 0x300, 6));
+        assert_eq!(read(&mut real, 0x300), reads, "MPP written {mpp}");
     }
     // mcounteren reads 0, ignores writes
-    linux.regs[6] = 7;
-    assert_eq!(exec(&mut linux, csr(1, 0, 0x306, 6)).trap, None);
-    assert_eq!(read(&mut linux, 0x306), 0);
-    assert_eq!(exec(&mut real, csr(2, 5, 0x306, 0)).trap, None);
+    real.regs[6] = 7;
+    assert_eq!(exec(&mut real, csr(1, 0, 0x306, 6)).trap, None);
+    assert_eq!(read(&mut real, 0x306), 0);
 }
 
 // ----- U-mode -------------------------------------------------------------------------
@@ -290,7 +285,7 @@ fn enter_user(soc: &mut Soc, pc: u32) {
 
 #[test]
 fn mret_to_user_and_ecall_back() {
-    let mut soc = new_soc(Profile::Linux);
+    let mut soc = new_soc(Profile::Real);
     enter_user(&mut soc, 0x40);
     assert_eq!(soc.csr.read(0x300, 0, 0) & 0x1800, 0, "MRET leaves MPP = U");
     // Code in U runs; ecall from U is cause 8 with MPP = U, back in M
@@ -335,7 +330,7 @@ fn user_mode_denies_m_csrs_counters_and_mret() {
         csr(2, 5, 0xC82, 0),
         MRET,
     ] {
-        let mut soc = new_soc(Profile::Linux);
+        let mut soc = new_soc(Profile::Real);
         enter_user(&mut soc, 0);
         soc.regs[5] = 0x1234;
         let r = exec(&mut soc, word);
@@ -349,18 +344,18 @@ fn user_mode_denies_m_csrs_counters_and_mret() {
         assert_eq!(soc.csr.read(0x300, 0, 0) & 0x1800, 0, "taken from U");
     }
     // WFI in U is a no-op, as in M
-    let mut soc = new_soc(Profile::Linux);
+    let mut soc = new_soc(Profile::Real);
     enter_user(&mut soc, 0);
     let r = exec(&mut soc, WFI);
     assert_eq!((r.trap, soc.pc, soc.csr.user), (None, 4, true));
     // In M the counters stay readable
-    let mut soc = new_soc(Profile::Linux);
+    let mut soc = new_soc(Profile::Real);
     assert_eq!(exec(&mut soc, csr(2, 5, 0xC00, 0)).trap, None);
 }
 
 #[test]
 fn interrupts_are_on_in_user_mode_whatever_mie() {
-    let mut soc = new_soc(Profile::Linux);
+    let mut soc = new_soc(Profile::Real);
     soc.csr.mie = 1 << 7; // MTIE
                           // mtimecmp = 0 through the CLINT block: the timer interrupt is pending
     soc.regs[1] = 0x2000_4000;
@@ -389,13 +384,7 @@ fn interrupts_are_on_in_user_mode_whatever_mie() {
 
 #[test]
 fn clint_registers_are_the_timer_and_msip() {
-    for profile in [Profile::Real, Profile::Linux] {
-        clint_registers(profile);
-    }
-}
-
-fn clint_registers(profile: Profile) {
-    let mut soc = new_soc(profile);
+    let mut soc = new_soc(Profile::Real);
     let load = |soc: &mut Soc, addr: u32| {
         soc.regs[1] = addr;
         exec(soc, lw(5, 1, 0));
@@ -488,38 +477,36 @@ fn isa_test_has_no_clint() {
 // ----- the UART's liteuart registers -----------------------------------------------------
 
 #[test]
-fn liteuart_drives_meip_in_every_profile_with_a_cpu() {
+fn liteuart_drives_meip() {
     let mip = |soc: &mut Soc| {
         exec(soc, csr(2, 5, 0x344, 0));
         soc.regs[5] & (1 << 11)
     };
-    for profile in [Profile::Real, Profile::Linux] {
-        let mut soc = new_soc(profile);
-        soc.uart_send(b"x");
-        soc.cycle += 2000;
-        assert_eq!(mip(&mut soc), 0, "{profile:?}: EV_ENABLE = 0");
-        soc.regs[1] = 0x4000_0000;
-        soc.regs[2] = 2;
-        exec(&mut soc, sw(2, 1, 0x14)); // EV_ENABLE = RX
-        assert_ne!(mip(&mut soc), 0, "{profile:?}");
-        exec(&mut soc, lw(5, 1, 0x08));
-        assert_eq!(soc.regs[5], 0, "RXEMPTY");
-        exec(&mut soc, lw(5, 1, 0x00));
-        assert_eq!(soc.regs[5], b'x' as u32);
-        assert_eq!(mip(&mut soc), 0, "{profile:?}: RX drained");
-        soc.regs[2] = 1;
-        exec(&mut soc, sw(2, 1, 0x14)); // EV_ENABLE = TX
-        assert_ne!(mip(&mut soc), 0, "{profile:?}: the TX FIFO isn't full");
-        // The interrupt is taken
-        soc.csr.mie = 1 << 11;
-        soc.csr.mstatus = 1 << 3;
-        assert_eq!(exec(&mut soc, addi(0, 0, 0)).trap, Some(0x8000_000B));
-        // RXTX transmits at the 115200-baud timing
-        soc.regs[2] = b'K' as u32;
-        exec(&mut soc, sw(2, 1, 0));
-        soc.cycle += 3000;
-        assert_eq!(soc.uart_received(), b"K");
-    }
+    let mut soc = new_soc(Profile::Real);
+    soc.uart_send(b"x");
+    soc.cycle += 2000;
+    assert_eq!(mip(&mut soc), 0, "EV_ENABLE = 0");
+    soc.regs[1] = 0x4000_0000;
+    soc.regs[2] = 2;
+    exec(&mut soc, sw(2, 1, 0x14)); // EV_ENABLE = RX
+    assert_ne!(mip(&mut soc), 0);
+    exec(&mut soc, lw(5, 1, 0x08));
+    assert_eq!(soc.regs[5], 0, "RXEMPTY");
+    exec(&mut soc, lw(5, 1, 0x00));
+    assert_eq!(soc.regs[5], b'x' as u32);
+    assert_eq!(mip(&mut soc), 0, "RX drained");
+    soc.regs[2] = 1;
+    exec(&mut soc, sw(2, 1, 0x14)); // EV_ENABLE = TX
+    assert_ne!(mip(&mut soc), 0, "the TX FIFO isn't full");
+    // The interrupt is taken
+    soc.csr.mie = 1 << 11;
+    soc.csr.mstatus = 1 << 3;
+    assert_eq!(exec(&mut soc, addi(0, 0, 0)).trap, Some(0x8000_000B));
+    // RXTX transmits at the 115200-baud timing
+    soc.regs[2] = b'K' as u32;
+    exec(&mut soc, sw(2, 1, 0));
+    soc.cycle += 3000;
+    assert_eq!(soc.uart_received(), b"K");
     // v03_mmio: the view before liteuart's, MEIP while RX holds data, no enable
     let mut soc = new_soc(Profile::Real);
     soc.v03_mmio = true;
@@ -545,7 +532,7 @@ fn load_linux_sets_up_memory_and_registers() {
         .flat_map(|w| w.to_le_bytes())
         .collect();
     let dtb = [0xD0, 0x0D, 0xFE, 0xED, 1, 2];
-    let mut soc = Soc::new(Profile::Linux);
+    let mut soc = Soc::new(Profile::Real);
     soc.regs[10] = 9;
     soc.regs[11] = 9;
     soc.load_linux(&image, &dtb).unwrap();
@@ -565,7 +552,7 @@ fn load_linux_sets_up_memory_and_registers() {
     );
     // What it refuses
     let room = (LINUX_DTB_ADDR - 0x8000_0000) as usize;
-    let mut soc = Soc::new(Profile::Linux);
+    let mut soc = Soc::new(Profile::Real);
     assert!(
         soc.load_linux(&vec![0; room], &dtb).is_ok(),
         "up to the DTB"
@@ -578,13 +565,5 @@ fn load_linux_sets_up_memory_and_registers() {
     assert!(soc.load_linux(&image, &vec![0; LINUX_DTB_MAX]).is_ok());
     assert!(soc.load_linux(&image, &vec![0; LINUX_DTB_MAX + 1]).is_err());
     assert!(soc.load_linux(&image, &[]).is_err());
-    assert!(Soc::new(Profile::Real).load_linux(&image, &dtb).is_err());
     assert!(Soc::new(Profile::IsaTest).load_linux(&image, &dtb).is_err());
-}
-
-#[test]
-fn linux_profile_switches() {
-    assert!(Soc::new(Profile::Linux).m_ext);
-    assert_eq!(Profile::Linux.rom_bytes(), Profile::Real.rom_bytes());
-    assert_eq!(Profile::Linux.xmem_bytes(), Profile::Real.xmem_bytes());
 }

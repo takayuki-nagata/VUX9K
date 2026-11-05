@@ -102,11 +102,12 @@ against the RTL: tb_soc_top.sv writes a trace in RTL builds (`VUX9K_RTL_TRACE`) 
   sim/emu/test_sd_transcripts.py`) must stay green on both sides.
 - Firmware bugs the tests expose are pinned as `xfail(strict=True)` with the reason
   until they are fixed, so the fix shows up as an XPASS.
-- A model ahead of the RTL (an emulator-only profile, linux.md) is the exception: the
-  lockstep covers `real` only. When the RTL gains it, the profile's version becomes the
-  model it has to match, and it moves into `real` with a lockstep program, as the CLINT did
-  (`periph/clint.rs`, the lockstep program `clint`) and the liteuart registers did
-  (`periph/uart.rs`, `liteuart`). The `linux` profile has nothing ahead of the RTL any more.
+- The lockstep covers `real`, and every profile but `isa-test` (tb_hex_runner's) is `real`:
+  there is no emulator-only profile ahead of the RTL. The Linux profile was one until the RTL
+  gained its CLINT and liteuart registers; they moved into `real` with the lockstep programs
+  `clint` and `liteuart` (`periph/clint.rs`, `periph/uart.rs`), and the profile was removed
+  (linux.md). A model put ahead of the RTL again is outside the lockstep until the RTL has it
+  and it moves into `real` with a lockstep program the same way.
 - `Soc::v03_mmio` (Python `v03_mmio`) models the v0.3.x bitstreams' MMIO (the TIMER page,
   the UART's registers before liteuart's) for the upgrade tests; it is not the RTL and no
   lockstep program uses it.
