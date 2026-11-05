@@ -539,7 +539,7 @@ def traps() -> list:
     a.label("after_ma")
     a.nop()
     a.lw("t1", 0, "zero")  # load from the ROM
-    a.lbu("t1", 4, "s1")  # UART status via a byte load
+    a.lbu("t1", 8, "s1")  # UART RXEMPTY via a byte load
     # CSRs
     a.li("t1", 0x12345678)
     a.csrw("mscratch", "t1")
@@ -555,7 +555,7 @@ def traps() -> list:
     a.word(_csr_read(7, 0x320))  # mcountinhibit, mhpmcounter3, mhpmcounter31h: read 0
     a.word(_csr_read(28, 0xB03))
     a.word(_csr_read(29, 0xB9F))
-    # UART TX: a few bytes, then poll tx_full
+    # UART TX: a few bytes, then read TXFULL
     for ch in b"Hi!\n":
         a.li("t1", ch)
         a.sw("t1", 0, "s1")
@@ -565,6 +565,8 @@ def traps() -> list:
     a.addi("t1", "t1", 200)
     a.sw("zero", 4, "s2")
     a.sw("t1", 0, "s2")
+    a.li("t1", 2)
+    a.sw("t1", 0x14, "s1")  # the UART's EV_ENABLE: RX
     a.li("t1", 0x880)  # MEIE | MTIE
     a.csrw("mie", "t1")
     a.li("t1", 8)
@@ -841,12 +843,11 @@ def amo() -> list:
     a.ecall()
     # The UART: wait for the byte, an AMO pops it once and sends the sum
     a.label("rx_wait")
-    a.lw("t1", 4, "s3")
-    a.andi("t1", "t1", 1)  # rx_empty
+    a.lw("t1", 8, "s3")  # RXEMPTY
     a.bnez("t1", "rx_wait")
     a.li("t2", 1)
     a.amo(0, "t3", "t2", "s3")
-    a.lw("t1", 4, "s3")
+    a.lw("t1", 8, "s3")
     a.label("done")
     a.j("done")
 
@@ -991,8 +992,7 @@ S2_LAUNCH_CYCLES = 18_000
 def _put_char(a, ch: int, tag: str):
     """Send ch once the TX FIFO has room (s1 = the UART)."""
     a.label(tag)
-    a.lw("t0", 4, "s1")
-    a.andi("t0", "t0", 2)  # TX full
+    a.lw("t0", 4, "s1")  # TXFULL
     a.bnez("t0", tag)
     a.li("t0", ch)
     a.sb("t0", 0, "s1")
@@ -1165,8 +1165,7 @@ def hash_program(origin: int, soft_reset: bool = False) -> bytes:
     a = Asm(origin=origin)
     a.lui("a1", 0x40000)  # UART
     a.label("wait")
-    a.lw("t0", 4, "a1")
-    a.andi("t0", "t0", 2)  # TX full
+    a.lw("t0", 4, "a1")  # TXFULL
     a.bne("t0", "zero", "wait")
     a.addi("a0", "zero", ord("#"))
     a.sb("a0", 0, "a1")
@@ -1201,9 +1200,9 @@ def _card_sectors(files: dict) -> dict:
 
 
 def stage2_card() -> dict:
-    """A FAT32 card with \\VUX9K\\STAGE2.BIN printing '#', as {lba: sector}: v9, the oldest the
+    """A FAT32 card with \\VUX9K\\STAGE2.BIN printing '#', as {lba: sector}: v10, the oldest the
     first stage starts (fw_common::boot::MIN_STAGE2_VERSION)."""
-    data, _ = _vux_tool().build_vux9_v4_image(hash_program(STAGE2_BASE), name="test", load_addr=STAGE2_BASE, version=9)
+    data, _ = _vux_tool().build_vux9_v4_image(hash_program(STAGE2_BASE), name="test", load_addr=STAGE2_BASE, version=10)
     return _card_sectors({"VUX9K/STAGE2.BIN": data})
 
 
@@ -1334,23 +1333,25 @@ UART_DROP_CYCLES = UART_DROP_READ + 3_000  # done ~600 cycles after the read, th
 
 
 def uart_drop() -> list:
-    """A byte that arrives with the RX FIFO full is dropped without a trace in the status: from
-    UART_DROP_READ on, two status reads (bits 2-3 read 0, the second read the same as the
-    first), the 32 bytes popped into t1 one by one with the status after each (the last one
-    empty), then 'D'. The data register isn't read once the FIFO is empty: the RTL's FIFO then
-    shows a stale slot and the emulator 0."""
+    """A byte that arrives with the RX FIFO full is dropped without a trace in any register:
+    from UART_DROP_READ on, every register read twice (RXFULL set, EV_STATUS both events, the
+    second read the same as the first: reads other than RXTX pop nothing), the 32 bytes
+    popped into t1 one by one with RXEMPTY and RXFULL after each, one RXTX read more on the
+    empty FIFO (it reads 0 and pops nothing), then 'D'."""
     a = Asm()
     a.li("s1", 0x4000_0000)  # UART
     a.li("t2", UART_DROP_READ)
     a.label("wait")
     a.csrr("t1", "mcycle")
     a.bltu("t1", "t2", "wait")
-    a.lw("s2", 4, "s1")  # status: not empty
-    a.lw("s3", 4, "s1")  # again: no side effect
-    a.li("t3", 32)  # what the FIFO holds; the status after the last pop reads empty
+    for off in range(4, 0x20, 4):
+        a.lw("s2", off, "s1")
+        a.lw("s3", off, "s1")  # again: no side effect
+    a.li("t3", 33)  # one read more than the FIFO holds: RXTX reads 0 when empty
     a.label("drain")
     a.lw("t1", 0, "s1")
-    a.lw("s4", 4, "s1")
+    a.lw("s4", 8, "s1")  # RXEMPTY
+    a.lw("s5", 0x1C, "s1")  # RXFULL
     a.addi("t3", "t3", -1)
     a.bnez("t3", "drain")
     a.li("t1", ord("D"))
@@ -1462,9 +1463,10 @@ def clint() -> list:
     a.li("t1", 8)
     a.csrc("mstatus", "t1")
     a.label("rx_wait")
-    a.lw("t1", 4, "s1")
-    a.andi("t1", "t1", 1)  # rx_empty
+    a.lw("t1", 8, "s1")  # RXEMPTY
     a.bnez("t1", "rx_wait")
+    a.li("t1", 2)
+    a.sw("t1", 0x14, "s1")  # the UART's EV_ENABLE: RX
     a.li("t1", 1)
     a.sw("t1", 0, "s2")
     a.sw("zero", 0, "s3")
@@ -1515,6 +1517,200 @@ def clint() -> list:
     a.lw("t0", 0, "s1")  # UART RX: pop the byte
     a.mret()
     return a.assemble()
+
+
+# --- the UART's registers (liteuart's layout) ----------------------------------------
+UART = 0x4000_0000  # uart_regs: RXTX +0, TXFULL +4, RXEMPTY +8, EV_STATUS +0xC, EV_PENDING
+# +0x10, EV_ENABLE +0x14, TXEMPTY +0x18, RXFULL +0x1C; repeating every 256 bytes
+LITEUART_RX_CYCLE = 3_000  # the byte EV_RX's interrupt pops (it arrives at ~4,500)
+LITEUART_RX2_CYCLE = 40_000  # the byte the RX FIFO keeps across the soft reset
+LITEUART_CYCLES = 60_000  # 'L' at ~51,800 (the TX FIFO drains until ~50,000), then spins
+
+
+def liteuart() -> list:
+    """The UART's registers: every one read, through the 256-byte repeat, 0x20-0xFC reading 0,
+    byte loads; stores to the read-only ones and to 0x20 ignored; EV_ENABLE by word, byte and
+    halfword stores (byte enables not looked at); RXTX's byte offsets transmitting; the TX FIFO
+    filled (TXFULL, no TX event, TXEMPTY 0). EV_PENDING (EV_STATUS while EV_ENABLE is 0,
+    EV_STATUS & EV_ENABLE otherwise) is read with EV_ENABLE 0 (the TX event showing at the
+    start, none with the FIFO full, TX and RX with a byte received), with TX enabled on a full
+    and on a non-full FIFO and with a byte received (RX hidden), in the handler and with
+    EV_ENABLE 3. Then the machine external interrupt from each
+    event: TX enabled while the FIFO is full, taken once its first byte leaves; RX, taken when
+    the byte arrives (the handler pops it with lbu, as Zephyr's driver does); MEI before MSI
+    with both pending. TXEMPTY polled until the FIFO is empty, a byte left in the RX FIFO,
+    EV_ENABLE = 3 and a soft reset: the second pass (x5 set) reads EV_ENABLE 0 and the byte,
+    and prints 'L'. The handler counts interrupts in s3 and records their causes in s7."""
+    a = Asm()
+    a.bnez("x5", "second")
+    a.la("t0", "handler")
+    a.csrw("mtvec", "t0")
+    a.li("s1", UART)
+    a.li("s2", CLINT)  # msip
+    # Every register, its repeat, offsets that read 0; byte loads
+    # (EV_PENDING with EV_ENABLE 0: the TX event, as Linux's polled driver reads it)
+    for off in (*range(0, 0x20, 4), 0x20, 0x24, 0x80, 0xFC, 0x104, 0x114, 0x11C, 0x708, 0x718):
+        a.lw("t1", off, "s1")
+    a.lbu("t2", 0x0C, "s1")
+    a.lbu("t2", 0x0D, "s1")  # EV_STATUS's second byte: 0
+    a.lbu("t2", 0x18, "s1")
+    a.word(i_type(0x1A, "s1", 5, "t2", 0x03))  # lhu: TXEMPTY's upper half, 0
+    # Stores the read-only registers and the unused offsets ignore
+    a.li("t1", -1)
+    for off in (0x04, 0x08, 0x0C, 0x10, 0x18, 0x1C, 0x20, 0xFC, 0x110):
+        a.sw("t1", off, "s1")
+    for off in (0x04, 0x0C, 0x14, 0x18, 0x20, 0xFC):
+        a.lw("t2", off, "s1")
+    # EV_ENABLE: a word store takes bits 1:0; a byte store and a halfword store at its other
+    # bytes write it with their replicated data
+    a.sw("t1", 0x14, "s1")
+    a.lw("t2", 0x14, "s1")
+    a.sb("zero", 0x15, "s1")
+    a.lw("t2", 0x14, "s1")
+    a.li("t1", 0x0102)
+    a.sh("t1", 0x16, "s1")
+    a.lw("t2", 0x14, "s1")
+    a.li("t1", 0x0101_0101)
+    a.sw("t1", 0x114, "s1")  # through the repeat
+    a.lw("t2", 0x14, "s1")
+    a.sw("zero", 0x14, "s1")
+    # TX: 34 bytes, each byte offset of RXTX: the first goes to the transmitter, 32 fill the
+    # FIFO, the last is dropped
+    for k in range(34):
+        a.li("t1", ord("a") + k)
+        a.sb("t1", k & 3, "s1")
+    for off in (0x04, 0x0C, 0x10, 0x18):  # EV_PENDING: 0 with EV_ENABLE 0, no event
+        a.lw("t2", off, "s1")
+    # EV_TX enabled while the FIFO is full: taken once a byte leaves it
+    a.li("t1", 0x800)  # MEIE
+    a.csrw("mie", "t1")
+    a.li("t1", 8)
+    a.csrs("mstatus", "t1")
+    a.li("t1", 1)
+    a.sw("t1", 0x14, "s1")  # EV_ENABLE: TX
+    a.lw("t2", 0x10, "s1")  # EV_PENDING: 0, the FIFO still full
+    a.label("wait_tx")
+    a.addi("s6", "s6", 1)
+    a.beqz("s3", "wait_tx")
+    # EV_RX: taken when the byte arrives
+    a.li("t1", 2)
+    a.sw("t1", 0x14, "s1")
+    a.li("t1", 2)
+    a.label("wait_rx")
+    a.addi("s6", "s6", 1)
+    a.bltu("s3", "t1", "wait_rx")
+    # MEI (EV_TX, the FIFO not full) and MSI pending with MIE clear: taken MEI first
+    a.li("t1", 8)
+    a.csrc("mstatus", "t1")
+    a.li("t1", 1)
+    a.sw("t1", 0x14, "s1")
+    a.lw("t2", 0x10, "s1")  # EV_PENDING: TX
+    a.sw("t1", 0, "s2")
+    a.li("t1", 0x808)  # MEIE | MSIE
+    a.csrw("mie", "t1")
+    a.csrr("t5", "mip")
+    a.li("t1", 8)
+    a.csrs("mstatus", "t1")
+    a.li("t1", 4)
+    a.label("wait_both")
+    a.bltu("s3", "t1", "wait_both")
+    a.li("t1", 8)
+    a.csrc("mstatus", "t1")
+    # TXEMPTY once the FIFO has drained (the last byte still in the transmitter)
+    a.label("wait_txempty")
+    a.lw("t1", 0x18, "s1")
+    a.beqz("t1", "wait_txempty")
+    a.lw("t2", 0x04, "s1")
+    # A byte left in the RX FIFO, EV_ENABLE = 3, the soft reset
+    a.label("wait_rx2")
+    a.lw("t1", 0x08, "s1")
+    a.bnez("t1", "wait_rx2")
+    a.lw("t2", 0x10, "s1")  # EV_PENDING with EV_ENABLE 0: RX and TX, the levels
+    a.li("t1", 1)
+    a.sw("t1", 0x14, "s1")  # (MIE is clear: MEIP rises, nothing is taken)
+    a.lw("t2", 0x10, "s1")  # EV_PENDING with TX enabled: TX, the received byte hidden
+    a.csrr("t5", "mip")
+    a.li("t1", 3)
+    a.sw("t1", 0x14, "s1")
+    a.lw("t2", 0x14, "s1")
+    a.lw("t2", 0x10, "s1")  # EV_PENDING: RX and TX
+    a.li("x5", 1)
+    a.li("t1", 0x4000_3000)
+    _soft_reset_key(a, "t1")
+    a.label("spin_reset")
+    a.j("spin_reset")
+    # The second pass: EV_ENABLE cleared, the RX FIFO kept
+    a.label("second")
+    for off in (0x14, 0x08, 0x0C, 0x00, 0x08):
+        a.lw("t2", off, "s1")
+    _put_char(a, ord("L"), "wait_l")
+    a.label("done")
+    a.j("done")
+
+    a.label("handler")  # count, record the cause, clear the source
+    a.csrr("s0", "mcause")
+    a.addi("s3", "s3", 1)
+    a.slli("s7", "s7", 8)
+    a.andi("t0", "s0", 0xFF)
+    a.add("s7", "s7", "t0")
+    a.li("t0", 0x8000_000B)
+    a.beq("s0", "t0", "h_ext")
+    a.sw("zero", 0, "s2")  # MSI: msip = 0
+    a.mret()
+    a.label("h_ext")
+    a.lw("t0", 0x10, "s1")  # EV_PENDING (masked: an interrupt means EV_ENABLE isn't 0)
+    a.lw("t6", 0x14, "s1")  # EV_ENABLE
+    a.word(r_type(0, "t6", "t0", 7, "t0"))  # and t0, t0, t6: a no-op now
+    a.andi("t6", "t0", 2)
+    a.beqz("t6", "h_tx")
+    a.lbu("s5", 0, "s1")  # RX: pop the byte
+    a.mret()
+    a.label("h_tx")
+    a.sw("zero", 0x14, "s1")  # TX: nothing more to send, disable
+    a.mret()
+    return a.assemble()
+
+
+def liteuart_hack() -> list:
+    """Hack (for its I segment, started by hack_stub) on the UART's words 0x6000-0x6003 (RXTX,
+    TXFULL, RXEMPTY, EV_STATUS): waits on RXEMPTY for the byte, reads TXFULL and EV_STATUS,
+    stores to 0x6001-0x6003 (ignored), pops the byte from 0x6000 (kept in data word 16), reads
+    RXEMPTY and EV_STATUS again, then sends the byte back and spins."""
+    import hack_asm
+
+    h = hack_asm.Asm()
+    h.label("wait")
+    h.at(0x6002)  # RXEMPTY
+    h.c("D=M")
+    h.at("wait")
+    h.c("D;JNE")
+    h.at(0x6001)  # TXFULL
+    h.c("D=M")
+    h.at(0x6003)  # EV_STATUS
+    h.c("D=M")
+    for w in (0x6001, 0x6002, 0x6003):
+        h.at(w)
+        h.c("M=-1")
+    h.at(0x6000)  # RXTX: pop
+    h.c("D=M")
+    h.at(16)
+    h.c("M=D")
+    h.at(0x6002)
+    h.c("D=M")
+    h.at(0x6003)
+    h.c("D=M")
+    h.at(16)
+    h.c("D=M")
+    h.at(0x6000)
+    h.c("M=D")
+    h.label("spin")
+    h.at("spin")
+    h.c("0;JMP")
+    return h.assemble()
+
+
+LITEUART_HACK_RX_CYCLE = 1_000
+LITEUART_HACK_CYCLES = 8_000  # the byte back at ~2,800, then spins
 
 
 def programs() -> list:
@@ -1602,6 +1798,24 @@ def programs() -> list:
             cycles=UART_DROP_CYCLES,
             imem_words=uart_drop(),
             uart_rx=[(UART_DROP_RX_CYCLE, bytes(range(0x40, 0x61)))],
+        )
+    )
+    # The UART's registers (liteuart's layout), from RV32 and from Hack
+    progs.append(
+        Program(
+            "liteuart",
+            cycles=LITEUART_CYCLES,
+            imem_words=liteuart(),
+            uart_rx=[(LITEUART_RX_CYCLE, b"R"), (LITEUART_RX2_CYCLE, b"S")],
+        )
+    )
+    progs.append(
+        Program(
+            "liteuart_hack",
+            cycles=LITEUART_HACK_CYCLES,
+            imem_words=hack_stub(),
+            xmem=[(HACK_I_BASE, hack_image_bytes(liteuart_hack()))],
+            uart_rx=[(LITEUART_HACK_RX_CYCLE, b"h")],
         )
     )
     seeds = os.environ.get("LOCKSTEP_SEEDS", "")

@@ -7,13 +7,15 @@ emulator's real profile, started like the Rust demo (sim/emu/test_zephyr_demo.py
 into the PSRAM, and from the card by the second stage's `run VUX9K/APPS/IRQECHO.BIN`. Its
 main thread sleeps until the UART callback wakes it, so an echo at all means the RX
 interrupt (MEI) works; a line longer than both 32-byte FIFOs checks that RX keeps up and
-that TX refills from the driver's timer, with the handlers running from the PSRAM.
+that TX refills from the TX interrupt (the TX FIFO not full), with the handlers running from
+the PSRAM.
 
 With the instruction cache in front of the PSRAM the RX handler keeps up with a line sent
 back to back at 115200 baud; the paced line (irq_echo_pace) is what the board test sends.
 A line that arrives before irq_echo enables RX overflows the 32-byte RX FIFO: its 33rd byte is
-lost, with no error to report (uart_err_check is 0). The ROM holds irq_echo back until it has
-(irq_echo_pace.hold_words), which leaves no race with its start-up time.
+lost, with no error to report (the UART has no error flags; irq_echo prints none). The ROM
+holds irq_echo back until it has (irq_echo_pace.hold_words), which leaves no race with its
+start-up time.
 """
 
 import os
@@ -28,7 +30,7 @@ import irq_echo_pace as pace  # noqa: E402 (sim/integration, on sys.path once vu
 ECHO_BIN = os.path.join(REPO_ROOT, "build", "zephyr-irq-echo", "zephyr", "zephyr.bin")
 FLASH_BYTES = 4 * 1024 * 1024  # the board's flash (vux9k.dts), from XMEM_BASE
 BURST = bytes(b"abcdefghijklmnopqrstuvwxyz0123456789"[i % 36] for i in range(64))
-ECHO = BURST.upper().decode() + "\nrx=64 drop=0 err=0\n"
+ECHO = BURST.upper().decode() + "\nrx=64 drop=0\n"
 RX_FIFO = pace.RX_FIFO
 EARLY = BURST[: pace.OVERRUN_LINE]  # overflows the RX FIFO by one byte
 
@@ -62,12 +64,12 @@ def start(echo_bin: bytes, how: str):
 
 
 def reply(soc, mark: int) -> str:
-    """The echo and its rx/drop/err line, from output index mark."""
-    wait_for(soc, b"err=", timeout_cycles=10_000_000, start=mark)
-    # The error code and the newline: TX from the PSRAM is slow, so a real wait, not a fixed run
-    err = soc.uart_received().index(b"err=", mark)
-    wait_for(soc, b"\n", timeout_cycles=5_000_000, start=err)
-    end = soc.uart_received().index(b"\n", err) + 1
+    """The echo and its rx/drop line, from output index mark."""
+    wait_for(soc, b"drop=", timeout_cycles=10_000_000, start=mark)
+    # The count and the newline: TX from the PSRAM is slow, so a real wait, not a fixed run
+    drop = soc.uart_received().index(b"drop=", mark)
+    wait_for(soc, b"\n", timeout_cycles=5_000_000, start=drop)
+    end = soc.uart_received().index(b"\n", drop) + 1
     return soc.uart_received()[mark:end].decode("utf-8", errors="replace")
 
 
@@ -117,8 +119,7 @@ def test_echoes_a_back_to_back_line_by_interrupt(echo_bin, how):
 
 def test_a_line_sent_while_it_starts_keeps_its_first_32_bytes(echo_bin):
     """irq_echo, held back by the ROM until a line has arrived, finds the RX FIFO full and
-    the rest of the line lost; uart_err_check has nothing to report (the UART has no error
-    flags)."""
+    the rest of the line lost, which only rx= shows (the UART has no error flags)."""
     soc = new_soc()
     soc.load_xmem(XMEM_BASE, echo_bin)
     soc.load_rom_words(pace.hold_words(XMEM_BASE))
@@ -134,4 +135,4 @@ def test_a_line_sent_while_it_starts_keeps_its_first_32_bytes(echo_bin):
     mark = len(soc.uart_received())
     soc.uart_send(b"\n")
     out = reply(soc, mark)
-    assert out == BURST[:RX_FIFO].upper().decode() + f"\nrx={RX_FIFO} drop=0 err=0\n", out
+    assert out == BURST[:RX_FIFO].upper().decode() + f"\nrx={RX_FIFO} drop=0\n", out

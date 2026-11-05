@@ -17,7 +17,7 @@ pub use timer::{Reg as TimerReg, Timer};
 pub use uart::Uart;
 
 pub const PAGE_UART: u32 = 0x0;
-/// The v0.3.x bitstreams' TIMER page (`Soc::timer_page`); unassigned in the RTL.
+/// The v0.3.x bitstreams' TIMER page (`Soc::v03_mmio`); unassigned in the RTL.
 pub const PAGE_TIMER: u32 = 0x1;
 pub const PAGE_SD: u32 = 0x2;
 pub const PAGE_GPIO: u32 = 0x3;
@@ -32,7 +32,7 @@ pub struct Periph {
     pub clint: Clint,
 }
 
-/// The machine timer's register at the TIMER page's offset (addr[3:0], `Soc::timer_page`).
+/// The machine timer's register at the TIMER page's offset (addr[3:0], `Soc::v03_mmio`).
 pub fn timer_page_reg(addr: u32) -> Option<TimerReg> {
     match addr & 0xF {
         0x0 => Some(TimerReg::MtimeLo),

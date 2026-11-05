@@ -1,6 +1,6 @@
 # VUX9K Zephyr support
 
-Board, SoC, UART driver and devicetree support for the VUX9K SoC on the Tang Nano 9K, as
+Board, SoC and devicetree support for the VUX9K SoC on the Tang Nano 9K, as
 a Zephyr module, plus a demo application (`app/`). Licensed under Apache-2.0 (`LICENSE`).
 
 Tested with Zephyr v3.7.2 and Zephyr SDK 0.16.8 (`riscv64-zephyr-elf`).
@@ -40,19 +40,22 @@ prompt was ~10 with the caches before the data cache became write-back, ~42 with
 
 ## UART
 
-`vux9k,uart` supports polling and, with `CONFIG_UART_INTERRUPT_DRIVEN=y`, the
-interrupt-driven API (`uart_irq_*`, `uart_fifo_*`). The SoC raises the machine external
-interrupt (cause 11) while the 32-byte RX FIFO holds data; it is level-triggered and has
-no enable bit in the UART, so `uart_irq_rx_disable()` masks it in `mie`. The UART has no
-TX interrupt: `uart_irq_tx_enable()` calls the callback at once, and a kernel timer calls
-it again every 700 us (rounded up to a tick, 1 ms at the board's 1000 ticks/s) while TX
-stays enabled, which keeps up with 115200 baud. A lower `CONFIG_SYS_CLOCK_TICKS_PER_SEC`
-slows it down: one 32-byte refill per tick. `uart_irq_tx_complete()`
-is not supported (the status register has no "transmitter empty" bit), nor are error
-interrupts. The UART has no error flags (a byte that arrives with the RX FIFO full is lost, a
-frame with a low stop bit is received), so `uart_err_check()` always returns 0. Running from the PSRAM, the RX handler keeps up with input sent back to back
-at 115200 baud thanks to the instruction cache in front of it (without it, it took about
-four byte times per byte and overran the 32-byte RX FIFO). `irq_echo/` is an example.
+The SoC's UART has LiteX liteuart's registers, so the board uses Zephyr's own driver,
+`litex,uart0` (`uart_liteuart.c`), with polling and, with `CONFIG_UART_INTERRUPT_DRIVEN=y`,
+the interrupt-driven API (`uart_irq_*`, `uart_fifo_*`). Its RX and TX events raise the
+machine external interrupt (cause 11) as EV_ENABLE enables them. Unlike LiteX's, they are
+levels: RX while the 32-byte RX FIFO holds data, TX while the 32-byte TX FIFO has room. So
+a callback that has nothing more to send calls `uart_irq_tx_disable()`, or the interrupt
+comes back at once. Once EV_ENABLE isn't 0, EV_PENDING is EV_STATUS masked
+by it, so `uart_irq_is_pending()` sees only enabled events (with EV_ENABLE 0 it shows
+EV_STATUS, which Linux's liteuart polls without an interrupt). The driver names the interrupt with a priority cell, which the hart's
+`riscv,cpu-intc` doesn't have: the board's dts passes cause 11 through a two-cell node,
+`vux9k,meip-intc` (a binding with no driver). The UART has no error flags (a byte that
+arrives with the RX FIFO full is lost, a frame with a low stop bit is received), and the
+driver no `err_check`: `uart_err_check()` returns `-ENOSYS`. Running from the PSRAM, the RX
+handler keeps up with input sent back to back at 115200 baud thanks to the instruction
+cache in front of it (without it, it took about four byte times per byte and overran the
+32-byte RX FIFO). `irq_echo/` is an example.
 
 ## Demo application (`app/`)
 
@@ -64,6 +67,6 @@ to load from the card.
 ## Interrupt-driven UART echo (`irq_echo/`)
 
 A C application that sends each line it receives back in upper case through the
-interrupt-driven UART API, followed by `rx=<bytes> drop=<bytes lost in the app>
-err=<uart_err_check()>`. Its main thread sleeps until the UART callback wakes it, and a
-line longer than 32 bytes goes through the driver's TX retry.
+interrupt-driven UART API, followed by `rx=<bytes> drop=<bytes lost in the app>`. Its main
+thread sleeps until the UART callback wakes it, and a line longer than 32 bytes is refilled
+from the TX interrupt.

@@ -93,8 +93,7 @@ def synthetic_words(iterations: int = 2_000_000) -> list[int]:
     a.label("halt")
     a.j("halt")
     a.label("putc")
-    a.lw("t6", 4, "s0")
-    a.andi("t6", "t6", 2)
+    a.lw("t6", 4, "s0")  # TXFULL
     a.bnez("t6", "putc")
     a.sb("a1", 0, "s0")
     a.ret()

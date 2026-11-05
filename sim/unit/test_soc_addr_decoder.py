@@ -58,8 +58,9 @@ async def test_rv32_regions_and_pages(dut):
 
 @cocotb.test()
 async def test_hack_map(dut):
-    """RAM (the window) below 0x6000, the MMIO block's UART/GPIO words, nothing above; upper bits ignored"""
-    for a in (0x0000, 0x1FFF, 0x5FFF, 0x6000, 0x6003, 0x6004, 0x600F, 0x6010, 0x7FFF, 0xFFFF):
+    """RAM (the window) below 0x6000, the MMIO block's UART words (0x6000-0x6003: uart_regs' first
+    four registers) and GPIO words, nothing above; upper bits ignored"""
+    for a in (0x0000, 0x1FFF, 0x5FFF, 0x6000, 0x6001, 0x6002, 0x6003, 0x6004, 0x600F, 0x6010, 0x7FFF, 0xFFFF):
         for high in (0, 0xABCD_0000):
             await check(dut, high | a, 1)
 

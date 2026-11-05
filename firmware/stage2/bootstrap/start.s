@@ -4,7 +4,9 @@
  */
 
 /* Entered from the first stage with a0-a2 (stage1's main.rs), which go on to main.
- * {UART_DATA}, {UART_STATUS} and {UART_TX_FULL} are main.rs's global_asm! operands. */
+ * {UART_DATA}, {UART_STATUS} and {UART_TX_FULL} are main.rs's global_asm! operands: the
+ * UART's registers before the liteuart layout (map::LEGACY_UART_STATUS), for the message
+ * below. */
 .section .text.entry
 .global _start
 .type _start, @function
@@ -40,7 +42,9 @@ _start:
 
     /* The stage is built for RV32IM: on a CPU without M (misa bit 12, the v0.3.x
      * bitstreams) say so and stop before main, whose code may hold M instructions.
-     * This loop is assembly, so it has none. */
+     * This loop is assembly, so it has none. Those bitstreams also have the UART's older
+     * registers (data +0, status +4 with tx_full in bit 1), so it writes through them:
+     * on a bitstream with RV32M the loop never runs. */
     csrr t0, misa
     .option pop
     srli t0, t0, 12

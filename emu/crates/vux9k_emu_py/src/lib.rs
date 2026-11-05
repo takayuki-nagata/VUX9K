@@ -351,17 +351,18 @@ impl Soc {
         self.inner.m_ext = on;
     }
 
-    /// The v0.3.x bitstreams' TIMER page at MMIO page 1 in place of the CLINT, region 2
-    /// then unassigned (default False: the RTL's CLINT, page 1 unassigned); with m_ext
-    /// False it models those bitstreams for their first stage. Kept across reset().
+    /// The v0.3.x bitstreams' MMIO (default False: the RTL's): the TIMER page at MMIO page 1
+    /// in place of the CLINT, region 2 then unassigned, and the UART's register view before
+    /// liteuart's (data +0, status +4: bit 0 rx_empty, bit 1 tx_full; MEIP while RX holds
+    /// data). With m_ext False it models those bitstreams. Kept across reset().
     #[getter]
-    fn timer_page(&self) -> bool {
-        self.inner.timer_page
+    fn v03_mmio(&self) -> bool {
+        self.inner.v03_mmio
     }
 
     #[setter]
-    fn set_timer_page(&mut self, on: bool) {
-        self.inner.timer_page = on;
+    fn set_v03_mmio(&mut self, on: bool) {
+        self.inner.v03_mmio = on;
     }
 
     /// The hart runs in U-mode now.

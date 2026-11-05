@@ -41,17 +41,39 @@
 		};
 	};
 
+	/*
+	 * The machine external interrupt (cause 11) with two cells (irq, priority), which
+	 * Zephyr's litex,uart0 driver reads (DT_INST_IRQ(0, priority)); riscv,cpu-intc has one.
+	 * No driver: without CONFIG_MULTI_LEVEL_INTERRUPTS the irq cell is the cause itself.
+	 */
+	meip_intc: meip-interrupt-controller {
+		compatible = "vux9k,meip-intc";
+		interrupt-controller;
+		#address-cells = <0>;
+		#interrupt-cells = <2>;
+		interrupts-extended = <&cpu0_intc 11>;
+	};
+
 	soc {
 		#address-cells = <1>;
 		#size-cells = <1>;
 		compatible = "simple-bus";
 		ranges;
 
-		/* Machine external interrupt (cause 11) while the RX FIFO holds data */
-		uart0: uart@40000000 {
-			compatible = "vux9k,uart";
-			reg = <0x40000000 0x10>;
-			interrupts-extended = <&cpu0_intc 11>;
+		/*
+		 * soc/uart/uart_regs.veryl: LiteX liteuart's registers, one a word. Its events
+		 * are levels (TX: the TX FIFO isn't full, RX: the RX FIFO isn't empty), and
+		 * EV_ENABLE & events is the machine external interrupt.
+		 */
+		uart0: serial@40000000 {
+			compatible = "litex,uart0";
+			reg = <0x40000000 0x4>, <0x40000004 0x4>, <0x40000008 0x4>, <0x4000000c 0x4>,
+			      <0x40000010 0x4>, <0x40000014 0x4>, <0x40000018 0x4>, <0x4000001c 0x4>;
+			reg-names = "rxtx", "txfull", "rxempty", "ev_status", "ev_pending", "ev_enable",
+				    "txempty", "rxfull";
+			interrupt-parent = <&meip_intc>;
+			interrupts = <11 0>;
+			current-speed = <115200>;
 			status = "okay";
 		};
 

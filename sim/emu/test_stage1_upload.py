@@ -72,7 +72,10 @@ def test_ram_boot_without_a_card(tool):
         (stage2(mode="hack"), "not RV32, mode 0"),
         (stage2(crc_override=0), "CRC mismatch"),
         (stage2(entry_point=STAGE2_BASE + 2), "bad entry point 80700002"),
-        (stage2(version=MIN_STAGE2_VERSION - 1), f"too old, needs v9 \\(install-stage2\\): v{MIN_STAGE2_VERSION - 1}"),
+        (
+            stage2(version=MIN_STAGE2_VERSION - 1),
+            f"too old, needs v{MIN_STAGE2_VERSION} \\(install-stage2\\): v{MIN_STAGE2_VERSION - 1}",
+        ),
     ],
     ids=["magic", "window", "hack", "crc", "entry", "old"],
 )

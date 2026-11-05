@@ -816,7 +816,7 @@ mod write {
             let mut first = std::vec![0u8; HEADER_LEN];
             first.extend_from_slice(&bin);
             let _ = bin_version;
-            let new = v4_image(3000, 3, 9);
+            let new = v4_image(3000, 3, 10);
             let total = install_writes(img.clone(), &new);
             assert!(total > 5 && total < 200, "{name}: {total} writes");
             for limit in 0..total {
@@ -825,12 +825,12 @@ mod write {
                 reachable_ok(&cut);
                 let before = boot(img.clone()).unwrap().1;
                 let (_, version, payload) = boot(cut.clone()).expect("bootable");
-                assert!(version == before || (version == 9 && payload == new[HEADER_LEN..]));
+                assert!(version == before || (version == 10 && payload == new[HEADER_LEN..]));
                 // A later install recovers (removing the stale .NEW)
                 let (fixed, done) = cut_install(cut, &new, None);
                 assert!(done);
                 reachable_ok(&fixed);
-                assert_eq!(boot(fixed).unwrap().1, 9, "{name} {limit}");
+                assert_eq!(boot(fixed).unwrap().1, 10, "{name} {limit}");
             }
         }
     }
@@ -975,7 +975,7 @@ mod write {
         let mut low = good.clone();
         low[16..20].copy_from_slice(&0x2000_0000u32.to_le_bytes());
         // The first stage wouldn't start it (boot::check_stage2): too old, or Hack
-        let old = v4_image(100, 4, 8);
+        let old = v4_image(100, 4, 9);
         let mut hack = good.clone();
         hack[8..12].copy_from_slice(&MODE_HACK.to_le_bytes());
         for (img, want) in [
@@ -983,7 +983,7 @@ mod write {
             (&short[..], BootError::SizeMismatch),
             (&bad_crc[..], BootError::Crc),
             (&low[..], BootError::Image(ImageError::OutOfWindow)),
-            (&old[..], BootError::TooOld(8)),
+            (&old[..], BootError::TooOld(9)),
             (&hack[..], BootError::Image(ImageError::BadMode(MODE_HACK))),
         ] {
             let mut vol = mount(image("mkfs_s1")).unwrap();
@@ -1976,7 +1976,7 @@ mod write {
 
         #[test]
         fn install_makes_the_directory() {
-            let new = v4_image(3000, 3, 9);
+            let new = v4_image(3000, 3, 10);
             // mkfs_lfn has no \VUX9K\; on mkfs_s1 its entry is removed (its clusters are
             // then lost: no `consistent` there)
             let mut gone = image("mkfs_s1");
@@ -1990,7 +1990,7 @@ mod write {
                 if what == "mkfs_lfn" {
                     consistent(&img, true);
                 }
-                assert_eq!(boot(img.clone()).unwrap().1, 9, "{what}");
+                assert_eq!(boot(img.clone()).unwrap().1, 10, "{what}");
                 let mut vol = mount(img).unwrap();
                 let names: Vec<String> = {
                     let d = vol.open("VUX9K").unwrap();
@@ -2011,7 +2011,7 @@ mod write {
                 let (fixed, done) = cut_install(cut, &new, None);
                 assert!(done, "cut {limit}");
                 reachable_ok(&fixed);
-                assert_eq!(boot(fixed).unwrap().1, 9, "cut {limit}");
+                assert_eq!(boot(fixed).unwrap().1, 10, "cut {limit}");
             }
             // \VUX9K\ a file: refused, as before
             let mut img = image("mkfs_s1");

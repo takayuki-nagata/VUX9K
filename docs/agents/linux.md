@@ -31,9 +31,11 @@ emulator's Linux profile. Index and the rules that apply everywhere: [`AGENTS.md
   target sets, so `test-emu` (`pytest sim/emu`, CI) skips it even where an Image exists. None of
   these targets is in CI. The first buildroot run takes ~40 min on a 2-vCPU
   machine, a kernel rebuild ~6 min.
-- **The profile is ahead of the RTL.** It has a liteuart register view of the UART, which the
-  RTL doesn't. Its CLINT at `0x2000_0000` (`periph/clint.rs`) is the RTL's (`timer_core`) and `Real`'s too, held to the RTL by the lockstep program `clint`. The lockstep covers
-  `Real` only. Nothing here runs on the board, and no document may say it does.
+- **The profile is the real SoC.** Its UART's liteuart registers (`periph/uart.rs`) are the
+  RTL's (`uart_regs`) and `Real`'s, held to the RTL by the lockstep program `liteuart`, as its
+  CLINT at `0x2000_0000` (`periph/clint.rs`, `timer_core`) is by `clint`; the profile differs
+  from `Real` only in letting `load_linux` start a kernel. Nothing here has run on the board
+  yet, and no document may say it does.
 
 ## Things that are not obvious
 
@@ -65,9 +67,10 @@ emulator's Linux profile. Index and the rules that apply everywhere: [`AGENTS.md
   where `ARCH_NO_PREEMPT` is set, and riscv has lazy preemption.
 - **The console's name is `liteuart`, and its tty is `ttyLXU`.** `console=ttyLXU0` matches no
   console, `/dev/console` has no driver behind it, and init prints nothing.
-- liteuart polls on a timer. The DT gives it no interrupt: wired to the hart's MEIP directly,
-  riscv-intc's per-CPU IRQ makes `request_irq` fail, and the driver falls back to polling
-  anyway. An interrupt-driven UART needs a PLIC-like controller.
+- liteuart polls on a timer. The DT gives it no interrupt (the UART's EV_ENABLE stays 0, so
+  EV_PENDING shows EV_STATUS: the poll services RX and TX only from EV_PENDING's bits):
+  wired to the hart's MEIP directly, riscv-intc's per-CPU IRQ makes `request_irq` fail, and
+  the driver falls back to polling anyway. An interrupt-driven UART needs a PLIC-like controller.
 - M-mode Linux still runs processes in U-mode: `mret` with MPP = U, system calls as ecalls
   from U (cause 8), and `user_mode()` reads MPP. That is why the CPU has U-mode.
 - mcounteren is 0, so `cycle`/`time`/`instret` trap in U-mode. The DT leaves out `zicntr`, but

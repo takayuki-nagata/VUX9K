@@ -43,6 +43,8 @@ async def test_uart_controller(dut):
 
     assert int(dut.empty.value) == 1, "RX FIFO should initially be empty"
     assert int(dut.full.value) == 0, "TX FIFO should initially not be full"
+    assert int(dut.tx_empty.value) == 1, "TX FIFO should initially be empty"
+    assert int(dut.rx_full.value) == 0, "RX FIFO should initially not be full"
 
     # 2. Write 3 bytes to TX FIFO: 0x48 ('H'), 0x69 ('i'), 0x21 ('!')
     test_bytes = [0x48, 0x69, 0x21]
@@ -51,6 +53,8 @@ async def test_uart_controller(dut):
         dut.we.value = 1
         await FallingEdge(dut.clk)
     dut.we.value = 0
+    # The first byte went on to the transmitter; the other two wait in the FIFO
+    assert int(dut.tx_empty.value) == 0, "TX FIFO should hold the bytes not yet sent"
 
     # 3. Read back each byte from RX FIFO after transmission over loopback
     received_bytes = []
@@ -80,6 +84,7 @@ async def test_uart_controller(dut):
 
     assert received_bytes == test_bytes, f"Data mismatch! Expected {test_bytes}, got {received_bytes}"
     assert int(dut.empty.value) == 1, "RX FIFO should be empty after reading all bytes"
+    assert int(dut.tx_empty.value) == 1, "TX FIFO should be empty once everything was sent"
 
     dut._log.info("UART Controller full loopback test passed 100% [PASS]")
 
@@ -130,13 +135,14 @@ async def test_uart_controller_full_rx_fifo_and_bad_stop_bit(dut):
         await send_frame(dut, i, cnt)
     for _ in range(cnt):
         await FallingEdge(dut.clk)
-    assert (int(dut.empty.value), int(dut.rdata.value)) == (0, 0)
+    assert (int(dut.empty.value), int(dut.rx_full.value), int(dut.rdata.value)) == (0, 1, 0)
     await send_frame(dut, 0xA5, cnt)
     for _ in range(cnt):
         await FallingEdge(dut.clk)
     assert (int(dut.empty.value), int(dut.rdata.value)) == (0, 0), "the dropped byte changed the FIFO's head"
     got = await read_fifo(dut)
     assert got == list(range(32)), f"the 33rd byte into a 32-deep RX FIFO must be dropped: {got}"
+    assert int(dut.rx_full.value) == 0
 
     # A low stop bit: the byte is kept, and the next frame after it too
     await send_frame(dut, 0x55, cnt, stop_bit=0)

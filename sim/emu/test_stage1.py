@@ -107,7 +107,8 @@ def test_reports_why_nothing_starts():
             {BIN: stage2(load_addr=0x8000_0000)},
             "STAGE2.BIN: loads outside 80700000-807FFFFF; STAGE2.OLD: not found",
         ),
-        # Second stages before v9 read mtime at the TIMER page, which the CLINT replaces
+        # Second stages before v9 read mtime at the TIMER page, which the CLINT replaces;
+        # before v10 they use the UART's older registers
         ({BIN: stage2(version=8)}, f"STAGE2.BIN: {TOO_OLD}8; STAGE2.OLD: not found"),
         ({BIN: stage2(version=7), OLD: stage2(version=0)}, f"STAGE2.BIN: {TOO_OLD}7; STAGE2.OLD: {TOO_OLD}0"),
         ({BIN: stage2(mode="hack")}, "STAGE2.BIN: not RV32, mode 0; STAGE2.OLD: not found"),

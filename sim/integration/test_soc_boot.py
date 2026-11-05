@@ -17,7 +17,7 @@ import sys
 import cocotb
 
 sys.path.append(os.path.dirname(__file__))
-from soc_env import BANNER, S1_PROMPT, fat_sectors, send_and_wait, start_soc, v4_file
+from soc_env import BANNER, S1_PROMPT, fat_sectors, send_and_wait, start_soc, v4_file, v4_size
 
 
 async def cmd(ser, text: str, until: bytes = S1_PROMPT, timeout_cycles: int = 10_000_000) -> str:
@@ -36,7 +36,9 @@ def expect_lines(resp: str, lines: list[str], what: str):
 @cocotb.test()
 async def test_stage1_prompt(dut):
     """A key keeps the first stage at its prompt; every command answers; r boots again"""
-    ser, _ = await start_soc(dut, sd_sectors=fat_sectors({"VUX9K/STAGE2.BIN": v4_file(version=15)}))
+    stage2 = v4_file(version=15)
+    size = v4_size(stage2)
+    ser, _ = await start_soc(dut, sd_sectors=fat_sectors({"VUX9K/STAGE2.BIN": stage2}))
 
     boot = (await ser.wait_for(b"3 MHz\n", timeout_cycles=2_000_000)).decode("utf-8", errors="replace")
     expect_lines(boot, [BANNER], "banner")
@@ -53,7 +55,7 @@ async def test_stage1_prompt(dut):
         [
             "[SD] SDHC card",
             "[FAT] FAT32 at LBA 2048, 512 B clusters",
-            '[FAT] \\VUX9K\\STAGE2.BIN: v15 "test" 28 B [OK]',
+            f'[FAT] \\VUX9K\\STAGE2.BIN: v15 "test" {size} B [OK]',
             "[FAT] \\VUX9K\\STAGE2.OLD: not found",
         ],
         "sd info",
@@ -64,6 +66,6 @@ async def test_stage1_prompt(dut):
 
     # r: soft reset; no key this time, so the first stage boots STAGE2.BIN ('#')
     resp = await cmd(ser, "r", until=b"[BOOT] Starting at 0x80700000", timeout_cycles=10_000_000)
-    expect_lines(resp, ["[RESET] Soft reset", BANNER, '[BOOT] STAGE2.BIN v15 "test" 28 B'], "soft reset")
+    expect_lines(resp, ["[RESET] Soft reset", BANNER, f'[BOOT] STAGE2.BIN v15 "test" {size} B'], "soft reset")
     await ser.wait_for(b"#", timeout_cycles=500_000)
     dut._log.info("First stage prompt verified (key, h/i/unknown/r, boot after the soft reset)")

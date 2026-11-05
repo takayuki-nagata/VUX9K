@@ -1,10 +1,10 @@
 // Copyright (c) 2026 Takayuki Nagata
 // SPDX-License-Identifier: MIT
 
-//! The Linux profile (emulator only, ahead of the RTL): the A extension, U-mode, the CLINT
-//! block (also Real's, the RTL's timer_core), the UART's liteuart view and `load_linux`.
+//! What noMMU Linux needs (the Linux profile, the real SoC for `load_linux`): the A
+//! extension, U-mode, the CLINT block (also Real's, the RTL's timer_core), the UART's
+//! liteuart registers (Real's too, the RTL's uart_regs) and `load_linux`.
 
-use vux9k_emu::periph::uart::Uart;
 use vux9k_emu::soc::{
     LINUX_DTB_ADDR, LINUX_DTB_MAX, XMEM_FETCH_FILL, XMEM_LINE_DIRTY, XMEM_LINE_FILL,
 };
@@ -424,8 +424,8 @@ fn clint_registers(profile: Profile) {
     store(&mut soc, 0x4000_1008, 0x1234_5678);
     assert_eq!(load(&mut soc, 0x4000_1008), 0);
     assert_eq!(load(&mut soc, 0x2000_4000), 0xAABB_CCDD);
-    // The v0.3.x bitstreams' TIMER page, when asked for: the same timer at its offsets
-    soc.timer_page = true;
+    // The v0.3.x bitstreams' TIMER page, when asked for (v03_mmio): the same timer at its offsets
+    soc.v03_mmio = true;
     assert_eq!(load(&mut soc, 0x4000_1008), 0xAABB_CCDD);
     assert_eq!(load(&mut soc, 0x4000_100C), 0x11);
     assert_eq!(
@@ -439,11 +439,11 @@ fn clint_registers(profile: Profile) {
     assert_eq!(load(&mut soc, 0x2000_4000), 0);
     store(&mut soc, 0x2000_4000, 0);
     store(&mut soc, 0x4000_1008, 0x1234_5678);
-    soc.timer_page = false;
+    soc.v03_mmio = false;
     assert_eq!(load(&mut soc, 0x2000_4000), 0x1234_5678, "the same timer");
-    soc.timer_page = true;
+    soc.v03_mmio = true;
     store(&mut soc, 0x4000_1008, 0xAABB_CCDD);
-    soc.timer_page = false;
+    soc.v03_mmio = false;
     // Mirrored across region 2 (addr[15:2]); other offsets read 0
     assert_eq!(load(&mut soc, 0x2ABC_4000), 0xAABB_CCDD);
     assert_eq!(load(&mut soc, 0x2001_4004), 0x11);
@@ -485,96 +485,55 @@ fn isa_test_has_no_clint() {
     assert_eq!(exec(&mut soc, addi(0, 0, 0)).trap, None);
 }
 
-// ----- the liteuart view ----------------------------------------------------------------
+// ----- the UART's liteuart registers -----------------------------------------------------
 
 #[test]
-fn liteuart_registers() {
-    let mut u = Uart::default();
-    assert_eq!(u.lite_read(0x04, 10), 0, "TXFULL");
-    assert_eq!(u.lite_read(0x08, 10), 1, "RXEMPTY");
-    assert_eq!(u.lite_read(0x0C, 10), 1, "EV_STATUS: TX");
-    assert_eq!(u.lite_read(0x10, 10), 1, "EV_PENDING: TX");
-    assert_eq!(u.lite_read(0x14, 10), 0, "EV_ENABLE resets to 0");
-    assert!(!u.lite_irq(10));
-    // EV_ENABLE: 2 bits, from the edge on
-    u.lite_write(0x14, 0xFF, 20);
-    assert_eq!(u.lite_read(0x14, 20), 0);
-    assert_eq!(u.lite_read(0x14, 21), 3);
-    assert!(u.lite_irq(21), "TX enabled and the TX FIFO not full");
-    u.lite_write(0x14, 2, 30);
-    assert!(!u.lite_irq(31), "RX enabled, nothing received");
-    // EV_PENDING ignores writes (levels)
-    u.lite_write(0x10, 3, 40);
-    assert_eq!(u.lite_read(0x10, 41), 1);
-    // RX: a byte arrives (1486 cycles after its start bit), RXTX pops it
-    u.host_send(b"Z", 100, false);
-    assert!(!u.lite_irq(100 + 1485));
-    assert!(u.lite_irq(100 + 1486));
-    assert_eq!(u.lite_read(0x08, 2000), 0);
-    assert_eq!(u.lite_read(0x10, 2000), 3);
-    assert_eq!(u.lite_read(0x00, 2000), b'Z' as u32);
-    assert_eq!(
-        u.lite_read(0x08, 2001),
-        1,
-        "popped at the end of the read cycle"
-    );
-    assert!(!u.lite_irq(2001));
-    // Mirrored every 256 bytes; other offsets read 0
-    assert_eq!(u.lite_read(0x114, 2002), 2);
-    assert_eq!(u.lite_read(0x18, 2002), 0);
-    // TX: RXTX writes transmit; 40 writes fill the FIFO (TXFULL, no TX event)
-    for k in 0..40u64 {
-        u.lite_write(0x00, b'a' as u32 + k as u32, 3000 + k);
-    }
-    assert_eq!(u.lite_read(0x04, 3040), 1, "TXFULL");
-    assert_eq!(u.lite_read(0x10, 3040) & 1, 0);
-    u.advance(200_000);
-    assert_eq!(&u.tx_bytes()[..3], b"abc");
-    assert_eq!(
-        u.tx_bytes().len(),
-        33,
-        "one in the transmitter, 32 in the FIFO"
-    );
-    assert_eq!(u.lite_read(0x04, 200_000), 0);
-}
-
-#[test]
-fn liteuart_drives_meip_on_linux_only() {
+fn liteuart_drives_meip_in_every_profile_with_a_cpu() {
     let mip = |soc: &mut Soc| {
         exec(soc, csr(2, 5, 0x344, 0));
         soc.regs[5] & (1 << 11)
     };
-    // Real: MEIP while the RX FIFO holds data
-    let mut real = new_soc(Profile::Real);
-    real.uart_send(b"x");
-    real.cycle += 2000;
-    assert_ne!(mip(&mut real), 0);
-    // Linux: EV_ENABLE & EV_PENDING
-    let mut soc = new_soc(Profile::Linux);
-    soc.uart_send(b"x");
+    for profile in [Profile::Real, Profile::Linux] {
+        let mut soc = new_soc(profile);
+        soc.uart_send(b"x");
+        soc.cycle += 2000;
+        assert_eq!(mip(&mut soc), 0, "{profile:?}: EV_ENABLE = 0");
+        soc.regs[1] = 0x4000_0000;
+        soc.regs[2] = 2;
+        exec(&mut soc, sw(2, 1, 0x14)); // EV_ENABLE = RX
+        assert_ne!(mip(&mut soc), 0, "{profile:?}");
+        exec(&mut soc, lw(5, 1, 0x08));
+        assert_eq!(soc.regs[5], 0, "RXEMPTY");
+        exec(&mut soc, lw(5, 1, 0x00));
+        assert_eq!(soc.regs[5], b'x' as u32);
+        assert_eq!(mip(&mut soc), 0, "{profile:?}: RX drained");
+        soc.regs[2] = 1;
+        exec(&mut soc, sw(2, 1, 0x14)); // EV_ENABLE = TX
+        assert_ne!(mip(&mut soc), 0, "{profile:?}: the TX FIFO isn't full");
+        // The interrupt is taken
+        soc.csr.mie = 1 << 11;
+        soc.csr.mstatus = 1 << 3;
+        assert_eq!(exec(&mut soc, addi(0, 0, 0)).trap, Some(0x8000_000B));
+        // RXTX transmits at the 115200-baud timing
+        soc.regs[2] = b'K' as u32;
+        exec(&mut soc, sw(2, 1, 0));
+        soc.cycle += 3000;
+        assert_eq!(soc.uart_received(), b"K");
+    }
+    // v03_mmio: the view before liteuart's, MEIP while RX holds data, no enable
+    let mut soc = new_soc(Profile::Real);
+    soc.v03_mmio = true;
+    soc.uart_send(b"y");
     soc.cycle += 2000;
-    assert_eq!(mip(&mut soc), 0, "EV_ENABLE = 0");
-    soc.regs[1] = 0x4000_0000;
-    soc.regs[2] = 2;
-    exec(&mut soc, sw(2, 1, 0x14)); // EV_ENABLE = RX
     assert_ne!(mip(&mut soc), 0);
-    exec(&mut soc, lw(5, 1, 0x08));
-    assert_eq!(soc.regs[5], 0, "RXEMPTY");
+    soc.regs[1] = 0x4000_0000;
+    exec(&mut soc, lw(5, 1, 0x04));
+    assert_eq!(soc.regs[5], 0, "status: data, TX not full");
     exec(&mut soc, lw(5, 1, 0x00));
-    assert_eq!(soc.regs[5], b'x' as u32);
-    assert_eq!(mip(&mut soc), 0, "RX drained");
-    soc.regs[2] = 1;
-    exec(&mut soc, sw(2, 1, 0x14)); // EV_ENABLE = TX
-    assert_ne!(mip(&mut soc), 0, "the TX FIFO isn't full");
-    // The interrupt is taken
-    soc.csr.mie = 1 << 11;
-    soc.csr.mstatus = 1 << 3;
-    assert_eq!(exec(&mut soc, addi(0, 0, 0)).trap, Some(0x8000_000B));
-    // RXTX transmits at the 115200-baud timing
-    soc.regs[2] = b'K' as u32;
-    exec(&mut soc, sw(2, 1, 0));
-    soc.cycle += 3000;
-    assert_eq!(soc.uart_received(), b"K");
+    assert_eq!(soc.regs[5], b'y' as u32);
+    exec(&mut soc, lw(5, 1, 0x04));
+    assert_eq!(soc.regs[5], 1, "status: rx_empty");
+    assert_eq!(mip(&mut soc), 0);
 }
 
 // ----- load_linux -----------------------------------------------------------------------

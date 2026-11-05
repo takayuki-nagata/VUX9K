@@ -19,10 +19,11 @@
 //!
 //! - the CLINT at region 2 (crate::periph::clint): soc/timer_core.veryl; MMIO page 1 is
 //!   unassigned, as in soc_addr_decoder. Its msip is mip.MSIP (Real and Linux; the IsaTest profile, like tb_hex_runner, has none)
+//! - the UART's registers (liteuart's layout, crate::periph::uart): soc/uart/uart_regs.veryl,
+//!   the same in every profile
 //!
-//! Except the Linux profile's addition, which is ahead of the RTL and mirrors nothing yet
-//! (crate::profile): the UART's liteuart view (crate::periph::uart). With it off (Real,
-//! IsaTest) every path below is the RTL's.
+//! Except `v03_mmio`, which models the older bitstreams' MMIO for their first stage: with it
+//! off (the default) every path below is the RTL's.
 //!
 //! Timing: `cycle` counts SoC clocks (18 MHz) since reset release. An instruction starts
 //! with its FETCH cycle; `Soc::step` executes one instruction and advances `cycle` by
@@ -189,12 +190,14 @@ pub struct Soc {
     /// The CPU has RV32M (true, the default). false models the CPU before it (the v0.3.x
     /// bitstreams): misa without M, and the M instructions illegal. Kept across resets.
     pub m_ext: bool,
-    /// The TIMER page at MMIO page 1 (mtime +0/+4, mtimecmp +8/+C: the CLINT's timer at
-    /// other addresses) in place of the CLINT, region 2 then unassigned. false, the
-    /// default, is the RTL, where page 1 is unassigned; true models the v0.3.x bitstreams'
-    /// timer (with `m_ext` false, their CPU), for their first stage
+    /// The v0.3.x bitstreams' MMIO: the TIMER page at MMIO page 1 (mtime +0/+4, mtimecmp
+    /// +8/+C: the CLINT's timer at other addresses) in place of the CLINT, region 2 then
+    /// unassigned, and the UART's register view before liteuart's (data +0, status +4: bit 0
+    /// rx_empty, bit 1 tx_full; MEIP while the RX FIFO holds data; `Uart::legacy_read`).
+    /// false, the default, is the RTL; true models those bitstreams (with `m_ext` false,
+    /// their CPU), for their first stage and for a newer second stage meeting them
     /// (sim/emu/test_upgrade.py). Kept across resets.
-    pub timer_page: bool,
+    pub v03_mmio: bool,
     /// The A extension's reservation: the address of the last LR.W, until an SC.W or a trap.
     reservation: Option<u32>,
     /// Instructions executed (retired or trapped), for statistics.
@@ -209,7 +212,7 @@ pub struct Soc {
     rom_mask: u32,
     /// The IsaTest profile: one flat RAM, `TOHOST` (see `rv_read_word`/`rv_write`).
     isa_test: bool,
-    /// The Linux profile's device: the UART's liteuart view.
+    /// The Linux profile (`load_linux` takes a kernel).
     linux: bool,
     /// IsaTest profile: the first value stored to `TOHOST`.
     pub tohost: Option<u32>,
@@ -383,7 +386,7 @@ impl Soc {
             periph: Periph::default(),
             riscv_mode: true,
             m_ext: true,
-            timer_page: false,
+            v03_mmio: false,
             reservation: None,
             steps: 0,
             rom: vec![0; rom_words],
@@ -420,8 +423,10 @@ impl Soc {
     /// cpu_soft_rst (GPIO 0xC): the FSM, PC and CSRs reset, the register file and
     /// everything outside the CPU don't; the CPU fetches from 0 once the pulse ends, in the
     /// ISA given in GPIO 0x8, else RV32. (soc_top gives the instruction cache no fetch
-    /// during the pulse, so the first one after it hits or misses by its line alone.)
+    /// during the pulse, so the first one after it hits or misses by its line alone.) The
+    /// pulse also clears the UART's EV_ENABLE (uart_regs).
     fn soft_reset(&mut self, sr: SoftReset) {
+        self.periph.uart.soft_reset(sr.release - 1);
         self.pc = 0;
         self.csr = Csrs::default();
         self.mcycle_written = None;
@@ -662,7 +667,7 @@ impl Soc {
             // The ROM, repeating every 16 KB across region 0
             0 => self.rom[((addr >> 2) & self.rom_mask) as usize],
             // The CLINT (timer_core), sampled in EXECUTE like the registered MMIO pages
-            2 if !self.timer_page => self.periph.clint.read(addr, &self.periph.timer, t + 1),
+            2 if !self.v03_mmio => self.periph.clint.read(addr, &self.periph.timer, t + 1),
             4 => self.mmio_read(addr, t),
             _ if self.in_xmem(addr) => self.xmem[Self::xmem_index(addr)],
             _ => 0,
@@ -684,7 +689,7 @@ impl Soc {
             return 0;
         }
         match addr >> 28 {
-            2 if !self.timer_page => {
+            2 if !self.v03_mmio => {
                 self.periph
                     .clint
                     .write(addr, data, &mut self.periph.timer, t + 2);
@@ -706,13 +711,13 @@ impl Soc {
     }
 
     /// MMIO read by the instruction fetched in cycle `t`. The registered peripherals
-    /// (SD, GPIO, the `timer_page`) sample in its EXECUTE cycle, t + 1; the UART is read
-    /// combinationally in MEM_WAIT, t + 2.
+    /// (SD, GPIO, `v03_mmio`'s TIMER page) sample in its EXECUTE cycle, t + 1; the UART is
+    /// read combinationally in MEM_WAIT, t + 2.
     fn mmio_read(&mut self, addr: u32, t: u64) -> u32 {
         match (addr >> 12) & 0xF {
-            periph::PAGE_UART if self.linux => self.periph.uart.lite_read(addr, t + 2),
+            periph::PAGE_UART if self.v03_mmio => self.periph.uart.legacy_read(addr, t + 2),
             periph::PAGE_UART => self.periph.uart.read(addr, t + 2),
-            periph::PAGE_TIMER if self.timer_page => match periph::timer_page_reg(addr) {
+            periph::PAGE_TIMER if self.v03_mmio => match periph::timer_page_reg(addr) {
                 Some(reg) => self.periph.timer.read(reg, t + 1),
                 None => 0,
             },
@@ -725,9 +730,9 @@ impl Soc {
     /// MMIO write taking effect at the end of cycle `edge`.
     fn mmio_write(&mut self, addr: u32, data: u32, edge: u64) {
         match (addr >> 12) & 0xF {
-            periph::PAGE_UART if self.linux => self.periph.uart.lite_write(addr, data, edge),
+            periph::PAGE_UART if self.v03_mmio => self.periph.uart.legacy_write(addr, data, edge),
             periph::PAGE_UART => self.periph.uart.write(addr, data, edge),
-            periph::PAGE_TIMER if self.timer_page => {
+            periph::PAGE_TIMER if self.v03_mmio => {
                 if let Some(reg) = periph::timer_page_reg(addr) {
                     self.periph.timer.write(reg, data, edge)
                 }
@@ -738,10 +743,16 @@ impl Soc {
         }
     }
 
-    /// Hack MMIO addresses (0x6000-0x600F) as RV32 addresses: UART in the first four
-    /// words, GPIO above; the register is addr[3:0].
+    /// Hack MMIO addresses (0x6000-0x600F) as RV32 addresses: the UART in the first four
+    /// words, word k its register at offset 4k (RXTX, TXFULL, RXEMPTY, EV_STATUS; uart_regs);
+    /// GPIO above, its register addr[3:0]. (`v03_mmio`'s UART view takes offset 0 as data and
+    /// any other as status, as 0x6000 and 0x6001-0x6003 were.)
     fn hack_mmio(a16: u32) -> u32 {
-        0x4000_0000 | if a16 & 0xC == 0 { 0 } else { 0x3000 } | (a16 & 0xF)
+        if a16 & 0xC == 0 {
+            0x4000_0000 | (a16 & 3) << 2
+        } else {
+            0x4000_3000 | (a16 & 0xF)
+        }
     }
 
     /// The window word of Hack data address `a` (below 0x6000): its D segment.
@@ -784,14 +795,14 @@ impl Soc {
 
     // ----- interrupts -----------------------------------------------------------------
 
-    /// The machine external interrupt during cycle `c`: the RX FIFO holds data; in the
-    /// Linux profile the liteuart view's EV_ENABLE & EV_PENDING.
+    /// The machine external interrupt during cycle `c`: the UART's EV_STATUS & EV_ENABLE
+    /// (`v03_mmio`: the RX FIFO holds data).
     #[inline]
     fn meip(&mut self, c: u64) -> bool {
-        if self.linux {
-            self.periph.uart.lite_irq(c)
-        } else {
+        if self.v03_mmio {
             self.periph.uart.rx_pending(c)
+        } else {
+            self.periph.uart.irq(c)
         }
     }
 

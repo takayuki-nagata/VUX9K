@@ -20,7 +20,17 @@ import sys
 import cocotb
 
 sys.path.append(os.path.dirname(__file__))
-from soc_env import S1_PROMPT, S2_PROMPT, STAGE1_VERSION, fat_sectors, send_and_wait, stage2_file, start_soc, v4_file
+from soc_env import (
+    S1_PROMPT,
+    S2_PROMPT,
+    STAGE1_VERSION,
+    fat_sectors,
+    send_and_wait,
+    stage2_file,
+    start_soc,
+    v4_file,
+    v4_size,
+)
 
 TIMEOUT = 4_000_000
 BLOCK = 512
@@ -62,13 +72,14 @@ async def test_soc_hardware_flow(dut):
     # Install: the `install` line, then a small STAGE2.BIN that prints '#'
     ser.reset_input_buffer()
     ser.write(b"install\r")
-    await upload_v2(ser, v4_file(version=17))
+    installed = v4_file(version=17)
+    await upload_v2(ser, installed)
     resp = await send_and_wait(ser, "", S2_PROMPT, timeout_cycles=20_000_000, settle_bits=0)
     assert "[INSTALL] OK" in resp, resp
     dut._log.info("[PASS] 3: STAGE2.BIN installed on the card")
 
     # Soft reset (`reset`): the first stage boots the installed file
     resp = await send_and_wait(ser, "reset\r", "[BOOT] Starting at 0x80700000".encode(), timeout_cycles=10_000_000)
-    assert '[BOOT] STAGE2.BIN v17 "test" 28 B' in resp, resp
+    assert f'[BOOT] STAGE2.BIN v17 "test" {v4_size(installed)} B' in resp, resp
     await ser.wait_for(b"#", timeout_cycles=500_000)
     dut._log.info("[PASS] 4: soft reset, the first stage booted the installed STAGE2.BIN ('#')")

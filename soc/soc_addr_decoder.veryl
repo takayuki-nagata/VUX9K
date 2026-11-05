@@ -5,8 +5,10 @@
 // (data_waddr) addresses. Only the bits needed to tell the regions apart are
 // decoded, so regions repeat (README, "Address decoding and aliases"); an address
 // matching nothing selects nothing (reads 0, writes are ignored). rom is RV32 region 0,
-// the boot ROM (soc_rom; soc_top reads it, nothing writes it). timer is timer_core, the
-// CLINT in RV32 region 2 (MMIO page 1, once its TIMER page, is unassigned). xmem is the
+// the boot ROM (soc_rom; soc_top reads it, nothing writes it). uart is MMIO page 0 and
+// Hack's 0x6000-0x6003, whose registers uart_regs decodes (RV32 addr[7:2]; Hack's word k
+// is offset 4k). timer is timer_core, the CLINT in RV32 region 2 (MMIO page 1, once its
+// TIMER page, is unassigned). xmem is the
 // wait-state window (soc_xmem_bridge serves it): RV32 region 8, and Hack's data below
 // HACK_MMIO_BASE, which soc_top maps into the window's D segment.
 pub module soc_addr_decoder (

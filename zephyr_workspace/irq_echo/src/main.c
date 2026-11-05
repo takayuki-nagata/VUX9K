@@ -6,9 +6,11 @@
  * main, which sleeps on a semaphore (no polling: without the RX interrupt nothing comes
  * back). At each '\n', main sends the line back in upper case (up to 256 bytes) through
  * tx, which the callback drains into the TX FIFO, then "rx=<bytes in the line>
- * drop=<bytes rx had no room for> err=<uart_err_check()>". Everything goes out through
- * the interrupt-driven API; there is no printk (cbprintf alone would not fit in the
- * board's 14 KB with the rest).
+ * drop=<bytes rx had no room for>". Everything goes out through the interrupt-driven API;
+ * there is no printk (cbprintf alone would not fit in the board's 14 KB with the rest).
+ * The UART (Zephyr's litex,uart0 driver) has no error flags to report, and its TX event is
+ * a level (the TX FIFO isn't full): the callback disables the TX interrupt once tx is
+ * empty, or it would fire again at once.
  */
 
 #include <zephyr/kernel.h>
@@ -124,7 +126,7 @@ int main(void)
 				len++;
 				continue;
 			}
-			/* At once: longer than the 32-byte TX FIFO, so the driver's retry runs */
+			/* At once: longer than the 32-byte TX FIFO, so the TX interrupt refills it */
 			send(line, MIN(len, sizeof(line)));
 			send_str("\nrx=");
 			send_u32(len);
@@ -135,8 +137,6 @@ int main(void)
 			irq_unlock(key);
 			send_str(" drop=");
 			send_u32(dropped);
-			send_str(" err=");
-			send_u32(uart_err_check(uart));
 			send_str("\n");
 			len = 0;
 		}

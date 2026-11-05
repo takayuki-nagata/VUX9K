@@ -56,18 +56,20 @@ binaries land in the single shared `firmware/target/riscv32im-unknown-none-elf/`
   ROM may be 8 KB. Its `t` and `d` commands were dropped for room; what a feature costs is
   measured by building without it, and `Volume::open`'s path parsing alone cost 1.3 KB (the
   stage finds `\VUX9K\` with `stage2::dir`, by its 8.3 name).
-- **The first stage starts no second stage older than `boot::MIN_STAGE2_VERSION`** (9, the
-  v4 header's version): those read mtime at the TIMER page (`0x4000_1000`), before the
-  timer moved to the CLINT (`map::MTIME_LO`), and on a bitstream without the page their
-  delays and timeouts never end. `boot::check_stage2` (RV32, not too old) is part of
+- **The first stage starts no second stage older than `boot::MIN_STAGE2_VERSION`** (10, the
+  v4 header's version): those before v9 read mtime at the TIMER page (`0x4000_1000`), before
+  the timer moved to the CLINT (`map::MTIME_LO`), and on a bitstream without the page their
+  delays and timeouts never end; v9 still used the UART's registers before liteuart's
+  (status at `+4`, `tx_full` in bit 1, where `map::UART_TXFULL` is now), so its output would
+  overrun the TX FIFO and it would never see a received byte. `boot::check_stage2` (RV32, not too old) is part of
   choosing (`select_boot`'s `accept`, checked on the header before the payload loads): an old
   `.BIN` with a new `.OLD` boots `.OLD`, both old print one `[BOOT] STAGE2.BIN: too old, needs
-  v9 (install-stage2): v<n>; STAGE2.OLD: ...` line and stay at `s1> `, where `install-stage2`
+  v10 (install-stage2): v<n>; STAGE2.OLD: ...` line and stay at `s1> `, where `install-stage2`
   (a RAM boot, then `install`) works; a RAM boot of an old one is refused before anything is
   stored, and `i` shows the same reason; the second stage's `install` refuses it too
   (`fat::stage2::install`), before writing. The second stage holds its `STAGE2_VERSION` to it
   (a const assert), the text spells out the number (a const assert in `boot.rs`), and the
-  tests' second stages are v9 or later where they expect a boot (`soc_env.v4_file`'s
+  tests' second stages are v10 or later where they expect a boot (`soc_env.v4_file`'s
   default, `lockstep_programs.stage2_card`, `s1_env.MIN_STAGE2_VERSION`); `fw_common`'s FAT
   fixtures hold v1/v2, which the host tests boot with an `accept` that takes any. Raising it
   is a first-stage change that strands cards: only when old second stages can't work.
@@ -84,8 +86,10 @@ binaries land in the single shared `firmware/target/riscv32im-unknown-none-elf/`
   with RV32M (v0.4.0 on). The first stage comes with its bitstream; the second stage can
   meet an older one (a card updated before the flash), so `start.s` reads `misa` before
   `main` and, without M, prints that it needs the newer bitstream and stops: that check is
-  assembly, so it can't contain an M instruction itself (the emulator's `m_ext = False`
-  tests it, `sim/emu/test_stage2.py`).
+  assembly, so it can't contain an M instruction itself, and it writes through the UART's
+  registers of those bitstreams (`map::LEGACY_UART_STATUS`/`LEGACY_TX_FULL`: status at `+4`,
+  `tx_full` in bit 1), not liteuart's (the emulator's `m_ext = False` with `v03_mmio` tests
+  it, `sim/emu/test_stage2.py` and `test_upgrade.py`).
 - **The second stage is a line prompt** (`s2> `, echo and backspace; `fw_common::shell`):
   the commands are `firmware/stage2/src/shell.rs`'s `HELP` and `CARD_CMDS`, an error is one
   `[ERR] ` line, `put`/`install` speak transfer v2 after their line, `install`'s result is
@@ -119,7 +123,9 @@ binaries land in the single shared `firmware/target/riscv32im-unknown-none-elf/`
   `ms_ticks` shifts, where a `mul` takes 35 cycles).
   Keep per-byte paths of code that runs from the PSRAM free of loops and calls.
 - **A program started after the first stage's output may find the UART's TX FIFO full**:
-  wait for `UART_TX_FULL` to clear before each byte (a store to a full FIFO is dropped).
+  wait for `map::UART_TXFULL` to read 0 before each byte (a store to a full FIFO is dropped).
+  The UART has LiteX liteuart's registers (`map::UART_*`, one word each); RX waits on
+  `UART_RXEMPTY`, and a read of `UART_RXTX` pops.
 - **The VUX9 header exists twice**: `fw_common::header` (the firmware reads it) and
   `ImageHeader`/`build_vux9_v4_image`/the constants in `tools/vux_tool.py` (it writes the
   files; the dist ships it as one file, so nothing is generated). Change both, then

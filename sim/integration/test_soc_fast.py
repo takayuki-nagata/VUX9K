@@ -13,13 +13,14 @@ import sys
 import cocotb
 
 sys.path.append(os.path.dirname(__file__))
-from soc_env import BANNER, check_psram_pins, fat_sectors, start_soc, v4_file
+from soc_env import BANNER, check_psram_pins, fat_sectors, start_soc, v4_file, v4_size
 
 
 @cocotb.test()
 async def test_soc_fast_boot(dut):
     """Power-on to the first stage, which loads STAGE2.BIN into the PSRAM and starts it"""
-    card = fat_sectors({"VUX9K/STAGE2.BIN": v4_file(version=15)})
+    stage2 = v4_file(version=15)
+    card = fat_sectors({"VUX9K/STAGE2.BIN": stage2})
     ser, _ = await start_soc(dut, sd_sectors=card)
     dut._log.info("SoC Reset released.")
 
@@ -27,7 +28,7 @@ async def test_soc_fast_boot(dut):
     out = await ser.wait_for(b"[BOOT] Starting at 0x80700000", timeout_cycles=6_000_000)
     text = out.decode("utf-8", errors="replace")
     assert BANNER in text, text
-    assert '[BOOT] STAGE2.BIN v15 "test" 28 B' in text, text
+    assert f'[BOOT] STAGE2.BIN v15 "test" {v4_size(stage2)} B' in text, text
     # The second stage runs from the PSRAM: '#'
     if b"#" not in out.split(b"Starting at 0x80700000", 1)[1]:
         await ser.wait_for(b"#", timeout_cycles=500_000)

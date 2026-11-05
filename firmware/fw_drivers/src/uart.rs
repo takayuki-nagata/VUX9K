@@ -8,8 +8,9 @@ use fw_common::fmt::Sink;
 use fw_common::map;
 use fw_common::upload::Host;
 
-const UART_DATA: *mut u8 = map::UART_DATA as *mut u8;
-const UART_STATUS: *const u32 = map::UART_STATUS as *const u32;
+const UART_RXTX: *mut u8 = map::UART_RXTX as *mut u8;
+const UART_TXFULL: *const u32 = map::UART_TXFULL as *const u32;
+const UART_RXEMPTY: *const u32 = map::UART_RXEMPTY as *const u32;
 
 pub struct Uart;
 
@@ -17,20 +18,20 @@ impl Uart {
     #[inline(always)]
     pub fn write_byte(c: u8) {
         unsafe {
-            while (core::ptr::read_volatile(UART_STATUS) & map::UART_TX_FULL) != 0 {}
-            core::ptr::write_volatile(UART_DATA, c);
+            while core::ptr::read_volatile(UART_TXFULL) != 0 {}
+            core::ptr::write_volatile(UART_RXTX, c);
         }
     }
 
     #[inline(always)]
     pub fn has_rx_data() -> bool {
-        unsafe { (core::ptr::read_volatile(UART_STATUS) & map::UART_RX_EMPTY) == 0 }
+        unsafe { core::ptr::read_volatile(UART_RXEMPTY) == 0 }
     }
 
     #[inline(always)]
     pub fn read_byte() -> Option<u8> {
         if Self::has_rx_data() {
-            unsafe { Some(core::ptr::read_volatile(UART_DATA)) }
+            unsafe { Some(core::ptr::read_volatile(UART_RXTX)) }
         } else {
             None
         }

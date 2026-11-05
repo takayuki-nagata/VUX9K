@@ -87,6 +87,14 @@ def v4_file(payload: bytes = HASH_PAYLOAD, version: int = MIN_STAGE2_VERSION, **
     return data
 
 
+def v4_size(data: bytes) -> int:
+    """The payload size in a v4 file's header: the "<n> B" of the first stage's [BOOT] and
+    [FAT] lines for it."""
+    header = vux_tool.ImageHeader.parse(data)
+    assert header is not None, "not a v4 file"
+    return header.size
+
+
 def stage2_file(version: int = MIN_STAGE2_VERSION) -> bytes:
     """The second stage (35 KB) as a v4 file, as `make firmware` builds it."""
     with open(STAGE2_RAW, "rb") as f:

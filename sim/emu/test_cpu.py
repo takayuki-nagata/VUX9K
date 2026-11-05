@@ -229,6 +229,32 @@ def test_m_ext_switch():
     assert (soc.regs[5], soc.regs[12], soc.mcause) == (0x4010_0101, 0, 2)
 
 
+def test_v03_mmio_switch():
+    """v03_mmio True is the v0.3.x bitstreams' MMIO: the UART's older registers (status at +4,
+    bit 0 rx_empty, bit 1 tx_full) in place of liteuart's (+4 TXFULL, +8 RXEMPTY), and the
+    TIMER page in place of the CLINT."""
+    a = Asm()
+    a.lui("s0", 0x40000)  # the UART
+    a.lw("a0", 4, "s0")
+    a.lw("a1", 8, "s0")
+    a.li("s1", 0x2000_4004)  # the CLINT's mtimecmp hi
+    a.lw("a2", 0, "s1")
+    image = b"".join(w.to_bytes(4, "little") for w in a.assemble())
+    soc = Soc("real")
+    assert not soc.v03_mmio
+    soc.load_app(image, "riscv", 0)
+    for _ in range(6):
+        soc.step()
+    assert soc.regs[10:13] == [0, 1, 0xFFFF_FFFF], "TXFULL, RXEMPTY, mtimecmp hi"
+    soc.v03_mmio = True
+    soc.reset()
+    assert soc.v03_mmio, "kept across reset()"
+    soc.load_app(image, "riscv", 0)
+    for _ in range(6):
+        soc.step()
+    assert soc.regs[10:13] == [1, 1, 0], "status: rx_empty; the status again; no CLINT"
+
+
 def test_load_app_into_the_psram():
     a = Asm(XMEM_BASE)
     a.auipc("a0", 0)

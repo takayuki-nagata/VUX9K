@@ -2,15 +2,22 @@
 // SPDX-License-Identifier: MIT
 
 //! UART: TX bit-timer phase and pacing, RX push timing, FIFO limits, a full RX FIFO and a
-//! low stop bit leaving no trace in the status, TX only from register 0x0, and the RX
-//! interrupt.
+//! low stop bit leaving no trace in any register, liteuart's registers (TX only from RXTX,
+//! EV_ENABLE, the 256-byte repeat), the interrupt, and the view before liteuart's
+//! (`Soc::v03_mmio`).
 
 use vux9k_emu::periph::uart::{FIFO_DEPTH, FRAME};
 use vux9k_emu::periph::Uart;
 use vux9k_emu::{Profile, Soc};
 
-const STATUS: u32 = 0x4000_0004;
-const DATA: u32 = 0x4000_0000;
+const DATA: u32 = 0x4000_0000; // RXTX
+const TXFULL: u32 = 0x4000_0004;
+const RXEMPTY: u32 = 0x4000_0008;
+const EV_STATUS: u32 = 0x4000_000C;
+const EV_PENDING: u32 = 0x4000_0010;
+const EV_ENABLE: u32 = 0x4000_0014;
+const TXEMPTY: u32 = 0x4000_0018;
+const RXFULL: u32 = 0x4000_001C;
 
 #[test]
 fn tx_waits_for_the_bit_timer_then_paces_one_frame_per_byte() {
@@ -32,14 +39,30 @@ fn tx_from_idle_starts_at_the_next_alarm() {
 }
 
 #[test]
-fn only_register_0_transmits_and_a_full_fifo_drops_writes() {
+fn only_rxtx_transmits_and_a_full_fifo_drops_writes() {
     let mut u = Uart::default();
-    u.write(0x4000_0004, 0x99, 5);
+    for (k, reg) in [
+        TXFULL,
+        RXEMPTY,
+        EV_STATUS,
+        EV_PENDING,
+        TXEMPTY,
+        RXFULL,
+        0x4000_0020,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        u.write(reg, 0x99, 1 + k as u64);
+    }
+    assert_eq!(u.read(TXEMPTY, 9), 1, "nothing pushed");
     for i in 0..(FIFO_DEPTH as u64 + 3) {
         u.write(DATA, i as u32, 10 + i);
     }
     // One byte leaves the FIFO at 156; everything written before that beyond 32 is lost
-    assert_eq!(u.read(STATUS, 100) & 2, 2, "tx_full");
+    assert_eq!(u.read(TXFULL, 100), 1);
+    assert_eq!(u.read(EV_STATUS, 100), 0, "no TX event while full");
+    assert_eq!(u.read(TXEMPTY, 100), 0);
     u.advance(156 + 34 * FRAME);
     let sent: Vec<u8> = u.tx_log().iter().map(|&(b, _)| b).collect();
     assert_eq!(sent, (0..FIFO_DEPTH as u8).collect::<Vec<_>>());
@@ -49,9 +72,10 @@ fn only_register_0_transmits_and_a_full_fifo_drops_writes() {
 fn rx_byte_is_readable_1486_cycles_after_its_start_bit() {
     let mut u = Uart::default();
     u.host_send(&[0x5A, 0xA5], 100, false);
+    assert_eq!(u.read(RXEMPTY, 100 + 1485), 1);
     assert!(!u.rx_pending(100 + 1485));
     assert!(u.rx_pending(100 + 1486));
-    assert_eq!(u.read(STATUS, 100 + 1486), 0, "data, bits 2-3 read 0");
+    assert_eq!(u.read(RXEMPTY, 100 + 1486), 0);
     assert_eq!(u.read(DATA, 3000), 0x5A);
     assert!(!u.rx_pending(3001), "popped at the end of the read cycle");
     assert_eq!(u.read(DATA, 3001), 0, "empty reads 0");
@@ -78,15 +102,25 @@ fn rx_byte_whose_fifo_push_has_passed_is_refused() {
 }
 
 #[test]
-fn a_byte_into_a_full_rx_fifo_is_dropped_without_a_status_bit() {
+fn a_byte_into_a_full_rx_fifo_is_dropped_without_a_trace() {
     let mut u = Uart::default();
     let bytes: Vec<u8> = (0..=FIFO_DEPTH as u8).collect();
     u.host_send(&bytes, 0, false);
     let done = u.host_send_done();
     assert_eq!(u.rx_dropped(done), 1, "the 33rd byte");
-    assert_eq!(u.read(STATUS, done), 0, "not empty, bits 2-3 read 0");
-    assert_eq!(u.read(STATUS, done + 1), 0, "a status read changes nothing");
-    assert_eq!(u.rx_level(done + 2), FIFO_DEPTH, "nor pops a byte");
+    assert_eq!(u.read(RXFULL, done), 1);
+    for (k, reg) in [TXFULL, RXEMPTY, EV_STATUS, EV_PENDING, EV_ENABLE, TXEMPTY]
+        .into_iter()
+        .enumerate()
+    {
+        let want = [0, 0, 3, 3, 0, 1][k]; // EV_PENDING: EV_ENABLE = 0 shows the levels
+        assert_eq!(u.read(reg, done), want, "register {reg:#x}");
+    }
+    assert_eq!(
+        u.rx_level(done + 2),
+        FIFO_DEPTH,
+        "no read but RXTX pops a byte"
+    );
     for i in 0..FIFO_DEPTH as u32 {
         assert_eq!(
             u.read(DATA, done + 2 + i as u64),
@@ -94,19 +128,146 @@ fn a_byte_into_a_full_rx_fifo_is_dropped_without_a_status_bit() {
             "the first 32 bytes, in order"
         );
     }
-    assert_eq!(u.read(STATUS, done + 2 + FIFO_DEPTH as u64), 1, "empty");
+    assert_eq!(u.read(RXEMPTY, done + 2 + FIFO_DEPTH as u64), 1, "empty");
+    assert_eq!(u.read(RXFULL, done + 2 + FIFO_DEPTH as u64), 0);
 }
 
 #[test]
-fn a_frame_with_a_low_stop_bit_is_received_without_a_status_bit() {
+fn a_frame_with_a_low_stop_bit_is_received_without_a_trace() {
     let mut u = Uart::default();
     u.host_send(&[0x33], 0, true);
     let push = u.host_send_done() - 1;
-    assert_eq!(u.read(STATUS, push), 1, "empty until its push edge");
-    assert_eq!(u.read(STATUS, push + 1), 0, "data, bits 2-3 read 0");
+    assert_eq!(u.read(RXEMPTY, push), 1, "empty until its push edge");
+    assert_eq!(u.read(RXEMPTY, push + 1), 0);
+    assert_eq!(u.read(EV_STATUS, push + 1), 3);
     assert_eq!(u.read(DATA, push + 2), 0x33, "the byte is kept");
-    assert_eq!(u.read(STATUS, push + 3), 1);
+    assert_eq!(u.read(RXEMPTY, push + 3), 1);
     assert_eq!(u.rx_dropped(push + 3), 0);
+}
+
+#[test]
+fn liteuart_registers() {
+    let mut u = Uart::default();
+    assert_eq!(u.read(TXFULL, 10), 0);
+    assert_eq!(u.read(RXEMPTY, 10), 1);
+    assert_eq!(u.read(EV_STATUS, 10), 1, "TX: the TX FIFO isn't full");
+    assert_eq!(
+        u.read(EV_PENDING, 10),
+        1,
+        "EV_ENABLE 0: EV_STATUS, as Linux's polled driver reads it"
+    );
+    assert_eq!(u.read(EV_ENABLE, 10), 0, "resets to 0");
+    assert_eq!(u.read(TXEMPTY, 10), 1);
+    assert_eq!(u.read(RXFULL, 10), 0);
+    assert!(!u.irq(10), "no interrupt without EV_ENABLE");
+    // EV_ENABLE: 2 bits, from the edge on
+    u.write(EV_ENABLE, 0xFF, 20);
+    assert_eq!(u.read(EV_ENABLE, 20), 0);
+    assert!(!u.irq(20));
+    assert_eq!(u.read(EV_ENABLE, 21), 3);
+    assert_eq!(u.read(EV_PENDING, 21), 1, "TX enabled and pending");
+    assert!(u.irq(21), "TX enabled and the TX FIFO not full");
+    u.write(EV_ENABLE, 2, 30);
+    assert!(!u.irq(31), "RX enabled, nothing received");
+    // EV_PENDING ignores writes (levels: nothing to clear); with RX enabled, TX is hidden
+    u.write(EV_PENDING, 3, 40);
+    assert_eq!(u.read(EV_PENDING, 41), 0);
+    assert_eq!(u.read(EV_STATUS, 41), 1, "the TX event stays in EV_STATUS");
+    // RX: a byte arrives (1486 cycles after its start bit), RXTX pops it
+    u.host_send(b"Z", 100, false);
+    assert!(!u.irq(100 + 1485));
+    assert!(u.irq(100 + 1486));
+    assert_eq!(u.read(EV_PENDING, 2000), 2, "RX only: TX is not enabled");
+    assert_eq!(u.read(EV_STATUS, 2000), 3);
+    assert_eq!(u.read(DATA, 2000), b'Z' as u32);
+    assert_eq!(
+        u.read(RXEMPTY, 2001),
+        1,
+        "popped at the end of the read cycle"
+    );
+    assert!(!u.irq(2001));
+    // Repeating every 256 bytes (addr[7:2]); 0x20-0xFC read 0; the page's other bits ignored
+    assert_eq!(u.read(0x4000_0114, 2002), 2);
+    assert_eq!(u.read(0x4000_0F14, 2002), 2);
+    for off in (0x20..0x100).step_by(4) {
+        assert_eq!(u.read(0x4000_0000 + off, 2002), 0, "offset {off:#x}");
+    }
+    // Byte offsets within a register are the register (byte enables are not looked at)
+    assert_eq!(u.read(EV_ENABLE + 1, 2002), 2);
+    u.write(EV_ENABLE + 3, 0x0101_0101, 2003);
+    assert_eq!(u.read(EV_ENABLE, 2004), 1);
+    // TX: RXTX writes transmit; 40 writes fill the FIFO (TXFULL, no TX event)
+    for k in 0..40u64 {
+        u.write(DATA + (k as u32 & 3), b'a' as u32 + k as u32, 3000 + k);
+    }
+    assert_eq!(u.read(TXFULL, 3040), 1);
+    assert_eq!(u.read(EV_STATUS, 3040) & 1, 0);
+    assert!(!u.irq(3040), "TX enabled, the TX FIFO full");
+    u.advance(200_000);
+    assert_eq!(&u.tx_bytes()[..3], b"abc");
+    assert_eq!(
+        u.tx_bytes().len(),
+        33,
+        "one in the transmitter, 32 in the FIFO"
+    );
+    assert_eq!(u.read(TXFULL, 200_000), 0);
+    assert_eq!(u.read(TXEMPTY, 200_000), 1);
+    assert!(u.irq(200_000));
+}
+
+#[test]
+fn txempty_is_the_fifo_not_the_transmitter() {
+    let mut u = Uart::default();
+    u.write(DATA, 0x41, 1000); // popped at 1001 into uart_tx, sent from 1092
+    assert_eq!(
+        u.read(TXEMPTY, 1001),
+        0,
+        "in the FIFO during the cycle after the store"
+    );
+    assert_eq!(
+        u.read(TXEMPTY, 1002),
+        1,
+        "in the transmitter, still sending"
+    );
+    assert!(u.tx_complete_by(1002) == 0);
+}
+
+#[test]
+fn the_soft_reset_clears_ev_enable_only() {
+    let mut u = Uart::default();
+    u.write(EV_ENABLE, 3, 10);
+    u.write(DATA, 0x41, 11);
+    u.host_send(b"Q", 0, false);
+    u.soft_reset(2000);
+    assert_eq!(u.read(EV_ENABLE, 2000), 3);
+    assert_eq!(u.read(EV_ENABLE, 2001), 0);
+    assert!(!u.irq(2001));
+    assert_eq!(
+        u.read(DATA, 2001),
+        b'Q' as u32,
+        "the RX FIFO keeps its byte"
+    );
+    u.advance(5000);
+    assert_eq!(u.tx_bytes(), b"A", "and TX goes on");
+}
+
+#[test]
+fn the_view_before_liteuart() {
+    let mut u = Uart::default();
+    assert_eq!(u.legacy_read(0x4000_0004, 10), 1, "status: rx_empty");
+    u.legacy_write(0x4000_0004, 0x42, 11); // no TX from the status
+    u.legacy_write(0x4000_0010, 0x41, 12); // repeating every 16 bytes
+    u.host_send(b"q", 0, false);
+    assert!(u.rx_pending(1486));
+    assert_eq!(
+        u.legacy_read(0x4000_000C, 1486),
+        0,
+        "data waiting, TX not full"
+    );
+    assert_eq!(u.legacy_read(0x4000_0000, 1487), b'q' as u32);
+    assert!(!u.rx_pending(1488));
+    u.advance(5000);
+    assert_eq!(u.tx_bytes(), b"A");
 }
 
 fn i(op: u32, imm: i32, rs1: u32, f3: u32, rd: u32) -> u32 {
@@ -149,7 +310,7 @@ fn cpu_store_reaches_tx_at_its_mem_wait_edge() {
 }
 
 #[test]
-fn rx_data_raises_the_external_interrupt_until_read() {
+fn rx_data_raises_the_external_interrupt_once_enabled_until_read() {
     let handler = 0x80;
     let mut words = vec![
         addi(1, 0, handler),
@@ -159,19 +320,24 @@ fn rx_data_raises_the_external_interrupt_until_read() {
         csrs(0x304, 1),
         addi(2, 0, 8),
         csrw(0x300, 2), // mstatus.MIE
-        J_SELF,         // at 0x1C
+        lui(3, 0x40000),
+        addi(2, 0, 2),
+        J_SELF,         // at 0x24
+        sw(2, 3, 0x14), // at 0x28: EV_ENABLE = RX
+        J_SELF,         // at 0x2C
     ];
     words.resize(handler as usize / 4, 0x13);
-    words.extend([lui(3, 0x40000), lw(4, 3, 0), lw(5, 3, 4), J_SELF]);
+    words.extend([lw(4, 3, 0), lw(5, 3, 8), J_SELF]);
     let mut soc = load(&words);
     soc.periph.uart.host_send(&[0x7E], 0, false);
-    soc.run(1000); // the byte is pushed at 1485
-    assert_eq!(soc.pc, 0x1C, "nothing received yet");
-    soc.run(3000);
-    assert_eq!(soc.csr.mcause, 0x8000_000B);
-    assert_eq!(soc.csr.mepc, 0x1C);
+    soc.run(3000); // the byte is pushed at 1485, EV_ENABLE is 0
+    assert_eq!(soc.pc, 0x24, "not enabled: nothing taken");
+    soc.pc = 0x28;
+    soc.run(100);
+    assert_eq!(soc.csr.mcause, 0x8000_000B, "taken once enabled");
+    assert_eq!(soc.csr.mepc, 0x2C);
     assert_eq!(soc.regs[4], 0x7E);
-    assert_eq!(soc.regs[5], 1, "empty again after the data read");
+    assert_eq!(soc.regs[5], 1, "RXEMPTY again after the RXTX read");
 }
 
 fn andi(rd: u32, rs1: u32, imm: i32) -> u32 {
@@ -224,15 +390,15 @@ fn run_until_tx_reference(
 
 #[test]
 fn run_until_tx_stops_where_checking_every_instruction_would() {
-    // Echo every received byte twice (so TX backs up behind RX), polling the status
+    // Echo every received byte twice (so TX backs up behind RX), polling RXEMPTY/TXFULL
     let echo = [
         lui(1, 0x40000),
-        lw(2, 1, 4), // 0x04: wait for RX data
+        lw(2, 1, 8), // 0x04: wait for RX data
         andi(2, 2, 1),
         bne(2, 0, -8),
         lw(3, 1, 0),
         lw(2, 1, 4), // 0x14: wait for TX room
-        andi(2, 2, 2),
+        andi(2, 2, 1),
         bne(2, 0, -8),
         sw(3, 1, 0),
         sw(3, 1, 0),
@@ -321,4 +487,30 @@ fn a_byte_sent_after_a_quiet_spell_still_arrives() {
     assert_eq!(u.rx_level(10_000 + 1485), 0);
     assert_eq!(u.rx_level(10_000 + 1486), 1);
     assert!(u.rx_pending(10_000 + 1486));
+}
+
+#[test]
+fn the_cpu_soft_reset_clears_ev_enable() {
+    // First pass: EV_ENABLE = 3, read back, soft reset; second pass (x7 set, registers
+    // survive the soft reset): EV_ENABLE read into x6
+    let prog = [
+        lui(3, 0x40000),
+        lw(6, 3, 0x14),
+        bne(7, 0, 36), // 0x08: to 0x2C on the second pass
+        addi(7, 0, 1),
+        addi(2, 0, 3),
+        sw(2, 3, 0x14),
+        lw(8, 3, 0x14),
+        lui(4, 0x40003),
+        lui(9, 0xA),
+        addi(9, 9, 0x55A),
+        sw(9, 4, 0xC), // 0x28: soft reset
+        J_SELF,        // 0x2C
+    ];
+    let mut soc = load(&prog);
+    soc.run(500);
+    assert_eq!(soc.pc, 0x2C);
+    assert_eq!(soc.regs[7], 1, "the second pass");
+    assert_eq!(soc.regs[8], 3, "enabled before the soft reset");
+    assert_eq!(soc.regs[6], 0, "cleared by it");
 }

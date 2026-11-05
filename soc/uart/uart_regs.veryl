@@ -1,0 +1,102 @@
+// Copyright (c) 2026 Takayuki Nagata
+// SPDX-License-Identifier: MIT
+
+// The UART's registers as LiteX's liteuart lays them out (litex,uart0 / litex,liteuart),
+// 32-bit words, addr[7:2] decoded in full, repeating every 256 bytes; byte enables are not
+// looked at (a byte store writes its word with the store's replicated data):
+//   0x00 RXTX       read: the RX FIFO's head (the read pops it), 0 when the FIFO is empty;
+//                   write: pushes TX
+//   0x04 TXFULL     bit 0: the TX FIFO is full
+//   0x08 RXEMPTY    bit 0: the RX FIFO is empty
+//   0x0C EV_STATUS  bit 0 TX: the TX FIFO is not full; bit 1 RX: the RX FIFO is not empty
+//   0x10 EV_PENDING EV_STATUS while EV_ENABLE is 0, EV_STATUS & EV_ENABLE otherwise; writes
+//                   are ignored
+//   0x14 EV_ENABLE  bits 1:0, read/write
+//   0x18 TXEMPTY    bit 0: the TX FIFO is empty (not counting the byte being sent)
+//   0x1C RXFULL     bit 0: the RX FIFO is full
+//   0x20-0xFC       read 0, writes ignored
+// The events are levels, not LiteX's latched, write-1-to-clear EventSourceProcess: they
+// follow the FIFOs, so nothing is left to clear. EV_PENDING serves the two upstream drivers:
+// Linux's liteuart without an interrupt polls EV_PENDING from a timer and never writes
+// EV_ENABLE, so with nothing enabled EV_PENDING shows the levels; Zephyr's uart_liteuart
+// enables what it wants and its uart_console ISR loops while irq_is_pending (EV_PENDING)
+// shows an event, so once anything is enabled a disabled event (TX, the FIFO having room,
+// is nearly always 1) is hidden. The interrupt (mip.MEIP) is |(EV_STATUS & EV_ENABLE), the
+// same as |EV_PENDING except with EV_ENABLE 0, when it is 0. EV_ENABLE resets with rst and
+// with the CPU's soft reset (a level event left enabled by an application would fire as
+// soon as the next one's driver enables MEIE); the FIFOs only with rst (uart_controller).
+// Hack sees the first four registers at its words 0x6000-0x6003 (word k: offset 4k).
+// Reads take the registers combinationally in the cycle after the address (the CPU's
+// MEM_WAIT), from the address and select registered here, as soc_top's other reads.
+module uart_regs (
+    clk      : input  clock    ,
+    rst      : input  reset    ,
+    soft_rst : input  logic    , // cpu_soft_rst: clears EV_ENABLE
+    hack_mode: input  logic    , // 1: Hack word addresses, 0: RV32 byte addresses
+    rd_sel   : input  logic    , // the read address decodes to the UART
+    rd_addr  : input  logic<8> , // the read address's low bits
+    read     : input  logic    , // the CPU takes the read word (mem_read_req), MEM_WAIT
+    we       : input  logic    , // a store to the UART
+    wr_addr  : input  logic<8> , // the store address's low bits
+    wdata    : input  logic<2> , // the store data's bits EV_ENABLE takes
+    tx_full  : input  logic    ,
+    tx_empty : input  logic    ,
+    rx_empty : input  logic    ,
+    rx_full  : input  logic    ,
+    rx_data  : input  logic<8> , // the RX FIFO's head
+    rdata    : output logic<32>, // 0 unless the read before selected the UART
+    tx_push  : output logic    ,
+    rx_pop   : output logic    ,
+    irq      : output logic    ,
+) {
+    const RXTX     : logic<6> = 6'h00;
+    const EV_ENABLE: logic<6> = 6'h05;
+
+    // The register index: RV32 addr[7:2], Hack's word k in 0x6000-0x6003 is 4k
+    let rd_idx: logic<6> = if hack_mode ? {4'd0, rd_addr[1:0]} : rd_addr[7:2];
+    let wr_idx: logic<6> = if hack_mode ? {4'd0, wr_addr[1:0]} : wr_addr[7:2];
+
+    var last_sel: logic   ;
+    var last_idx: logic<6>;
+    var ev_en   : logic<2>;
+
+    let events : logic<2> = {!rx_empty, !tx_full}; // {RX, TX}: EV_STATUS
+    let enabled: logic<2> = ev_en & events;
+    let pending: logic<2> = if ev_en == 2'b00 ? events : enabled; // EV_PENDING
+
+    assign tx_push = we && wr_idx == RXTX;
+    assign rx_pop  = read && last_sel && last_idx == RXTX;
+    assign irq     = |enabled;
+
+    always_ff (clk, rst) {
+        if_reset {
+            last_sel = 1'b0;
+            last_idx = 6'd0;
+            ev_en    = 2'b00;
+        } else {
+            last_sel = rd_sel;
+            last_idx = rd_idx;
+            if soft_rst {
+                ev_en = 2'b00;
+            } else if we && wr_idx == EV_ENABLE {
+                ev_en = wdata;
+            }
+        }
+    }
+
+    var word: logic<32>;
+    always_comb {
+        case last_idx {
+            6'h00  : word = {24'd0, if rx_empty ? 8'd0 : rx_data}; // the FIFO shows a stale slot
+            6'h01  : word = {31'd0, tx_full};
+            6'h02  : word = {31'd0, rx_empty};
+            6'h03  : word = {30'd0, events};
+            6'h04  : word = {30'd0, pending};
+            6'h05  : word = {30'd0, ev_en};
+            6'h06  : word = {31'd0, tx_empty};
+            6'h07  : word = {31'd0, rx_full};
+            default: word = 32'd0;
+        }
+    }
+    assign rdata = if last_sel ? word : 32'd0;
+}

@@ -2,15 +2,17 @@
 # SPDX-License-Identifier: MIT
 
 """The upgrade from the previous release (v0.3.x: the two-stage boot on a CPU without RV32M,
-its timer at the TIMER page) on the emulator: a card as v0.3.x left it, its \\VUX9K\\ from
-that release's dist, given to this tree's first stage on a CPU with M (the new bitstream,
-written first), which refuses the old second stage (older than MIN_STAGE2_VERSION: it reads
-mtime where the CLINT replaced the page) and stays at its prompt; then
+its timer at the TIMER page, the UART's older registers) on the emulator: a card as v0.3.x
+left it, its \\VUX9K\\ from that release's dist, given to this tree's first stage on a CPU
+with M (the new bitstream, written first), which refuses the old second stage (older than
+MIN_STAGE2_VERSION: it reads mtime where the CLINT replaced the page and uses the UART's
+older registers) and stays at its prompt; then
 docs/APP_DEVELOPMENT.md's "Upgrading from v0.3.x" with this tree's tools/vux_tool.py, command
 by command (`main()` on an EmuSerial, in emulated time). And the wrong order, the card first:
-the previous release's first stage on a CPU without M boots the new second stage, which says
-so and stops. The previous release is the Makefile's PREV_RELEASE (`make prev-release`); its
-SHA256SUMS are checked. The board half, the bitstream changed from the old one to the new, is
+the previous release's first stage on a CPU without M and with that release's MMIO
+(`Soc.v03_mmio`) boots the new second stage, which says so through the old UART and stops.
+The previous release is the Makefile's PREV_RELEASE (`make prev-release`); its SHA256SUMS
+are checked. The board half, the bitstream changed from the old one to the new, is
 scripts/test_hw_upgrade.py."""
 
 import json
@@ -87,7 +89,7 @@ def test_upgrade_from_the_previous_release(prev, monkeypatch, capsys, tmp_path):
         return capsys.readouterr().out
 
     # The new bitstream first: its first stage doesn't start the old second stage (its timer
-    # is gone), says why and stays at its prompt
+    # and its UART registers are gone), says why and stays at its prompt
     old = prev["stage2_version"]
     assert old < MIN_STAGE2_VERSION
     out = wait_for(soc, S1_PROMPT, BOOT_CYCLES)
@@ -122,12 +124,13 @@ def test_upgrade_from_the_previous_release(prev, monkeypatch, capsys, tmp_path):
 
 def test_the_card_before_the_bitstream_stops_the_second_stage(prev):
     """The new second stage on the card while the flash still holds the previous release's
-    bitstream (its first stage; a CPU without M, the timer at the TIMER page): the second stage
-    says what to do and stops before its first M instruction. The card is left as it is:
-    programming the bitstream then is the whole fix."""
+    bitstream (its first stage; a CPU without M, the timer at the TIMER page and the UART's
+    older registers): the second stage says what to do through that UART and stops before its
+    first M instruction. The card is left as it is: programming the bitstream then is the
+    whole fix."""
     soc = new_soc()
     soc.m_ext = False
-    soc.timer_page = True
+    soc.v03_mmio = True
     preload_firmware(soc, os.path.join(PREV_DIR, "emu", "firmware"))
     image = card({"VUX9K/STAGE2.BIN": stage2(), "VUX9K/APPS/HELLO.BIN": app("HELLO.BIN")})
     soc.sd_insert(image)

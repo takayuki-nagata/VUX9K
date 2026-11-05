@@ -13,7 +13,7 @@
 //! instruction segment in the PSRAM, 0 by default).
 //!
 //! `--linux IMAGE --dtb DTB` starts a noMMU Linux kernel on the emulator-only Linux profile
-//! (`--profile linux`, ahead of the RTL): no firmware, the kernel in the PSRAM at
+//! (`--profile linux`, the real SoC): no firmware, the kernel in the PSRAM at
 //! 0x8000_0000 and its device tree in the PSRAM's top 64 KB (`Soc::load_linux`).
 //!
 //! The UART is connected to stdout (batch), the terminal (`--stdio`), or a TCP
@@ -35,7 +35,7 @@ const USAGE: &str = "\
 usage: vux9k-emu [options]
 
   --profile NAME      memory profile: real (default, the board), isa-test (riscv-tests) or
-                      linux (real + liteuart; emulator only)
+                      linux (real, for --linux; emulator only)
   --firmware DIR      preload the ROM from DIR/firmware.hex (default build/firmware;
                       none on the linux profile)
   --no-firmware       start with empty memories

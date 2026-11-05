@@ -96,8 +96,7 @@ def app(origin: int, text: str, tail=None) -> bytes:
     a.lui("t1", 0x40000)  # UART
     for i, ch in enumerate(text):
         a.label(f"w{i}")
-        a.lw("t0", 4, "t1")
-        a.andi("t0", "t0", 2)  # TX full
+        a.lw("t0", 4, "t1")  # TXFULL
         a.bne("t0", "zero", f"w{i}")
         a.addi("t2", "zero", ord(ch))
         a.sb("t2", 0, "t1")
@@ -153,11 +152,13 @@ def test_banner_handoff_and_help():
 @pytest.mark.parametrize("m_ext", [True, False])
 def test_needs_rv32m(m_ext):
     """The second stage is RV32IM: on a CPU without M (a v0.3.x bitstream; the emulator's
-    m_ext off) it says so before main and stops, with M it starts. It is started where it
-    runs, as the first stage hands over (this first stage is RV32IM too, and the old one
-    comes with the old bitstream)."""
+    m_ext off, with those bitstreams' MMIO, v03_mmio) it says so through that bitstream's UART
+    registers before main and stops, with M it starts. It is started where it runs, as the
+    first stage hands over (this first stage is RV32IM too, and the old one comes with the
+    old bitstream)."""
     soc = new_soc()
     soc.m_ext = m_ext
+    soc.v03_mmio = not m_ext
     with open(STAGE2_RAW, "rb") as f:
         soc.load_app(f.read(), "riscv", STAGE2_BASE)
     out = wait_for(soc, b"\n" if m_ext else b"Stopped.\n", timeout_cycles=2_000_000, start=1)

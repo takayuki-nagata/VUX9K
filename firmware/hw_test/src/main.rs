@@ -33,8 +33,8 @@ use fw_common::map::{self, TICKS_PER_MS};
 
 global_asm!(include_str!("start.s"));
 
-const UART_DATA: *mut u32 = map::UART_DATA as *mut u32;
-const UART_STATUS: *const u32 = map::UART_STATUS as *const u32;
+const UART_RXTX: *mut u32 = map::UART_RXTX as *mut u32;
+const UART_TXFULL: *const u32 = map::UART_TXFULL as *const u32;
 const MTIME_LOW: *const u32 = map::MTIME_LO as *const u32;
 const GPIO_LED: *mut u32 = map::GPIO_LED as *mut u32;
 
@@ -43,8 +43,8 @@ struct Uart;
 impl Sink for Uart {
     fn put(&mut self, b: u8) {
         unsafe {
-            while read_volatile(UART_STATUS) & map::UART_TX_FULL != 0 {}
-            write_volatile(UART_DATA, b as u32);
+            while read_volatile(UART_TXFULL) != 0 {}
+            write_volatile(UART_RXTX, b as u32);
         }
     }
 }
@@ -514,6 +514,142 @@ fn t_clint(seed: u32) -> u32 {
     unsafe { clint_run(seed) }
 }
 
+// t_liteuart: the UART's registers (liteuart's layout, map::UART_*). TXEMPTY polled until the
+// FIFO has drained this run's earlier lines (at most 1,000,000 loops; whether it got there
+// is folded); then RXEMPTY 1, RXFULL 0, TXFULL 0, EV_STATUS TX only, EV_PENDING TX only
+// (EV_STATUS while EV_ENABLE is 0), EV_ENABLE 0, offset 0x20 0 and the 256-byte repeat
+// (RXEMPTY, TXEMPTY at +0x100); EV_ENABLE written 3 with MIE clear (read back, EV_PENDING TX
+// only, mip.MEIP set), written 2 (EV_PENDING 0: TX hidden, MEIP clear), cleared (MEIP
+// clear); then EV_ENABLE = TX with
+// MEIE and MIE set: the machine external interrupt (cause 11), whose handler clears EV_ENABLE,
+// waited for at most 100,000 loops; EV_ENABLE and MEIP read again. Every trap folds mcause
+// into a0 and counts in a4. No byte may arrive on the RX line meanwhile.
+global_asm!(
+    ".option push",
+    ".option arch, +zicsr",
+    ".macro uart_fold r",
+    "slli t0, a0, 5",
+    "srli a0, a0, 27",
+    "or a0, a0, t0",
+    "xor a0, a0, \\r",
+    ".endm",
+    ".balign 4",
+    "liteuart_run:",
+    "csrr t6, mtvec",
+    "la t0, liteuart_trap",
+    "csrw mtvec, t0",
+    "li a1, {uart}",
+    "li t5, 1000000",
+    "1:",
+    "lw t1, {txempty}(a1)",
+    "bnez t1, 2f",
+    "addi t5, t5, -1",
+    "bnez t5, 1b",
+    "2:",
+    "snez t5, t5",
+    "uart_fold t5",
+    "lw t1, {rxempty}(a1)",
+    "uart_fold t1",
+    "lw t1, {rxfull}(a1)",
+    "uart_fold t1",
+    "lw t1, {txfull}(a1)",
+    "uart_fold t1",
+    "lw t1, {ev_status}(a1)",
+    "uart_fold t1",
+    "lw t1, {ev_pending}(a1)",
+    "uart_fold t1",
+    "lw t1, {ev_enable}(a1)",
+    "uart_fold t1",
+    "lw t1, 0x20(a1)",
+    "uart_fold t1",
+    "lw t1, 0x108(a1)",
+    "uart_fold t1",
+    "lw t1, 0x118(a1)",
+    "uart_fold t1",
+    // EV_ENABLE with MIE clear: MEIP follows it
+    "li a4, 0",
+    "li t1, 0x800",
+    "csrw mie, t1",
+    "li t1, -1",
+    "sw t1, {ev_enable}(a1)",
+    "lw t1, {ev_enable}(a1)",
+    "uart_fold t1",
+    "lw t1, {ev_pending}(a1)",
+    "uart_fold t1",
+    "csrr t1, mip",
+    "srli t1, t1, 11",
+    "andi t1, t1, 1",
+    "uart_fold t1",
+    "li t1, 2",
+    "sw t1, {ev_enable}(a1)",
+    "lw t1, {ev_pending}(a1)",
+    "uart_fold t1",
+    "csrr t1, mip",
+    "srli t1, t1, 11",
+    "andi t1, t1, 1",
+    "uart_fold t1",
+    "sw zero, {ev_enable}(a1)",
+    "csrr t1, mip",
+    "srli t1, t1, 11",
+    "andi t1, t1, 1",
+    "uart_fold t1",
+    // EV_TX -> MEI
+    "li t1, 1",
+    "sw t1, {ev_enable}(a1)",
+    "li t5, 100000",
+    "csrsi mstatus, 8",
+    "1:",
+    "bnez a4, 2f",
+    "addi t5, t5, -1",
+    "bnez t5, 1b",
+    "2:",
+    "csrci mstatus, 8",
+    "snez t5, t5",
+    "uart_fold t5",
+    "uart_fold a4",
+    "lw t1, {ev_enable}(a1)",
+    "uart_fold t1",
+    "csrr t1, mip",
+    "srli t1, t1, 11",
+    "andi t1, t1, 1",
+    "uart_fold t1",
+    "csrw mie, zero",
+    "csrw mtvec, t6",
+    "ret",
+    ".balign 4",
+    "liteuart_trap:",
+    "csrr t1, mcause",
+    "uart_fold t1",
+    "addi a4, a4, 1",
+    "li t2, 0x8000000B",
+    "bne t1, t2, 1f",
+    "sw zero, {ev_enable}(a1)",
+    "mret",
+    "1:",
+    "csrr t1, mepc",
+    "addi t1, t1, 4",
+    "csrw mepc, t1",
+    "mret",
+    ".purgem uart_fold",
+    ".option pop",
+    uart = const map::UART_RXTX,
+    txfull = const map::UART_TXFULL - map::UART_RXTX,
+    rxempty = const map::UART_RXEMPTY - map::UART_RXTX,
+    ev_status = const map::UART_EV_STATUS - map::UART_RXTX,
+    ev_pending = const map::UART_EV_PENDING - map::UART_RXTX,
+    ev_enable = const map::UART_EV_ENABLE - map::UART_RXTX,
+    txempty = const map::UART_TXEMPTY - map::UART_RXTX,
+    rxfull = const map::UART_RXFULL - map::UART_RXTX,
+);
+
+extern "C" {
+    fn liteuart_run(seed: u32) -> u32;
+}
+
+fn t_liteuart(seed: u32) -> u32 {
+    unsafe { liteuart_run(seed) }
+}
+
 const XMEM_WORDS: usize = map::XMEM_BYTES / 4;
 
 fn xmem_word(i: usize) -> *mut u32 {
@@ -819,7 +955,7 @@ enum Test {
 use Test::{Once, Pairs};
 
 /// (name, test, checksum the emulator computes)
-const TESTS: [(&str, Test, u32); 20] = [
+const TESTS: [(&str, Test, u32); 21] = [
     ("add", Pairs(t_add), 0xC02B_9A30),
     ("sub", Pairs(t_sub), 0x1C9E_5AB3),
     ("logic", Pairs(t_logic), 0x0F9E_3961),
@@ -840,6 +976,7 @@ const TESTS: [(&str, Test, u32); 20] = [
     ("amo", Pairs(t_amo), 0x29F4_9444),
     ("umode", Once(t_umode), 0x4C42_10E8),
     ("clint", Once(t_clint), 0x26A2_6E4C),
+    ("liteuart", Once(t_liteuart), 0x9035_8710),
 ];
 
 #[no_mangle]

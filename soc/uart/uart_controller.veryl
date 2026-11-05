@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: MIT
 
 // UART Controller Top-Level Module in Veryl
-// Integrates TX FIFO, UART Transmitter, UART Receiver, and RX FIFO (8N1 protocol)
+// Integrates TX FIFO, UART Transmitter, UART Receiver, and RX FIFO (8N1 protocol); the
+// FIFOs' four flags go to uart_regs
 pub module uart_controller #(
     param CNT  : u32 = 434,
     param CSIZE: u32 = 10 ,
@@ -13,17 +14,19 @@ pub module uart_controller #(
     rdata: output logic<8>,
     re   : input  logic   ,
     we   : input  logic   ,
-    empty: output logic   ,
-    full : output logic   ,
-    txd  : output logic   ,
-    rxd  : input  logic   ,
+    empty: output logic   , // the RX FIFO is empty
+    full : output logic   , // the TX FIFO is full
+    // The TX FIFO is empty (a byte uart_tx is sending isn't in it); the RX FIFO is full
+    tx_empty: output logic,
+    rx_full : output logic,
+    txd     : output logic,
+    rxd     : input  logic,
 ) {
     var tx_wdata : logic<8>;
     var tx_we    : logic   ;
     var tx_rdata : logic<8>;
     var tx_re    : logic   ;
     var tx_full  : logic   ;
-    var tx_empty : logic   ;
     var txdata   : logic<8>;
     var uart_we  : logic   ;
     var uart_busy: logic   ;
@@ -32,7 +35,6 @@ pub module uart_controller #(
     var rx_we   : logic   ;
     var rx_rdata: logic<8>;
     var rx_re   : logic   ;
-    var rx_full : logic   ;
     var rx_empty: logic   ;
     var rxdata  : logic<8>;
     var uart_rdy: logic   ;

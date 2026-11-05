@@ -23,9 +23,12 @@ pub const RAM_BOOT_MAX: u32 = HEADER_LEN as u32 + map::STAGE2_BYTES as u32;
 
 /// The oldest second stage the first stage starts (its v4 header's version). Those before
 /// v9 read mtime at the TIMER page (0x4000_1000), which the CLINT (`map::MTIME_LO`)
-/// replaces: on a bitstream without the page their delays and timeouts never end. The
-/// second stage holds its `STAGE2_VERSION` to it (a const assert).
-pub const MIN_STAGE2_VERSION: u32 = 9;
+/// replaces: on a bitstream without the page their delays and timeouts never end. Those
+/// before v10 use the UART's older registers (status at +4 with tx_full in bit 1), where
+/// the liteuart registers (`map::UART_TXFULL`) now are: they would wait on TXFULL's bit 1,
+/// which never sets, overrun the TX FIFO, and never see a received byte (`map::UART_RXEMPTY`
+/// moved to +8). The second stage holds its `STAGE2_VERSION` to it (a const assert).
+pub const MIN_STAGE2_VERSION: u32 = 10;
 
 /// The first stage starts RV32 code of `MIN_STAGE2_VERSION` or later only (from the
 /// card, `select_boot` then tries `.OLD`; a RAM boot refuses it before storing anything).
@@ -151,7 +154,7 @@ const _: () = assert!(
     "update OutOfWindow's text in put_boot_error"
 );
 const _: () = assert!(
-    MIN_STAGE2_VERSION == 9,
+    MIN_STAGE2_VERSION == 10,
     "update TooOld's text in put_boot_error"
 );
 
@@ -183,7 +186,7 @@ pub fn put_boot_error(out: &mut impl Sink, e: BootError) {
             ImageError::BadEntry(a) => ("bad entry point ", Num::Hex(a)),
         },
         BootError::Crc => ("CRC mismatch", Num::No),
-        BootError::TooOld(v) => ("too old, needs v9 (install-stage2): v", Num::Dec(v)),
+        BootError::TooOld(v) => ("too old, needs v10 (install-stage2): v", Num::Dec(v)),
     };
     out.put_str(what);
     match n {

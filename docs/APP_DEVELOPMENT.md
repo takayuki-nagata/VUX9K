@@ -69,7 +69,7 @@ python3 tools/vux_tool.py run sd/VUX9K/STAGE2.BIN                 # start it wit
 
 `install-stage2` starts the given second stage from the serial port (a RAM boot) and has
 it write itself to the card as `STAGE2.BIN`, keeping the previous one as `STAGE2.OLD`: when
-`STAGE2.BIN` is missing, broken or older than the first stage starts (v9, below), the first
+`STAGE2.BIN` is missing, broken or older than the first stage starts (v10, below), the first
 stage starts `STAGE2.OLD`. `run` is the RAM boot
 alone, for trying a second stage or recovering a card. `monitor` opens a plain terminal.
 
@@ -101,9 +101,12 @@ python3 tools/vux_tool.py run-app VUX9K/APPS/HELLO.BIN
 stage and applications use it; v0.3.x's CPU traps those instructions. Its timer moved too:
 `mtime` and `mtimecmp` are the CLINT's (`0x2000_0000`), not at `0x4000_1000` any more, so
 v0.3.x's second stage and its applications that use the timer don't run on this bitstream
-(`0x4000_1000` is unassigned now: it reads 0 and ignores writes).
+(`0x4000_1000` is unassigned now: it reads 0 and ignores writes). The UART has LiteX
+liteuart's registers now (README's map): v0.3.x's second stage and every v0.3.x application
+that uses the UART (all the demos, any Zephyr application) don't work on this bitstream either
+and must be rebuilt.
 Write the new bitstream to the flash first, then the card: the new first stage doesn't start
-a second stage older than v9 (`[BOOT] STAGE2.BIN: too old, needs v9 (install-stage2): v7`)
+a second stage older than v10 (`[BOOT] STAGE2.BIN: too old, needs v10 (install-stage2): v6`)
 and stays at its `s1> ` prompt, from where `install-stage2` works; and v0.3.x's bitstream
 can't run the new second stage, which then says "needs a CPU with RV32M: program the v0.4.0
 bitstream or later" and stops (program the flash then; the card stays as it is). The card's
@@ -167,10 +170,16 @@ image copies to its RAM at startup.
   `riscv32im-unknown-none-elf` (`rustup target add riscv32im-unknown-none-elf`). Its
   `prj.conf` keeps it small (minimal libc, `printk` without `printf`, small stacks; 13 KB).
 - The board `vux9k` enforces its 4 MB / 3 MB at link time.
-- The console is the SoC's UART. Its driver also has the interrupt-driven API
-  (`CONFIG_UART_INTERRUPT_DRIVEN`): RX on the machine external interrupt, TX refilled
-  from a kernel timer since the UART has no TX interrupt (`vux9k-zephyr-bsp/README.md`,
-  "UART"; `vux9k-zephyr-bsp/irq_echo/` is an example). The system timer is the CLINT's
+- The console is the SoC's UART, which has LiteX liteuart's registers, so the board uses
+  Zephyr's own driver (`litex,uart0`). It also has the interrupt-driven API
+  (`CONFIG_UART_INTERRUPT_DRIVEN`): RX and TX on the machine external interrupt
+  (`vux9k-zephyr-bsp/README.md`, "UART"; `vux9k-zephyr-bsp/irq_echo/` is an example). The
+  UART's TX event is a level (the TX FIFO has room), so a callback that has nothing more to
+  send calls `uart_irq_tx_disable()`, or the interrupt comes back at once; EV_PENDING is
+  EV_STATUS masked by EV_ENABLE once EV_ENABLE isn't 0, as the driver's
+  `uart_irq_is_pending()` expects (with EV_ENABLE 0 it shows EV_STATUS, for Linux's polled
+  driver);
+  `uart_err_check()` returns `-ENOSYS` (the UART has no error flags). The system timer is the CLINT's
   `mtime` (`0x2000_0000`, SiFive's `riscv,clint0` layout: `mtimecmp` at `+0x4000`, `mtime`
   at `+0xBFF8`; 18 ticks per microsecond); the board runs the kernel tickless at 1000
   ticks/s, so timeouts have 1 ms resolution.
@@ -191,7 +200,8 @@ writes to the UART at Hack address 24576):
 hcc -r hack/main.c -o app.bin    # the image for the emulator (--mode hack)
 ```
 
-Hack mode sees the UART at `0x6000`-`0x6003`, the GPIO at `0x6004`-`0x600F` and 24K words
+Hack mode sees the UART at `0x6000`-`0x6003` (RXTX, TXFULL, RXEMPTY, EV_STATUS), the GPIO at
+`0x6004`-`0x600F` and 24K words
 of RAM (`0x0000`-`0x5FFF`); its code and data are in the PSRAM, in two segments, so a fetch that
 misses the instruction cache waits ~49 cycles and a load or store that misses the data cache
 ~49 (~99 with a write-back); 8 consecutive RAM words share a data-cache line
@@ -346,10 +356,10 @@ whole SoC) and starts the first stage again, which boots the card. A Hack progra
 formed by addition such as `0x255A + 0x4000 + 0x4000` (an `@n` holds at most `0x7FFF`), and
 without writing `0x6008` first: a soft reset without a mode starts RV32, the first stage (the
 Hack demo ends this way).
-The UART, timer, GPIO and SD SPI master keep their state across it
-([Memory & MMIO Register Map](../README.md#memory--mmio-register-map)); so does the CLINT's
-`msip`: clear it before the soft reset if you set it, or the next program takes a machine
-software interrupt as soon as it enables `mie.MSIE`.
+The UART (its FIFOs; its EV_ENABLE is cleared), timer, GPIO and SD SPI master keep their
+state across it ([Memory & MMIO Register Map](../README.md#memory--mmio-register-map)); so
+does the CLINT's `msip`: clear it before the soft reset if you set it, or the next program
+takes a machine software interrupt as soon as it enables `mie.MSIE`.
 
 **If output stops after ~128 bytes** or arrives seconds late: the Tang Nano 9K's on-board
 USB-UART bridge (BL702) does this when another full-speed USB device is busy on the same
@@ -372,7 +382,8 @@ their slots, which this revision no longer reads.) v0.4.0 added RV32M to this re
 applications and cards keep working on it, but software built for v0.4.0 or later needs its
 bitstream ("Upgrading from v0.3.x", section 2). The same release moved the timer to the
 CLINT (`0x2000_0000`) and broke that promise for the timer: v0.3.x's second stage doesn't
-start on it (the first stage refuses second stages before v9), and v0.3.x's applications
+start on it (the first stage refuses second stages before v9, v10 since the UART's change
+below), and v0.3.x's applications
 that use the timer at `0x4000_1000` must be rebuilt: that page is gone (it reads 0 and
 ignores writes, as an unassigned address does). The same release added U-mode, which changes
 one thing for M-mode software: `mstatus.MPP` is real now, so an `mret` with MPP left at 0 (after
@@ -380,7 +391,14 @@ writing `mstatus` without it, or a second `mret` without a trap between) lands i
 removed the UART's receive-error flags: status bits 2 and 3 (`overrun`, `frame_err`) read 0, and
 reading the status register no longer clears anything. A byte that arrives with the RX FIFO full
 is still dropped, and a frame with a low stop bit is still received; software that checked those
-bits sees no errors.
+bits sees no errors. Then the same release replaced the UART's registers with LiteX liteuart's
+(README's map: RXTX at `0x00`, TXFULL `0x04`, RXEMPTY `0x08`, the events and EV_ENABLE, a TX
+interrupt) and broke the promise for the UART too: v0.3.x's data register is still at `0x00`,
+but its status register at `0x04` is TXFULL now (bit 1, `tx_full`, reads 0: a program that waits
+on it sends into a full FIFO and loses bytes) and `rx_empty` moved to `0x08`, so v0.3.x's second
+stage and applications that use the UART must be rebuilt (the first stage refuses second stages
+before v10). The receive interrupt needs EV_ENABLE's RX bit now. Hack's `0x6001`-`0x6003` are
+TXFULL, RXEMPTY and EV_STATUS.
 
 A later hardware revision makes no such promise. Its memory map, registers, file format,
 SD card layout and loaders may all change, and its release says how to rebuild and

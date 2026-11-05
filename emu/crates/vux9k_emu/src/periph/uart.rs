@@ -1,12 +1,24 @@
 // Copyright (c) 2026 Takayuki Nagata
 // SPDX-License-Identifier: MIT
 
-//! UART, soc/uart/uart_controller.veryl + uart_tx/uart_rx/fifo_sync/clk_timer, as
-//! soc_top wires it: 115200 8N1 at 18 MHz (156 clocks per bit), 32-byte TX and RX
-//! FIFOs, TX only from register 0x0, status {tx_full, rx_empty} (reading it has no side
-//! effect), and the machine external interrupt while the RX FIFO holds data. A byte that
-//! arrives with the RX FIFO full is dropped and a frame with a low stop bit is kept, both
-//! without a trace in the status.
+//! UART, soc/uart/uart_controller.veryl + uart_tx/uart_rx/fifo_sync/clk_timer behind
+//! soc/uart/uart_regs.veryl, as soc_top wires them: 115200 8N1 at 18 MHz (156 clocks per
+//! bit), 32-byte TX and RX FIFOs, liteuart's registers (`read`/`write`: 32-bit words
+//! decoded on addr[7:2], repeating every 256 bytes, byte enables not looked at): 0x00 RXTX
+//! (a read pops RX, a write pushes TX), 0x04 TXFULL, 0x08 RXEMPTY, 0x0C EV_STATUS (bit 0
+//! TX = TX FIFO not full, bit 1 RX = RX FIFO not empty), 0x10 EV_PENDING (EV_STATUS while
+//! EV_ENABLE is 0, EV_STATUS & EV_ENABLE otherwise: Linux's polled liteuart never enables
+//! anything and reads the levels there, Zephyr's uart_console ISR loops while it shows an
+//! event and needs a disabled one hidden), 0x14 EV_ENABLE (2 bits; reset 0, and 0 again at
+//! the CPU's soft reset, `soft_reset`), 0x18 TXEMPTY (the TX FIFO is empty), 0x1C RXFULL; the rest read 0 and
+//! ignore writes. The events are levels, not latched: EV_PENDING ignores writes, and the
+//! machine external interrupt is `EV_STATUS & EV_ENABLE != 0` (`irq`). A byte that arrives
+//! with the RX FIFO full is dropped and a frame with a low stop bit is kept, both without a
+//! trace in any register.
+//!
+//! `legacy_read`/`legacy_write`/`rx_pending` are the register view before it (v0.3.x's
+//! bitstreams, less their sticky error bits): data at +0, status at +4 (bit 0 rx_empty,
+//! bit 1 tx_full), the interrupt while the RX FIFO holds data; only `Soc::v03_mmio` uses it.
 //!
 //! Timing (all derived from the RTL, and proven against it by the lockstep tests):
 //! - The TX bit timer free-runs from reset: its alarm fires in cycles 155 + 156n (BIT - 1 + BIT n).
@@ -17,19 +29,9 @@
 //!   cycle s + 1485 (the middle of its stop bit: 2 synchronizer stages and the
 //!   IDLE cycle, BIT/2 to mid start bit, then 9 bit times), or dropped if the FIFO is
 //!   full then.
-//! - The CPU reads the data/status in its MEM_WAIT cycle (combinational); the pop
-//!   happens at the end of that cycle.
-//!
-//! The Linux profile (emulator only, ahead of the RTL) reads and writes the same UART
-//! through a liteuart register view instead (Linux's drivers/tty/serial/liteuart.c,
-//! `litex,liteuart`; `lite_read`/`lite_write`, 32-bit words decoded on addr[7:2], repeating
-//! every 256 bytes): 0x00 RXTX (a read pops RX, a write pushes TX, as register 0x0 here),
-//! 0x04 TXFULL, 0x08 RXEMPTY (bit 0), 0x0C EV_STATUS and 0x10 EV_PENDING (bit 0 TX = TX
-//! FIFO not full, bit 1 RX = RX FIFO not empty), 0x14 EV_ENABLE (2 bits, reset 0). The
-//! events are levels, not latched: EV_PENDING equals EV_STATUS and ignores writes (the
-//! driver's write of EV_RX after each byte has nothing to clear), and the machine external
-//! interrupt is `EV_ENABLE & EV_PENDING != 0` (`lite_irq`). Timing as for the RTL's
-//! registers.
+//! - The CPU reads a register in its MEM_WAIT cycle (combinational); the pop happens at
+//!   the end of that cycle. A store (TX push, EV_ENABLE) takes effect at the end of its
+//!   cycle, so the interrupt follows from the next.
 //!
 //! Everything that happens at one clock edge is decided from the state during that
 //! cycle; CPU effects are therefore queued and applied at their edge, after the UART's
@@ -51,7 +53,7 @@ const RX_PUSH_DELAY: u64 = 3 + BIT / 2 + 9 * BIT;
 enum CpuOp {
     TxPush(u8),
     RxPop,
-    /// liteuart view: EV_ENABLE is written.
+    /// EV_ENABLE is written (or cleared by the soft reset).
     SetEvEnable(u8),
 }
 
@@ -84,7 +86,7 @@ pub struct Uart {
     cpu_ops: VecDeque<(u64, CpuOp)>,
     /// No edge before this cycle changes anything (`advance`'s fast path; 0 = unknown).
     quiet_until: u64,
-    /// liteuart view's EV_ENABLE (bit 0 TX, bit 1 RX).
+    /// EV_ENABLE (bit 0 TX, bit 1 RX).
     ev_enable: u8,
 }
 
@@ -195,69 +197,67 @@ impl Uart {
         self.quiet_until = self.quiet_until.min(edge);
     }
 
-    /// Status during cycle `c` (the state must have been advanced to `c`).
-    fn status(&self) -> u32 {
-        ((self.tx_fifo.len() == FIFO_DEPTH) as u32) << 1 | self.rx_fifo.is_empty() as u32
+    /// EV_STATUS (state advanced to the cycle).
+    fn events(&self) -> u32 {
+        let tx = self.tx_fifo.len() < FIFO_DEPTH;
+        let rx = !self.rx_fifo.is_empty();
+        tx as u32 | (rx as u32) << 1
     }
 
-    /// CPU read in cycle `c` (its MEM_WAIT cycle): data (offset 0, pops a byte) or
-    /// status (any other offset, no side effect).
-    pub fn read(&mut self, addr: u32, c: u64) -> u32 {
-        self.advance(c);
-        if addr & 0xF == 0 {
-            let head = self.rx_fifo.front().copied();
-            if head.is_some() {
-                self.queue(c, CpuOp::RxPop);
-            }
-            head.unwrap_or(0) as u32
+    /// EV_STATUS & EV_ENABLE, the interrupt's events (state advanced to the cycle).
+    fn enabled(&self) -> u32 {
+        self.ev_enable as u32 & self.events()
+    }
+
+    /// EV_PENDING: EV_STATUS while EV_ENABLE is 0, else EV_STATUS & EV_ENABLE (state
+    /// advanced to the cycle).
+    fn pending(&self) -> u32 {
+        if self.ev_enable == 0 {
+            self.events()
         } else {
-            self.status()
+            self.enabled()
         }
     }
 
-    /// CPU write at the end of cycle `c`: only register 0x0 transmits, and only when
-    /// the TX FIFO isn't full.
-    pub fn write(&mut self, addr: u32, v: u32, c: u64) {
-        if addr & 0xF != 0 {
-            return;
+    /// Queue the pop of the RX FIFO's head at the end of cycle `c`, if there is one, and
+    /// return it (0 when empty).
+    fn pop_head(&mut self, c: u64) -> u32 {
+        let head = self.rx_fifo.front().copied();
+        if head.is_some() {
+            self.queue(c, CpuOp::RxPop);
         }
+        head.unwrap_or(0) as u32
+    }
+
+    /// Queue a TX push at the end of cycle `c` (dropped when the TX FIFO is full).
+    fn push_tx(&mut self, v: u32, c: u64) {
         self.advance(c);
         if self.tx_fifo.len() < FIFO_DEPTH {
             self.queue(c, CpuOp::TxPush(v as u8));
         }
     }
 
-    /// liteuart view: EV_STATUS = EV_PENDING (state advanced to the cycle).
-    fn lite_events(&self) -> u32 {
-        let tx = self.tx_fifo.len() < FIFO_DEPTH;
-        let rx = !self.rx_fifo.is_empty();
-        tx as u32 | (rx as u32) << 1
-    }
-
-    /// liteuart view: CPU read in cycle `c` (its MEM_WAIT cycle).
-    pub fn lite_read(&mut self, addr: u32, c: u64) -> u32 {
+    /// CPU read in cycle `c` (its MEM_WAIT cycle).
+    pub fn read(&mut self, addr: u32, c: u64) -> u32 {
         self.advance(c);
         match addr & 0xFC {
-            0x00 => {
-                let head = self.rx_fifo.front().copied();
-                if head.is_some() {
-                    self.queue(c, CpuOp::RxPop);
-                }
-                head.unwrap_or(0) as u32
-            }
+            0x00 => self.pop_head(c),
             0x04 => (self.tx_fifo.len() == FIFO_DEPTH) as u32,
             0x08 => self.rx_fifo.is_empty() as u32,
-            0x0C | 0x10 => self.lite_events(),
+            0x0C => self.events(),
+            0x10 => self.pending(),
             0x14 => self.ev_enable as u32,
+            0x18 => self.tx_fifo.is_empty() as u32,
+            0x1C => (self.rx_fifo.len() == FIFO_DEPTH) as u32,
             _ => 0,
         }
     }
 
-    /// liteuart view: CPU write at the end of cycle `c` (RXTX transmits when the TX FIFO
-    /// isn't full; EV_ENABLE; the rest ignore writes).
-    pub fn lite_write(&mut self, addr: u32, v: u32, c: u64) {
+    /// CPU write at the end of cycle `c` (RXTX transmits when the TX FIFO isn't full;
+    /// EV_ENABLE takes bits 1:0; the rest ignore writes).
+    pub fn write(&mut self, addr: u32, v: u32, c: u64) {
         match addr & 0xFC {
-            0x00 => self.write(0, v, c),
+            0x00 => self.push_tx(v, c),
             0x14 => {
                 self.advance(c);
                 self.queue(c, CpuOp::SetEvEnable((v & 3) as u8));
@@ -266,12 +266,37 @@ impl Uart {
         }
     }
 
-    /// liteuart view: the machine external interrupt during cycle `c`
-    /// (EV_ENABLE & EV_PENDING).
-    #[inline]
-    pub fn lite_irq(&mut self, c: u64) -> bool {
+    /// The CPU's soft reset, its pulse covering cycle `c` (after every store before it):
+    /// EV_ENABLE is cleared at the end of `c`; the FIFOs and the line go on.
+    pub fn soft_reset(&mut self, c: u64) {
         self.advance(c);
-        self.ev_enable as u32 & self.lite_events() != 0
+        self.queue(c, CpuOp::SetEvEnable(0));
+    }
+
+    /// The machine external interrupt during cycle `c` (EV_STATUS & EV_ENABLE != 0).
+    #[inline]
+    pub fn irq(&mut self, c: u64) -> bool {
+        self.advance(c);
+        self.enabled() != 0
+    }
+
+    /// The register view before liteuart's (`Soc::v03_mmio`): CPU read in cycle `c`, data
+    /// at offset 0 (pops a byte), status at any other offset (no side effect).
+    pub fn legacy_read(&mut self, addr: u32, c: u64) -> u32 {
+        self.advance(c);
+        if addr & 0xF == 0 {
+            self.pop_head(c)
+        } else {
+            ((self.tx_fifo.len() == FIFO_DEPTH) as u32) << 1 | self.rx_fifo.is_empty() as u32
+        }
+    }
+
+    /// The register view before liteuart's: CPU write at the end of cycle `c`, only
+    /// offset 0 transmits.
+    pub fn legacy_write(&mut self, addr: u32, v: u32, c: u64) {
+        if addr & 0xF == 0 {
+            self.push_tx(v, c);
+        }
     }
 
     /// Bytes in the RX FIFO during cycle `c`.
@@ -287,7 +312,8 @@ impl Uart {
         self.rx_dropped
     }
 
-    /// True while the RX FIFO holds data during cycle `c` (the MEI line).
+    /// True while the RX FIFO holds data during cycle `c` (the MEI line of the view before
+    /// liteuart's, `Soc::v03_mmio`).
     #[inline]
     pub fn rx_pending(&mut self, c: u64) -> bool {
         self.advance(c);

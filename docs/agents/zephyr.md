@@ -10,7 +10,7 @@ Read before changing `zephyr_workspace/`. Index and the rules that apply everywh
 ## Zephyr: the board `vux9k`
 
 `zephyr_workspace/boards/vux9k/` defines one HWMv2 target on `vux9k-common.dtsi`
-(18 MHz, `vux9k,uart`, and the CLINT, `timer_core` at `0x2000_0000`, as
+(18 MHz, the UART as `litex,uart0` (Zephyr's `uart_liteuart` driver; below), and the CLINT, `timer_core` at `0x2000_0000`, as
 `sifive,clint0`, whose mtimecmp +0x4000 / mtime +0xBFF8 Zephyr's in-tree
 `riscv_machine_timer` driver uses, its timer interrupt the node's second
 `interrupts-extended` entry (MSI 3, then MTI 7); before the CLINT the board used the
@@ -100,8 +100,7 @@ aren't obvious:
   `prj_minimal.conf`'s `CONSOLE_SUBSYS` the port reads through a tty, which sees Ctrl-C only
   when the REPL asks for a character: `while True: pass` could not be stopped. Without it the
   port's `src/zephyr_getchar.c` takes each byte in the RX interrupt (Ctrl-C raises
-  `KeyboardInterrupt` at once) and output is `uart_poll_out`, so the driver's emulated TX
-  interrupt (the k_timer below) isn't used.
+  `KeyboardInterrupt` at once) and output is `uart_poll_out`, so the TX interrupt isn't used.
 - **The banner's version is `MICROPY_GIT_TAG`** (`build-micropython` exports it):
   otherwise `py/makeversionhdr.py` runs `git describe` in the unpacked tree, finds this
   repository around it, and the image says `MicroPython <our commit>-dirty`.
@@ -137,39 +136,47 @@ line at its REPL, printing `[TIME]` lines.
 
 ## Zephyr: the interrupt-driven UART
 
-`uart_vux9k.c` implements the interrupt-driven API under `CONFIG_UART_INTERRUPT_DRIVEN`
-(the polling build, and so the demo's `zephyr.bin`, is unchanged by it). What the
-hardware gives and what the driver makes up for:
-- **RX is the machine external interrupt** (dts `interrupts-extended = <&cpu0_intc 11>`):
-  `soc_top` wires `ext_irq_in` to `!uart_empty`, level, with no enable bit in the UART.
-  `uart_irq_rx_disable()` therefore masks MEIE in `mie`; leaving it enabled with a
-  callback that doesn't read the FIFO dry re-enters the ISR forever (with no callback
-  set, the ISR masks it itself).
-- **There is no TX interrupt.** `uart_irq_tx_enable()` runs the callback at once (under
-  `irq_lock` when called from a thread; from inside the callback only a flag is set;
-  a thread the callback wakes there runs at the next reschedule point, not at once),
-  then a `k_timer` re-runs it every 700 us, rounded up to a tick, while TX stays enabled.
-  The board runs 1000 ticks/s (`vux9k_defconfig`) for this: at the earlier 100 it was
-  one 32-byte refill per 10 ms (~3 KB/s). An app that lowers
-  `CONFIG_SYS_CLOCK_TICKS_PER_SEC` slows its TX the same way. The kernel is tickless, so
-  the rate costs no periodic interrupts; the demo tests check `k_msleep(100)` to 102 ms,
-  a tick plus rounding, which fails at 100 ticks/s (110 or more). From the PSRAM without
-  its caches it read 103-104 ms (the kernel's own time).
-- `irq_tx_complete` and error interrupts are left out on purpose: the status register
-  has no "transmitter empty" bit, and the UART has no error flags.
-- **`err_check` always returns 0.** The UART reports no receive errors (a byte that arrives
-  with the RX FIFO full is dropped, a frame with a low stop bit is received), and a status
-  read has no side effect. It is defined anyway: without it `uart_err_check()` would return
-  `-ENOSYS`, which irq_echo would print as its `err=`. A lost byte shows in irq_echo's `rx=`
-  count instead. (Up to v0.3.x the status had sticky overrun/frame-error bits that a read
-  cleared, and the driver ORed them from every one of its status reads.)
+The UART has LiteX liteuart's registers (`soc/uart/uart_regs.veryl`), so the board uses
+Zephyr's own `uart_liteuart.c` (`litex,uart0`, `CONFIG_UART_LITEUART`); this module has no
+driver of its own (the former `uart_vux9k.c`, with its emulated TX interrupt, is gone).
+What the board adds for it and what to know:
+- **The interrupt's two cells.** The driver connects `DT_INST_IRQN(0)` with
+  `DT_INST_IRQ(0, priority)`, and `riscv,cpu-intc` has one cell (the irq), so a UART node
+  wired to it doesn't compile. `vux9k-common.dtsi` puts a node in between,
+  `vux9k,meip-intc` (`dts/bindings/interrupt-controller/`, two cells, no driver), wired to
+  `cpu0_intc` 11, and the UART names `interrupts = <11 0>` on it. With
+  `CONFIG_MULTI_LEVEL_INTERRUPTS` off, `DT_IRQN` is the irq cell itself, 11: the ISR is
+  mcause 11's, MEI. `soc.h` gives the driver its `litex_read8`/`litex_write8` (`sys_read8`/
+  `sys_write8` at the register's word address: `lbu`/`sb`, which the UART takes as word
+  accesses).
+- **The events are levels** (EV_TX: the TX FIFO isn't full; EV_RX: the RX FIFO isn't
+  empty), not LiteX's latched ones; the driver's write of EV_RX to EV_PENDING after each
+  byte does nothing, and nothing else needs it. EV_PENDING is EV_STATUS masked by EV_ENABLE
+  once EV_ENABLE isn't 0 (with EV_ENABLE 0 it is EV_STATUS: Linux's liteuart, polled, never
+  enables anything and services RX/TX only from EV_PENDING): the driver's `irq_is_pending`
+  reads it, and `uart_console.c`'s ISR loops `while (uart_irq_update() &&
+  uart_irq_is_pending())`, skipping the RX work when no byte is there. With EV_PENDING
+  unmasked while RX alone was enabled, its TX bit (room in the FIFO) kept that loop going
+  forever: MicroPython's REPL hung in the ISR after its prompt. With EV_TX enabled and room in the FIFO the
+  interrupt is pending all the time, so a callback disables TX (`uart_irq_tx_disable()`)
+  once it has nothing to send; irq_echo's does. TX is a real interrupt now: the 700 us
+  k_timer of the old driver, and the reason the board runs 1000 ticks/s, are gone (the
+  ticks stay at 1000: the demo tests check `k_msleep(100)` to 102 ms).
+- **EV_ENABLE resets with the soft reset**, the FIFOs don't: an application that left an
+  event enabled would otherwise interrupt the next one as soon as its driver's init calls
+  `irq_enable` (the stages enable no interrupts).
+- `uart_err_check()` returns `-ENOSYS`: the UART reports no receive errors (a byte that
+  arrives with the RX FIFO full is dropped, a frame with a low stop bit is received), and
+  the driver has no `err_check`. A lost byte shows in irq_echo's `rx=` count. (Up to v0.3.x
+  the status had sticky overrun/frame-error bits that a read cleared.)
 - **RX at full speed needs the instruction cache.** From the uncached PSRAM (before the
   cache) the RX handler took about 4.3 frame times a byte, so input longer than the FIFO
   overran at 115200 baud (a 64-byte line came back with 52 bytes). With the cache the
   back-to-back line comes back whole. The paced line stays: the board test sends it by
   default (16-byte chunks, a chunk every 176 frame times, `sim/integration/irq_echo_pace.py`,
   shared by the emulator, RTL and board tests; the emulator test prints the measurement and
-  fails below a 2x margin). The overrun check (`rx=32 drop=0 err=0`) sends a line that
+  fails below a 2x margin; the TX interrupts the echo now takes while a line comes in are
+  part of what it measures). The overrun check (`rx=32 drop=0`) sends a line that
   arrives before irq_echo enables RX: the FIFO keeps 32 bytes, and the reply is exactly those.
   The line is 33 bytes, the shortest that overflows the FIFO. It no longer races irq_echo's
   start-up, which the instruction cache's lines moved ahead of it (RX enabled after ~32k
@@ -182,13 +189,9 @@ hardware gives and what the driver makes up for:
   emulator the RX level and its count of dropped bytes; and nothing yet sent), so a lost race
   says so instead of reading as a wrong echo.
 
-A TX interrupt and an interrupt-enable register would only come with a later hardware
-revision, whose register map isn't bound by this one's (docs/APP_DEVELOPMENT.md, "Hardware
-revisions and compatibility"); this revision doesn't add them.
-
 `zephyr_workspace/irq_echo/` exercises all of it: main sleeps on a semaphore the RX
 callback gives, and each line comes back upper-cased in one piece (longer than the TX
-FIFO, so the timer path runs) with `rx=<n> drop=<n> err=<n>`. It does without printk
+FIFO, so the TX interrupt refills it) with `rx=<n> drop=<n>`. It does without printk
 (cbprintf alone is 1.5 KB), so it stays small and loads quickly, like the Rust demo. Its handlers run from the PSRAM like the rest. Tests:
 `sim/emu/test_zephyr_irq_echo.py` (loaded into the PSRAM, and through the second stage's
 `run VUX9K/APPS/IRQECHO.BIN`) and `sim-zephyr-irq-echo-rtl` (preloaded into the PSRAM); on

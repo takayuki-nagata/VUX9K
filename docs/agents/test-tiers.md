@@ -51,8 +51,9 @@ UART and SD chain: transfer v2 carries the second stage (35 KB, ~54M cycles at 1
 baud) to the first stage's `u` for a RAM boot, the second stage installs a new
 `\VUX9K\STAGE2.BIN` on the FAT32 card (`install`), and after its `reset` the first stage
 boots that file. The first stage's other commands are `test_soc_boot.py`'s. RTL reads the card
-at ~230 cycles a byte as the board does: the other SoC tests boot a 28-byte `STAGE2.BIN`
-(`soc_env.v4_file`), not the second stage.
+at ~230 cycles a byte as the board does: the other SoC tests boot a tiny `STAGE2.BIN`
+that prints '#' (`soc_env.v4_file`; `soc_env.v4_size` gives the size the first stage shows
+for it), not the second stage.
 
 `test_soc_stage2.py` (`sim-stage2`) is the RTL test of the real second stage booted from the
 card (`soc_env.s2_card`: `STAGE2.BIN` and the demos of `make apps` in `\VUX9K\APPS\`): `ls`,
@@ -127,5 +128,6 @@ clock-and-board.md, "Board UART output that is noise: ModemManager and the bridg
   this tree's first stage, which refuses that second stage (older than `MIN_STAGE2_VERSION`)
   and stays at `s1> `, then docs/APP_DEVELOPMENT.md's upgrade steps with this tree's
   `vux_tool` (`install-stage2` from there, `put`, `run-app`, `r` back to the new second
-  stage), and v0.3.0's first stage on a CPU without M (`m_ext`) and with the TIMER page
-  (`timer_page`) booting this tree's second stage.
+  stage), and v0.3.0's first stage on a CPU without M (`m_ext`) and with its MMIO, the TIMER
+  page and the UART's older registers (`v03_mmio`), booting this tree's second stage, which
+  prints its no-M message through that UART.

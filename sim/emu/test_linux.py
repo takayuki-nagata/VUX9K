@@ -3,14 +3,13 @@
 
 """
 noMMU Linux (make linux: linux_workspace/, the kernel with buildroot's busybox initramfs built
-in) on the emulator's Linux profile, which is ahead of the RTL (the liteuart view;
+in) on the emulator's Linux profile, the real SoC (the liteuart registers are the RTL's;
 docs/agents/linux.md): the kernel Image and the device tree loaded into the PSRAM
 (Soc.load_linux), the boot to busybox's shell on the console, then commands typed at it, one of
 them a builtin and the others busybox executed again (FLAT, copied into RAM at each exec).
 
 The cycles, retired instructions and the caches' hit rates to the prompt and for each command
-are printed by test_record_measurements. Nothing here runs on the board: the RTL has none of the
-profile's additions yet.
+are printed by test_record_measurements. Nothing here runs on the board.
 """
 
 import os

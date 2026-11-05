@@ -189,13 +189,15 @@ fn stage2_is_rv32_only() {
 
 #[test]
 fn stage2_is_not_older_than_the_gate() {
-    // Before v9 a second stage reads mtime at the TIMER page, not at the CLINT
-    assert_eq!(MIN_STAGE2_VERSION, 9);
+    // Before v9 a second stage reads mtime at the TIMER page, not at the CLINT; before v10
+    // it uses the UART's older registers
+    assert_eq!(MIN_STAGE2_VERSION, 10);
     for (version, want) in [
         (0, Err(BootError::TooOld(0))),
         (8, Err(BootError::TooOld(8))),
-        (9, Ok(())),
+        (9, Err(BootError::TooOld(9))),
         (10, Ok(())),
+        (11, Ok(())),
         (u32::MAX, Ok(())),
     ] {
         let h = ImageHeader::parse(&v4_version(4, MODE_RISCV, S2, version)).unwrap();
@@ -251,7 +253,7 @@ fn boot_errors_read_as_text() {
         (BootError::Crc, "CRC mismatch"),
         (
             BootError::TooOld(7),
-            "too old, needs v9 (install-stage2): v7",
+            "too old, needs v10 (install-stage2): v7",
         ),
     ];
     for (e, want) in cases {

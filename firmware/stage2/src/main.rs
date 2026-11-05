@@ -16,9 +16,10 @@ use core::panic::PanicInfo;
 
 global_asm!(
     include_str!("../bootstrap/start.s"),
-    UART_DATA = const fw_common::map::UART_DATA,
-    UART_STATUS = const fw_common::map::UART_STATUS,
-    UART_TX_FULL = const fw_common::map::UART_TX_FULL,
+    // The no-M message goes out through the UART of the bitstreams without M (start.s)
+    UART_DATA = const fw_common::map::UART_RXTX,
+    UART_STATUS = const fw_common::map::LEGACY_UART_STATUS,
+    UART_TX_FULL = const fw_common::map::LEGACY_TX_FULL,
 );
 
 mod cmds;
@@ -31,8 +32,9 @@ use fw_drivers::uart::Uart;
 /// Raise it with every change of the second stage: its v4 header carries it (the
 /// Makefile's mkv4 reads it from here), `info` and the banner show it, and the tests
 /// read it from here.
-const STAGE2_VERSION: u32 = 9;
-// The first stage starts no second stage older than this (it reads mtime at the CLINT)
+const STAGE2_VERSION: u32 = 10;
+// The first stage starts no second stage older than this (it reads mtime at the CLINT and
+// the UART's liteuart registers)
 const _: () = assert!(STAGE2_VERSION >= fw_common::boot::MIN_STAGE2_VERSION);
 
 #[no_mangle]

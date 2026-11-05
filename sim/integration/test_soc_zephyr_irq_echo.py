@@ -9,7 +9,7 @@ sim/emu/test_zephyr_irq_echo.py). Its interrupt handlers run from the PSRAM as w
 instruction cache in front of it they keep up with a line sent back to back at 115200 baud.
 The paced line (irq_echo_pace) is what the board test sends. A line that arrives before
 irq_echo enables RX overflows the 32-byte RX FIFO: its 33rd byte is lost, with no error to
-report (uart_err_check is 0). The ROM holds irq_echo back until it has
+report (the UART has no error flags; irq_echo prints none). The ROM holds irq_echo back until it has
 (irq_echo_pace.hold_words), which leaves no race with its start-up time.
 """
 
@@ -31,7 +31,7 @@ from soc_env import (
 
 ECHO_BIN = os.path.join(REPO_ROOT, "build", "zephyr-irq-echo", "zephyr", "zephyr.bin")
 BURST = bytes(b"abcdefghijklmnopqrstuvwxyz0123456789"[i % 36] for i in range(64))
-ECHO = BURST.upper() + b"\nrx=64 drop=0 err=0\n"
+ECHO = BURST.upper() + b"\nrx=64 drop=0\n"
 RX_FIFO = pace.RX_FIFO
 EARLY = BURST[: pace.OVERRUN_LINE]  # overflows the RX FIFO by one byte
 BRIDGE_BYTE_BITS = 11  # VirtualSerialBridge sends two stop bits
@@ -52,10 +52,10 @@ async def start(dut):
 
 
 async def reply(ser) -> bytes:
-    """The echo and its rx/drop/err line."""
-    out = await ser.wait_for(b"err=", timeout_cycles=10_000_000)
-    # The error code and the newline (TX from the PSRAM is slow); wait_for may have read them
-    if b"\n" not in out[out.index(b"err=") :]:
+    """The echo and its rx/drop line."""
+    out = await ser.wait_for(b"drop=", timeout_cycles=10_000_000)
+    # The count and the newline (TX from the PSRAM is slow); wait_for may have read them
+    if b"\n" not in out[out.index(b"drop=") :]:
         out += await ser.wait_for(b"\n", timeout_cycles=5_000_000)
     return out
 
@@ -87,8 +87,8 @@ async def test_zephyr_irq_echo_back_to_back(dut):
 @cocotb.test(timeout_time=2000, timeout_unit="ms")
 async def test_zephyr_irq_echo_overrun_while_it_starts(dut):
     """A line that arrives before irq_echo enables RX overflows the RX FIFO; the line keeps its
-    first 32 bytes, the 33rd is lost, and uart_err_check has nothing to report (the UART has
-    no error flags). The ROM holds irq_echo back until then, whatever its start-up time"""
+    first 32 bytes, the 33rd is lost, which only rx= shows (the UART has no error flags). The
+    ROM holds irq_echo back until then, whatever its start-up time"""
     image = echo_image()
 
     def preload(soc):
@@ -110,4 +110,4 @@ async def test_zephyr_irq_echo_overrun_while_it_starts(dut):
     await wait_cycles(1_000_000)  # past uart_irq_rx_enable and the handler emptying the FIFO
     ser.write(b"\n")
     out = await reply(ser)
-    assert out == BURST[:RX_FIFO].upper() + f"\nrx={RX_FIFO} drop=0 err=0\n".encode(), out
+    assert out == BURST[:RX_FIFO].upper() + f"\nrx={RX_FIFO} drop=0\n".encode(), out
