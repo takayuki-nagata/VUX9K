@@ -20,7 +20,7 @@ import rv32_asm
 from rv32_asm import Asm
 from soc_env import check_psram_pins, load_imem, start_soc
 
-UART = 0x4000_0000  # +0 data, +4 status {frame_err, overrun, tx_full, rx_empty}
+UART = 0x4000_0000  # +0 data, +4 status {tx_full, rx_empty}
 PAGE1 = 0x4000_1000  # MMIO page 1, the TIMER page until the CLINT replaced it: unassigned
 GPIO = 0x4000_3000  # +0 LEDs, +4 button, +C soft-reset magic
 CLINT = 0x2000_0000  # region 2: +0 msip, +0x4000/+0x4004 mtimecmp lo/hi, +0xBFF8/+0xBFFC mtime lo/hi
@@ -361,7 +361,7 @@ async def test_soc_clint(dut):
 
 
 def uart_status_program() -> list[int]:
-    """UART register decode and the sticky RX error flags, reported as 'F<code>' or 'UPASS'."""
+    """UART register decode and a byte dropped on a full RX FIFO, reported as 'F<code>' or 'UPASS'."""
     a = Asm()
     a.li("s0", UART)
     # Only the data register (offset 0) transmits: this must not show up on TX
@@ -373,14 +373,28 @@ def uart_status_program() -> list[int]:
     a.label("spin")
     a.addi("t3", "t3", -1)
     a.bnez("t3", "spin")
-    # 1: the first status read shows the overrun (bit 2) and a non-empty FIFO
+    # 1: the status shows a non-empty FIFO and nothing else (bits 2-3, once the error
+    # flags, read 0)
     a.lw("t1", 4, "s0")
-    a.andi("t1", "t1", 0xD)
-    _expect(a, "t1", 0x4, 1)
-    # 2: reading the status cleared it
+    _expect(a, "t1", 0, 1)
+    # 2: a second read the same: reading the status has no side effect
     a.lw("t1", 4, "s0")
-    a.andi("t1", "t1", 0x4)
     _expect(a, "t1", 0, 2)
+    # 3: the FIFO holds the first 32 bytes in order (0x40..0x5F), the 33rd was dropped
+    a.li("t4", 0x40)
+    a.li("t5", 0x60)
+    a.label("drain")
+    a.lw("t1", 4, "s0")
+    a.li("a1", 3)
+    a.andi("t1", "t1", 1)
+    a.bnez("t1", "fail")  # empty before 0x60
+    a.lw("t1", 0, "s0")
+    a.bne("t1", "t4", "fail")
+    a.addi("t4", "t4", 1)
+    a.bne("t4", "t5", "drain")
+    # 4: empty now (the 33rd byte isn't there)
+    a.lw("t1", 4, "s0")
+    _expect(a, "t1", 1, 4)
     _puts(a, "UPASS\n")
     a.label("halt")
     a.j("halt")
@@ -392,7 +406,7 @@ def uart_status_program() -> list[int]:
 
 @cocotb.test()
 async def test_soc_uart_status(dut):
-    """TX only from the data register; RX overrun flagged in status bit 2, cleared by reading it"""
+    """TX only from the data register; a byte into a full RX FIFO is dropped, status bits 2-3 read 0"""
     program = uart_status_program()
     ser, _ = await start_soc(dut, during_reset=lambda soc: load_imem(soc, program))
     before = await ser.wait_for(b"?", timeout_cycles=200_000)

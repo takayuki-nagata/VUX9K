@@ -108,6 +108,7 @@ SOC_RTL_PUBLIC = [
     ("unified_cpu", "pc_out"),  # dut.cpu_inst.pc_out
     ("soc_rom", "mem"),  # dut.rom_inst.mem[] (the boot ROM: a test's program in place of the first stage)
     ("rv32i_regfile", "registers"),  # test_soc_lockstep zeroes the register file
+    ("uart_controller", "rx_full"),  # test_soc_zephyr_irq_echo: the RX FIFO full before the app starts
     ("psram_word_model", "mem"),  # ...and the words of the wait-state window its programs use
     ("psram_word_model", "init_count"),  # soc_env.start_soc skips the PSRAM power-up
 ]

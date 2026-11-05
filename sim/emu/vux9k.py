@@ -165,7 +165,7 @@ def send_paced(soc, data: bytes, chunk: int = 16, drain_cycles: int = 50_000_000
         end = soc.cycle + drain_cycles
         while soc.uart_rx_level and soc.cycle < end:
             soc.run(2_000)
-    if soc.uart_overrun:
+    if soc.uart_rx_dropped:
         raise RuntimeError("UART RX overrun: the program didn't keep up with the host")
 
 

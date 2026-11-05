@@ -1327,6 +1327,39 @@ def rom_stores() -> list:
     return a.assemble()
 
 
+# --- the UART's RX FIFO overflowing ----------------------------------------------------
+UART_DROP_RX_CYCLE = 100  # 33 bytes back to back from here: the 33rd finds the FIFO full
+UART_DROP_READ = UART_DROP_RX_CYCLE + 33 * UART_FRAME  # past its push (~1,490 after its start)
+UART_DROP_CYCLES = UART_DROP_READ + 3_000  # done ~600 cycles after the read, then spins
+
+
+def uart_drop() -> list:
+    """A byte that arrives with the RX FIFO full is dropped without a trace in the status: from
+    UART_DROP_READ on, two status reads (bits 2-3 read 0, the second read the same as the
+    first), the 32 bytes popped into t1 one by one with the status after each (the last one
+    empty), then 'D'. The data register isn't read once the FIFO is empty: the RTL's FIFO then
+    shows a stale slot and the emulator 0."""
+    a = Asm()
+    a.li("s1", 0x4000_0000)  # UART
+    a.li("t2", UART_DROP_READ)
+    a.label("wait")
+    a.csrr("t1", "mcycle")
+    a.bltu("t1", "t2", "wait")
+    a.lw("s2", 4, "s1")  # status: not empty
+    a.lw("s3", 4, "s1")  # again: no side effect
+    a.li("t3", 32)  # what the FIFO holds; the status after the last pop reads empty
+    a.label("drain")
+    a.lw("t1", 0, "s1")
+    a.lw("s4", 4, "s1")
+    a.addi("t3", "t3", -1)
+    a.bnez("t3", "drain")
+    a.li("t1", ord("D"))
+    a.sw("t1", 0, "s1")
+    a.label("done")
+    a.j("done")
+    return a.assemble()
+
+
 # --- the CLINT -------------------------------------------------------------------------
 CLINT = 0x2000_0000  # soc_pkg::RV_REGION_CLINT: timer_core, repeating every 64 KB
 CLINT_MTIMECMP = CLINT + 0x4000  # soc_pkg::CLINT_MTIMECMP (lo, hi at +4)
@@ -1562,6 +1595,15 @@ def programs() -> list:
     progs.append(Program("amo", cycles=9_000, imem_words=amo(), uart_rx=[(AMO_RX_CYCLE, b"Z")]))
     # The CLINT: done by cycle ~1,900, then spins
     progs.append(Program("clint", cycles=CLINT_CYCLES, imem_words=clint(), uart_rx=[(CLINT_RX_CYCLE, b"Z")]))
+    # The RX FIFO overflowing: 33 bytes, read once they have all arrived
+    progs.append(
+        Program(
+            "uart_drop",
+            cycles=UART_DROP_CYCLES,
+            imem_words=uart_drop(),
+            uart_rx=[(UART_DROP_RX_CYCLE, bytes(range(0x40, 0x61)))],
+        )
+    )
     seeds = os.environ.get("LOCKSTEP_SEEDS", "")
     for s in [int(x) for x in seeds.split(",") if x]:
         progs.append(Program(f"random_rv_{s}", cycles=200_000, imem_words=random_rv(s, blocks=1500), slow=True))

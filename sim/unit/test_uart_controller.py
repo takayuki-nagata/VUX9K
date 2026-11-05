@@ -30,7 +30,6 @@ async def test_uart_controller(dut):
     dut.rst.value = 0
     dut.we.value = 0
     dut.re.value = 0
-    dut.clr_err.value = 0
     dut.wdata.value = 0
     dut.rxd.value = 1
 
@@ -94,15 +93,29 @@ async def send_frame(dut, byte_val: int, cnt: int, stop_bit: int = 1):
     dut.rxd.value = 1
 
 
+async def read_fifo(dut) -> list[int]:
+    """Pop the RX FIFO until it is empty; the bytes, in order."""
+    got: list[int] = []
+    for _ in range(40):  # 32 deep
+        if int(dut.empty.value):
+            return got
+        got.append(int(dut.rdata.value))
+        dut.re.value = 1
+        await FallingEdge(dut.clk)
+        dut.re.value = 0
+        await Timer(1, unit="ns")
+    raise AssertionError(f"the RX FIFO didn't empty after {len(got)} reads")
+
+
 @cocotb.test()
-async def test_uart_controller_error_flags(dut):
-    """overrun (byte dropped on a full RX FIFO) and frame_err are sticky until clr_err"""
+async def test_uart_controller_full_rx_fifo_and_bad_stop_bit(dut):
+    """A byte arriving while the RX FIFO is full is dropped and leaves the FIFO as it was;
+    a frame with a low stop bit is received like any other"""
     cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
     await FallingEdge(dut.clk)
     dut.rst.value = 0
     dut.we.value = 0
     dut.re.value = 0
-    dut.clr_err.value = 0
     dut.wdata.value = 0
     dut.rxd.value = 1
     for _ in range(3):
@@ -110,50 +123,40 @@ async def test_uart_controller_error_flags(dut):
     dut.rst.value = 1
     for _ in range(500):
         await FallingEdge(dut.clk)
-    cnt = int(dut.CNT.value) if hasattr(dut, "CNT") else 434
+    cnt = 434  # uart_controller's default CNT (parameters aren't VPI-visible on Verilator)
 
-    assert (int(dut.overrun.value), int(dut.frame_err.value)) == (0, 0)
-
-    # 32 bytes fill the RX FIFO; the 33rd is dropped
-    for i in range(33):
+    # 32 bytes fill the RX FIFO; the 33rd is dropped and the head stays the first byte
+    for i in range(32):
         await send_frame(dut, i, cnt)
     for _ in range(cnt):
         await FallingEdge(dut.clk)
-    assert int(dut.overrun.value) == 1, "33rd byte into a 32-deep RX FIFO must flag an overrun"
-    assert int(dut.frame_err.value) == 0
-
-    dut.clr_err.value = 1
-    await FallingEdge(dut.clk)
-    dut.clr_err.value = 0
-    assert int(dut.overrun.value) == 0, "clr_err must clear overrun"
-
-    # Drain the FIFO, then a frame with a low stop bit
-    dut.re.value = 1
-    for _ in range(32):
-        await FallingEdge(dut.clk)
-    dut.re.value = 0
-    assert int(dut.empty.value) == 1
-    await send_frame(dut, 0x55, cnt, stop_bit=0)
+    assert (int(dut.empty.value), int(dut.rdata.value)) == (0, 0)
+    await send_frame(dut, 0xA5, cnt)
     for _ in range(cnt):
         await FallingEdge(dut.clk)
-    assert int(dut.frame_err.value) == 1, "a low stop bit must flag a framing error"
-    assert int(dut.overrun.value) == 0
-    dut.clr_err.value = 1
-    await FallingEdge(dut.clk)
-    dut.clr_err.value = 0
-    assert int(dut.frame_err.value) == 0, "clr_err must clear frame_err"
+    assert (int(dut.empty.value), int(dut.rdata.value)) == (0, 0), "the dropped byte changed the FIFO's head"
+    got = await read_fifo(dut)
+    assert got == list(range(32)), f"the 33rd byte into a 32-deep RX FIFO must be dropped: {got}"
+
+    # A low stop bit: the byte is kept, and the next frame after it too
+    await send_frame(dut, 0x55, cnt, stop_bit=0)
+    await send_frame(dut, 0x3C, cnt)
+    for _ in range(cnt):
+        await FallingEdge(dut.clk)
+    got = await read_fifo(dut)
+    assert got == [0x55, 0x3C], f"a frame with a low stop bit must be received: {got}"
 
 
 @cocotb.test()
 async def test_uart_controller_random_loopback(dut):
     """Random bursts into the TX FIFO (some while it is full: dropped), random reads of the
     RX FIFO and pauses, over a txd->rxd loopback: the bytes read are exactly the accepted
-    ones, in order, with no overrun or framing error"""
+    ones, in order"""
     period_ns = 20
     cocotb.start_soon(Clock(dut.clk, period_ns, unit="ns").start())
     await FallingEdge(dut.clk)
     dut.rst.value = 0
-    for sig in ("we", "re", "clr_err", "wdata"):
+    for sig in ("we", "re", "wdata"):
         getattr(dut, sig).value = 0
     dut.rxd.value = 1
     await FallingEdge(dut.clk)
@@ -200,4 +203,3 @@ async def test_uart_controller_random_loopback(dut):
         await FallingEdge(dut.clk)
         await read_all()
     assert received == accepted, f"accepted {len(accepted)} bytes, read {len(received)}"
-    assert (int(dut.overrun.value), int(dut.frame_err.value)) == (0, 0)

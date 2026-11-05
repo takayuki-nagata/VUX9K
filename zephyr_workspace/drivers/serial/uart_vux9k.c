@@ -15,9 +15,6 @@
 
 #define STATUS_RX_EMPTY  (1U << 0)
 #define STATUS_TX_FULL   (1U << 1)
-#define STATUS_OVERRUN   (1U << 2) /* sticky; reading the status register clears it */
-#define STATUS_FRAME_ERR (1U << 3) /* sticky; reading the status register clears it */
-#define STATUS_ERRORS    (STATUS_OVERRUN | STATUS_FRAME_ERR)
 
 struct uart_vux9k_config {
 	mm_reg_t base;
@@ -26,10 +23,9 @@ struct uart_vux9k_config {
 #endif
 };
 
-struct uart_vux9k_data {
-	/* The error bits of every status read since the last err_check (read_status) */
-	uint32_t errors;
 #ifdef CONFIG_UART_INTERRUPT_DRIVEN
+/* The polling build has no driver data */
+struct uart_vux9k_data {
 	const struct device *dev;
 	uart_irq_callback_user_data_t cb;
 	void *cb_data;
@@ -37,28 +33,15 @@ struct uart_vux9k_data {
 	bool tx_enabled;
 	bool in_callback;
 	struct k_timer tx_timer;
-#endif
 };
+#endif
 
-/*
- * Every status read clears the hardware's error bits, and the driver reads the status
- * for RX empty and TX full all the time: each read goes through here, which keeps the
- * error bits for err_check. Threads and the ISR both read, so the update is under
- * irq_lock (only when an error bit is set: rare).
- */
+/* Reading the status register has no side effect */
 static uint32_t uart_vux9k_read_status(const struct device *dev)
 {
 	const struct uart_vux9k_config *config = dev->config;
-	struct uart_vux9k_data *data = dev->data;
-	uint32_t status = sys_read32(REG_STATUS(config->base));
 
-	if (status & STATUS_ERRORS) {
-		unsigned int key = irq_lock();
-
-		data->errors |= status & STATUS_ERRORS;
-		irq_unlock(key);
-	}
-	return status;
+	return sys_read32(REG_STATUS(config->base));
 }
 
 static int uart_vux9k_poll_in(const struct device *dev, unsigned char *p_char)
@@ -84,23 +67,15 @@ static void uart_vux9k_poll_out(const struct device *dev, unsigned char out_char
 	sys_write32((uint32_t)out_char, REG_DATA(config->base));
 }
 
-/* The errors since the last call, which it clears */
+/*
+ * The UART reports no receive errors: a byte that arrives with the RX FIFO full is
+ * dropped, a frame with a low stop bit is received, and neither shows in the status.
+ * Defined so that uart_err_check() returns 0 rather than -ENOSYS.
+ */
 static int uart_vux9k_err_check(const struct device *dev)
 {
-	struct uart_vux9k_data *data = dev->data;
-	unsigned int key = irq_lock();
-	uint32_t errors = data->errors | (uart_vux9k_read_status(dev) & STATUS_ERRORS);
-	int err = 0;
-
-	data->errors = 0;
-	irq_unlock(key);
-	if (errors & STATUS_OVERRUN) {
-		err |= UART_ERROR_OVERRUN;
-	}
-	if (errors & STATUS_FRAME_ERR) {
-		err |= UART_ERROR_FRAMING;
-	}
-	return err;
+	ARG_UNUSED(dev);
+	return 0;
 }
 
 #ifdef CONFIG_UART_INTERRUPT_DRIVEN
@@ -290,9 +265,13 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) <= 1, "one VUX9K UART only")
 			    DEVICE_DT_INST_GET(n), 0);                         \
 	}
 #define UART_VUX9K_IRQ_CONFIG_FUNC(n) .irq_config_func = uart_vux9k_irq_config_##n,
+#define UART_VUX9K_DATA(n) static struct uart_vux9k_data uart_vux9k_data_##n;
+#define UART_VUX9K_DATA_PTR(n) (&uart_vux9k_data_##n)
 #else
 #define UART_VUX9K_IRQ_CONFIG(n)
 #define UART_VUX9K_IRQ_CONFIG_FUNC(n)
+#define UART_VUX9K_DATA(n)
+#define UART_VUX9K_DATA_PTR(n) NULL
 #endif
 
 #define UART_VUX9K_INIT(n)                                                     \
@@ -301,9 +280,9 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) <= 1, "one VUX9K UART only")
 		.base = DT_INST_REG_ADDR(n),                                   \
 		UART_VUX9K_IRQ_CONFIG_FUNC(n)                                  \
 	};                                                                     \
-	static struct uart_vux9k_data uart_vux9k_data_##n;                     \
+	UART_VUX9K_DATA(n)                                                     \
 	DEVICE_DT_INST_DEFINE(n, uart_vux9k_init, NULL,                        \
-			      &uart_vux9k_data_##n,                            \
+			      UART_VUX9K_DATA_PTR(n),                          \
 			      &uart_vux9k_config_##n, PRE_KERNEL_1,            \
 			      CONFIG_SERIAL_INIT_PRIORITY,                     \
 			      &uart_vux9k_driver_api);

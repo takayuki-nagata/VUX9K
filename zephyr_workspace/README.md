@@ -49,9 +49,8 @@ it again every 700 us (rounded up to a tick, 1 ms at the board's 1000 ticks/s) w
 stays enabled, which keeps up with 115200 baud. A lower `CONFIG_SYS_CLOCK_TICKS_PER_SEC`
 slows it down: one 32-byte refill per tick. `uart_irq_tx_complete()`
 is not supported (the status register has no "transmitter empty" bit), nor are error
-interrupts. The status register's error bits clear when it is read; the driver keeps them
-from all its reads, so `uart_err_check()` reports every overrun and framing error since its
-last call. Running from the PSRAM, the RX handler keeps up with input sent back to back
+interrupts. The UART has no error flags (a byte that arrives with the RX FIFO full is lost, a
+frame with a low stop bit is received), so `uart_err_check()` always returns 0. Running from the PSRAM, the RX handler keeps up with input sent back to back
 at 115200 baud thanks to the instruction cache in front of it (without it, it took about
 four byte times per byte and overran the 32-byte RX FIFO). `irq_echo/` is an example.
 

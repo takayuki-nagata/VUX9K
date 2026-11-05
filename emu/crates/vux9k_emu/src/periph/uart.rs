@@ -3,9 +3,10 @@
 
 //! UART, soc/uart/uart_controller.veryl + uart_tx/uart_rx/fifo_sync/clk_timer, as
 //! soc_top wires it: 115200 8N1 at 18 MHz (156 clocks per bit), 32-byte TX and RX
-//! FIFOs, TX only from register 0x0, status {frame_err, overrun, tx_full, rx_empty}
-//! whose error bits are cleared by reading the status register, and the machine
-//! external interrupt while the RX FIFO holds data.
+//! FIFOs, TX only from register 0x0, status {tx_full, rx_empty} (reading it has no side
+//! effect), and the machine external interrupt while the RX FIFO holds data. A byte that
+//! arrives with the RX FIFO full is dropped and a frame with a low stop bit is kept, both
+//! without a trace in the status.
 //!
 //! Timing (all derived from the RTL, and proven against it by the lockstep tests):
 //! - The TX bit timer free-runs from reset: its alarm fires in cycles 155 + 156n (BIT - 1 + BIT n).
@@ -14,10 +15,10 @@
 //!   transmitter is idle again 9 bit times + 2 cycles after the load.
 //! - A byte whose start bit begins in cycle s is pushed into the RX FIFO at the end of
 //!   cycle s + 1485 (the middle of its stop bit: 2 synchronizer stages and the
-//!   IDLE cycle, BIT/2 to mid start bit, then 9 bit times), or dropped with `overrun` if the
-//!   FIFO is full then.
-//! - The CPU reads the data/status in its MEM_WAIT cycle (combinational); the pop and
-//!   the flag clear happen at the end of that cycle.
+//!   IDLE cycle, BIT/2 to mid start bit, then 9 bit times), or dropped if the FIFO is
+//!   full then.
+//! - The CPU reads the data/status in its MEM_WAIT cycle (combinational); the pop
+//!   happens at the end of that cycle.
 //!
 //! The Linux profile (emulator only, ahead of the RTL) reads and writes the same UART
 //! through a liteuart register view instead (Linux's drivers/tty/serial/liteuart.c,
@@ -27,8 +28,8 @@
 //! FIFO not full, bit 1 RX = RX FIFO not empty), 0x14 EV_ENABLE (2 bits, reset 0). The
 //! events are levels, not latched: EV_PENDING equals EV_STATUS and ignores writes (the
 //! driver's write of EV_RX after each byte has nothing to clear), and the machine external
-//! interrupt is `EV_ENABLE & EV_PENDING != 0` (`lite_irq`). The status register's error
-//! bits aren't visible there. Timing as for the RTL's registers.
+//! interrupt is `EV_ENABLE & EV_PENDING != 0` (`lite_irq`). Timing as for the RTL's
+//! registers.
 //!
 //! Everything that happens at one clock edge is decided from the state during that
 //! cycle; CPU effects are therefore queued and applied at their edge, after the UART's
@@ -50,18 +51,15 @@ const RX_PUSH_DELAY: u64 = 3 + BIT / 2 + 9 * BIT;
 enum CpuOp {
     TxPush(u8),
     RxPop,
-    ClearErrors,
     /// liteuart view: EV_ENABLE is written.
     SetEvEnable(u8),
 }
 
-/// A byte on the RX line: its value, the cycle its start bit begins, and whether its
-/// stop bit is low (a framing error).
+/// A byte on the RX line: its value and the cycle its start bit begins.
 #[derive(Clone, Copy, Debug)]
 struct RxFrame {
     byte: u8,
     start: u64,
-    bad_stop: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -79,8 +77,9 @@ pub struct Uart {
     rx_line: VecDeque<RxFrame>,
     /// Earliest start of the next byte the host may send (back-to-back frames).
     rx_line_free: u64,
-    overrun: bool,
-    frame_err: bool,
+    /// Bytes dropped because they arrived with the RX FIFO full (for the host's tests; no
+    /// register shows it).
+    rx_dropped: u64,
     /// CPU effects waiting for their edge: (edge cycle, op), in time order.
     cpu_ops: VecDeque<(u64, CpuOp)>,
     /// No edge before this cycle changes anything (`advance`'s fast path; 0 = unknown).
@@ -100,8 +99,7 @@ impl Default for Uart {
             rx_fifo: VecDeque::new(),
             rx_line: VecDeque::new(),
             rx_line_free: 0,
-            overrun: false,
-            frame_err: false,
+            rx_dropped: 0,
             cpu_ops: VecDeque::new(),
             quiet_until: 0,
             ev_enable: 0,
@@ -157,8 +155,6 @@ impl Uart {
     /// during it.
     fn apply_edge(&mut self, edge: u64, tx_pop: bool, rx_push: bool) {
         let rx_full = self.rx_fifo.len() == FIFO_DEPTH;
-        // A flag being set wins over a clear in the same cycle (per flag)
-        let (mut overrun_set, mut frame_err_set) = (false, false);
         if tx_pop {
             let byte = self.tx_fifo.pop_front().expect("tx_pop only with data");
             let load = next_alarm(edge + 1);
@@ -171,14 +167,9 @@ impl Uart {
             let f = self.rx_line.pop_front().expect("rx_push only with a frame");
             // uart_rx raises rdy even for a bad stop bit: the byte is kept
             if rx_full {
-                self.overrun = true;
-                overrun_set = true;
+                self.rx_dropped += 1;
             } else {
                 pushed = Some(f.byte);
-            }
-            if f.bad_stop {
-                self.frame_err = true;
-                frame_err_set = true;
             }
         }
         while let Some(&(e, op)) = self.cpu_ops.front() {
@@ -190,10 +181,6 @@ impl Uart {
                 CpuOp::TxPush(b) => self.tx_fifo.push_back(b),
                 CpuOp::RxPop => {
                     self.rx_fifo.pop_front();
-                }
-                CpuOp::ClearErrors => {
-                    self.overrun &= overrun_set;
-                    self.frame_err &= frame_err_set;
                 }
                 CpuOp::SetEvEnable(v) => self.ev_enable = v,
             }
@@ -210,14 +197,11 @@ impl Uart {
 
     /// Status during cycle `c` (the state must have been advanced to `c`).
     fn status(&self) -> u32 {
-        (self.frame_err as u32) << 3
-            | (self.overrun as u32) << 2
-            | ((self.tx_fifo.len() == FIFO_DEPTH) as u32) << 1
-            | self.rx_fifo.is_empty() as u32
+        ((self.tx_fifo.len() == FIFO_DEPTH) as u32) << 1 | self.rx_fifo.is_empty() as u32
     }
 
     /// CPU read in cycle `c` (its MEM_WAIT cycle): data (offset 0, pops a byte) or
-    /// status (any other offset, clears the error bits).
+    /// status (any other offset, no side effect).
     pub fn read(&mut self, addr: u32, c: u64) -> u32 {
         self.advance(c);
         if addr & 0xF == 0 {
@@ -227,9 +211,7 @@ impl Uart {
             }
             head.unwrap_or(0) as u32
         } else {
-            let s = self.status();
-            self.queue(c, CpuOp::ClearErrors);
-            s
+            self.status()
         }
     }
 
@@ -298,10 +280,11 @@ impl Uart {
         self.rx_fifo.len()
     }
 
-    /// Sticky overrun flag during cycle `c` (as the status register would read it).
-    pub fn overrun(&mut self, c: u64) -> bool {
+    /// Bytes dropped by cycle `c` because they arrived with the RX FIFO full. Observation
+    /// only: the RTL keeps no such count and no register shows a drop.
+    pub fn rx_dropped(&mut self, c: u64) -> u64 {
         self.advance(c);
-        self.overrun
+        self.rx_dropped
     }
 
     /// True while the RX FIFO holds data during cycle `c` (the MEI line).
@@ -312,9 +295,10 @@ impl Uart {
     }
 
     /// The host sends `bytes` on the RX line, back to back, starting no earlier than
-    /// cycle `c`. `bad_stop` sends them with a low stop bit (framing error).
+    /// cycle `c`. `bad_stop` sends them with a low stop bit (a framing error), which
+    /// changes nothing the CPU sees: uart_rx delivers the byte all the same.
     /// Panics if a byte would reach the RX FIFO at an edge `advance` has already passed.
-    pub fn host_send(&mut self, bytes: &[u8], c: u64, bad_stop: bool) {
+    pub fn host_send(&mut self, bytes: &[u8], c: u64, _bad_stop: bool) {
         for &byte in bytes {
             let start = self.rx_line_free.max(c);
             // Applied late, its edge would move `now` back and shift every later edge
@@ -324,11 +308,7 @@ impl Uart {
                  which the UART has already passed",
                 self.now
             );
-            self.rx_line.push_back(RxFrame {
-                byte,
-                start,
-                bad_stop,
-            });
+            self.rx_line.push_back(RxFrame { byte, start });
             self.rx_line_free = start + FRAME;
             self.quiet_until = self.quiet_until.min(start + RX_PUSH_DELAY);
         }

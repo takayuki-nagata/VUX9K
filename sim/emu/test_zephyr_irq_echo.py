@@ -11,8 +11,8 @@ that TX refills from the driver's timer, with the handlers running from the PSRA
 
 With the instruction cache in front of the PSRAM the RX handler keeps up with a line sent
 back to back at 115200 baud; the paced line (irq_echo_pace) is what the board test sends.
-An overrun still has to reach uart_err_check: a line that arrives before irq_echo enables RX
-overflows the 32-byte RX FIFO. The ROM holds irq_echo back until it has
+A line that arrives before irq_echo enables RX overflows the 32-byte RX FIFO: its 33rd byte is
+lost, with no error to report (uart_err_check is 0). The ROM holds irq_echo back until it has
 (irq_echo_pace.hold_words), which leaves no race with its start-up time.
 """
 
@@ -29,7 +29,6 @@ ECHO_BIN = os.path.join(REPO_ROOT, "build", "zephyr-irq-echo", "zephyr", "zephyr
 FLASH_BYTES = 4 * 1024 * 1024  # the board's flash (vux9k.dts), from XMEM_BASE
 BURST = bytes(b"abcdefghijklmnopqrstuvwxyz0123456789"[i % 36] for i in range(64))
 ECHO = BURST.upper().decode() + "\nrx=64 drop=0 err=0\n"
-UART_ERROR_OVERRUN = 1  # Zephyr's enum uart_rx_stop_reason
 RX_FIFO = pace.RX_FIFO
 EARLY = BURST[: pace.OVERRUN_LINE]  # overflows the RX FIFO by one byte
 
@@ -116,10 +115,10 @@ def test_echoes_a_back_to_back_line_by_interrupt(echo_bin, how):
     assert reply(soc, mark) == ECHO
 
 
-def test_a_line_sent_while_it_starts_reports_the_overrun(echo_bin):
+def test_a_line_sent_while_it_starts_keeps_its_first_32_bytes(echo_bin):
     """irq_echo, held back by the ROM until a line has arrived, finds the RX FIFO full and
-    the rest of the line lost, and that overrun reaches uart_err_check (the driver keeps the
-    sticky error bits that its own status reads clear)."""
+    the rest of the line lost; uart_err_check has nothing to report (the UART has no error
+    flags)."""
     soc = new_soc()
     soc.load_xmem(XMEM_BASE, echo_bin)
     soc.load_rom_words(pace.hold_words(XMEM_BASE))
@@ -128,10 +127,11 @@ def test_a_line_sent_while_it_starts_reports_the_overrun(echo_bin):
     # The precondition, before the hold ends: the whole line in, the FIFO full, nothing sent
     assert soc.cycle >= soc.uart_send_done, f"the line arrives at {soc.uart_send_done}, cycle {soc.cycle}"
     assert soc.uart_rx_level == RX_FIFO, f"RX FIFO holds {soc.uart_rx_level}"
+    assert soc.uart_rx_dropped == 1, f"{soc.uart_rx_dropped} bytes dropped"
     assert not soc.uart_received(), "irq_echo started before the line had arrived"
     wait_for(soc, b"irq_echo ready\n", timeout_cycles=10_000_000)
     soc.run(1_000_000)  # past uart_irq_rx_enable and the handler emptying the FIFO
     mark = len(soc.uart_received())
     soc.uart_send(b"\n")
     out = reply(soc, mark)
-    assert out == BURST[:RX_FIFO].upper().decode() + f"\nrx={RX_FIFO} drop=0 err={UART_ERROR_OVERRUN}\n", out
+    assert out == BURST[:RX_FIFO].upper().decode() + f"\nrx={RX_FIFO} drop=0 err=0\n", out

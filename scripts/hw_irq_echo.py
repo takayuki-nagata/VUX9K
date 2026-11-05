@@ -6,7 +6,8 @@
 The Zephyr interrupt-driven UART echo (make build-zephyr-irq-echo) on the board: put on the
 card as \\VUX9K\\APPS\\IRQECHO.BIN through the second stage (`put`, the file left there) and
 started with its `run`, then sent lines longer than both 32-byte UART FIFOs; each must come
-back upper-cased with "rx=<n> drop=0 err=0" (no byte lost in the app or by the UART). Each
+back upper-cased with "rx=<n> drop=0 err=0" (rx: every byte reached the app, none dropped
+by a full RX FIFO; drop: none lost in the app; the UART reports no errors, so err is 0). Each
 is sent in paced chunks by default (sim/integration/irq_echo_pace.py, measured on the
 emulator when the PSRAM had no cache and the app couldn't read a line sent back to back at
 115200 baud); --chunk 0 sends it back to back, which the instruction cache makes pass. The

@@ -39,6 +39,8 @@ lint_off -rule UNUSEDSIGNAL -file "*/sdcard_spi.sv" -match "*'data_in'*"
 // the CPU outputs the riscv-tests harness doesn't need
 lint_off -rule PINCONNECTEMPTY -file "*/uart_tx.sv" -match "*'pout'*"
 lint_off -rule PINCONNECTEMPTY -file "*/uart_rx.sv" -match "*'sout'*"
+// uart_rx's frame_err (its unit test's): the controller keeps a frame with a low stop bit
+lint_off -rule PINCONNECTEMPTY -file "*/uart_controller.sv" -match "*'frame_err'*"
 lint_off -rule PINCONNECTEMPTY -file "*/board_top.sv" -match "*'CLKOUT*'*"
 // The write-address decoder's ROM select: the ROM takes no stores
 lint_off -rule PINCONNECTEMPTY -file "*/soc_top.sv" -match "*'rom'*"

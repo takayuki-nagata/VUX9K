@@ -156,31 +156,31 @@ hardware gives and what the driver makes up for:
   a tick plus rounding, which fails at 100 ticks/s (110 or more). From the PSRAM without
   its caches it read 103-104 ms (the kernel's own time).
 - `irq_tx_complete` and error interrupts are left out on purpose: the status register
-  has no "transmitter empty" bit, and errors are only sticky flags.
-- **Errors aren't lost to the driver's own status reads.** The overrun and frame-error
-  bits are sticky, but every read of the status register clears them, and the driver reads
-  it all the time (RX empty, TX full, in the ISR and in threads), so `err_check` used to
-  find them cleared (irq_echo printed `err=0` for a line that had lost bytes). Every status
-  read goes through `uart_vux9k_read_status()`, which ORs the error bits into the driver
-  data (under `irq_lock`, only when one is set), and `err_check` returns and clears them.
-  This is in the polling build too, so it changed the demo's `zephyr.bin`.
+  has no "transmitter empty" bit, and the UART has no error flags.
+- **`err_check` always returns 0.** The UART reports no receive errors (a byte that arrives
+  with the RX FIFO full is dropped, a frame with a low stop bit is received), and a status
+  read has no side effect. It is defined anyway: without it `uart_err_check()` would return
+  `-ENOSYS`, which irq_echo would print as its `err=`. A lost byte shows in irq_echo's `rx=`
+  count instead. (Up to v0.3.x the status had sticky overrun/frame-error bits that a read
+  cleared, and the driver ORed them from every one of its status reads.)
 - **RX at full speed needs the instruction cache.** From the uncached PSRAM (before the
   cache) the RX handler took about 4.3 frame times a byte, so input longer than the FIFO
   overran at 115200 baud (a 64-byte line came back with 52 bytes). With the cache the
   back-to-back line comes back whole. The paced line stays: the board test sends it by
   default (16-byte chunks, a chunk every 176 frame times, `sim/integration/irq_echo_pace.py`,
   shared by the emulator, RTL and board tests; the emulator test prints the measurement and
-  fails below a 2x margin). The overrun check (`err=1`, `UART_ERROR_OVERRUN`) sends a line that
+  fails below a 2x margin). The overrun check (`rx=32 drop=0 err=0`) sends a line that
   arrives before irq_echo enables RX: the FIFO keeps 32 bytes, and the reply is exactly those.
   The line is 33 bytes, the shortest that overflows the FIFO. It no longer races irq_echo's
   start-up, which the instruction cache's lines moved ahead of it (RX enabled after ~32k
   cycles, the line taking 51.5k on the emulator and 56.6k from the RTL's bridge, two stop bits:
   sending with one stop bit wouldn't have closed that gap): `irq_echo_pace.hold_words` is a
   ROM stub in place of the plain jump that waits `HOLD_CYCLES` (the slowest line and 4 frames'
-  margin, 63.5k) on mtime before it jumps to the app, leaving the UART alone, so the sticky
-  bit is the app's to find. Both tests check the precondition two frames before the hold
-  ends (the RTL `soc_top.uart_overrun`, the emulator the RX level and the line's end, and
-  nothing yet sent), so a lost race says so instead of reading as a wrong echo.
+  margin, 63.5k) on mtime before it jumps to the app, leaving the UART alone, so the full
+  FIFO is the app's to find. Both tests check the precondition two frames before the hold
+  ends (the line has left the host and the RX FIFO is full: the RTL `uart_inst.rx_full`, the
+  emulator the RX level and its count of dropped bytes; and nothing yet sent), so a lost race
+  says so instead of reading as a wrong echo.
 
 A TX interrupt and an interrupt-enable register would only come with a later hardware
 revision, whose register map isn't bound by this one's (docs/APP_DEVELOPMENT.md, "Hardware

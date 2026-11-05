@@ -1,8 +1,9 @@
 // Copyright (c) 2026 Takayuki Nagata
 // SPDX-License-Identifier: MIT
 
-//! UART: TX bit-timer phase and pacing, RX push timing, FIFO limits, sticky error
-//! flags and their clear, TX only from register 0x0, and the RX interrupt.
+//! UART: TX bit-timer phase and pacing, RX push timing, FIFO limits, a full RX FIFO and a
+//! low stop bit leaving no trace in the status, TX only from register 0x0, and the RX
+//! interrupt.
 
 use vux9k_emu::periph::uart::{FIFO_DEPTH, FRAME};
 use vux9k_emu::periph::Uart;
@@ -50,7 +51,7 @@ fn rx_byte_is_readable_1486_cycles_after_its_start_bit() {
     u.host_send(&[0x5A, 0xA5], 100, false);
     assert!(!u.rx_pending(100 + 1485));
     assert!(u.rx_pending(100 + 1486));
-    assert_eq!(u.read(STATUS, 100 + 1486), 0, "data, no errors");
+    assert_eq!(u.read(STATUS, 100 + 1486), 0, "data, bits 2-3 read 0");
     assert_eq!(u.read(DATA, 3000), 0x5A);
     assert!(!u.rx_pending(3001), "popped at the end of the read cycle");
     assert_eq!(u.read(DATA, 3001), 0, "empty reads 0");
@@ -77,38 +78,35 @@ fn rx_byte_whose_fifo_push_has_passed_is_refused() {
 }
 
 #[test]
-fn overrun_and_frame_error_are_sticky_until_a_status_read() {
+fn a_byte_into_a_full_rx_fifo_is_dropped_without_a_status_bit() {
     let mut u = Uart::default();
     let bytes: Vec<u8> = (0..=FIFO_DEPTH as u8).collect();
     u.host_send(&bytes, 0, false);
     let done = u.host_send_done();
-    assert_eq!(u.read(STATUS, done), 0b0100, "overrun, not empty");
-    assert_eq!(u.read(STATUS, done + 1), 0, "cleared by the previous read");
+    assert_eq!(u.rx_dropped(done), 1, "the 33rd byte");
+    assert_eq!(u.read(STATUS, done), 0, "not empty, bits 2-3 read 0");
+    assert_eq!(u.read(STATUS, done + 1), 0, "a status read changes nothing");
+    assert_eq!(u.rx_level(done + 2), FIFO_DEPTH, "nor pops a byte");
     for i in 0..FIFO_DEPTH as u32 {
         assert_eq!(
             u.read(DATA, done + 2 + i as u64),
             i,
-            "the 33rd byte was dropped"
+            "the first 32 bytes, in order"
         );
     }
-    u.host_send(&[0x33], done + 100, true);
-    let done = u.host_send_done();
-    assert_eq!(
-        u.read(DATA, done),
-        0x33,
-        "a bad stop bit still delivers the byte"
-    );
-    assert_eq!(u.read(STATUS, done + 1), 0b1001);
-    assert_eq!(u.read(STATUS, done + 2), 0b0001);
+    assert_eq!(u.read(STATUS, done + 2 + FIFO_DEPTH as u64), 1, "empty");
 }
 
 #[test]
-fn an_error_in_the_clearing_cycle_survives_the_clear() {
+fn a_frame_with_a_low_stop_bit_is_received_without_a_status_bit() {
     let mut u = Uart::default();
-    u.host_send(&[1], 0, true);
+    u.host_send(&[0x33], 0, true);
     let push = u.host_send_done() - 1;
-    u.read(STATUS, push); // clr_err in the same cycle as rdy && frame_err
-    assert_eq!(u.read(STATUS, push + 1), 0b1000);
+    assert_eq!(u.read(STATUS, push), 1, "empty until its push edge");
+    assert_eq!(u.read(STATUS, push + 1), 0, "data, bits 2-3 read 0");
+    assert_eq!(u.read(DATA, push + 2), 0x33, "the byte is kept");
+    assert_eq!(u.read(STATUS, push + 3), 1);
+    assert_eq!(u.rx_dropped(push + 3), 0);
 }
 
 fn i(op: u32, imm: i32, rs1: u32, f3: u32, rd: u32) -> u32 {

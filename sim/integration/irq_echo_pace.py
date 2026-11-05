@@ -42,8 +42,8 @@ HOLD_CYCLES = (OVERRUN_LINE + 4) * SLOWEST_FRAME_CYCLES
 
 def hold_words(target: int) -> list[int]:
     """ROM words that wait HOLD_CYCLES on mtime and then jump to target (4 KB-aligned), as
-    soc_env.jump_words does at once: the UART is left alone, so its sticky bits and FIFO are
-    what the line left them for the application to find."""
+    soc_env.jump_words does at once: the UART is left alone, so its RX FIFO is
+    what the line left it for the application to find."""
     assert target % 4096 == 0, hex(target)
     a = Asm()
     a.li("t0", 0x2000_BFF8)  # mtime lo (the CLINT, fw_common::map::MTIME_LO)

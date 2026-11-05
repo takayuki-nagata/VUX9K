@@ -158,7 +158,7 @@ impl Soc {
     // ----- UART ---------------------------------------------------------------------
 
     /// The host sends `data` on the UART RX line from now on, back to back
-    /// (`bad_stop`: with a low stop bit, a framing error).
+    /// (`bad_stop`: with a low stop bit, a framing error; the byte is received all the same).
     /// `at`: start no earlier than this cycle instead of now (not before the current cycle).
     #[pyo3(signature = (data, bad_stop = false, at = None))]
     fn uart_send(&mut self, data: &[u8], bad_stop: bool, at: Option<u64>) -> PyResult<()> {
@@ -186,11 +186,12 @@ impl Soc {
         self.inner.periph.uart.rx_level(c)
     }
 
-    /// The UART's sticky overrun flag now (a byte arrived with the RX FIFO full).
+    /// Bytes the UART has dropped so far because they arrived with the RX FIFO full.
+    /// Observation only: no register shows a drop.
     #[getter]
-    fn uart_overrun(&mut self) -> bool {
+    fn uart_rx_dropped(&mut self) -> u64 {
         let c = self.inner.cycle;
-        self.inner.periph.uart.overrun(c)
+        self.inner.periph.uart.rx_dropped(c)
     }
 
     /// UART output the host has completely received.

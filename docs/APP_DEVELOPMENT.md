@@ -376,7 +376,11 @@ start on it (the first stage refuses second stages before v9), and v0.3.x's appl
 that use the timer at `0x4000_1000` must be rebuilt: that page is gone (it reads 0 and
 ignores writes, as an unassigned address does). The same release added U-mode, which changes
 one thing for M-mode software: `mstatus.MPP` is real now, so an `mret` with MPP left at 0 (after
-writing `mstatus` without it, or a second `mret` without a trap between) lands in U-mode.
+writing `mstatus` without it, or a second `mret` without a trap between) lands in U-mode. The same release
+removed the UART's receive-error flags: status bits 2 and 3 (`overrun`, `frame_err`) read 0, and
+reading the status register no longer clears anything. A byte that arrives with the RX FIFO full
+is still dropped, and a frame with a low stop bit is still received; software that checked those
+bits sees no errors.
 
 A later hardware revision makes no such promise. Its memory map, registers, file format,
 SD card layout and loaders may all change, and its release says how to rebuild and
