@@ -153,7 +153,11 @@ async def test_uart_controller_full_rx_fifo_and_bad_stop_bit(dut):
     assert got == [0x55, 0x3C], f"a frame with a low stop bit must be received: {got}"
 
 
-@cocotb.test()
+RANDOM_STEPS = 1000  # cap on the random steps (60 bytes took at most 129 in a model of 2,000 seeds)
+
+
+# ~4.3 ms to accept the 60 bytes and ~5.4 ms to drain them at most: a hung DUT stops here
+@cocotb.test(timeout_time=50, timeout_unit="ms")
 async def test_uart_controller_random_loopback(dut):
     """Random bursts into the TX FIFO (some while it is full: dropped), random reads of the
     RX FIFO and pauses, over a txd->rxd loopback: the bytes read are exactly the accepted
@@ -186,7 +190,9 @@ async def test_uart_controller_random_loopback(dut):
             dut.re.value = 0
             await Timer(1, unit="ns")
 
-    while len(accepted) < 60:
+    for _ in range(RANDOM_STEPS):
+        if len(accepted) >= 60:
+            break
         r = random.random()
         if r < 0.4:  # a burst, possibly past full
             for _ in range(random.randint(1, 40)):
@@ -204,6 +210,7 @@ async def test_uart_controller_random_loopback(dut):
             await Timer(random.randint(1, 3 * frame_ns), unit="ns")
             await FallingEdge(dut.clk)
             await read_all()  # often enough that the RX FIFO can't overflow
+    assert len(accepted) >= 60, f"only {len(accepted)} bytes accepted in {RANDOM_STEPS} steps"
     for _ in range(len(accepted) - len(received) + 2):  # the rest is at most one frame each
         await Timer(frame_ns, unit="ns")
         await FallingEdge(dut.clk)
