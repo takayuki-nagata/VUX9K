@@ -166,3 +166,39 @@ def test_ram_boot_transfer_errors(tool):
     ser.write(b"u")
     with pytest.raises(vux_tool.UploadError, match="CRC mismatch: sent 00000001"):
         vux_tool.send_upload_v2(ser, good, crc_override=1)
+
+
+class _QueuedSerial:
+    """A port whose bytes come in the given chunks, one per read: what is still on its way
+    when the reader drains (the bridge delivers in bursts) arrives after the drain."""
+
+    def __init__(self, chunks):
+        self.chunks = [c.encode() for c in chunks]
+        self.in_waiting = 0
+        self.written = b""
+
+    def reset_input_buffer(self):
+        pass
+
+    def write(self, data):
+        self.written += data
+
+    def flush(self):
+        pass
+
+    def read(self, n):
+        return self.chunks.pop(0) if self.chunks else b""
+
+
+def test_send_cmd_and_wait_reads_past_a_stale_prompt():
+    """Earlier output still arriving (the first stage's refusal of an old STAGE2.BIN, its
+    command list and a prompt: what a key sent ahead of its prompt makes it print) holds an
+    'i' and 's1> ' before the answer to 'i'. The read ends at the prompt after that answer
+    (the first stage's [CMD:0x69]), not at the stale one: on the board it ended right after
+    '[SD] ' and the card's check failed."""
+    stale = "STAGE2.BIN: too old, needs v10 (install-stage2): v9\n\nCommands:\n  [i] SD card\ns1> "
+    answer = ["[CMD:0x69]\n[SD] ", "SDHC card\n[FAT] FAT32 at LBA 63\n", "\ns1> "]
+    ser = _QueuedSerial([stale, *answer])
+    out = vux_tool.send_cmd_and_wait(ser, "i", timeout=1.0, prompt="s1> ")
+    assert ser.written == b"i"
+    assert "[FAT] FAT32 at LBA 63" in out, out

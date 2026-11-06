@@ -268,18 +268,23 @@ def drain_serial(ser, timeout=0.15):
 
 
 def send_cmd_and_wait(ser, cmd_char, timeout=5.0, prompt=S1_PROMPT):
+    """Send a one-key command and read until the prompt after its answer. The first stage
+    answers a key with `[CMD:0xNN]` before anything else, so with its prompt the read ends at
+    the prompt after that marker: earlier output still arriving after the drain (a command
+    list and a prompt, which hold the key's letter too) doesn't end it early. With another
+    prompt, after the key's echo."""
     drain_serial(ser, timeout=0.1)
     ser.write(cmd_char.encode("utf-8"))
     ser.flush()
+    mark = f"[CMD:0x{ord(cmd_char):02X}]" if prompt == S1_PROMPT else cmd_char
     start = time.time()
     buf = ""
     while time.time() - start < timeout:
         c = ser.read(256)
         if c:
-            text = c.decode("utf-8", errors="replace")
-            buf += text
-            # Ensure prompt is checked only after command echo
-            if (cmd_char in buf) and (prompt in buf[buf.find(cmd_char) + len(cmd_char) :]):
+            buf += c.decode("utf-8", errors="replace")
+            k = buf.find(mark)
+            if k >= 0 and prompt in buf[k + len(mark) :]:
                 break
     return buf
 
