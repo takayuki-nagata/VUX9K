@@ -62,6 +62,7 @@ TARGETS = (
     "timer_core",
     "sdcard_spi",
     "uart_rx",
+    "uart_regs",
     "fifo_sync",
     "soc_icache",
     "soc_dcache",
