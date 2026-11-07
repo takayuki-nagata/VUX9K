@@ -124,7 +124,8 @@ pub enum Isa {
 /// Where `load_linux` puts the device tree: the top 64 KB of the PSRAM, all of which the
 /// Linux device tree gives the kernel (linux_workspace/dts/vux9k.dts:
 /// the stages' memory is free once the kernel runs; the kernel keeps the device tree's own
-/// pages).
+/// pages). The second stage's `linux` puts it there too: `fw_common::map::LINUX_DTB_ADDR`
+/// is a copy (firmware/fw_common/src/map.rs).
 pub const LINUX_DTB_ADDR: u32 = 0x807F_0000;
 /// The largest device tree `load_linux` takes.
 pub const LINUX_DTB_MAX: usize = 64 * 1024;

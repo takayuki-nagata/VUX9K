@@ -178,8 +178,8 @@ Its data and stack are in the PSRAM below the second stage (`0x806F_0000`-`0x806
 The **second stage** is a VUX9 v4 file of RV32 code that loads in the top 1 MB of the
 PSRAM (`0x8070_0000`-`0x807F_FFFF`). `firmware/stage2` is the file manager and application
 launcher at the `s2> ` prompt ("The second stage's prompt" below): it works on the card's
-files, receives files and second stages over the UART, and starts applications from the
-card. It installs a second stage with `fat::stage2::install`: the new file is written as
+files, receives files and second stages over the UART, and starts applications and a Linux
+kernel from the card. It installs a second stage with `fat::stage2::install`: the new file is written as
 `STAGE2.NEW` and read back, the current `.BIN` becomes `.OLD`, then `.NEW` becomes `.BIN`, so
 one of them stays bootable whenever power fails. The first stage writes nothing to the
 card.
@@ -193,6 +193,7 @@ one formatted without a partition table is refused). What VUX9K uses is in the d
 | `\VUX9K\STAGE2.BIN` | The second stage the first stage boots (a release ships it as `sd/VUX9K/STAGE2.BIN`; a PC can copy it there, or `vux_tool.py install-stage2` installs it and makes `\VUX9K\` if it is missing) |
 | `\VUX9K\STAGE2.OLD` | The previous one, booted when `STAGE2.BIN` is missing, broken or too old |
 | `\VUX9K\APPS\` | Applications as VUX9 v4 files, started by the second stage's `run` (a release ships the demos as `sd/VUX9K/APPS/`) |
+| `\VUX9K\LINUX\Image`, `\VUX9K\LINUX\vux9k.dtb` | A noMMU Linux kernel and its device tree as `make linux` builds them (`build/linux/arch/riscv/boot/Image`, `build/linux/vux9k.dtb`), copied unchanged; the second stage's `linux` boots them (a release ships neither) |
 
 The second stage reads FAT32 only, with 8.3 and long names (long names are read only, and
 shown in ASCII with `?` for other characters); the files and directories it makes get 8.3
@@ -303,6 +304,7 @@ and `..`, and 8.3 or long names, relative to the current directory:
 | `mv SRC DST` | Move or rename a file (`DST` may be a directory) |
 | `put NAME` | Receive a file over the UART (transfer v2: `vux_tool.py put`) as `NAME` (8.3 names; an existing file is replaced once the new one is on the card, written as `~PUT.TMP` until then) |
 | `run FILE` | Start a VUX9 v4 application (below) |
+| `linux [IMAGE DTB]` | Boot a riscv Linux kernel `Image` with its device tree (both or neither; by default `\VUX9K\LINUX\Image` and `\VUX9K\LINUX\vux9k.dtb`; below) |
 | `info` | The card, free space, versions |
 | `install [-u]` | Receive a second stage and install it as `\VUX9K\STAGE2.BIN` (`-u`: unchecked, for tests) |
 | `reset` | Soft reset: back to the first stage, which boots the card again |
@@ -325,6 +327,24 @@ one refused for its CRC, or for a load address that doesn't suit its ISA (RV32 a
 offset that isn't word-aligned), has overwritten only the PSRAM below the second stage, and
 nothing starts. An exception in a PSRAM application that set no trap vector of its own
 is reported by the second stage (`[TRAP] ...`).
+
+`linux` takes the kernel's files as upstream writes them, with no VUX9 header: the `Image`
+of `arch/riscv/boot/` and the device tree dtc made (`fw_common::linux`). It checks both
+headers before it writes anything: the Image's (64 bytes, little-endian) needs magic2
+`RSC\x05` at `0x38`, `text_offset` 0 (an M-mode kernel runs where it loads) and an
+`image_size` (the file and its bss) that ends at `0x807F_0000` at most, and the file may be
+7 MB at most (it must end below the second stage, which runs while it loads); the device
+tree's needs the magic `0xD00DFEED`, a `totalsize` that is the file's size, and at most
+56 KB (`0x807F_0000`-`0x807F_DFFF`, below the second stage's stack). A refusal or a card
+error is one `[ERR] ...` line, and the prompt follows. Then it reads the device tree to
+`0x807F_0000` and the Image to `0x8000_0000` (on the emulator ~70 cycles a byte: ~13 s at
+18 MHz for a 3.2 MB Image), prints `[LINUX] Image <n> B, DTB <m> B, starting at 0x80000000` and a blank line, waits
+until the UART has sent it, clears `mie` and `mstatus.MIE`, and jumps to `0x8000_0000` in
+M-mode with `a0` = 0 (the hart), `a1` = `0x807F_0000` (the device tree), `a2` = 0, as the
+emulator's `--linux` starts a kernel. The UART's `EV_ENABLE` stays 0, as neither stage
+writes it: the kernel's liteuart driver polls. The kernel then has all of the PSRAM, the
+stages' memory included; only Button S1 (the board's reset) brings the first stage back.
+Nothing of this has run on the board yet.
 
 ---
 
@@ -356,7 +376,8 @@ hardware; `--trace FILE` logs every instruction. Profiles: `real` (default: the 
 boot ROM and the 8 MB PSRAM, as the board), `isa-test` (the riscv-tests
 harness' flat 256 KB RAM, `make test-isa-emu`). `--linux Image --dtb DTB` starts a noMMU
 kernel on `real` without firmware, the device tree from
-`linux_workspace/dts/vux9k.dts`. Python tests drive the emulator through
+`linux_workspace/dts/vux9k.dts`; the second stage's `linux` boots the same two files from
+the card with the same handoff (`make test-linux-emu` boots both ways). Python tests drive the emulator through
 the `vux9k_emu` module (`make emu-py`; helpers in `sim/emu/vux9k.py`).
 
 `make emu-bench` (`scripts/emu_bench.py`) measures how fast that runs (millions of

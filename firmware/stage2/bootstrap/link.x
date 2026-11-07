@@ -60,6 +60,10 @@ SECTIONS
 
   /* start.s zeroes the stack's 8 KB: the image and .bss must end below it */
   ASSERT(_ebss <= _stack_zero, "stage2: the image and .bss run into the stack")
+  /* linux loads a device tree at fw_common::map::LINUX_DTB_ADDR while the stage runs */
+  ASSERT(_ebss <= 0x807F0000, "stage2: the image and .bss run into linux's device tree")
+  /* fw_common::map::STAGE2_STACK_BYTES and LINUX_DTB_MAX assume the stack's 8 KB start here */
+  ASSERT(_stack_zero == 0x807FE000, "stage2: the stack moved: change map::STAGE2_STACK_BYTES")
 
   /DISCARD/ :
   {

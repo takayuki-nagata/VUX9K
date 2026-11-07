@@ -1,15 +1,16 @@
 // Copyright (c) 2026 Takayuki Nagata
 // SPDX-License-Identifier: MIT
 
-//! Starting things: an application (`run`, to fw_common::launch's targets), the first
-//! stage again (`soft_reset`), and installing a second stage (`install`).
+//! Starting things: an application (`run`, to fw_common::launch's targets), a Linux
+//! kernel (`linux`, fw_common::linux), the first stage again (`soft_reset`), and installing
+//! a second stage (`install`).
 
 use fw_common::boot::{put_boot_error, RAM_BOOT_MAX, STAGE2_WINDOW};
 use fw_common::fat::stage2::{self, BootError};
 use fw_common::fat::Volume;
 use fw_common::header::ImageHeader;
 use fw_common::launch::{load, Target, SCRATCH, SCRATCH_BYTES};
-use fw_common::map;
+use fw_common::{linux, map};
 use fw_drivers::sdcard::SdCard;
 use fw_drivers::uart::Uart;
 
@@ -69,6 +70,58 @@ fn start_psram(h: &ImageHeader, part_lba: u32, s1_version: u32) -> ! {
             in("a0") sdhc,
             in("a1") part_lba,
             in("a2") s1_version,
+            options(noreturn),
+        );
+    }
+}
+
+/// `linux IMAGE DTB`: both files' headers checked (fw_common::linux), then the device tree
+/// read to `LINUX_DTB_ADDR` (above the stage's image and below its stack) and the Image to
+/// the PSRAM's start (below the stage), and the kernel started as the emulator's
+/// `Soc::load_linux` does. Returns on an error, before anything is written for a refusal.
+pub fn linux(c: &mut Card, image: &[u8], dtb: &[u8]) -> Result {
+    let vol = &mut c.vol;
+    let image = vol.resolve(&c.cwd, image)?;
+    let dtb = vol.resolve(&c.cwd, dtb)?;
+    if image.is_dir() || dtb.is_dir() {
+        return Err(Error::IsDir);
+    }
+    let (kernel, fdt) = unsafe {
+        (
+            core::slice::from_raw_parts_mut(map::LINUX_IMAGE_BASE as *mut u8, map::LINUX_IMAGE_MAX),
+            core::slice::from_raw_parts_mut(map::LINUX_DTB_ADDR as *mut u8, map::LINUX_DTB_MAX),
+        )
+    };
+    linux::load::<_, Error>(vol, &image, &dtb, kernel, fdt)?;
+    Uart::print_str("[LINUX] Image ");
+    Uart::print_dec(image.size);
+    Uart::print_str(" B, DTB ");
+    Uart::print_dec(dtb.size);
+    Uart::print_str(" B, starting at 0x");
+    Uart::print_hex(map::LINUX_IMAGE_BASE as u32);
+    Uart::print_str("\n\n");
+    start_linux()
+}
+
+/// Once the UART has sent everything (the kernel's console starts on it), interrupts off
+/// (mie, mstatus.MIE), fence.i, and a jump to the Image with a0 = 0 (the hart), a1 = the
+/// device tree, a2 = 0. The UART's EV_ENABLE stays 0 (neither stage writes it): the kernel's
+/// liteuart polls and reads EV_PENDING as EV_STATUS.
+fn start_linux() -> ! {
+    while unsafe { core::ptr::read_volatile(map::UART_TXEMPTY as *const u32) } & 1 == 0 {}
+    unsafe {
+        core::arch::asm!(
+            ".option push",
+            ".option arch, +zicsr, +zifencei",
+            "csrw mie, zero",
+            "csrci mstatus, 8",
+            "fence.i",
+            ".option pop",
+            "jr {entry}",
+            entry = in(reg) map::LINUX_IMAGE_BASE,
+            in("a0") 0,
+            in("a1") map::LINUX_DTB_ADDR,
+            in("a2") 0,
             options(noreturn),
         );
     }

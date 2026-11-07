@@ -7,7 +7,8 @@ card laid out as the dist's sd/ (\\VUX9K\\STAGE2.BIN, the demos in \\VUX9K\\APPS
 apps), and its `run` starts a demo on each of fw_common::launch's paths the board uses
 first: the hello demo in place in the PSRAM (a jump with a0-a2), the Hack demo in its
 segment in the PSRAM (soft reset in Hack mode; at its end it soft-resets back to the first
-stage). The other commands and the
+stage). Its `linux` starts a stand-in for a kernel (linux_stub) with its device tree, as the
+emulator's Soc.load_linux hands them over. The other commands and the
 refusals are sim/emu/test_stage2.py's; the Zephyr demo started this way runs on the
 netlist (test_soc_zephyr_s2.py, make sim-zephyr-demo-gls).
 
@@ -19,7 +20,19 @@ PSRAM through its caches, loads a demo at ~100 cycles a byte.
 import re
 
 import cocotb
-from soc_env import BANNER, boot_s2, s2_cmd, send_and_wait
+import linux_stub
+from soc_env import (
+    BANNER,
+    S2_BANNER,
+    S2_BOOT_CYCLES,
+    S2_PROMPT,
+    STAGE2_BIN,
+    boot_s2,
+    fat_sectors,
+    s2_cmd,
+    send_and_wait,
+    start_soc,
+)
 
 
 def handoff(out: str, tag: str):
@@ -66,3 +79,24 @@ async def test_s2_run_hack_from_its_segment(dut):
     out = await ser.wait_for(BANNER.encode(), timeout_cycles=8_000_000)
     assert b"ALL HACK C FIRMWARE TESTS PASSED (100%)!" in out, out
     dut._log.info("[PASS] the Hack demo's soft reset: back to the first stage")
+
+
+# Boot ~12.1M, linux with its two files (1.4 KB) and the stand-in's line ~1.0M: ~13.1M
+# cycles (0.73 s, the emulator's); room for 3x
+@cocotb.test(timeout_time=2400, timeout_unit="ms")
+async def test_s2_linux_starts_a_kernel_with_its_device_tree(dut):
+    """linux: \\VUX9K\\LINUX\\Image and vux9k.dtb in place, a jump to 0x80000000, a0 = 0, a1 = the DTB, no interrupts"""
+    dtb = linux_stub.dtb(512)
+    image = linux_stub.image(len(dtb), pad=256)
+    with open(STAGE2_BIN, "rb") as f:
+        files = {"VUX9K/STAGE2.BIN": f.read(), "VUX9K/LINUX/IMAGE": image, "VUX9K/LINUX/VUX9K.DTB": dtb}
+    ser, _ = await start_soc(dut, sd_sectors=fat_sectors(files), mbr=False)
+    out = await send_and_wait(ser, "", S2_PROMPT, timeout_cycles=S2_BOOT_CYCLES, settle_bits=0)
+    assert S2_BANNER in out, out
+    out = await s2_cmd(ser, "linux", b"[KERNEL]", timeout_cycles=2_000_000)
+    assert f"[LINUX] Image {len(image)} B, DTB {len(dtb)} B, starting at 0x80000000\n\n" in out, out
+    out = await ser.wait_for(b"\n", timeout_cycles=2_000_000)
+    got = linux_stub.handoff("[KERNEL]" + out.decode())
+    assert (got["a0"], got["a1"], got["a2"], got["mie"], got["mstatus"] & 8) == (0, 0x807F_0000, 0, 0, 0), got
+    assert got["dtb"] == linux_stub.word_sum(dtb) and got["image"] == linux_stub.word_sum(image), got
+    dut._log.info("[PASS] linux: the kernel stand-in started with its device tree")

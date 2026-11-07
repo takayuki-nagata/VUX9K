@@ -13,6 +13,7 @@ use fw_common::boot::put_boot_error;
 use fw_common::fat::stage2::BootError;
 use fw_common::fat::{DirEntry, FatError, Volume};
 use fw_common::launch::{put_run_error, SCRATCH, SCRATCH_BYTES};
+use fw_common::linux::{put_linux_error, LinuxError};
 use fw_common::upload::{upload_v2, UploadSink, BLOCK};
 use fw_drivers::sdcard::SdCard;
 use fw_drivers::uart::Uart;
@@ -23,6 +24,8 @@ use crate::shell::{Ctx, PutBytes};
 pub enum Error {
     Fat(FatError),
     Boot(BootError),
+    /// `linux`'s files refused.
+    Linux(LinuxError),
     /// No card answered.
     NoCard,
     /// A directory where a file is needed.
@@ -45,6 +48,12 @@ impl From<BootError> for Error {
     }
 }
 
+impl From<LinuxError> for Error {
+    fn from(e: LinuxError) -> Self {
+        Error::Linux(e)
+    }
+}
+
 pub type Result = core::result::Result<(), Error>;
 
 pub fn print_error(e: Error) {
@@ -55,6 +64,7 @@ pub fn print_error(e: Error) {
         Error::Fat(FatError::WrongType) => Uart::print_str("not a directory"),
         Error::Fat(f) => put_boot_error(&mut Uart, BootError::Fat(f)),
         Error::Boot(b) => put_run_error(&mut Uart, b),
+        Error::Linux(l) => put_linux_error(&mut Uart, l),
         Error::NoCard => Uart::print_str("no SD card"),
         Error::IsDir => Uart::print_str("is a directory"),
         Error::IsCwd => Uart::print_str("is the current directory"),

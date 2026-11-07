@@ -2,6 +2,8 @@
 paths:
   - "linux_workspace/**"
   - "sim/emu/test_linux.py"
+  - "firmware/fw_common/src/linux.rs"
+  - "sim/integration/linux_stub.py"
   - "emu/crates/vux9k_emu/src/profile.rs"
   - "emu/crates/vux9k_emu/src/csr.rs"
   - "emu/crates/vux9k_emu/src/periph/clint.rs"
@@ -11,8 +13,9 @@ paths:
 
 # noMMU Linux (linux_workspace/, the kernel on the emulator)
 
-Read before changing `linux_workspace/`, `make linux-src`, `linux-rootfs`, `linux` or how
-the emulator starts a kernel (`Soc::load_linux`, `vux9k-emu --linux`). Index and the rules that apply everywhere: [`AGENTS.md`](../../AGENTS.md).
+Read before changing `linux_workspace/`, `make linux-src`, `linux-rootfs`, `linux`, how
+the emulator starts a kernel (`Soc::load_linux`, `vux9k-emu --linux`) or how the second
+stage's `linux` does (`fw_common::linux`). Index and the rules that apply everywhere: [`AGENTS.md`](../../AGENTS.md).
 
 ## What exists, and where it runs
 
@@ -27,7 +30,8 @@ the emulator starts a kernel (`Soc::load_linux`, `vux9k-emu --linux`). Index and
   the cpio built in uncompressed (`Image`), and the device tree
   `linux_workspace/dts/vux9k.dts` (`vux9k.dtb`).
 - `make test-linux-emu` (`sim/emu/test_linux.py`) boots it on the emulator's `real` profile to
-  busybox's shell and runs a few commands. It runs only with `VUX9K_LINUX_TEST=1`, which that
+  busybox's shell and runs a few commands, twice: from `load_linux`, and from a FAT32 card
+  (vux_tool's mkfat) through the first stage, the second stage and its `linux`. It runs only with `VUX9K_LINUX_TEST=1`, which that
   target sets, so `test-emu` (`pytest sim/emu`, CI) skips it even where an Image exists. None of
   these targets is in CI. The first buildroot run takes ~40 min on a 2-vCPU
   machine, a kernel rebuild ~6 min.
@@ -38,6 +42,22 @@ the emulator starts a kernel (`Soc::load_linux`, `vux9k-emu --linux`). Index and
   was removed once the RTL had them. `load_linux` (`--linux`) only puts the kernel and the DTB
   into the PSRAM and starts it without firmware; `isa-test` refuses it (no PSRAM). Nothing here has run on the board
   yet, and no document may say it does.
+- **The second stage boots the same files from the card** (`linux [IMAGE DTB]`, both or
+  neither; `\VUX9K\LINUX\Image` and `\VUX9K\LINUX\vux9k.dtb` by default: upstream's
+  `arch/riscv/boot/Image` and dtc's output, unchanged, no VUX9 header). `fw_common::linux`
+  checks both headers before anything is written (the Image's magic2 `RSC\x05`,
+  `text_offset` 0, an `image_size` that ends at `map::LINUX_DTB_ADDR`, a file of at most
+  `map::LINUX_IMAGE_MAX`, 7 MB, below the second stage, which runs while it loads; the device
+  tree's magic, `totalsize` equal to the file's size, at most `map::LINUX_DTB_MAX`, 56 KB,
+  below the second stage's stack: `stage2/bootstrap/link.x` asserts its image ends below the
+  slot), then reads the device tree and the Image into place and jumps with `load_linux`'s
+  handoff (a0 = 0, a1 = the device tree, mie and mstatus.MIE cleared, EV_ENABLE left 0).
+  `map::LINUX_DTB_ADDR` is a copy of `soc::LINUX_DTB_ADDR`: change both. Names: a PC's copy
+  may give the files long names; `resolve` finds them by their 8.3 alias or long name, case
+  ignored, and mkfat's upper-case 8.3 names too. The emulator tests use a stand-in kernel
+  (`sim/integration/linux_stub.py`: the 64-byte header, then code that prints a0-a2, mie,
+  mstatus and word sums of both files), the RTL one too (`test_soc_stage2.py`); the load of
+  the real 3.2 MB Image is ~230M cycles (~70 a byte), ~13 s at 18 MHz.
 
 ## Things that are not obvious
 
@@ -51,8 +71,8 @@ the emulator starts a kernel (`Soc::load_linux`, `vux9k-emu --linux`). Index and
   inittab. Buildroot's `busybox-minimal.config` (780 KB) needed order-8 allocations that 8 MB
   could not keep.
 - **All 8 MB of the PSRAM go to the kernel.** The stages' memory (from `0x806F_0000`) is free
-  once the kernel runs. The DTB sits in the top 64 KB (`soc::LINUX_DTB_ADDR`, `0x807F_0000`),
-  and the kernel reserves its pages.
+  once the kernel runs. The DTB sits in the top 64 KB (`soc::LINUX_DTB_ADDR`, `0x807F_0000`,
+  and `fw_common::map::LINUX_DTB_ADDR` for the second stage), and the kernel reserves its pages.
 - **buildroot sets `BR2_SOFT_FLOAT` for no RISC-V target.** A riscv32 without F would get
   uClibc's FPU configuration, whose riscv32 fenv needs F (`frrm`). `external.mk` replaces
   `UCLIBC_FLOAT_CONFIG` with the soft-float one. This works because uClibc's configuration
@@ -83,7 +103,8 @@ the emulator starts a kernel (`Soc::load_linux`, `vux9k-emu --linux`). Index and
 
 ## Speed (2026-11-01, emulator)
 
-The boot to the prompt is ~224M cycles (12.5 s at 18 MHz), with CPI 9.7, the I cache hitting
+The boot to the prompt is ~224M cycles (12.5 s at 18 MHz; from the second stage's `[LINUX]`
+line ~214M, after its ~230M-cycle load), with CPI 9.7, the I cache hitting
 92.8% and the D cache 88.4%. A command that executes busybox is 13-15M cycles (~0.8 s). The
 measurements are in `test_linux.py`'s output (`make test-linux-emu`). Before the 8-word lines and
 the write-back data cache the same boot was ~3.1G cycles (173 s, CPI 25): its lines were one word,

@@ -75,8 +75,13 @@ alone, for trying a second stage or recovering a card. `monitor` opens a plain t
 
 The second stage is a file manager and launcher (`help` lists its commands; the README's
 "The second stage's prompt" describes them): `ls`, `cd`, `cat`, `hexdump`, `rm`, `mkdir`,
-`rmdir`, `mv`, `put` (a file over the serial port), `run`, `info`, `install`, `reset`. It
-reads FAT32 with 8.3 and long names (long names read only); what it writes gets 8.3 names.
+`rmdir`, `mv`, `put` (a file over the serial port), `run`, `linux`, `info`, `install`,
+`reset`. It reads FAT32 with 8.3 and long names (long names read only); what it writes gets
+8.3 names. `linux [IMAGE DTB]` boots a noMMU Linux kernel as `make linux` builds it, the
+upstream `Image` and its device tree unchanged (by default `\VUX9K\LINUX\Image` and
+`\VUX9K\LINUX\vux9k.dtb`; `vux_tool.py linux`), in M-mode at `0x8000_0000` with `a1` =
+`0x807F_0000`, the device tree (the README's "The second stage's prompt" has its checks);
+a release ships no kernel, and none has run on the board yet.
 `sd/VUX9K/APPS/` holds the demos as v4 files for the card; copy the directory to
 `\VUX9K\APPS\` (or `put` them there; `put` needs the directory, which `mkdir` makes, at the
 prompt or as `vux_tool.py mkdir VUX9K/APPS`) and start one with `run`:

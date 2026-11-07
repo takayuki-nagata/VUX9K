@@ -6,7 +6,8 @@ The second stage (firmware/stage2) on the emulator: its line prompt (echo, backs
 usage), the file commands on FAT32 cards (long names read, 8.3 names written, every error
 they report), put/install over transfer v2 through tools/vux_tool.py, `run` of the two
 targets of fw_common::launch (PSRAM, Hack's segment) and what it refuses (an RV32 file at 0
-among them, with the first stage left intact in the ROM), `info`, `reset` and the trap report.
+among them, with the first stage left intact in the ROM), `linux` with a stand-in for a
+kernel (linux_stub) and what it refuses, `info`, `reset` and the trap report.
 """
 
 import os
@@ -17,6 +18,7 @@ import zlib
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "integration"))
+import linux_stub  # noqa: E402
 from rv32_asm import Asm  # noqa: E402
 from s1_env import (  # noqa: E402
     BANNER,
@@ -145,6 +147,7 @@ def test_banner_handoff_and_help():
     for c in ["ls [PATH]", "cd PATH | pwd", "cat FILE", "hexdump FILE", "rm FILE", "mkdir DIR", "rmdir DIR",
               "mv SRC DST", "put NAME", "run FILE", "info", "install [-u]", "reset"]:  # fmt: skip
         assert f"  {c} " in out, (c, out)
+    assert "  linux [IMAGE DTB]\n" in out and "(default \\VUX9K\\LINUX\\Image, \\VUX9K\\LINUX\\vux9k.dtb)" in out
     assert s2_cmd(soc, "") == ""
     assert s2_cmd(soc, "   ") == ""
     assert err(s2_cmd(soc, "frobnicate")) == "unknown command (help lists them)"
@@ -186,6 +189,8 @@ def test_needs_rv32m(m_ext):
         ("mv A B C", "mv SRC DST"),
         ("put", "put NAME"),
         ("run", "run FILE"),
+        ("linux A", "linux [IMAGE DTB]"),
+        ("linux A B C", "linux [IMAGE DTB]"),
         ("info X", "info"),
         ("install -x", "install [-u]"),
         ("install -u X", "install [-u]"),
@@ -753,6 +758,138 @@ def test_run_reports_card_and_chain_errors():
         got = err(s2_cmd(soc, f"run {name}.BIN", timeout_cycles=RUN_CYCLES))
         assert got == want, (name, got)
         assert s1_intact(soc), name
+
+
+# ----- linux ---------------------------------------------------------------------------
+
+LINUX = "VUX9K/LINUX"
+# A file's load at ~100 cycles a byte (as run's), to the blank line after [LINUX]
+LINUX_CYCLES_PER_BYTE = 150
+# The kernel stand-in's [KERNEL] line: sums over its file and the device tree, and the line
+KERNEL_CYCLES = 4_000_000
+
+
+def linux_line(image: bytes, dtb: bytes) -> str:
+    return f"[LINUX] Image {len(image)} B, DTB {len(dtb)} B, starting at 0x80000000\n\n"
+
+
+def boot_kernel(soc, line: str, image: bytes, dtb: bytes) -> dict:
+    """Type the linux command line, which must start the kernel stand-in image with dtb;
+    returns what the stand-in printed (linux_stub.handoff)."""
+    budget = (len(image) + len(dtb)) * LINUX_CYCLES_PER_BYTE + 2_000_000
+    out = s2_cmd(soc, line, until=b"\n\n", timeout_cycles=budget)
+    assert out == linux_line(image, dtb), out
+    mark = len(soc.uart_received())
+    got = linux_stub.handoff(wait_for(soc, b"\n", KERNEL_CYCLES, start=mark))
+    # a0 = 0 (the hart), a1 = the device tree, a2 = 0, interrupts off; both files read
+    # back through the caches as they are on the card
+    assert {k: got[k] for k in ("a0", "a1", "a2", "mie")} == {"a0": 0, "a1": 0x807F_0000, "a2": 0, "mie": 0}, got
+    assert got["mstatus"] & 0x8 == 0, got  # MIE
+    assert got["dtb"] == linux_stub.word_sum(dtb), got
+    assert got["image"] == linux_stub.word_sum(image), got
+    return got
+
+
+def test_linux_starts_an_image_with_its_device_tree():
+    """linux IMAGE DTB: the device tree at 0x807F0000, the Image at 0x80000000, and a jump
+    there with the handoff the emulator's Soc.load_linux gives (a0 = 0, a1 = the device
+    tree), interrupts off; paths from the working directory, names in any case."""
+    dtb = linux_stub.dtb(1500 // 4 * 4)
+    image = linux_stub.image(len(dtb))
+    soc, _ = boot_s2({"BOOT/KERNEL": image, "BOOT/BOARD.DTB": dtb})
+    assert s2_cmd(soc, "cd boot") == ""
+    boot_kernel(soc, "linux kernel ../Boot/board.dtb", image, dtb)
+    soc.run(ms(1))
+    assert linux_stub.BASE <= soc.pc < linux_stub.BASE + len(image)
+    # In the PSRAM itself (the data cache wrote the device tree's lines back while the Image
+    # loaded): the device tree and the Image's start
+    assert all(soc.xmem_word(0x807F_0000 + i) == struct.unpack_from("<I", dtb, i)[0] for i in range(0, len(dtb), 4))
+    assert all(soc.xmem_word(linux_stub.BASE + i) == struct.unpack_from("<I", image, i)[0] for i in range(0, 1024, 4))
+    assert s1_intact(soc)
+
+
+def test_linux_defaults_and_the_largest_device_tree():
+    """linux without arguments: \\VUX9K\\LINUX\\Image and vux9k.dtb (vux_tool's 8.3 names,
+    upper case); a device tree of 56 KB, the most below the second stage's stack."""
+    dtb = linux_stub.dtb(56 * 1024)
+    image = linux_stub.image(len(dtb))
+    soc, _ = boot_s2({f"{LINUX}/IMAGE": image, f"{LINUX}/VUX9K.DTB": dtb})
+    boot_kernel(soc, "linux", image, dtb)
+
+
+def test_linux_refusals_leave_the_second_stage():
+    """What linux refuses, each before it writes anything: the Image's header (shorter than
+    it, magic2, text_offset, an image_size that reaches the device tree, a file over 7 MB),
+    the device tree's (magic, totalsize, over 56 KB, shorter than its header), a missing
+    file (the defaults on a card without them), a directory, one argument. The second stage
+    works on after each, and starts the good pair at the end."""
+    dtb = linux_stub.dtb(1024)
+    image = linux_stub.image(len(dtb))
+    files = {
+        "GOOD.IMG": image,
+        "GOOD.DTB": dtb,
+        "SHORT.IMG": image[:63],
+        "MAGIC2.IMG": linux_stub.image(len(dtb), magic2=b"RSC\x04"),
+        "OFFSET.IMG": linux_stub.image(len(dtb), text_offset=0x20_0000),
+        "SIZE0.IMG": linux_stub.image(len(dtb), image_size=0),
+        "OVERLAP.IMG": linux_stub.image(len(dtb), image_size=0x7F_0001),
+        "HIGH.IMG": linux_stub.image(len(dtb), image_size=1 << 32),
+        # One word past 7 MB: it would run into the second stage
+        "BIG.IMG": image + bytes(7 * 1024 * 1024 + 4 - len(image)),
+        "MAGIC.DTB": linux_stub.dtb(1024, magic=0xD00DFEEE),
+        "TOTAL.DTB": linux_stub.dtb(1024, totalsize=1028),
+        "BIG.DTB": linux_stub.dtb(56 * 1024 + 4),
+        "SHORT.DTB": linux_stub.dtb(36),
+        "DIR/X.TXT": b"x",
+    }
+    img = card({"VUX9K/STAGE2.BIN": stage2()} | files, part_sectors=20480)
+    soc, _ = boot_s2(image=img)
+    for line, want in [
+        ("linux", "not found"),
+        ("linux GOOD.IMG", "usage: linux [IMAGE DTB]"),
+        ("linux NOPE.IMG GOOD.DTB", "not found"),
+        ("linux GOOD.IMG NOPE.DTB", "not found"),
+        ("linux DIR GOOD.DTB", "is a directory"),
+        ("linux GOOD.IMG DIR", "is a directory"),
+        ("linux GOOD.IMG/X GOOD.DTB", "not a directory"),
+        ("linux SHORT.IMG GOOD.DTB", "Image: not a RISC-V Linux Image"),
+        ("linux MAGIC2.IMG GOOD.DTB", "Image: not a RISC-V Linux Image"),
+        ("linux SIZE0.IMG GOOD.DTB", "Image: not a RISC-V Linux Image"),
+        ("linux OFFSET.IMG GOOD.DTB", "Image: text_offset not 0 (it runs at 80000000)"),
+        ("linux OVERLAP.IMG GOOD.DTB", "Image: image_size reaches the device tree at 807F0000"),
+        ("linux HIGH.IMG GOOD.DTB", "Image: image_size reaches the device tree at 807F0000"),
+        ("linux BIG.IMG GOOD.DTB", "Image: over 7 MB (it must end below the second stage)"),
+        ("linux GOOD.IMG MAGIC.DTB", "DTB: not a flattened device tree"),
+        ("linux GOOD.IMG SHORT.DTB", "DTB: not a flattened device tree"),
+        ("linux GOOD.IMG TOTAL.DTB", "DTB: totalsize is not the file's size"),
+        ("linux GOOD.IMG BIG.DTB", "DTB: over 56 KB"),
+        # The Image's header is checked first
+        ("linux MAGIC2.IMG MAGIC.DTB", "Image: not a RISC-V Linux Image"),
+    ]:
+        out = s2_cmd(soc, line, timeout_cycles=RUN_CYCLES)
+        assert out == f"[ERR] {want}\n", (line, out)
+    assert ls_line("GOOD.IMG", len(image)) in s2_cmd(soc, "ls")
+    assert s1_intact(soc)
+    boot_kernel(soc, "linux GOOD.IMG GOOD.DTB", image, dtb)
+
+
+def test_linux_through_vux_tool(tool):
+    """vux_tool.linux: refused (S2Error with the [ERR] line, the prompt back), then the
+    kernel stand-in started from the defaults; its output follows the [LINUX] line."""
+    dtb = linux_stub.dtb(1024)
+    image = linux_stub.image(len(dtb))
+    soc, ser = tool(card({S2: stage2(), f"{LINUX}/IMAGE": image, f"{LINUX}/VUX9K.DTB": dtb}))
+    with pytest.raises(vux_tool.S2Error, match="Image: not a RISC-V Linux Image"):
+        vux_tool.linux(ser, "VUX9K/LINUX/VUX9K.DTB", "VUX9K/LINUX/IMAGE")
+    with pytest.raises(ValueError):
+        vux_tool.linux(ser, "VUX9K/LINUX/IMAGE")
+    out = vux_tool.linux(ser)
+    assert linux_line(image, dtb)[:-1] in out, out
+    got, rest = vux_tool.read_until(ser, ("[KERNEL]",), 5.0, vux_tool.after_run(out, "[LINUX] "))
+    assert got, rest
+    got, line = vux_tool.read_until(ser, ("\n",), 5.0, rest[rest.index(got) :])
+    assert got, line
+    assert linux_stub.handoff(line)["dtb"] == linux_stub.word_sum(dtb), line
 
 
 def test_reset_back_to_the_first_stage():

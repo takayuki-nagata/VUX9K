@@ -94,8 +94,9 @@ binaries land in the single shared `firmware/target/riscv32im-unknown-none-elf/`
 - **The second stage is a line prompt** (`s2> `, echo and backspace; `fw_common::shell`):
   the commands are `firmware/stage2/src/shell.rs`'s `HELP` and `CARD_CMDS`, an error is one
   `[ERR] ` line, `put`/`install` speak transfer v2 after their line, `install`'s result is
-  `[INSTALL] ...` (`install -u`: `[UNCHECKED] ...`). `tools/vux_tool.py` (`s2_cmd`, `put`,
-  `run_app`, `install_stage2`, `enter_s1`'s `reset`), `scripts/test_hardware.py` and the
+  `[INSTALL] ...` (`install -u`: `[UNCHECKED] ...`), `linux`'s start `[LINUX] ...` and a blank
+  line. `tools/vux_tool.py` (`s2_cmd`, `put`, `run_app`, `linux`, `install_stage2`,
+  `enter_s1`'s `reset`), `scripts/test_hardware.py` and the
   emulator tests (`sim/emu/test_stage2.py`, `s1_env.s2_cmd`) depend on those strings.
 - **The launcher writes nothing outside the PSRAM before the CRC checked** (`fw_common::launch`,
   `run`, `launch::load`): the header is checked within `LOAD_WINDOW` and `plan` picks the
@@ -111,7 +112,11 @@ binaries land in the single shared `firmware/target/riscv32im-unknown-none-elf/`
   payload 0, Hack's data segment (`HACK_D_BASE`, `HACK_D_WORDS`) zeroed, `fence.i`,
   `GPIO_BOOT_MODE` and the soft reset (Hack starts at 0; its soft reset without a mode goes
   back to the first stage). The first stage stays in the ROM whatever runs. The windows are
-  spelled out in `put_run_error`'s text (a const assert).
+  spelled out in `put_run_error`'s text (a const assert). `linux` (`fw_common::linux`, no
+  VUX9 header: upstream's `Image` and dtb) checks both files' headers before it writes, then
+  writes only the PSRAM below the second stage and the device tree's slot at
+  `map::LINUX_DTB_ADDR` in the second stage's window, above its image and below its stack
+  (linux.md, "What exists, and where it runs").
 - **`fw_common` code that only the second stage needs stays out of the first stage's
   build**: merely adding `launch` to `lib.rs` changed the first stage's binary (36 bytes), so
   it is behind `fat-full`, as is the table-driven `crc32_update` (the bitwise one, which the

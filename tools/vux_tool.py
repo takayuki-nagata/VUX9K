@@ -598,33 +598,54 @@ def put(ser, path, data, timeout=10.0):
     return next((ln for ln in text.splitlines() if ln.startswith("[PUT]")), text.strip())
 
 
-def run_app(ser, path, timeout=30.0):
-    """At the second stage's prompt: start the v4 file path on the card with `run`.
-    Returns the text read: up to and including the [RUN] line, and whatever of the
-    application's output arrived in the same read (an application in the PSRAM prints at
-    once; `after_run` gives that part, the rest follows on ser). Raises S2Error when the
-    second stage refuses it."""
+def _start(ser, line, tag, timeout):
+    """At the second stage's prompt: a command that starts something (`run`, `linux`).
+    Returns the text read up to and including the line starting with tag, and whatever
+    followed in the same read; raises S2Error when the prompt comes back instead."""
     drain_serial(ser, timeout=0.05)
-    ser.write(f"run {path}\r".encode())
+    ser.write(f"{line}\r".encode())
     ser.flush()
     text = ""
     end = time.monotonic() + timeout
     while time.monotonic() < end:
         _, t = read_until(ser, ("\n",), max(0.0, end - time.monotonic()))
         text += t
-        at = text.find("[RUN] ")
+        at = text.find(tag)
         if at >= 0 and "\n" in text[at:]:
             return text
         if S2_PROMPT in text[text.find("\n") + 1 :]:
             _s2_check(text)
             raise S2Error(text.strip())
-    raise TimeoutError(f"no [RUN] line after run {path}; got {text[-400:]!r}")
+    raise TimeoutError(f"no {tag.strip()} line after {line}; got {text[-400:]!r}")
 
 
-def after_run(text):
-    """The application's output in `run_app`'s text: what follows the [RUN] line."""
-    at = text.find("[RUN] ")
+def run_app(ser, path, timeout=30.0):
+    """At the second stage's prompt: start the v4 file path on the card with `run`.
+    Returns the text read: up to and including the [RUN] line, and whatever of the
+    application's output arrived in the same read (an application in the PSRAM prints at
+    once; `after_run` gives that part, the rest follows on ser). Raises S2Error when the
+    second stage refuses it."""
+    return _start(ser, f"run {path}", "[RUN] ", timeout)
+
+
+def after_run(text, tag="[RUN] "):
+    """The application's output in `run_app`'s text (`linux`'s with tag "[LINUX] "): what
+    follows the [RUN] line."""
+    at = text.find(tag)
     return text[text.index("\n", at) + 1 :] if at >= 0 and "\n" in text[at:] else ""
+
+
+def linux(ser, image=None, dtb=None, timeout=120.0):
+    """At the second stage's prompt: boot a Linux kernel from the card with `linux` (the
+    kernel's Image and its device tree, by default \\VUX9K\\LINUX\\Image and vux9k.dtb;
+    both or neither). Returns the text read up to and including the [LINUX] line and
+    whatever of the kernel's output came with it (`after_run(text, "[LINUX] ")`; the rest
+    follows on ser). Raises S2Error when the second stage refuses the files. The second
+    stage is gone once the kernel starts: a reset (the board's, `reset`) brings it back."""
+    if (image is None) != (dtb is None):
+        raise ValueError("linux takes both files or neither")
+    line = "linux" if image is None else f"linux {image} {dtb}"
+    return _start(ser, line, "[LINUX] ", timeout)
 
 
 def ram_boot(ser, data, timeout=10.0):
@@ -940,6 +961,15 @@ def cmd_run_app(args):
         ser.close()
 
 
+def cmd_linux(args):
+    ser = open_port(args.port, baudrate=args.baud)
+    try:
+        enter_s2(ser)
+        print(linux(ser, args.image, args.dtb, timeout=args.timeout), end="")
+    finally:
+        ser.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description="VUX9K Host Tooling")
     parser.add_argument("--port", default="auto", help="Serial/FTDI port URL (default: auto)")
@@ -1003,8 +1033,22 @@ def main():
         default=120.0,
         help="seconds for the load, to the [RUN] line (default: 120; ~100 cycles a byte: BC.BIN takes ~1.5 s)",
     )
+    sub_linux = subparsers.add_parser(
+        "linux",
+        help="Boot a Linux kernel from the card (second stage's linux; then `monitor` for its console)",
+    )
+    sub_linux.add_argument("image", nargs="?", help="Image on the card (default: \\VUX9K\\LINUX\\Image)")
+    sub_linux.add_argument("dtb", nargs="?", help="Device tree on the card (default: \\VUX9K\\LINUX\\vux9k.dtb)")
+    sub_linux.add_argument(
+        "--timeout",
+        type=float,
+        default=600.0,
+        help="seconds for the load, to the [LINUX] line (default: 600; ~70 cycles a byte: a 3.2 MB Image takes ~13 s)",
+    )
 
     args = parser.parse_args()
+    if args.command == "linux" and args.dtb is None and args.image is not None:
+        parser.error("linux takes both files (IMAGE DTB) or neither")
 
     if args.command == "mkv4":
         cmd_mkv4(args)
@@ -1042,6 +1086,8 @@ def _dispatch(args):
         cmd_put(args)
     elif args.command == "run-app":
         cmd_run_app(args)
+    elif args.command == "linux":
+        cmd_linux(args)
 
 
 if __name__ == "__main__":

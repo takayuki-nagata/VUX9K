@@ -13,6 +13,12 @@ use crate::{cmds, launch};
 
 pub const PROMPT: &str = "s2> ";
 
+/// `linux`'s files without arguments: upstream's names (arch/riscv/boot/Image, dtc's
+/// output). A PC's copy may give them long names, vux_tool's mkfat 8.3 ones in upper case:
+/// `resolve` takes either, case ignored.
+const LINUX_IMAGE: &[u8] = b"\\VUX9K\\LINUX\\Image";
+const LINUX_DTB: &[u8] = b"\\VUX9K\\LINUX\\vux9k.dtb";
+
 /// What the commands share: the working directory (None: the root, also before a card
 /// is mounted) and its path, and the first stage's version (a2).
 pub struct Ctx {
@@ -34,6 +40,9 @@ Commands (paths with / or \\, . and .., 8.3 or long names):
   mv SRC DST       move or rename a file (DST may be a directory)
   put NAME         receive a file over the UART (transfer v2) as NAME
   run FILE         start a VUX9 v4 application (RV32 or Hack, in the PSRAM)
+  linux [IMAGE DTB]
+                   boot a riscv Linux kernel Image with a device tree
+                   (default \\VUX9K\\LINUX\\Image, \\VUX9K\\LINUX\\vux9k.dtb)
   info             card, free space, versions
   install [-u]     receive a second stage and install it as \\VUX9K\\STAGE2.BIN
                    (-u: unchecked, for tests)
@@ -84,10 +93,11 @@ enum Cmd {
     Mv,
     Put,
     Run,
+    Linux,
     Info,
 }
 
-const CARD_CMDS: [(&[u8], Cmd, usize, usize, &str); 11] = [
+const CARD_CMDS: [(&[u8], Cmd, usize, usize, &str); 12] = [
     (b"ls", Cmd::Ls, 0, 1, "ls [PATH]"),
     (b"cd", Cmd::Cd, 1, 1, "cd PATH"),
     (b"cat", Cmd::Cat, 1, 1, "cat FILE"),
@@ -98,6 +108,7 @@ const CARD_CMDS: [(&[u8], Cmd, usize, usize, &str); 11] = [
     (b"mv", Cmd::Mv, 2, 2, "mv SRC DST"),
     (b"put", Cmd::Put, 1, 1, "put NAME"),
     (b"run", Cmd::Run, 1, 1, "run FILE"),
+    (b"linux", Cmd::Linux, 0, 2, "linux [IMAGE DTB]"),
     (b"info", Cmd::Info, 0, 0, "info"),
 ];
 
@@ -131,7 +142,12 @@ fn execute(ctx: &mut Ctx, line: &[u8]) {
     let Some(&(_, cmd, min, max, how)) = CARD_CMDS.iter().find(|c| c.0 == a.cmd) else {
         return Uart::print_str("[ERR] unknown command (help lists them)\n");
     };
-    if a.extra || args.len() < min || args.len() > max {
+    // linux takes both of its files or neither
+    if a.extra
+        || args.len() < min
+        || args.len() > max
+        || matches!((cmd, args.len()), (Cmd::Linux, 1))
+    {
         return usage(how);
     }
     let path = args.first().copied().unwrap_or(b".");
@@ -146,6 +162,10 @@ fn execute(ctx: &mut Ctx, line: &[u8]) {
         Cmd::Mv => cmds::mv(&mut card, path, args[1]),
         Cmd::Put => cmds::put(&mut card, path),
         Cmd::Run => launch::run(ctx, &mut card, path),
+        Cmd::Linux => match args {
+            [image, dtb] => launch::linux(&mut card, image, dtb),
+            _ => launch::linux(&mut card, LINUX_IMAGE, LINUX_DTB),
+        },
         Cmd::Info => cmds::info(ctx, &mut card),
     });
     if let Err(e) = r {

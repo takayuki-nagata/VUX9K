@@ -4,8 +4,8 @@
 //! The firmware's hardware-independent logic: the SoC's address map, the VUX9 v4 file
 //! header, CRC32, transfer v2 (`upload`), FAT32 (`fat`) with the second stage's files
 //! (`fat::stage2`), the first stage's RAM boot (`boot`), the second stage's launcher
-//! (`launch`) and command line (`shell`), and number formatting. No MMIO
-//! here (the drivers pass themselves in as traits), so all of it is tested on the host:
+//! (`launch`), its kernel loader (`linux`) and command line (`shell`), and number
+//! formatting. No MMIO here (the drivers pass themselves in as traits), so all of it is tested on the host:
 //! `cargo test -p fw_common --target x86_64-unknown-linux-gnu --features fat-full`
 //! (make test-fw-host).
 
@@ -19,6 +19,8 @@ pub mod header;
 // module alone changed
 #[cfg(feature = "fat-full")]
 pub mod launch;
+#[cfg(feature = "fat-full")]
+pub mod linux;
 pub mod map;
 pub mod shell;
 pub mod upload;

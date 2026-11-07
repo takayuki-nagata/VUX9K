@@ -90,6 +90,23 @@ pub const STAGE2_BYTES: usize = 1024 * 1024;
 /// The first stage's data and stack: the 64 KB below the second stage's window.
 pub const S1_RAM_BASE: usize = 0x806F_0000;
 pub const S1_RAM_BYTES: usize = 64 * 1024;
+/// Where the second stage's `linux` loads a kernel's `Image`: the PSRAM's start, where the
+/// kernel runs (riscv's text_offset 0 in M-mode). The file must end below the second stage,
+/// which runs while it loads.
+pub const LINUX_IMAGE_BASE: usize = XMEM_BASE;
+pub const LINUX_IMAGE_MAX: usize = STAGE2_BASE - XMEM_BASE;
+/// Where `linux` puts the device tree, which a1 points the kernel to: the emulator's
+/// `soc::LINUX_DTB_ADDR` (emu/crates/vux9k_emu/src/soc.rs, `Soc::load_linux`), in the top
+/// 64 KB of the PSRAM, all of which the device tree gives the kernel. The kernel's image,
+/// bss included, must end below it.
+pub const LINUX_DTB_ADDR: usize = 0x807F_0000;
+/// The second stage's stack: the top 8 KB of its window, which start.s zeroes
+/// (stage2/bootstrap/link.x's `_stack_zero`, held to this by an assert there). Nothing
+/// measures its depth: an overflow would now run into the device tree `linux` loads below it.
+pub const STAGE2_STACK_BYTES: usize = 8 * 1024;
+/// The device tree's room while the second stage loads it: up to its stack at its window's
+/// top (its image and .bss end below `LINUX_DTB_ADDR`: stage2/bootstrap/link.x).
+pub const LINUX_DTB_MAX: usize = STAGE2_BASE + STAGE2_BYTES - STAGE2_STACK_BYTES - LINUX_DTB_ADDR;
 /// Hack's instruction segment (soc_pkg::HACK_I_BASE): a Hack fetch of byte address pc
 /// reads `HACK_I_BASE + pc[15:0]`, two 16-bit instructions a word, the first in the low
 /// half. A Hack program starts at 0 (a soft reset into Hack).

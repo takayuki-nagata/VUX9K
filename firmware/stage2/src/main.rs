@@ -32,7 +32,7 @@ use fw_drivers::uart::Uart;
 /// Raise it with every change of the second stage: its v4 header carries it (the
 /// Makefile's mkv4 reads it from here), `info` and the banner show it, and the tests
 /// read it from here.
-const STAGE2_VERSION: u32 = 11;
+const STAGE2_VERSION: u32 = 12;
 // The first stage starts no second stage older than this (it reads mtime at the CLINT and
 // the UART's liteuart registers)
 const _: () = assert!(STAGE2_VERSION >= fw_common::boot::MIN_STAGE2_VERSION);

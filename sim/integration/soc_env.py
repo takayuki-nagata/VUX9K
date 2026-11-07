@@ -59,7 +59,7 @@ S2_BANNER = f"VUX9K Stage 2 (v{STAGE2_VERSION})"
 # The demos as v4 files for \VUX9K\APPS\ (make apps)
 APPS_DIR = os.path.join(REPO_ROOT, "build", "firmware", "apps")
 # Power-on to the real second stage's prompt: the first stage's key window (1.8M cycles) and
-# its read of the 38 KB STAGE2.BIN from the card (~11.0M cycles in all on the emulator)
+# its read of the 40 KB STAGE2.BIN from the card (~11.0M cycles in all on the emulator)
 S2_BOOT_CYCLES = 20_000_000
 
 CLK_PERIOD_PS = 55556  # 18.0 MHz SoC clock (tb_soc_top.sv: 2 x 27778 ps)
@@ -96,7 +96,7 @@ def v4_size(data: bytes) -> int:
 
 
 def stage2_file(version: int = MIN_STAGE2_VERSION) -> bytes:
-    """The second stage (38 KB) as a v4 file, as `make firmware` builds it."""
+    """The second stage (40 KB) as a v4 file, as `make firmware` builds it."""
     with open(STAGE2_RAW, "rb") as f:
         return v4_file(f.read(), version)
 
