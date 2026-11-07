@@ -26,8 +26,10 @@ pub const RAM_BOOT_MAX: u32 = HEADER_LEN as u32 + map::STAGE2_BYTES as u32;
 /// replaces: on a bitstream without the page their delays and timeouts never end. Those
 /// before v10 use the UART's older registers (status at +4 with tx_full in bit 1), where
 /// the liteuart registers (`map::UART_TXFULL`) now are: they would wait on TXFULL's bit 1,
-/// which never sets, overrun the TX FIFO, and never see a received byte (`map::UART_RXEMPTY`
-/// moved to +8). The second stage holds its `STAGE2_VERSION` to it (a const assert).
+/// which never sets, and overrun the TX FIFO; and their rx_empty, bit 0 there, is TXFULL,
+/// nearly always 0, so they would read RXTX as if a byte waited and get NULs (RXTX reads 0
+/// with the RX FIFO empty) between the received bytes. The second stage holds its
+/// `STAGE2_VERSION` to it (a const assert).
 pub const MIN_STAGE2_VERSION: u32 = 10;
 
 /// The first stage starts RV32 code of `MIN_STAGE2_VERSION` or later only (from the

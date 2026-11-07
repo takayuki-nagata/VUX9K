@@ -61,7 +61,8 @@ binaries land in the single shared `firmware/target/riscv32im-unknown-none-elf/`
   the timer moved to the CLINT (`map::MTIME_LO`), and on a bitstream without the page their
   delays and timeouts never end; v9 still used the UART's registers before liteuart's
   (status at `+4`, `tx_full` in bit 1, where `map::UART_TXFULL` is now), so its output would
-  overrun the TX FIFO and it would never see a received byte. `boot::check_stage2` (RV32, not too old) is part of
+  overrun the TX FIFO, and its `rx_empty` (bit 0 there, now TXFULL, nearly always 0) would
+  read NULs from the empty RX FIFO between the received bytes. `boot::check_stage2` (RV32, not too old) is part of
   choosing (`select_boot`'s `accept`, checked on the header before the payload loads): an old
   `.BIN` with a new `.OLD` boots `.OLD`, both old print one `[BOOT] STAGE2.BIN: too old, needs
   v10 (install-stage2): v<n>; STAGE2.OLD: ...` line and stay at `s1> `, where `install-stage2`
