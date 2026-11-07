@@ -41,15 +41,15 @@ pub fn crc32_update(data: &[u8], mut crc: u32) -> u32 {
     crc
 }
 
-/// The CRC-32 of each 4-bit value, for `crc32_update` a nibble at a time.
+/// The CRC-32 of each byte value, for `crc32_update` a byte at a time.
 #[cfg(feature = "fat-full")]
-const CRC_NIBBLES: [u32; 16] = {
-    let mut t = [0u32; 16];
+const CRC_BYTES: [u32; 256] = {
+    let mut t = [0u32; 256];
     let mut i = 0;
-    while i < 16 {
+    while i < 256 {
         let mut c = i as u32;
         let mut k = 0;
-        while k < 4 {
+        while k < 8 {
             c = if (c & 1) != 0 {
                 (c >> 1) ^ 0xEDB8_8320
             } else {
@@ -63,15 +63,13 @@ const CRC_NIBBLES: [u32; 16] = {
     t
 };
 
-/// CRC-32 as above, a nibble at a time from a 64-byte table: the second stage's
-/// (feature `fat-full`). From the PSRAM before its caches, every fetch waiting ~35 cycles,
-/// the bitwise loop took ~1,800 cycles a byte of every file it loaded.
+/// CRC-32 as above, a byte at a time from a 1 KB table: the second stage's (feature
+/// `fat-full`), ~28 cycles a byte from the PSRAM where the 64-byte nibble table's took ~41
+/// (and the bitwise loop, before the caches, ~1,800); `run` checks every file it loads.
 #[cfg(feature = "fat-full")]
 pub fn crc32_update(data: &[u8], mut crc: u32) -> u32 {
     for &b in data {
-        crc ^= b as u32;
-        crc = (crc >> 4) ^ CRC_NIBBLES[(crc & 0xF) as usize];
-        crc = (crc >> 4) ^ CRC_NIBBLES[(crc & 0xF) as usize];
+        crc = (crc >> 8) ^ CRC_BYTES[((crc ^ b as u32) & 0xFF) as usize];
     }
     crc
 }

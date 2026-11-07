@@ -104,11 +104,23 @@ fn mount(img: Vec<u8>) -> Result<Volume<MemDisk>, FatError> {
     Volume::mount(disk(img))
 }
 
-/// Read a file twice (sector by sector, and into a buffer); its bytes.
+/// Read a file twice (sector by sector, and into a buffer), and with `fat-full` also
+/// with `read_file_to`, which must give the same bytes or chain error (not an empty file's,
+/// whose range reads no cluster; and not after a card error: it reads the FAT and the data
+/// in another order, which leaves another FAT sector cached); its bytes.
 fn read_file(vol: &mut Volume<MemDisk>, path: &str) -> Result<Vec<u8>, FatError> {
     let f = vol.open(path)?;
     let mut streamed = Vec::new();
-    vol.for_each_sector(&f, &mut |d| streamed.extend_from_slice(d))?;
+    let r = vol.for_each_sector(&f, &mut |d| streamed.extend_from_slice(d));
+    #[cfg(feature = "fat-full")]
+    if f.size != 0 && !matches!(r, Err(FatError::Io(_))) {
+        let mut direct = std::vec![0xAAu8; f.size as usize];
+        assert_eq!(vol.read_file_to(&f, 0, &mut direct), r, "{path}");
+        if r.is_ok() {
+            assert_eq!(direct, streamed, "{path}");
+        }
+    }
+    r?;
     let mut buf = std::vec![0xAAu8; f.size as usize + 3];
     assert_eq!(vol.read_to(&f, &mut buf)?, f.size as usize);
     assert_eq!(&buf[..f.size as usize], &streamed[..]);
@@ -547,6 +559,244 @@ fn errors_at_a_chains_end_and_in_directories() {
     vol.device().fail_read = Some(lba);
     let mut buf = [0u8; 600];
     assert_eq!(vol.read_to(&f, &mut buf), Err(FatError::Io(lba)));
+}
+
+// ----- Long reads (feature fat-full) ---------------------------------------------
+
+#[cfg(feature = "fat-full")]
+mod read_file_to {
+    use super::*;
+
+    /// A card that records each `read_sectors` (first LBA, sectors) and fails the reads of
+    /// `fail` (both kinds).
+    struct Runs {
+        disk: MemDisk,
+        runs: Vec<(u32, usize)>,
+    }
+
+    impl BlockDevice for Runs {
+        fn read(&mut self, lba: u32, buf: &mut [u8; SECTOR]) -> bool {
+            self.disk.read(lba, buf)
+        }
+        fn write(&mut self, lba: u32, buf: &[u8; SECTOR]) -> bool {
+            self.disk.write(lba, buf)
+        }
+        fn read_sectors(&mut self, lba: u32, dst: &mut [u8]) -> usize {
+            self.runs.push((lba, dst.len() / SECTOR));
+            let mut n = 0;
+            for chunk in dst.chunks_exact_mut(SECTOR) {
+                if !self.disk.read(lba + n as u32, chunk.try_into().unwrap()) {
+                    break;
+                }
+                n += 1;
+            }
+            n
+        }
+    }
+
+    fn mount_runs(img: Vec<u8>) -> Volume<Runs> {
+        Volume::mount(Runs {
+            disk: disk(img),
+            runs: Vec::new(),
+        })
+        .unwrap()
+    }
+
+    /// Bytes `from..from + len` of `f` by read_file_to, and the runs it read.
+    fn range(
+        vol: &mut Volume<Runs>,
+        f: &DirEntry,
+        from: u32,
+        len: usize,
+    ) -> Result<(Vec<u8>, Vec<(u32, usize)>), FatError> {
+        vol.device().runs.clear();
+        // One more byte: it must stay as it is
+        let mut buf = std::vec![0xAAu8; len + 1];
+        vol.read_file_to(f, from, &mut buf[..len])?;
+        assert_eq!(buf[len], 0xAA);
+        buf.truncate(len);
+        Ok((buf, core::mem::take(&mut vol.device().runs)))
+    }
+
+    /// Every file of every image, whole and in ranges that start and end in the middle of
+    /// sectors and clusters, at their edges, and at the file's ends.
+    #[test]
+    fn ranges_read_what_the_file_holds() {
+        for name in IMAGES {
+            let mut vol = mount_runs(image(name));
+            for (path, size, _) in manifest(name) {
+                let f = vol.open(&path).unwrap();
+                let mut whole = Vec::new();
+                vol.for_each_sector(&f, &mut |d| whole.extend_from_slice(d))
+                    .unwrap();
+                let mut cuts: Vec<u32> = [0, 1, 64, 511, 512, 513, 4095, 4096, 4097, 5000]
+                    .into_iter()
+                    .chain([size / 2, size.saturating_sub(1), size])
+                    .filter(|&c| c <= size)
+                    .collect();
+                cuts.sort();
+                cuts.dedup();
+                for &from in &cuts {
+                    for &to in cuts.iter().filter(|&&t| t >= from) {
+                        let (got, _) = range(&mut vol, &f, from, (to - from) as usize).unwrap();
+                        assert_eq!(
+                            got,
+                            whole[from as usize..to as usize],
+                            "{name} {path} {from}..{to}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Whole sectors go in runs of consecutive clusters, the cut ones through the buffer.
+    #[test]
+    fn runs_follow_the_clusters() {
+        // FRAG.BIN (5000 bytes, 1-sector clusters) is in pieces
+        let img = image("mkfs_s1");
+        let mut chain = Vec::new();
+        let mut c = first_cluster(&img, b"FRAG    BIN");
+        while c < 0x0FFF_FFF8 {
+            chain.push(c);
+            c = le32(&img, fat_at(&img, c)) & 0x0FFF_FFFF;
+        }
+        assert_eq!(chain.len(), 10);
+        let mut vol = mount_runs(img);
+        let data_lba = (data_start(&vol.device().disk.img) / SECTOR) as u32;
+        let f = vol.open("FRAG.BIN").unwrap();
+        // The runs the chain makes of its first 9 sectors (the 10th is cut)
+        let mut want: Vec<(u32, usize)> = Vec::new();
+        for (i, &c) in chain[..9].iter().enumerate() {
+            match want.last_mut() {
+                Some((_, n)) if i > 0 && c == chain[i - 1] + 1 => *n += 1,
+                _ => want.push((data_lba + c - 2, 1)),
+            }
+        }
+        assert!(want.len() > 1, "FRAG.BIN is not fragmented: {chain:?}");
+        let (_, runs) = range(&mut vol, &f, 0, 5000).unwrap();
+        let runs: Vec<_> = runs.into_iter().filter(|r| r.1 != 0).collect();
+        assert_eq!(runs, want);
+        // A range inside one sector reads no run
+        let (_, runs) = range(&mut vol, &f, 600, 10).unwrap();
+        assert!(runs.iter().all(|r| r.1 == 0), "{runs:?}");
+
+        // A file of whole clusters in one piece: one run (8-sector clusters)
+        let mut vol = mount_runs(image("vuxtool_s8"));
+        let root = vol.root();
+        let data: Vec<u8> = (0..3 * 4096u32).map(|i| (i % 253) as u8).collect();
+        let f = vol.create(&root, b"WHOLE   BIN", &data).unwrap();
+        let (got, runs) = range(&mut vol, &f, 0, data.len()).unwrap();
+        assert_eq!(got, data);
+        let runs: Vec<_> = runs.into_iter().filter(|r| r.1 != 0).collect();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].1, 24);
+        // Made in two pieces: a file in the hole another one left (a new mount looks for
+        // free clusters from the start), and past it
+        let small = vol.create(&root, b"SMALL   BIN", &data[..4096]).unwrap();
+        vol.create(&root, b"AFTER   BIN", &data[..10]).unwrap();
+        vol.remove(&small).unwrap();
+        let img = core::mem::take(&mut vol.device().disk.img);
+        let mut vol = mount_runs(img);
+        let split: Vec<u8> = (0..9000u32).map(|i| (i % 249) as u8).collect();
+        let f = vol.create(&root, b"SPLIT   BIN", &split).unwrap();
+        let (got, runs) = range(&mut vol, &f, 0, split.len()).unwrap();
+        assert_eq!(got, split);
+        let runs: Vec<_> = runs.into_iter().filter(|r| r.1 != 0).collect();
+        // 8 sectors in the hole, then 9 more (the last one cut) after AFTER.BIN
+        assert_eq!(runs.len(), 2, "{runs:?}");
+        assert_eq!((runs[0].1, runs[1].1), (8, 9));
+        // From the middle of the second piece
+        let (got, _) = range(&mut vol, &f, 5000, 4000).unwrap();
+        assert_eq!(got, split[5000..]);
+    }
+
+    #[test]
+    fn ranges_past_the_file_and_empty_ones() {
+        let mut vol = mount_runs(image("mkfs_s1"));
+        let f = vol.open("B.BIN").unwrap();
+        assert_eq!(range(&mut vol, &f, 0, 601), Err(FatError::TooBig));
+        assert_eq!(range(&mut vol, &f, 601, 0), Err(FatError::TooBig));
+        assert_eq!(range(&mut vol, &f, 1, 600), Err(FatError::TooBig));
+        assert_eq!(range(&mut vol, &f, 600, 0), Ok((Vec::new(), Vec::new())));
+        // A directory is an empty file here
+        let d = vol.open("VUX9K").unwrap();
+        assert_eq!(range(&mut vol, &d, 0, 1), Err(FatError::TooBig));
+        // An empty range reads nothing, not even the chain
+        let empty = vol.open("VUX9K/EMPTY.DAT").unwrap();
+        assert_eq!(range(&mut vol, &empty, 0, 0), Ok((Vec::new(), Vec::new())));
+    }
+
+    #[test]
+    fn chains_are_checked_as_far_as_the_range_reaches() {
+        let name = b"FRAG    BIN";
+        let img = image("mkfs_s1");
+        let c = first_cluster(&img, name);
+        let second = le32(&img, fat_at(&img, c)) & 0x0FFF_FFFF;
+        // The chain ends after its second cluster: the first two read, more is too short
+        let mut short = img.clone();
+        patch(
+            &mut short,
+            fat_at(&img, second),
+            &0x0FFF_FFFFu32.to_le_bytes(),
+        );
+        let mut vol = mount_runs(short);
+        let f = vol.open("FRAG.BIN").unwrap();
+        assert!(range(&mut vol, &f, 0, 1024).is_ok());
+        assert!(range(&mut vol, &f, 100, 924).is_ok());
+        assert_eq!(
+            range(&mut vol, &f, 0, 1025),
+            Err(FatError::BadChain(second))
+        );
+        assert_eq!(
+            range(&mut vol, &f, 2000, 10),
+            Err(FatError::BadChain(second))
+        );
+        // Too long: only a range to the file's end sees it
+        let mut long = img.clone();
+        let e = entry_at(&long, name);
+        patch(&mut long, e + 28, &1000u32.to_le_bytes());
+        let mut vol = mount_runs(long);
+        let f = vol.open("FRAG.BIN").unwrap();
+        assert!(range(&mut vol, &f, 0, 999).is_ok());
+        assert_eq!(
+            range(&mut vol, &f, 0, 1000),
+            Err(FatError::BadChain(second))
+        );
+        assert_eq!(range(&mut vol, &f, 999, 1), Err(FatError::BadChain(second)));
+        // A first cluster outside the volume
+        let mut out = img.clone();
+        let e = entry_at(&out, name);
+        patch(&mut out, e + 26, &1u16.to_le_bytes());
+        patch(&mut out, e + 20, &0u16.to_le_bytes());
+        let mut vol = mount_runs(out);
+        let f = vol.open("FRAG.BIN").unwrap();
+        assert_eq!(range(&mut vol, &f, 0, 1), Err(FatError::BadChain(1)));
+    }
+
+    #[test]
+    fn card_errors_name_the_sector() {
+        let img = image("vuxtool_s8");
+        let mut vol = mount_runs(img);
+        let f = vol.open("APPS/BIG.BIN").unwrap();
+        let first = (data_start(&vol.device().disk.img) / SECTOR) as u32 + ((f.cluster - 2) << 3);
+        // In a run (its first sector and a later one), and a cut sector
+        for (lba, from, len) in [
+            (first, 0, 20000),
+            (first + 13, 0, 20000),
+            (first + 39, 0, 20000),
+            (first, 3, 100),
+        ] {
+            vol.device().disk.fail_read = Some(lba);
+            assert_eq!(
+                range(&mut vol, &f, from, len),
+                Err(FatError::Io(lba)),
+                "{lba}"
+            );
+        }
+        vol.device().disk.fail_read = None;
+        assert!(range(&mut vol, &f, 0, 20000).is_ok());
+    }
 }
 
 // ----- Writes (feature fat-write) ------------------------------------------------

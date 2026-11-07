@@ -161,8 +161,8 @@ Use it as `west build` writes it: it carries the initial values of `.data`, whic
 image copies to its RAM at startup.
 
 - **C:** any Zephyr application; start from `samples/hello_world`. Size still costs time:
-  `run` loads a file at ~150 cycles a byte (on the emulator, which follows the RTL
-  cycle for cycle: ~0.1 s for 13 KB, ~2 s for `BC.BIN`'s 260 KB), so Zephyr's size options
+  `run` loads a file at ~100 cycles a byte (on the emulator, which follows the RTL
+  cycle for cycle: ~0.1 s for 13 KB, ~1.5 s for `BC.BIN`'s 260 KB), so Zephyr's size options
   still pay off.
 - **Rust:** `vux9k-zephyr-bsp/app/` is a template: a Zephyr application whose logic is a
   Rust `no_std` staticlib (`app/rust_demo`), called from `app/src/main.c` through small

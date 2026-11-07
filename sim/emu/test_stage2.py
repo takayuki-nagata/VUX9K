@@ -33,6 +33,7 @@ from s1_env import (  # noqa: E402
     STAGE2_VERSION,
     boot_s2,
     card,
+    entry_at,
     fixture,
     handoff,
     s2_cmd,
@@ -631,6 +632,127 @@ def test_run_refusals_leave_the_first_stage():
     # Still at the prompt, and `reset` finds the first stage as it was
     out = s2_cmd(soc, "reset", until=S2_PROMPT)
     assert out.startswith("[RESET] Soft reset\n") and BANNER in out, out
+
+
+class Fat:
+    """The FAT32 volume of a card image from s1_env.card (vux_tool), for breaking and
+    rearranging its files' chains."""
+
+    def __init__(self, img: bytes):
+        self.img = bytearray(img)
+        part = FAT_LBA * 512
+        reserved, fats = struct.unpack_from("<H", self.img, part + 14)[0], self.img[part + 16]
+        self.spc = self.img[part + 13]
+        self.fat_size = struct.unpack_from("<I", self.img, part + 36)[0]
+        self.fat_lba = FAT_LBA + reserved
+        self.fats = fats
+        self.data_lba = self.fat_lba + fats * self.fat_size
+
+    def entry(self, name: bytes) -> int:
+        return entry_at(self.img, name)
+
+    def first(self, name: bytes) -> int:
+        e = self.entry(name)
+        hi, lo = struct.unpack_from("<H", self.img, e + 20)[0], struct.unpack_from("<H", self.img, e + 26)[0]
+        return hi << 16 | lo
+
+    def set_first(self, name: bytes, c: int):
+        e = self.entry(name)
+        struct.pack_into("<HH", self.img, e + 20, c >> 16, 0)
+        struct.pack_into("<H", self.img, e + 26, c & 0xFFFF)
+
+    def link(self, c: int) -> int:
+        return struct.unpack_from("<I", self.img, self.fat_lba * 512 + 4 * c)[0] & 0x0FFF_FFFF
+
+    def set_link(self, c: int, v: int):
+        for i in range(self.fats):
+            struct.pack_into("<I", self.img, (self.fat_lba + i * self.fat_size) * 512 + 4 * c, v)
+
+    def chain(self, name: bytes) -> list[int]:
+        out = [self.first(name)]
+        while (n := self.link(out[-1])) < 0x0FFF_FFF8:
+            out.append(n)
+        return out
+
+    def lba(self, c: int) -> int:
+        return self.data_lba + (c - 2) * self.spc
+
+    def swap(self, name: bytes, a: int, b: int):
+        """Swap the file's clusters number a and b (their data and their places in the
+        chain): the file reads the same from clusters in another order."""
+        ch = self.chain(name)
+        n = 512 * self.spc
+        ca, cb = self.lba(ch[a]) * 512, self.lba(ch[b]) * 512
+        self.img[ca : ca + n], self.img[cb : cb + n] = self.img[cb : cb + n], self.img[ca : ca + n]
+        ch[a], ch[b] = ch[b], ch[a]
+        self.set_first(name, ch[0])
+        for c, nxt in zip(ch, ch[1:] + [0x0FFF_FFFF], strict=True):
+            self.set_link(c, nxt)
+
+
+def big_app(size: int, text: str) -> bytes:
+    """An RV32 application at PSRAM_APP printing text, padded to size bytes with
+    pseudo-random ones."""
+    code = app(PSRAM_APP, text)
+    state = 0x1234_5678
+    pad = bytearray()
+    while len(code) + len(pad) < size:
+        state = (state * 1103515245 + 12345) & 0xFFFF_FFFF
+        pad.append(state >> 24)
+    return code + bytes(pad)
+
+
+# `run` reads the card and checks the CRC at ~100 cycles a byte (the card's exchange is
+# 48 cycles a byte); the second stage before v11 took ~150
+RUN_CYCLES_PER_BYTE = 120
+
+
+def test_run_reads_a_file_in_pieces_at_the_cards_pace():
+    """A 200 KB file whose clusters are out of order lands in the PSRAM byte for byte, at
+    the pace of runs of clusters read straight into it."""
+    payload = big_app(200_000, "Big\n")
+    fat = Fat(card({"VUX9K/STAGE2.BIN": stage2(), "BIG.BIN": v4(payload, load_addr=PSRAM_APP, name="big")}))
+    # Runs of clusters: its first sector stays first (the header), a cluster in the middle
+    # and the last one change places with others
+    n = len(fat.chain(b"BIG     BIN"))
+    fat.swap(b"BIG     BIN", 3, 200)
+    fat.swap(b"BIG     BIN", n - 1, 100)
+    soc, _ = boot_s2(image=bytes(fat.img))
+    t0 = soc.cycle
+    out = s2_cmd(soc, "run BIG.BIN", until=b"\n\n", timeout_cycles=len(payload) * RUN_CYCLES_PER_BYTE)
+    took = soc.cycle - t0
+    assert out.startswith(f'[RUN] v1 "big" {len(payload)} B, PSRAM'), out
+    assert took < len(payload) * RUN_CYCLES_PER_BYTE, took / len(payload)
+    words = struct.unpack(f"<{len(payload) // 4}I", payload[: len(payload) // 4 * 4])
+    assert all(soc.xmem_word(PSRAM_APP + 4 * i) == w for i, w in enumerate(words))
+    wait_for(soc, b"Big\n", RUN_CYCLES, start=len(soc.uart_received()) - 1)
+
+
+def test_run_reports_card_and_chain_errors():
+    """What reading a file to run can meet: a card error in its header's sector or in the
+    payload's runs, a chain that starts outside the volume or runs past the file's size."""
+    payload = big_app(5000, "x")
+    file = v4(payload, load_addr=PSRAM_APP, name="err")
+    names = ["HEAD", "RUN", "FIRST", "LONG"]
+    fat = Fat(card({"VUX9K/STAGE2.BIN": stage2()} | {f"{n}.BIN": file for n in names}))
+    key = {n: f"{n:<8}BIN".encode() for n in names}
+    head = fat.lba(fat.first(key["HEAD"]))
+    in_run = fat.lba(fat.chain(key["RUN"])[5])
+    fat.set_first(key["FIRST"], 1)
+    long = fat.chain(key["LONG"])
+    free = max(fat.chain(key[n])[-1] for n in names) + 10
+    fat.set_link(long[-1], free)
+    fat.set_link(free, 0x0FFF_FFFF)
+    soc, _ = boot_s2(image=bytes(fat.img), sd_card={"bad_sectors": [head, in_run]})
+    for name, want in [
+        ("HEAD", f"card error at LBA {head}"),
+        ("RUN", f"card error at LBA {in_run}"),
+        ("FIRST", "bad cluster chain at cluster 1"),
+        ("LONG", f"bad cluster chain at cluster {long[-1]}"),
+    ]:
+        got = err(s2_cmd(soc, f"run {name}.BIN", timeout_cycles=RUN_CYCLES))
+        assert got == want, (name, got)
+        assert s1_intact(soc), name
 
 
 def test_reset_back_to_the_first_stage():

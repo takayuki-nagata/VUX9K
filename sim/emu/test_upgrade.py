@@ -49,7 +49,7 @@ HACK_DONE = b"ALL HACK C FIRMWARE TESTS PASSED (100%)!"
 # What the second stage prints on a CPU without M (firmware/stage2/bootstrap/start.s)
 NO_M = "VUX9K Stage 2 needs a CPU with RV32M: program the v0.4.0 bitstream or later. Stopped.\n"
 # The first stage's soft reset to the second stage's prompt (its banner, the key window,
-# the 35 KB second stage from the card)
+# the 38 KB second stage from the card)
 S2_BOOT_CYCLES = BOOT_CYCLES
 
 

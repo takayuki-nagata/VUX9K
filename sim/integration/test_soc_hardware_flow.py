@@ -60,7 +60,7 @@ async def test_soc_hardware_flow(dut):
     assert "[BOOT] STAGE2.BIN: not found; STAGE2.OLD: not found" in resp, resp
     dut._log.info("[PASS] 1: first stage at its prompt (no STAGE2.BIN)")
 
-    # RAM boot: `u`, then the second stage over transfer v2 (35 KB: ~54M cycles at 115200)
+    # RAM boot: `u`, then the second stage over transfer v2 (38 KB: ~59M cycles at 115200)
     ser.reset_input_buffer()
     ser.write(b"u")
     await upload_v2(ser, stage2_file())

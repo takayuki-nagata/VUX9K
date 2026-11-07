@@ -24,7 +24,7 @@ prints a0-a2 and soft-resets on `r`), `hw_test`,
 logic, no MMIO, tested on the host with `cargo test -p fw_common --target <host triple>
 --features fat-full` and again with `fat-write` alone — `make test-fw-host`; `make
 firmware-size` holds the first stage to the 16 KB it runs from and prints the second's
-size, 35 KB, which a RAM boot sends at ~1550 cycles a byte on the RTL).
+size, 38 KB, which a RAM boot sends at ~1550 cycles a byte on the RTL).
 **When you build a member from within its own directory (`cd firmware/stage1
 && cargo build`), rustc/the linker still runs with cwd = the workspace root
 (`firmware/`), not the member directory.** This means each member's
@@ -98,12 +98,15 @@ binaries land in the single shared `firmware/target/riscv32im-unknown-none-elf/`
   `run_app`, `install_stage2`, `enter_s1`'s `reset`), `scripts/test_hardware.py` and the
   emulator tests (`sim/emu/test_stage2.py`, `s1_env.s2_cmd`) depend on those strings.
 - **The launcher writes nothing outside the PSRAM before the CRC checked** (`fw_common::launch`,
-  `run`): a file loads within `LOAD_WINDOW` through `staging` (addresses below
-  `HACK_I_BYTES` into the PSRAM at `SCRATCH`, which is `map::HACK_I_BASE`, a const assert),
-  `plan` then picks the target from the checked header (RV32 in `XMEM_BASE..STAGE2_BASE`:
-  the PSRAM, a jump with a0-a2 as the first stage hands them over; Hack: a word-aligned
-  offset in its 64 KB instruction segment, so staging put it where it runs; RV32 anywhere
-  else, at 0 too, is out of the window),
+  `run`, `launch::load`): the header is checked within `LOAD_WINDOW` and `plan` picks the
+  target from it (RV32 in `XMEM_BASE..STAGE2_BASE`: the PSRAM, a jump with a0-a2 as the
+  first stage hands them over; Hack: a word-aligned offset in its 64 KB instruction
+  segment; RV32 anywhere else, at 0 too, is out of the window) before any payload byte
+  loads, then the payload goes straight into its target's window through `staging`
+  (addresses below `HACK_I_BYTES` into the PSRAM at `SCRATCH`, which is
+  `map::HACK_I_BASE`, a const assert, so a Hack payload lands where it runs; runs of
+  clusters with `Volume::read_file_to` and `BlockDevice::read_sectors`, the SD card's
+  pipelined `read_blocks_to`), the CRC is checked over it there,
   and only then does the second stage start it: for Hack the last word's bytes past the
   payload 0, Hack's data segment (`HACK_D_BASE`, `HACK_D_WORDS`) zeroed, `fence.i`,
   `GPIO_BOOT_MODE` and the soft reset (Hack starts at 0; its soft reset without a mode goes
@@ -111,7 +114,7 @@ binaries land in the single shared `firmware/target/riscv32im-unknown-none-elf/`
   spelled out in `put_run_error`'s text (a const assert).
 - **`fw_common` code that only the second stage needs stays out of the first stage's
   build**: merely adding `launch` to `lib.rs` changed the first stage's binary (36 bytes), so
-  it is behind `fat-full`, as is the nibble-table `crc32_update` (the bitwise one, which the
+  it is behind `fat-full`, as is the table-driven `crc32_update` (the bitwise one, which the
   first stage keeps, cost ~1,800 cycles a byte from the PSRAM). Check
   `build/firmware/firmware.hex` is unchanged after any `fw_common` change.
 - **Code in the PSRAM can be slow**: a fetch that misses the 16 KB instruction cache (8-word

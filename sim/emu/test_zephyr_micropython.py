@@ -36,7 +36,7 @@ LINE_CYCLES = 500_000_000
 # f(20), measured ~29M cycles), and the most lines a report has
 BC_CASE_CYCLES = 500_000_000
 BC_REPORT_LINES = 40
-# The second stage loads ~150 cycles a byte (s1_env.RUN_LOAD_CYCLES): ~54M for ~351 KB
+# The second stage loads ~100 cycles a byte (s1_env.RUN_LOAD_CYCLES): ~36M for ~351 KB
 RUN_LOAD_CYCLES = 100_000_000
 
 MEASURED: dict[str, tuple[int, int, dict[str, int]]] = {}

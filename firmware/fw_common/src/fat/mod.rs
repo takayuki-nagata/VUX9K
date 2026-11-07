@@ -33,6 +33,22 @@ pub const SECTOR: usize = 512;
 pub trait BlockDevice {
     fn read(&mut self, lba: u32, buf: &mut [u8; SECTOR]) -> bool;
     fn write(&mut self, lba: u32, buf: &[u8; SECTOR]) -> bool;
+
+    /// The sectors from `lba` on into `dst` (`dst.len() / SECTOR` of them, whole sectors),
+    /// for long reads (`Volume::read_file_to`); returns how many were read before one
+    /// failed. A card can do better than this default, sector by sector through `read`
+    /// (the SD card's is pipelined and stores straight into `dst`).
+    fn read_sectors(&mut self, lba: u32, dst: &mut [u8]) -> usize {
+        let mut n = 0;
+        for chunk in dst.chunks_exact_mut(SECTOR) {
+            let buf: &mut [u8; SECTOR] = chunk.try_into().unwrap();
+            if !self.read(lba + n as u32, buf) {
+                break;
+            }
+            n += 1;
+        }
+        n
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -336,6 +352,98 @@ impl<D: BlockDevice> Volume<D> {
             at += data.len();
         })?;
         Ok(at)
+    }
+}
+
+#[cfg(feature = "fat-full")]
+impl<D: BlockDevice> Volume<D> {
+    /// Read the file's bytes `from..from + dst.len()` into `dst`, each run of consecutive
+    /// clusters with one `read_sectors` (the second stage's `run`: through the volume's
+    /// buffer, a sector's copy and calls cost more than its bytes from the card). Only the
+    /// sectors the range cuts go through the buffer. `TooBig` when the range runs past
+    /// the file's size (a directory's is 0); the chain is followed as far as the range
+    /// reaches and, when that is the file's end, must end there, as in `for_each_sector`.
+    /// On a card error, `dst` may hold part of the range.
+    pub fn read_file_to(
+        &mut self,
+        file: &DirEntry,
+        from: u32,
+        dst: &mut [u8],
+    ) -> Result<(), FatError> {
+        let size = file.size;
+        if from > size || dst.len() as u64 > (size - from) as u64 {
+            return Err(FatError::TooBig);
+        }
+        if dst.is_empty() {
+            return Ok(()); // cov:exclude(the second stage reads no empty range: launch::load's are a header and a payload of at least a byte)
+        }
+        let end = from + dst.len() as u32;
+        let shift = 9 + self.cluster_shift;
+        let sectors = 1u32 << self.cluster_shift;
+        let mut c = file.cluster;
+        // File offset of cluster c's first byte, and of the next byte to read; the run of
+        // whole sectors not read yet (first LBA, sectors, offset in dst)
+        let mut base = 0u32;
+        let mut at = from;
+        let (mut run_lba, mut run_len, mut run_dst) = (0u32, 0u32, 0usize);
+        loop {
+            if !self.is_cluster(c) {
+                return Err(FatError::BadChain(c));
+            }
+            if (at - base) >> shift == 0 {
+                // c holds part of the range
+                let lba = self.cluster_lba(c);
+                let mut s = (at - base) >> 9;
+                while s < sectors && at < end {
+                    let skip = at - base - (s << 9);
+                    let n = (SECTOR as u32 - skip).min(end - at);
+                    let out = (at - from) as usize;
+                    if n == SECTOR as u32 {
+                        if run_len == 0 || run_lba + run_len != lba + s {
+                            read_run(&mut self.dev, run_lba, run_len, &mut dst[run_dst..])?;
+                            (run_lba, run_len, run_dst) = (lba + s, 0, out);
+                        }
+                        run_len += 1;
+                    } else {
+                        // A sector the range cuts (its first or its last)
+                        read(&mut self.dev, lba + s, &mut self.buf)?;
+                        let (skip, n) = (skip as usize, n as usize);
+                        dst[out..out + n].copy_from_slice(&self.buf[skip..skip + n]);
+                    }
+                    at += n;
+                    s += 1;
+                }
+                if at == end {
+                    read_run(&mut self.dev, run_lba, run_len, &mut dst[run_dst..])?;
+                    // At the file's end the chain must end too
+                    if end == size && self.next_cluster(c)?.is_some() {
+                        return Err(FatError::BadChain(c));
+                    }
+                    return Ok(());
+                }
+            }
+            // A looping chain doesn't run on forever: every step takes a cluster of the
+            // file's size
+            c = self.next_cluster(c)?.ok_or(FatError::BadChain(c))?;
+            base += 1 << shift;
+        }
+    }
+}
+
+/// `len` whole sectors from `lba` on into the start of `dst` (none: nothing to do).
+#[cfg(feature = "fat-full")]
+fn read_run<D: BlockDevice>(
+    dev: &mut D,
+    lba: u32,
+    len: u32,
+    dst: &mut [u8],
+) -> Result<(), FatError> {
+    let bytes = (len as usize) << 9;
+    let done = dev.read_sectors(lba, &mut dst[..bytes]);
+    if done == len as usize {
+        Ok(())
+    } else {
+        Err(FatError::Io(lba + done as u32))
     }
 }
 

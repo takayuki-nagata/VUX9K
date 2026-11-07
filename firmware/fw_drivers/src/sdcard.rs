@@ -235,6 +235,57 @@ impl SdCard {
         true
     }
 
+    /// `dst.len() / SECTOR` sectors from `first` on into `dst`, a CMD17 each (no CMD18:
+    /// the card models don't have it); returns how many were read before one failed. For
+    /// the second stage's long reads (`Volume::read_file_to`): it runs from the PSRAM, so
+    /// a byte's path has no call and no bounds check, and the next byte's exchange starts
+    /// as soon as the last one is read, its store running during the shift: a byte takes
+    /// its exchange (16 x `SD_DIV_FAST` cycles) and a few more, where `read_block` waits
+    /// for every exchange twice and calls `transfer` for it. Each CMD17 keeps
+    /// `send_cmd`'s 10 us delay (under 1 % of a sector's time; whether a card needs it
+    /// between the sectors of a run is not known).
+    pub fn read_blocks_to(first: u32, dst: &mut [u8]) -> usize {
+        let mut n = 0;
+        for chunk in dst.chunks_exact_mut(SECTOR) {
+            if !Self::read_block_to(first + n as u32, chunk.as_mut_ptr()) {
+                break;
+            }
+            n += 1;
+        }
+        n
+    }
+
+    /// One sector into the SECTOR bytes at `dst` (`read_blocks_to`); the token wait and
+    /// the errors as in `read_block`.
+    fn read_block_to(sector_num: u32, dst: *mut u8) -> bool {
+        crate::gpio::Gpio::toggle_led(5);
+        let r1 = Self::send_cmd(17, Self::address(sector_num), 0xFF);
+        // Its R1, then the data token
+        if r1 != 0x00 || !(0..50000).any(|_| Self::transfer(0xFF) == 0xFE) {
+            Self::deselect();
+            return false;
+        }
+        unsafe {
+            core::ptr::write_volatile(SD_DATA, 0xFF);
+            let last = dst.add(SECTOR - 1);
+            let mut p = dst;
+            while p != last {
+                while (core::ptr::read_volatile(SD_STATUS) & map::SD_BUSY) != 0 {}
+                let b = core::ptr::read_volatile(SD_DATA) as u8;
+                core::ptr::write_volatile(SD_DATA, 0xFF);
+                p.write(b);
+                p = p.add(1);
+            }
+            while (core::ptr::read_volatile(SD_STATUS) & map::SD_BUSY) != 0 {}
+            last.write(core::ptr::read_volatile(SD_DATA) as u8);
+        }
+        // The CRC
+        Self::transfer(0xFF);
+        Self::transfer(0xFF);
+        Self::deselect();
+        true
+    }
+
     pub fn write_block(sector_num: u32, buf: &[u8; SECTOR]) -> bool {
         crate::gpio::Gpio::toggle_led(5);
         let addr = Self::address(sector_num);
@@ -317,5 +368,9 @@ impl fw_common::fat::BlockDevice for SdCard {
 
     fn write(&mut self, lba: u32, buf: &[u8; SECTOR]) -> bool {
         SdCard::write_block(lba, buf)
+    }
+
+    fn read_sectors(&mut self, lba: u32, dst: &mut [u8]) -> usize {
+        SdCard::read_blocks_to(lba, dst)
     }
 }

@@ -11,16 +11,17 @@
 //! | `HackSeg` | `MODE_HACK`, a word-aligned `load_addr` inside `0..HACK_I_BYTES`: an offset in Hack's instruction segment | loaded in place (`HACK_I_BASE` + offset), Hack's data segment zeroed, `fence.i`, the Hack boot mode (`BOOT_MODE_VALID`), soft reset; it starts at 0 |
 //!
 //! RV32 runs from the PSRAM only: an RV32 file loading at 0 (the boot ROM) is refused as out of
-//! the window. The file loads through `staging` (addresses below `HACK_I_BYTES` into the
-//! PSRAM at `SCRATCH`, which is `HACK_I_BASE`, so a Hack payload lands in its segment;
-//! PSRAM addresses in place) with `LOAD_WINDOW`, which holds every target's window, and
-//! `plan` then decides from the checked header. Nothing outside the PSRAM is written
-//! before that.
+//! the window. `load` checks the header within `LOAD_WINDOW`, which holds every target's
+//! window, `plan` decides the target from it, and only then does the payload load, through
+//! `staging` (addresses below `HACK_I_BYTES` into the PSRAM at `SCRATCH`, which is
+//! `HACK_I_BASE`, so a Hack payload lands in its segment; PSRAM addresses in place), into
+//! the target's window. Nothing outside the PSRAM is written before the CRC is checked.
 
 use crate::boot::put_boot_error;
 use crate::fat::stage2::{BootError, Window};
+use crate::fat::{BlockDevice, DirEntry, FatError, Volume};
 use crate::fmt::Sink;
-use crate::header::{ImageError, ImageHeader, MODE_HACK, MODE_RISCV};
+use crate::header::{ImageError, ImageHeader, HEADER_LEN, MODE_HACK, MODE_RISCV};
 use crate::map;
 
 /// Where a run's target is staged: the PSRAM's start (the first stage's data, below the
@@ -30,8 +31,8 @@ pub const SCRATCH: u32 = map::XMEM_BASE as u32;
 /// second stage.
 pub const SCRATCH_BYTES: u32 = (map::STAGE2_BASE - map::XMEM_BASE) as u32;
 
-/// Every target's window together (`load_file` checks a header against it before `plan`
-/// picks the target): from 0 (Hack's offsets) to the second stage.
+/// Every target's window together (`load` checks a header against it before `plan` picks
+/// the target): from 0 (Hack's offsets) to the second stage.
 pub const LOAD_WINDOW: Window = Window {
     base: map::ROM_BASE as u32,
     len: (map::STAGE2_BASE - map::ROM_BASE) as u32,
@@ -80,11 +81,9 @@ pub fn plan(h: &ImageHeader) -> Result<Target, ImageError> {
     Ok(target)
 }
 
-/// Where a payload chunk for address `addr` is stored while it loads (`load_file` within
-/// `LOAD_WINDOW`): an address below `HACK_I_BYTES` (a Hack offset; an RV32 one `plan`
-/// refuses) at `SCRATCH` plus it, a PSRAM one in place, any other (a header `plan`
-/// refuses) nowhere. A chunk is at most a sector, so one that starts below `HACK_I_BYTES`
-/// ends in the PSRAM's first 64.5 KB.
+/// Where a payload for address `addr` is stored while it loads (`load`, after `plan`): an
+/// address below `HACK_I_BYTES` (a Hack offset; an RV32 one `plan` refuses) at `SCRATCH`
+/// plus it, a PSRAM one in place, any other (a header `plan` refuses) nowhere.
 pub fn staging(addr: u32) -> Option<u32> {
     if addr < map::HACK_I_BYTES as u32 {
         Some(SCRATCH + addr)
@@ -93,6 +92,40 @@ pub fn staging(addr: u32) -> Option<u32> {
     } else {
         None
     }
+}
+
+/// Load the v4 file `file` for `run` into `psram` (the PSRAM from `SCRATCH` on, up to
+/// the second stage, `SCRATCH_BYTES`): its header first (shorter than a header:
+/// `NotV4`), checked within `LOAD_WINDOW` and given its target by `plan`, then the payload
+/// straight to where `staging` puts it (`Volume::read_file_to`: runs of clusters at the
+/// card's pace), then its CRC over what landed there. Nothing changes before the header
+/// is checked, nothing outside the target's window after it; on an error after the header
+/// the window may hold part of the payload.
+pub fn load<D: BlockDevice>(
+    vol: &mut Volume<D>,
+    file: &DirEntry,
+    psram: &mut [u8],
+) -> Result<(ImageHeader, Target), BootError> {
+    let mut head = [0u8; HEADER_LEN];
+    vol.read_file_to(file, 0, &mut head).map_err(|e| match e {
+        FatError::TooBig => BootError::NotV4,
+        e => BootError::Fat(e),
+    })?;
+    let h = ImageHeader::parse(&head).ok_or(BootError::NotV4)?;
+    if h.size as u64 + HEADER_LEN as u64 != file.size as u64 {
+        return Err(BootError::SizeMismatch);
+    }
+    h.check(LOAD_WINDOW.base, LOAD_WINDOW.len)
+        .map_err(BootError::Image)?;
+    let target = plan(&h).map_err(BootError::Image)?;
+    // plan keeps the payload in its target's window, which staging maps into the PSRAM
+    let at = (staging(h.load_addr).unwrap_or(SCRATCH) - SCRATCH) as usize;
+    let dst = &mut psram[at..at + h.size as usize];
+    vol.read_file_to(file, HEADER_LEN as u32, dst)?;
+    if !h.crc_matches(dst) {
+        return Err(BootError::Crc);
+    }
+    Ok((h, target))
 }
 
 // A Hack payload is staged where it runs

@@ -5,10 +5,10 @@
 //! stage again (`soft_reset`), and installing a second stage (`install`).
 
 use fw_common::boot::{put_boot_error, RAM_BOOT_MAX, STAGE2_WINDOW};
-use fw_common::fat::stage2::{self, load_file, BootError};
+use fw_common::fat::stage2::{self, BootError};
 use fw_common::fat::Volume;
 use fw_common::header::ImageHeader;
-use fw_common::launch::{plan, staging, Target, LOAD_WINDOW, SCRATCH};
+use fw_common::launch::{load, Target, SCRATCH, SCRATCH_BYTES};
 use fw_common::map;
 use fw_drivers::sdcard::SdCard;
 use fw_drivers::uart::Uart;
@@ -20,21 +20,19 @@ fn write_word(addr: usize, w: u32) {
     unsafe { core::ptr::write_volatile(addr as *mut u32, w) }
 }
 
-/// `run FILE`: load and check it (a Hack program straight into its segment in the PSRAM:
-/// nothing outside the PSRAM changes until the file has proved good), then start it.
-/// Returns on an error.
+/// `run FILE`: load and check it (`launch::load`: a Hack program straight into its
+/// segment in the PSRAM, nothing outside the PSRAM changes until the file has proved
+/// good), then start it. Returns on an error.
 pub fn run(ctx: &Ctx, c: &mut Card, path: &[u8]) -> Result {
     let vol = &mut c.vol;
     let file = vol.resolve(&c.cwd, path)?;
     if file.is_dir() {
         return Err(Error::IsDir);
     }
-    let h = load_file(vol, &file, LOAD_WINDOW, &mut |addr, data| {
-        if let Some(at) = staging(addr) {
-            unsafe { core::ptr::copy_nonoverlapping(data.as_ptr(), at as *mut u8, data.len()) }
-        }
-    })?;
-    let target = plan(&h).map_err(BootError::Image)?;
+    // The PSRAM below the second stage, which nothing of the second stage's is in
+    let psram =
+        unsafe { core::slice::from_raw_parts_mut(SCRATCH as *mut u8, SCRATCH_BYTES as usize) };
+    let (h, target) = load(vol, &file, psram)?;
     Uart::print_str("[RUN] v");
     Uart::print_dec(h.version);
     Uart::print_str(" \"");

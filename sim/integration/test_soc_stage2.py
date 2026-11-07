@@ -12,8 +12,8 @@ refusals are sim/emu/test_stage2.py's; the Zephyr demo started this way runs on 
 netlist (test_soc_zephyr_s2.py, make sim-zephyr-demo-gls).
 
 Cycles (the emulator's, which the lockstep holds to the RTL's): the prompt at ~11.0M
-(the 35 KB STAGE2.BIN read at ~230 cycles a byte); the second stage, running from the
-PSRAM through its caches, loads a demo at ~150 cycles a byte.
+(the 38 KB STAGE2.BIN read at ~230 cycles a byte); the second stage, running from the
+PSRAM through its caches, loads a demo at ~100 cycles a byte.
 """
 
 import re

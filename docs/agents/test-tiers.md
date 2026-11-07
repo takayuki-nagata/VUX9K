@@ -30,8 +30,8 @@ second stage booted from the card running the hello demo: ~20M cycles, ~5M instr
 below), `sim-psram-icarus` (below) and
 `sim-unit-random` (the unit tests with the date as random seed). Until 2026-09 the flashing flow ran in
 no tier at all (25–35 min RTL / many hours GLS on Icarus); on Verilator it was ~16 s RTL /
-~3–6 min GLS, which made it affordable per PR. Since it RAM-boots the 35 KB second stage
-(~54M cycles) it takes far longer: on a 2-vCPU machine (2026-10-18) ~11 min RTL, ~3 h GLS
+~3–6 min GLS, which made it affordable per PR. Since it RAM-boots the second stage
+(35 KB then, ~54M cycles; 38 KB since v11) it takes far longer: on a 2-vCPU machine (2026-10-18) ~11 min RTL, ~3 h GLS
 (test-slow) and ~4.5 h on Icarus (test-slow).
 
 `sim-psram-icarus` runs the real PSRAM controller on the IP's pin-level W955D8MBYA model where
@@ -47,7 +47,7 @@ without its error check (sim.md, "The PSRAM word model and its contract test"). 
 controller tag or a change to the window's bridge.
 
 `test_soc_hardware_flow.py` is the only RTL test that drives the two-stage boot's whole
-UART and SD chain: transfer v2 carries the second stage (35 KB, ~54M cycles at 115200
+UART and SD chain: transfer v2 carries the second stage (38 KB, ~59M cycles at 115200
 baud) to the first stage's `u` for a RAM boot, the second stage installs a new
 `\VUX9K\STAGE2.BIN` on the FAT32 card (`install`), and after its `reset` the first stage
 boots that file. The first stage's other commands are `test_soc_boot.py`'s. RTL reads the card
@@ -59,9 +59,9 @@ for it), not the second stage.
 card (`soc_env.s2_card`: `STAGE2.BIN` and the demos of `make apps` in `\VUX9K\APPS\`): `ls`,
 `run HELLO.BIN` (the PSRAM, a0-a2, `r` back to the first stage; ~12.4M cycles) and `run
 HACK.BIN` (its PSRAM segment in Hack mode, then its soft reset back to the first stage;
-~15.5M cycles). The prompt alone takes ~11.0M cycles (the 35 KB
-file at ~230 cycles a byte), and `run` loads at ~150 cycles a byte (the second stage
-runs from the PSRAM, through its caches): the 13 KB Zephyr demo through it is ~16.4M cycles,
+~15.5M cycles). The prompt alone takes ~11.0M cycles (the 38 KB
+file at ~230 cycles a byte), and `run` loads at ~100 cycles a byte (the second stage
+runs from the PSRAM, through its caches, and reads runs of clusters straight into place): the 13 KB Zephyr demo through it is ~16.4M cycles,
 minutes on the netlist, so it runs there only in `sim-zephyr-demo-gls` (`test_soc_zephyr_s2.py`, test-slow);
 the RTL runs the Zephyr demos preloaded into the PSRAM (`soc_env.preload_psram_app`: the word
 model's words and a jump at ROM word 0, so Verilator RTL only). Cycle counts are the emulator's, which the

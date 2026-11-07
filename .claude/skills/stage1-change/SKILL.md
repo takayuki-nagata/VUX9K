@@ -16,8 +16,8 @@ Read docs/agents/firmware.md first; the rows below are its rules in checklist fo
 - [ ] `make firmware-size`: the first stage <= 16 KB (it is in the bitstream: measure what a
       feature costs by building without it), and `build/firmware/firmware.hex` unchanged
       after a change that wasn't meant for the first stage (fw_common code only the second
-      stage uses goes behind `fat-full`). Note the second stage's size (35 KB: a RAM boot of
-      it is ~54M cycles on the RTL).
+      stage uses goes behind `fat-full`). Note the second stage's size (38 KB: a RAM boot of
+      it is ~59M cycles on the RTL).
 - [ ] Second-stage commands or their output changed (`shell.rs`'s `HELP`/`CARD_CMDS`,
       `[ERR]`/`[PUT]`/`[RUN]`/`[INSTALL]` lines): `tools/vux_tool.py`'s `s2_cmd`/`put`/
       `run_app`/`install_stage2`, `scripts/test_hardware.py`, `sim/emu/test_stage2.py`,

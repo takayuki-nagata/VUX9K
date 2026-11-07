@@ -137,18 +137,22 @@ fn run_errors() {
     assert_eq!(text(BootError::Fat(FatError::NotFound)), "not found");
 }
 
-/// The way the second stage runs a file: `load_file` within LOAD_WINDOW through
-/// `staging`, then `plan` on the checked header.
+/// The way the second stage runs a file: `load` (the header within LOAD_WINDOW, `plan`,
+/// the payload through `staging`, the CRC).
 mod run {
     use super::*;
     use fw_common::crc32_update;
-    use fw_common::fat::stage2::load_file;
     use fw_common::fat::{BlockDevice, Volume, SECTOR};
+    use fw_common::launch::{load, SCRATCH_BYTES};
     use std::collections::BTreeMap;
 
-    struct Disk(Vec<u8>);
+    /// A card image, and a sector whose reads fail.
+    struct Disk(Vec<u8>, Option<u32>);
     impl BlockDevice for Disk {
         fn read(&mut self, lba: u32, buf: &mut [u8; SECTOR]) -> bool {
+            if Some(lba) == self.1 {
+                return false;
+            }
             let at = lba as usize * SECTOR;
             buf.copy_from_slice(&self.0[at..at + SECTOR]);
             true
@@ -174,7 +178,7 @@ mod run {
             let at = le32(rec, 0) as usize * SECTOR;
             img[at..at + SECTOR].copy_from_slice(&rec[4..]);
         }
-        Volume::mount(Disk(img)).unwrap()
+        Volume::mount(Disk(img, None)).unwrap()
     }
 
     fn v4(mode: u32, load: u32, payload: &[u8]) -> Vec<u8> {
@@ -192,59 +196,145 @@ mod run {
         f
     }
 
-    /// Run `file` from the card: the target or error, and the bytes staged (address ->
-    /// byte).
+    /// What the PSRAM held before a load.
+    const FILL: u8 = 0xA5;
+
+    /// Run `file` from the card: the target or error, and the bytes of the PSRAM that
+    /// changed (address -> byte; the payloads below hold no FILL).
     fn run(file: &[u8]) -> (Result<Target, BootError>, BTreeMap<u32, u8>) {
         let mut vol = card();
         let root = vol.root();
         let entry = vol.create(&root, b"APP     BIN", file).unwrap();
-        let mut mem = BTreeMap::new();
-        let r = load_file(&mut vol, &entry, LOAD_WINDOW, &mut |addr, data| {
-            if let Some(at) = staging(addr) {
-                for (i, &b) in data.iter().enumerate() {
-                    mem.insert(at + i as u32, b);
-                }
-            }
-        })
-        .and_then(|h| plan(&h).map_err(BootError::Image));
+        let mut psram = std::vec![FILL; SCRATCH_BYTES as usize];
+        let r = load(&mut vol, &entry, &mut psram).map(|(h, t)| {
+            assert_eq!(h.size as usize, file.len() - 64);
+            t
+        });
+        let mem = psram
+            .iter()
+            .enumerate()
+            .filter(|&(_, &b)| b != FILL)
+            .map(|(i, &b)| (SCRATCH + i as u32, b))
+            .collect();
         (r, mem)
     }
 
     #[test]
     fn files_stage_where_their_target_wants_them() {
-        let payload: Vec<u8> = (0..1500u32).map(|i| (i * 7) as u8).collect();
+        let payload: Vec<u8> = (0..1500u32)
+            .map(|i| match (i * 7) as u8 {
+                FILL => 0,
+                b => b,
+            })
+            .collect();
+        let at = |mem: &BTreeMap<u32, u8>| *mem.keys().next().unwrap();
+        let bytes = |mem: &BTreeMap<u32, u8>| mem.values().copied().collect::<Vec<u8>>();
         let (r, mem) = run(&v4(MODE_RISCV, 0x8001_0000, &payload));
         assert_eq!(r, Ok(Target::Psram));
-        assert_eq!(mem.keys().next(), Some(&0x8001_0000));
-        assert_eq!(mem.len(), payload.len());
+        assert_eq!(at(&mem), 0x8001_0000);
+        assert_eq!(*mem.keys().last().unwrap(), 0x8001_0000 + 1499);
+        assert_eq!(bytes(&mem), payload);
         // Hack: in its segment, where it runs
         let (r, mem) = run(&v4(MODE_HACK, 0, &payload));
         assert_eq!(r, Ok(Target::HackSeg));
-        assert_eq!(mem.keys().next(), Some(&(map::HACK_I_BASE as u32)));
-        assert_eq!(mem.values().copied().collect::<Vec<u8>>(), payload);
+        assert_eq!(at(&mem), map::HACK_I_BASE as u32);
+        assert_eq!(bytes(&mem), payload);
         let (r, mem) = run(&v4(MODE_HACK, 0x100, &payload));
         assert_eq!(r, Ok(Target::HackSeg));
-        assert_eq!(mem.keys().next(), Some(&(map::HACK_I_BASE as u32 + 0x100)));
+        assert_eq!(at(&mem), map::HACK_I_BASE as u32 + 0x100);
         let (r, mem) = run(&v4(MODE_HACK, 0xC000, &payload));
         assert_eq!(r, Ok(Target::HackSeg));
-        assert_eq!(mem.keys().next(), Some(&(map::HACK_I_BASE as u32 + 0xC000)));
-        // RV32 at 0 stages like a Hack file, in the PSRAM only, then is refused: the first
-        // stage in the ROM stays
-        let (r, mem) = run(&v4(MODE_RISCV, 0, &payload));
-        assert_eq!(r, Err(BootError::Image(ImageError::OutOfWindow)));
-        assert!(mem.keys().all(|&a| a >= SCRATCH && a < SCRATCH + 0x4000));
-        // Refused after loading, with nothing outside the PSRAM touched
-        let (r, mem) = run(&v4(MODE_RISCV, 0x2000_0000, &payload));
-        assert_eq!(r, Err(BootError::Image(ImageError::OutOfWindow)));
-        assert!(mem.is_empty());
-        let (r, mem) = run(&v4(MODE_HACK, 0xFF00, &payload));
-        assert_eq!(r, Err(BootError::Image(ImageError::OutOfWindow)));
-        assert!(mem.keys().all(|&a| a >= SCRATCH && a < SCRATCH + 0x1_0400));
-        // load_file's own checks: the second stage's window is not a target's
-        let (r, _) = run(&v4(MODE_RISCV, 0x8070_0000, &payload));
-        assert_eq!(r, Err(BootError::Image(ImageError::OutOfWindow)));
+        assert_eq!(at(&mem), map::HACK_I_BASE as u32 + 0xC000);
+        // Refused before anything loads: RV32 at 0 (the first stage in the ROM stays), out
+        // of every window, past Hack's segment, the second stage's window (not a target's)
+        for (mode, load_addr) in [
+            (MODE_RISCV, 0),
+            (MODE_RISCV, 0x2000_0000),
+            (MODE_HACK, 0xFF00),
+            (MODE_RISCV, 0x8070_0000),
+        ] {
+            let (r, mem) = run(&v4(mode, load_addr, &payload));
+            assert_eq!(r, Err(BootError::Image(ImageError::OutOfWindow)));
+            assert!(mem.is_empty(), "{load_addr:#x}");
+        }
         let mut bad = v4(MODE_RISCV, 0, &payload);
         bad[100] ^= 1;
-        assert_eq!(run(&bad).0, Err(BootError::Crc));
+        assert_eq!(
+            run(&bad),
+            (
+                Err(BootError::Image(ImageError::OutOfWindow)),
+                BTreeMap::new()
+            )
+        );
+        // A broken payload loads into its window, and is refused there
+        let mut bad = v4(MODE_RISCV, 0x8001_0000, &payload);
+        bad[100] ^= 1;
+        let (r, mem) = run(&bad);
+        assert_eq!(r, Err(BootError::Crc));
+        assert!(mem
+            .keys()
+            .all(|&a| (0x8001_0000..0x8001_0000 + 1500).contains(&a)));
+    }
+
+    #[test]
+    fn headers_refused_before_the_payload() {
+        let payload = [1u8, 2, 3, 4];
+        let good = v4(MODE_RISCV, 0x8000_0000, &payload);
+        // Shorter than a header, not v4, a size that isn't the file's, the header's own
+        // checks (mode, size 0, entry)
+        let mut wrong_size = good.clone();
+        wrong_size.push(0);
+        let mut not_v4 = good.clone();
+        not_v4[0] ^= 1;
+        let mode = v4(2, 0x8000_0000, &payload);
+        for (file, want) in [
+            (good[..63].to_vec(), BootError::NotV4),
+            (Vec::new(), BootError::NotV4),
+            (not_v4, BootError::NotV4),
+            (wrong_size, BootError::SizeMismatch),
+            (mode, BootError::Image(ImageError::BadMode(2))),
+            (
+                v4(MODE_RISCV, 0x8000_0000, &[]),
+                BootError::Image(ImageError::Empty),
+            ),
+        ] {
+            let (r, mem) = run(&file);
+            assert_eq!(r, Err(want));
+            assert!(mem.is_empty());
+        }
+        assert_eq!(run(&good).0, Ok(Target::Psram));
+    }
+
+    #[test]
+    fn card_errors_while_loading() {
+        let payload: Vec<u8> = (0..3000u32).map(|i| (i % 251) as u8).collect();
+        let file = v4(MODE_RISCV, 0x8000_0000, &payload);
+        let mut vol = card();
+        let root = vol.root();
+        let entry = vol.create(&root, b"APP     BIN", &file).unwrap();
+        let mut psram = std::vec![0u8; SCRATCH_BYTES as usize];
+        // The file's first sector (its header), and one of its payload's sectors after it
+        let first = {
+            let mut lba = None;
+            for l in 0..vol.device().0.len() as u32 / SECTOR as u32 {
+                let at = l as usize * SECTOR;
+                if vol.device().0[at..at + 64] == file[..64] {
+                    lba = Some(l);
+                }
+            }
+            lba.unwrap()
+        };
+        assert_eq!(
+            load(&mut vol, &entry, &mut psram).map(|r| r.1),
+            Ok(Target::Psram)
+        );
+        for (lba, what) in [(first, "header"), (first + 2, "payload")] {
+            vol.device().1 = Some(lba);
+            assert_eq!(
+                load(&mut vol, &entry, &mut psram).map(|r| r.1),
+                Err(BootError::Fat(FatError::Io(lba))),
+                "{what}"
+            );
+        }
     }
 }
