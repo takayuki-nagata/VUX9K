@@ -356,7 +356,7 @@ hardware; `--trace FILE` logs every instruction. Profiles: `real` (default: the 
 boot ROM and the 8 MB PSRAM, as the board), `isa-test` (the riscv-tests
 harness' flat 256 KB RAM, `make test-isa-emu`). `--linux Image --dtb DTB` starts a noMMU
 kernel on `real` without firmware, the device tree from
-`linux_workspace/dts/vux9k-linux-emu.dts`. Python tests drive the emulator through
+`linux_workspace/dts/vux9k.dts`. Python tests drive the emulator through
 the `vux9k_emu` module (`make emu-py`; helpers in `sim/emu/vux9k.py`).
 
 `make emu-bench` (`scripts/emu_bench.py`) measures how fast that runs (millions of

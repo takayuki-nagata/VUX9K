@@ -122,7 +122,7 @@ pub enum Isa {
 }
 
 /// Where `load_linux` puts the device tree: the top 64 KB of the PSRAM, all of which the
-/// emulator's Linux device tree gives the kernel (linux_workspace/dts/vux9k-linux-emu.dts:
+/// Linux device tree gives the kernel (linux_workspace/dts/vux9k.dts:
 /// the stages' memory is free once the kernel runs; the kernel keeps the device tree's own
 /// pages).
 pub const LINUX_DTB_ADDR: u32 = 0x807F_0000;

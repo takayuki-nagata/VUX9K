@@ -25,7 +25,7 @@ the emulator starts a kernel (`Soc::load_linux`, `vux9k-emu --linux`). Index and
 - `make linux` builds `vendor/linux-*` with that toolchain into `build/linux/`:
   `rv32_nommu_virt_defconfig` with `linux_workspace/kernel/vux9k_nommu.config` merged over it,
   the cpio built in uncompressed (`Image`), and the device tree
-  `linux_workspace/dts/vux9k-linux-emu.dts` (`vux9k-linux-emu.dtb`).
+  `linux_workspace/dts/vux9k.dts` (`vux9k.dtb`).
 - `make test-linux-emu` (`sim/emu/test_linux.py`) boots it on the emulator's `real` profile to
   busybox's shell and runs a few commands. It runs only with `VUX9K_LINUX_TEST=1`, which that
   target sets, so `test-emu` (`pytest sim/emu`, CI) skips it even where an Image exists. None of

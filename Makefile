@@ -451,8 +451,8 @@ linux: linux-rootfs $(LINUX_STAMP)
 		while read -r opt; do ! grep -q "^$$opt=" $(LINUX_OUT)/.config || \
 		{ echo "$(LINUX_FRAGMENT): set in the final .config: $$opt"; exit 1; }; done
 	$(LINUX_MAKE) Image
-	dtc -I dts -O dtb -o $(LINUX_OUT)/vux9k-linux-emu.dtb linux_workspace/dts/vux9k-linux-emu.dts
-	@ls -l $(LINUX_OUT)/arch/riscv/boot/Image $(LINUX_ROOTFS) $(LINUX_OUT)/vux9k-linux-emu.dtb
+	dtc -I dts -O dtb -o $(LINUX_OUT)/vux9k.dtb linux_workspace/dts/vux9k.dts
+	@ls -l $(LINUX_OUT)/arch/riscv/boot/Image $(LINUX_ROOTFS) $(LINUX_OUT)/vux9k.dtb
 
 # The previous release's archive, as GitHub publishes it, for the upgrade tests from it
 # (sim/emu/test_upgrade.py, test-hw-upgrade); a build input, so in build/

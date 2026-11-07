@@ -9,7 +9,7 @@
 //! `IsaTest` is the flat 256 KB RAM of sim/tb_hex_runner.veryl, used only to run
 //! riscv-tests.
 //! A noMMU Linux kernel runs on `Real` (`Soc::load_linux`, described by
-//! linux_workspace/dts/vux9k-linux-emu.dts): the emulator-only `Linux` profile that once ran
+//! linux_workspace/dts/vux9k.dts): the emulator-only `Linux` profile that once ran
 //! it ahead of the RTL had nothing left that `Real` lacks once the CLINT and the liteuart
 //! registers were the RTL's.
 
