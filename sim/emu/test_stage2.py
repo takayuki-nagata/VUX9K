@@ -892,6 +892,60 @@ def test_linux_through_vux_tool(tool):
     assert linux_stub.handoff(line)["dtb"] == linux_stub.word_sum(dtb), line
 
 
+# The second stage's stack: its window's top 8 KB, which start.s zeroes
+# (stage2/bootstrap/link.x's _stack_zero, fw_common::map::STAGE2_STACK_BYTES), right above
+# the device tree's slot that `linux` fills first and must keep while the Image loads
+DTB_SLOT = 0x807F_0000
+STACK_ZERO = 0x807F_E000
+STACK_END = 0x8080_0000
+# What `linux` may use of it (5,552 B measured 2026-11-10: as deep as `put`)
+LINUX_STACK_MAX = 6 * 1024
+
+
+def stack_used(soc, low: int = STACK_ZERO) -> int:
+    """The stack's high-water mark in bytes: from its top down to the deepest word at or
+    above `low` that is no longer 0 (xmem_word is what the CPU sees, dirty data lines
+    included). A frame that only stored zeros below that would go uncounted."""
+    deepest = next((a for a in range(low, STACK_END, 4) if soc.xmem_word(a)), STACK_END)
+    return STACK_END - deepest
+
+
+def test_linux_stack_stays_clear_of_the_device_tree(tool):
+    """`linux` with the largest device tree, typed at a fresh prompt: the deepest the stack
+    got, the second stage's own start included, is within LINUX_STACK_MAX, so the device
+    tree read in first is intact when the kernel starts. The stand-in kernel uses no stack."""
+    dtb = linux_stub.dtb(56 * 1024)
+    image = linux_stub.image(len(dtb))
+    soc, ser = tool(card({S2: stage2(), f"{LINUX}/IMAGE": image, f"{LINUX}/VUX9K.DTB": dtb}, part_sectors=20480))
+    out = vux_tool.linux(ser)
+    got, rest = vux_tool.read_until(ser, ("[KERNEL]",), 5.0, vux_tool.after_run(out, "[LINUX] "))
+    assert got, rest
+    used = stack_used(soc)
+    print(f"\nstage2 stack, linux: {used} B of {STACK_END - STACK_ZERO}")
+    assert used <= LINUX_STACK_MAX, used
+    assert all(soc.xmem_word(DTB_SLOT + i) == struct.unpack_from("<I", dtb, i)[0] for i in range(0, len(dtb), 4))
+
+
+def test_commands_stay_within_the_stack(tool):
+    """Every kind of command, install the deepest (8,092 B measured 2026-11-10): nothing is
+    written below the stack's 8 KB, into the device tree's slot (empty without `linux`)."""
+    files = {S2: stage2(), "D1/D2/D3/D4/NOTE.TXT": b"note\n", "BAD/CRC.BIN": REFUSED["CRC.BIN"][0]}
+    soc, ser = tool(card(files))
+    used = {}
+    for line in ["ls /", "cd D1/D2/D3/D4", "pwd", "cat NOTE.TXT", "hexdump NOTE.TXT", "cd /", "mkdir TMP",
+                 "mv D1/D2/D3/D4/NOTE.TXT TMP/N.TXT", "rm TMP/N.TXT", "rmdir TMP", "info", "help"]:  # fmt: skip
+        vux_tool.s2_cmd(ser, line)
+        used[line] = stack_used(soc, DTB_SLOT)
+    vux_tool.s2_cmd(ser, "run BAD/CRC.BIN", check=False)
+    used["run"] = stack_used(soc, DTB_SLOT)
+    vux_tool.put(ser, "BLOB.BIN", bytes(range(256)) * 12)
+    used["put"] = stack_used(soc, DTB_SLOT)
+    assert vux_tool.install_stage2(ser, stage2()) == "[INSTALL] OK"
+    used["install"] = stack_used(soc, DTB_SLOT)
+    print(f"\nstage2 stack high-water mark after each command: {used}")
+    assert max(used.values()) <= STACK_END - STACK_ZERO, used
+
+
 def test_reset_back_to_the_first_stage():
     soc, _ = boot_s2()
     soc.run(50 * UART_BIT)

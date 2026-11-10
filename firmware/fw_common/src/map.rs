@@ -101,8 +101,9 @@ pub const LINUX_IMAGE_MAX: usize = STAGE2_BASE - XMEM_BASE;
 /// bss included, must end below it.
 pub const LINUX_DTB_ADDR: usize = 0x807F_0000;
 /// The second stage's stack: the top 8 KB of its window, which start.s zeroes
-/// (stage2/bootstrap/link.x's `_stack_zero`, held to this by an assert there). Nothing
-/// measures its depth: an overflow would now run into the device tree `linux` loads below it.
+/// (stage2/bootstrap/link.x's `_stack_zero`, held to this by an assert there). An overflow
+/// would run into the device tree `linux` loads below it: sim/emu/test_stage2.py measures
+/// the depth on the emulator (`linux` ~5.4 KB, `install` the deepest at ~7.9 KB, 2026-11-10).
 pub const STAGE2_STACK_BYTES: usize = 8 * 1024;
 /// The device tree's room while the second stage loads it: up to its stack at its window's
 /// top (its image and .bss end below `LINUX_DTB_ADDR`: stage2/bootstrap/link.x).
