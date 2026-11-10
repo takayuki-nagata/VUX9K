@@ -118,6 +118,15 @@ clock-and-board.md, "Board UART output that is noise: ModemManager and the bridg
   (`build/synth/pack.fs`). After `test-hw-dist`, run `make test-hw-irq-echo-dist DIST=<dir>`
   instead: it takes `IRQECHO.BIN` and `pack.fs` from the tree. Given only `--bin`, the script
   once left the board on a weeks-old local `pack.fs` after a dist run.
+- `make test-hw-linux LINUX=<dir>` (`scripts/hw_linux.py`; `test-hw-linux-dist DIST=<dir>` takes
+  that tree's `pack.fs`): the noMMU Linux kernel of a `make linux-dist` tree (CI's
+  `vux9k-linux-<sha>`) put on the card in `\VUX9K\LINUX\` (~6 min for the 3.2 MB Image;
+  `HW_LINUX_FLAGS=--keep-card` boots the files already there), then `pack.fs` loaded into SRAM,
+  the first stage booting the second, whose `linux` starts the kernel; the boot lines and
+  commands of `sim/integration/linux_checks.py` (the emulator's `test_linux.py` checks the same),
+  `[TIME]` lines from the load to the shell's prompt, and `pack.fs` loaded again at the end.
+  `make test-linux-emu` runs the script against the emulator's CLI at full speed
+  (`test_board_script_on_the_emulator`).
 - `make test-hw-upgrade DIST=<dir>` (`scripts/test_hw_upgrade.py`): the previous release's
   `pack.fs` (`make prev-release`: `PREV_RELEASE`, v0.3.0, fetched into `build/previous/`) into
   SRAM, its first stage booting the card's second stage (the tree's, as `test-hw-dist` leaves

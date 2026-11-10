@@ -124,6 +124,35 @@ def test_irq_echo_files_come_from_the_dist(tmp_path):
     assert h is not None and (h.mode, h.load_addr) == (test_hardware.vux_tool.MODE_RISCV, 0x8000_0000)
 
 
+def linux_tree(tmp_path, image_size: int):
+    """A make linux-dist tree whose MANIFEST.json gives the Image image_size bytes."""
+    tree = tmp_path / "linux-dist"
+    (tree / "VUX9K" / "LINUX").mkdir(parents=True)
+    (tree / "VUX9K" / "LINUX" / "Image").write_bytes(b"I" * 64)
+    (tree / "VUX9K" / "LINUX" / "vux9k.dtb").write_bytes(b"D" * 8)
+    files = {"VUX9K/LINUX/Image": {"size": image_size}, "VUX9K/LINUX/vux9k.dtb": {"size": 8}}
+    manifest = {"git_describe": "test", "linux_version": "7.3", "card_files": files}
+    (tree / "MANIFEST.json").write_text(json.dumps(manifest))
+    return str(tree)
+
+
+def test_linux_script_files(tmp_path):
+    """hw_linux.py: the bitstream from --pack-fs, else the --dist tree's, else the working
+    tree's; the kernel's files from a make linux-dist tree, refused when they are not the
+    sizes its MANIFEST.json gives."""
+    import hw_linux
+
+    def pack_fs(*argv):
+        return hw_linux.pack_fs_of(hw_linux.parse_args(list(argv)))
+
+    assert pack_fs("--dist", "D", "--pack-fs", "P") == "P"
+    assert pack_fs("--dist", "D") == os.path.join("D", "bitstream", "pack.fs")
+    assert pack_fs() == os.path.join(REPO_ROOT, "build", "synth", "pack.fs")
+    assert hw_linux.card_files(linux_tree(tmp_path, 64)) == (b"I" * 64, b"D" * 8)
+    with pytest.raises(SystemExit):
+        hw_linux.card_files(linux_tree(tmp_path / "bad", 65))
+
+
 def test_bitstream_load_errors(tmp_path):
     assert test_hardware.load_bitstream(None, str(tmp_path / "pack.fs")) == "no openFPGALoader (--loader)"
     assert "missing" in test_hardware.load_bitstream("openFPGALoader", str(tmp_path / "pack.fs"))

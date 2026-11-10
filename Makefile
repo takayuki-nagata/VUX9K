@@ -39,7 +39,7 @@ HACK_BUILD_DIR := $(BUILD_DIR)/hack
 ZEPHYR_BUILD_DIR ?= $(BUILD_DIR)/zephyr
 SYNTH_DIR := $(BUILD_DIR)/synth
 
-.PHONY: all hello apps micropython-src linux-src linux-rootfs linux linux-dist test-linux-emu prev-release build-micropython sim-stage2 sim-zephyr-demo-gls sim-hw-suite-emu lint-rtl check-rtl-syntax coverage-fcov mutation act4-elfs test-act4 test-act4-gls test-act4-emu test-isa-waits emu emu-py emu-test emu-bench test-isa-emu test-emu test-fw-host test-fat firmware-size coverage-fw coverage-rust coverage-rust-tool sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hw-dist test-hw-irq-echo test-hw-irq-echo-dist test-hw-upgrade dist check-dist test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware hwtest hw-smoke sim-unit sim-psram-contract sim-psram-icarus sim-unit-random sim-boot sim-soc sim test-isa test-isa-gls zephyr-bc-lib build-zephyr build-zephyr-demo build-zephyr-irq-echo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-irq-echo-rtl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
+.PHONY: all hello apps micropython-src linux-src linux-rootfs linux linux-dist test-linux-emu prev-release build-micropython sim-stage2 sim-zephyr-demo-gls sim-hw-suite-emu lint-rtl check-rtl-syntax coverage-fcov mutation act4-elfs test-act4 test-act4-gls test-act4-emu test-isa-waits emu emu-py emu-test emu-bench test-isa-emu test-emu test-fw-host test-fat firmware-size coverage-fw coverage-rust coverage-rust-tool sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hw-dist test-hw-irq-echo test-hw-irq-echo-dist test-hw-linux test-hw-linux-dist test-hw-upgrade dist check-dist test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware hwtest hw-smoke sim-unit sim-psram-contract sim-psram-icarus sim-unit-random sim-boot sim-soc sim test-isa test-isa-gls zephyr-bc-lib build-zephyr build-zephyr-demo build-zephyr-irq-echo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-irq-echo-rtl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
 
 all: test-ci
 
@@ -578,8 +578,9 @@ test-isa-emu: emu-py
 
 # noMMU Linux to busybox's shell on the emulator's real profile (sim/emu/test_linux.py, which
 # skips without make linux's Image), from load_linux and through both stages from a card: not
-# in test-sim (make linux builds buildroot), CI's linux job runs it
-test-linux-emu: emu-py firmware linux
+# in test-sim (make linux builds buildroot), CI's linux job runs it; also scripts/hw_linux.py,
+# the board's test, against the emulator's CLI (emu-py builds it) with make linux-dist's tree
+test-linux-emu: emu-py firmware linux-dist
 	VUX9K_LINUX_TEST=1 $(PYTHON) -m pytest -s sim/emu/test_linux.py
 
 LOCKSTEP_TRACE_FILE = $(BUILD_DIR)/sim/verilator/tb_soc_top/run_test_soc_lockstep/lockstep.trace
@@ -959,6 +960,18 @@ test-hw-irq-echo: apps
 # test-hw-dist on the same tree)
 test-hw-irq-echo-dist:
 	$(PYTHON) scripts/hw_irq_echo.py --dist $(DIST) --loader $(OPENFPGALOADER)
+
+# The noMMU Linux kernel on the board (scripts/hw_linux.py): make linux-dist's tree (LINUX=, e.g.
+# CI's vux9k-linux-<sha>) put on the card in \VUX9K\LINUX\ and booted by the second stage to
+# busybox's shell, timed from the bitstream's load into SRAM; the bitstream is loaded again at
+# the end. HW_LINUX_FLAGS=--keep-card boots the files already on the card (the put takes ~6 min)
+LINUX ?= $(LINUX_DIST)
+test-hw-linux:
+	$(PYTHON) scripts/hw_linux.py --linux $(LINUX) --loader $(OPENFPGALOADER) $(HW_LINUX_FLAGS)
+
+# The same with a `make dist` tree's pack.fs (after test-hw-dist on the same tree)
+test-hw-linux-dist:
+	$(PYTHON) scripts/hw_linux.py --linux $(LINUX) --dist $(DIST) --loader $(OPENFPGALOADER) $(HW_LINUX_FLAGS)
 
 # ===== Clean =====
 

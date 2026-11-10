@@ -7,8 +7,8 @@ in) on the emulator's real profile, the SoC as synthesized (docs/agents/linux.md
 ways: the kernel Image and the device tree loaded into the PSRAM (Soc.load_linux), and the
 same files on a FAT32 card (vux_tool's mkfat, `\\VUX9K\\LINUX\\Image` and `vux9k.dtb`) that the
 second stage, booted by the first from the card, loads and starts with `linux`, as on the
-board. Each boots to busybox's shell on the console, then commands are typed at it, one of
-them a builtin and the others busybox executed again (FLAT, copied into RAM at each exec).
+board. Each boots to busybox's shell on the console, then commands are typed at it
+(sim/integration/linux_checks.py, which the board's scripts/hw_linux.py checks too).
 
 The cycles, retired instructions and the caches' hit rates to the prompt (for the card: the
 second stage's load, `linux` typed to its [LINUX] line, and the kernel's boot from there) and
@@ -16,16 +16,37 @@ for each command are printed by test_record_measurements. Nothing here runs on t
 """
 
 import os
+import socket
+import subprocess
+import sys
+import threading
 from dataclasses import dataclass
 
 import pytest
-import s1_env
-from vux9k import CLK_HZ, REPO_ROOT, UART_BIT, Meter, Soc, hit_rates, new_soc, send_paced, vux_tool, wait_for
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "integration"))
+import linux_checks  # noqa: E402
+import s1_env  # noqa: E402
+from vux9k import (  # noqa: E402
+    CLK_HZ,
+    REPO_ROOT,
+    UART_BIT,
+    Meter,
+    Soc,
+    hit_rates,
+    new_soc,
+    send_paced,
+    vux_tool,
+    wait_for,
+)
 
 LINUX_DIR = os.path.join(REPO_ROOT, "build", "linux")
 IMAGE = os.path.join(LINUX_DIR, "arch", "riscv", "boot", "Image")
 DTB = os.path.join(LINUX_DIR, "vux9k.dtb")
-PROMPT = b"/ # "
+# make linux-dist's tree of the same build, which scripts/hw_linux.py takes
+LINUX_DIST = os.path.join(REPO_ROOT, "build", "linux-dist")
+EMU = os.environ.get("VUX9K_EMU_BIN") or os.path.join(REPO_ROOT, "build", "emu", "target", "release", "vux9k-emu")
+PROMPT = linux_checks.PROMPT.encode()
 # Upper bounds, not measurements (test_record_measurements prints those): the boot to the
 # prompt took ~224M cycles and a command that executes busybox ~15M (2026-11-01); the second
 # stage reads the 3.2 MB Image at ~70 cycles a byte, ~230M (2026-11-07)
@@ -96,29 +117,65 @@ def command(linux: Booted, line: str) -> str:
 
 
 def test_boot_banner(linux):
-    assert "Linux version 7.3" in linux.boot
-    assert "clint: clint@20000000: timer running at 18000000 Hz" in linux.boot
-    assert "printk: legacy console [liteuart0] enabled" in linux.boot
-    assert "Run /init as init process" in linux.boot
-    assert "hush - the humble shell" in linux.boot
+    assert not linux_checks.missing(linux.boot, linux_checks.BOOT_LINES), linux.boot[-2000:]
 
 
-def test_builtin_echo(linux):
-    assert "hello-vux9k" in command(linux, "echo hello-vux9k")
+@pytest.mark.parametrize("line", list(linux_checks.COMMANDS))
+def test_command(linux, line):
+    out = command(linux, line)
+    assert not linux_checks.missing(out, linux_checks.COMMANDS[line]), out
 
 
-def test_uname(linux):
-    assert "Linux (none) 7.3.0" in command(linux, "uname -a")
+def test_board_script_on_the_emulator(tmp_path):
+    """scripts/hw_linux.py, the board's test, against the emulator's CLI at full speed
+    (--speed 0; its times mean nothing then): a card with only the second stage, the
+    kernel's files put on it in \\VUX9K\\LINUX\\, `reset` back to the first stage booting the
+    second, `linux`, the boot lines and the commands."""
+    if not os.environ.get("VUX9K_LINUX_TEST"):
+        pytest.skip("make test-linux-emu runs it (VUX9K_LINUX_TEST=1)")
+    if not os.path.exists(os.path.join(LINUX_DIST, "MANIFEST.json")):
+        pytest.skip(f"{LINUX_DIST} missing (make linux-dist)")
+    img = tmp_path / "sd.img"
+    img.write_bytes(vux_tool.build_fat32_image({"VUX9K/STAGE2.BIN": s1_env.stage2()}, part_sectors=CARD_SECTORS))
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    emu = subprocess.Popen(
+        [EMU, "--tcp", str(port), "--sd", str(img), "--speed", "0"], cwd=REPO_ROOT, stderr=subprocess.PIPE, text=True
+    )
+    # The emulator's stderr read to its end in a thread (a full pipe would stop it)
+    listening = threading.Event()
+    log: list[str] = []
 
+    def drain():
+        assert emu.stderr
+        for line in emu.stderr:
+            log.append(line)
+            if "waiting for a UART client" in line:
+                listening.set()
 
-def test_ls_root(linux):
-    out = command(linux, "ls /")
-    for name in ("bin", "dev", "proc", "sbin"):
-        assert name in out
-
-
-def test_proc_cpuinfo(linux):
-    assert "rv32ima" in command(linux, "cat /proc/cpuinfo")
+    threading.Thread(target=drain, daemon=True).start()
+    try:
+        assert listening.wait(30), f"the emulator did not listen: {''.join(log)[-2000:]}"
+        r = subprocess.run(
+            [
+                sys.executable,
+                os.path.join(REPO_ROOT, "scripts", "hw_linux.py"),
+                "--linux",
+                LINUX_DIST,
+                "--port",
+                f"socket://127.0.0.1:{port}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=900,
+        )
+    finally:
+        emu.kill()
+        emu.wait()
+    print(r.stdout[-3000:])
+    assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-2000:]
+    assert "[PUT] OK" in r.stdout and "Linux on the board: PASSED" in r.stdout
 
 
 def test_record_measurements(record_property, capsys):

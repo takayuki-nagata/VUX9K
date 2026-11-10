@@ -3,6 +3,8 @@ paths:
   - "linux_workspace/**"
   - "sim/emu/test_linux.py"
   - "scripts/make_linux_dist.py"
+  - "scripts/hw_linux.py"
+  - "sim/integration/linux_checks.py"
   - "firmware/fw_common/src/linux.rs"
   - "sim/integration/linux_stub.py"
   - "emu/crates/vux9k_emu/src/profile.rs"
@@ -32,7 +34,9 @@ stage's `linux` does (`fw_common::linux`). Index and the rules that apply everyw
   `linux_workspace/dts/vux9k.dts` (`vux9k.dtb`).
 - `make test-linux-emu` (`sim/emu/test_linux.py`) boots it on the emulator's `real` profile to
   busybox's shell and runs a few commands, twice: from `load_linux`, and from a FAT32 card
-  (vux_tool's mkfat) through the first stage, the second stage and its `linux`. It runs only with `VUX9K_LINUX_TEST=1`, which that
+  (vux_tool's mkfat) through the first stage, the second stage and its `linux`, and runs the
+  board's test, `scripts/hw_linux.py` (`make test-hw-linux`, test-tiers.md), against the
+  emulator's CLI with `make linux-dist`'s tree. It runs only with `VUX9K_LINUX_TEST=1`, which that
   target sets, so `test-emu` (`pytest sim/emu`, CI) skips it even where an Image exists. None of
   these targets is in `test-sim` or `test-slow`. The first buildroot run takes ~40 min on a 2-vCPU
   machine, a kernel rebuild ~6 min.
