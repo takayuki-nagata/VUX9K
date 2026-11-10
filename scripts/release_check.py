@@ -4,14 +4,17 @@
 
 """Tie a GitHub Release to the bitstream that was tested on the board.
 
-A release is the `make dist` tree CI built for a commit, published only if it is the
-one the maintainer put on the board. The evidence travels in the annotated tag:
+A release is the `make dist` tree CI built for a commit, with the Linux kernel CI built
+for it (`make linux-dist`), published only if they are the ones the maintainer put on the
+board. The evidence travels in the annotated tag:
 
-  template DIR       print a tag message for that dist, with the board results, the
-                     compatibility line and the release notes to fill in
-  verify DIR MSG     check a dist against a tag message (the release workflow runs this):
-                     SHA256SUMS, clean build of the tagged commit, pack.fs's hash equal to
-                     the one in the message, and everything filled in
+  template DIR --linux LDIR
+                     print a tag message for that dist and kernel, with the board results,
+                     the compatibility line and the release notes to fill in
+  verify DIR MSG --linux LDIR
+                     check a dist and a kernel against a tag message (the release workflow
+                     runs this): SHA256SUMS, clean builds of the tagged commit, pack.fs's and
+                     the Image's hashes equal to the ones in the message, everything filled in
   notes MSG          print the release notes for a tag message (the release workflow
                      publishes them): the fields in a code block, the notes as Markdown
   selftest DIR       template -> verify round trip, and verify must reject a wrong hash
@@ -39,9 +42,11 @@ FIELDS = [
     ("pnr seed", "seed"),
     ("first stage version", "stage1_version"),
     ("second stage version", "stage2_version"),
+    ("linux image sha256", "image_sha256"),
     ("test-hw", None),
     ("hw-smoke", None),
     ("test-hw-upgrade", None),
+    ("test-hw-linux", None),
     ("compatibility", None),
 ]
 
@@ -79,8 +84,21 @@ def load_dist(dist):
     }
 
 
-def template(dist, version="vX.Y.Z"):
+# make linux-dist's tree: the Image as it goes on the card
+LINUX_IMAGE = "VUX9K/LINUX/Image"
+
+
+def load_linux(linux):
+    """make linux-dist's MANIFEST and the Image's sha256 (SHA256SUMS checked first)."""
+    with open(os.path.join(linux, "MANIFEST.json")) as f:
+        m = json.load(f)
+    check_sums(linux)
+    return m, sha256(os.path.join(linux, LINUX_IMAGE))
+
+
+def template(dist, linux, version="vX.Y.Z"):
     _, facts = load_dist(dist)
+    facts["image_sha256"] = load_linux(linux)[1]
     lines = [version, ""]
     for key, src in FIELDS:
         lines.append(f"{key}: {facts[src] if src else FILL}")
@@ -94,6 +112,8 @@ Fill in, from the board (docs/RELEASING.md, step 2):
   hw-smoke         `make timing hw-smoke` at this commit, e.g. 5/5 seeds 16/16
   test-hw-upgrade  `make test-hw-upgrade DIST=<this dist>` (the previous release's bitstream,
                    then this one), e.g. 2/2 PASS from v0.3.0
+  test-hw-linux    `make test-hw-linux-dist DIST=<this dist> LINUX=<this kernel>`, e.g.
+                   PASS, 26 s from the bitstream's load to busybox's prompt
   compatibility    whether the previous release's applications and SD cards still work;
                    if not, why the minor or major version went up
 and replace the last line with the release notes in Markdown.
@@ -137,12 +157,14 @@ def parse(message):
     return fields
 
 
-def verify(dist, message, commit, allow_dirty=False):
+def verify(dist, linux, message, commit, allow_dirty=False):
     m, facts = load_dist(dist)
-    if m["dirty"] and not allow_dirty:
-        raise Mismatch("the dist was built from a tree with uncommitted changes")
-    if m["git_sha"] != commit:
-        raise Mismatch(f"the dist is of {m['git_sha']}, the tag points to {commit}")
+    lm, facts["image_sha256"] = load_linux(linux)
+    for what, built in (("dist", m), ("kernel", lm)):
+        if built["dirty"] and not allow_dirty:
+            raise Mismatch(f"the {what} was built from a tree with uncommitted changes")
+        if built["git_sha"] != commit:
+            raise Mismatch(f"the {what} is of {built['git_sha']}, the tag points to {commit}")
     version = split(message)[0]
     if len(version) != 1 or not version[0].startswith("v"):
         raise Mismatch("tag message: the first paragraph must be the version alone, then a blank line")
@@ -160,6 +182,11 @@ def verify(dist, message, commit, allow_dirty=False):
                 f"pack.fs is {facts['pack_sha256']}, the tag message says {value}: "
                 "this is not the bitstream that was tested"
             )
+        if key == "linux image sha256" and value != facts["image_sha256"]:
+            raise Mismatch(
+                f"the Image is {facts['image_sha256']}, the tag message says {value}: "
+                "this is not the kernel that was tested"
+            )
     if not split(message)[2].strip():
         raise Mismatch("tag message: no release notes after the fields")
     if "<fill in" in message:
@@ -174,23 +201,46 @@ def notes(message, commit):
     if body:
         out += [body, ""]
     out.append("Getting started: `docs/APP_DEVELOPMENT.md` in the archive. Tool versions: `MANIFEST.json`.")
+    out.append("The noMMU Linux kernel: the `-kernel` archive; its `VUX9K/LINUX/` goes on the card.")
     return "\n".join(out) + "\n"
 
 
+def fake_linux(tmp, git_sha, image=b"selftest Image"):
+    """A make linux-dist tree for the selftest (make check-dist builds no kernel)."""
+    os.makedirs(os.path.join(tmp, "VUX9K", "LINUX"))
+    with open(os.path.join(tmp, LINUX_IMAGE), "wb") as f:
+        f.write(image)
+    with open(os.path.join(tmp, "MANIFEST.json"), "w") as f:
+        json.dump({"git_sha": git_sha, "dirty": False}, f)
+    with open(os.path.join(tmp, "SHA256SUMS"), "w") as f:
+        f.write("".join(f"{sha256(os.path.join(tmp, rel))}  {rel}\n" for rel in (LINUX_IMAGE, "MANIFEST.json")))
+    return tmp
+
+
 def selftest(dist):
+    with tempfile.TemporaryDirectory() as tmp:
+        _selftest(dist, tmp)
+
+
+def _selftest(dist, tmp):
     m, facts = load_dist(dist)
+    linux = fake_linux(os.path.join(tmp, "linux"), m["git_sha"])
+    image = load_linux(linux)[1]
     body = "## Notes\n\ntest-hw: a line in the notes is not a field\n\nsecond paragraph"
-    filled = template(dist, "v0.0.0-selftest").replace(NOTES_FILL, body).replace(FILL, "selftest")
-    verify(dist, filled, m["git_sha"], allow_dirty=True)
+    filled = template(dist, linux, "v0.0.0-selftest").replace(NOTES_FILL, body).replace(FILL, "selftest")
+    verify(dist, linux, filled, m["git_sha"], allow_dirty=True)
     published = notes(filled + "-----BEGIN PGP SIGNATURE-----\n\nxyz\n-----END PGP SIGNATURE-----\n", m["git_sha"])
     fence = published.split("```")
     if len(fence) != 3 or "compatibility: selftest" not in fence[1] or body not in fence[2] or "xyz" in published:
         raise Mismatch(f"selftest: notes didn't put the fields in a code block and the notes after it:\n{published}")
     bad = facts["pack_sha256"][:-1] + ("0" if facts["pack_sha256"][-1] != "0" else "1")
+    bad_image = image[:-1] + ("0" if image[-1] != "0" else "1")
     for broken, why in (
         (filled.replace(facts["pack_sha256"], bad), "a different pack.fs hash"),
-        (template(dist), "unfilled results"),
-        (template(dist).replace(FILL, "selftest"), "unfilled release notes"),
+        (filled.replace(image, bad_image), "a different Image hash"),
+        (filled.replace("test-hw-linux: selftest\n", ""), "a missing test-hw-linux"),
+        (template(dist, linux), "unfilled results"),
+        (template(dist, linux).replace(FILL, "selftest"), "unfilled release notes"),
         (filled.replace("\n\n" + body, ""), "no release notes"),
         (filled.replace("hw-smoke: selftest\n", ""), "a missing hw-smoke"),
         (
@@ -206,23 +256,33 @@ def selftest(dist):
         (filled.replace("v0.0.0-selftest\n\n", "v0.0.0-selftest\n"), "no blank line after the version"),
     ):
         try:
-            verify(dist, broken, m["git_sha"], allow_dirty=True)
+            verify(dist, linux, broken, m["git_sha"], allow_dirty=True)
+        except Mismatch:
+            continue
+        raise Mismatch(f"selftest: verify accepted {why}")
+    # A kernel of another commit, and one whose Image changed after make linux-dist
+    other = fake_linux(os.path.join(tmp, "other"), "0" * 40)
+    changed = fake_linux(os.path.join(tmp, "changed"), m["git_sha"])
+    with open(os.path.join(changed, LINUX_IMAGE), "ab") as f:
+        f.write(b"!")
+    for kernel, why in ((other, "a kernel of another commit"), (changed, "an Image that isn't SHA256SUMS'")):
+        try:
+            verify(dist, kernel, filled, m["git_sha"], allow_dirty=True)
         except Mismatch:
             continue
         raise Mismatch(f"selftest: verify accepted {why}")
     # A dist whose files changed after make_dist must fail too
-    with tempfile.TemporaryDirectory() as tmp:
-        copy = os.path.join(tmp, "dist")
-        os.makedirs(copy)
-        for name in ("MANIFEST.json", "SHA256SUMS"):
-            with open(os.path.join(dist, name), "rb") as src, open(os.path.join(copy, name), "wb") as dst:
-                dst.write(src.read())
-        try:
-            load_dist(copy)
-        except (Mismatch, FileNotFoundError):
-            pass
-        else:
-            raise Mismatch("selftest: a dist with missing files passed")
+    copy = os.path.join(tmp, "dist")
+    os.makedirs(copy)
+    for name in ("MANIFEST.json", "SHA256SUMS"):
+        with open(os.path.join(dist, name), "rb") as src, open(os.path.join(copy, name), "wb") as dst:
+            dst.write(src.read())
+    try:
+        load_dist(copy)
+    except (Mismatch, FileNotFoundError):
+        pass
+    else:
+        raise Mismatch("selftest: a dist with missing files passed")
 
 
 def main():
@@ -230,10 +290,12 @@ def main():
     sub = p.add_subparsers(dest="cmd", required=True)
     t = sub.add_parser("template")
     t.add_argument("dist")
+    t.add_argument("--linux", required=True, help="make linux-dist's tree (CI's vux9k-linux-<sha>)")
     t.add_argument("--version", default="vX.Y.Z")
     v = sub.add_parser("verify")
     v.add_argument("dist")
     v.add_argument("message", help="file with the annotated tag's message")
+    v.add_argument("--linux", required=True, help="make linux-dist's tree (CI's vux9k-linux-<sha>)")
     v.add_argument("--commit", required=True, help="full SHA the tag points to")
     n = sub.add_parser("notes")
     n.add_argument("message", help="file with the annotated tag's message")
@@ -244,12 +306,12 @@ def main():
 
     try:
         if args.cmd == "template":
-            sys.stdout.write(template(args.dist, args.version))
+            sys.stdout.write(template(args.dist, args.linux, args.version))
             sys.stderr.write(TEMPLATE_HELP)
         elif args.cmd == "verify":
             with open(args.message) as f:
-                m = verify(args.dist, f.read(), args.commit)
-            print(f"release_check: OK ({m['git_sha']}, pack.fs as tested on the board)")
+                m = verify(args.dist, args.linux, f.read(), args.commit)
+            print(f"release_check: OK ({m['git_sha']}, pack.fs and the Image as tested on the board)")
         elif args.cmd == "notes":
             with open(args.message) as f:
                 sys.stdout.write(notes(f.read(), args.commit))

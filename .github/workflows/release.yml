@@ -1,9 +1,10 @@
 # Copyright (c) 2026 Takayuki Nagata
 # SPDX-License-Identifier: MIT
 
-# Publishes the dist CI built for a tagged commit, and only if it is what was tested on
-# the board: the annotated tag's message carries pack.fs's SHA-256 from that test, and
-# scripts/release_check.py compares it with the CI artifact. Nothing is rebuilt here.
+# Publishes the dist and the Linux kernel CI built for a tagged commit, and only if they are
+# what was tested on the board: the annotated tag's message carries pack.fs's and the Image's
+# SHA-256 from that test, and scripts/release_check.py compares them with the CI artifacts.
+# Nothing is rebuilt here.
 # docs/RELEASING.md has the procedure.
 name: Release
 
@@ -56,7 +57,7 @@ jobs:
           git tag -l --format='%(contents)' "$TAG" > "$RUNNER_TEMP/tag-message.txt"
           echo "SHA=$SHA" >> "$GITHUB_ENV"
 
-      - name: Fetch CI's dist of the tagged commit
+      - name: Fetch CI's dist and kernel of the tagged commit
         run: |
           RUN=$(gh run list --workflow ci.yml --commit "$SHA" --event push --status success \
                 --json databaseId --jq '.[0].databaseId')
@@ -70,9 +71,14 @@ jobs:
           fi
           mkdir -p "$RUNNER_TEMP/x"
           tar -xzf "$RUNNER_TEMP/artifact/vux9k-dist.tar.gz" -C "$RUNNER_TEMP/x"
+          # The job linux's make linux-dist tree, uploaded as it is
+          if ! gh run download "$RUN" --name "vux9k-linux-$SHA" --dir "$RUNNER_TEMP/linux"; then
+            echo "::error::CI run $RUN has no vux9k-linux-$SHA artifact (kept 90 days): re-run CI and test the new kernel on the board (docs/RELEASING.md)"
+            exit 1
+          fi
 
       - name: Verify against the tag
-        run: python3 scripts/release_check.py verify "$RUNNER_TEMP/x/dist" "$RUNNER_TEMP/tag-message.txt" --commit "$SHA"
+        run: python3 scripts/release_check.py verify "$RUNNER_TEMP/x/dist" "$RUNNER_TEMP/tag-message.txt" --linux "$RUNNER_TEMP/linux" --commit "$SHA"
 
       - name: Build the release assets
         run: |
@@ -82,6 +88,9 @@ jobs:
           tar -C "$X" -czf "assets/vux9k-$TAG-linux-x86_64.tar.gz" "vux9k-$TAG"
           cp "$X/vux9k-$TAG/bitstream/pack.fs" "assets/vux9k-$TAG-pack.fs"
           cp "$X/vux9k-$TAG/zephyr/vux9k-zephyr-bsp.tar.gz" "assets/vux9k-zephyr-bsp-$TAG.tar.gz"
+          # The kernel: its VUX9K/LINUX/ goes on the card as it is
+          cp -r "$RUNNER_TEMP/linux" "$X/vux9k-$TAG-kernel"
+          tar -C "$X" -czf "assets/vux9k-$TAG-kernel.tar.gz" "vux9k-$TAG-kernel"
           (cd assets && sha256sum -- * > SHA256SUMS)
           python3 scripts/release_check.py notes "$RUNNER_TEMP/tag-message.txt" --commit "$SHA" > notes.md
           cat notes.md

@@ -1,10 +1,11 @@
 # Releasing
 
-A release is the `make dist` tree that CI built for a commit on `main`, published only
-after that very tree was tested on the board. A passing STA doesn't prove a bitstream
+A release is the `make dist` tree that CI built for a commit on `main`, with the noMMU
+Linux kernel CI built for it (`make linux-dist`), published only after that very tree and
+kernel were tested on the board. A passing STA doesn't prove a bitstream
 works (README, "Clock"), so the board test is the gate, and the annotated tag carries
-its evidence: `release.yml` publishes only if the tag's `pack.fs sha256` matches the CI
-artifact of the tagged commit. Nothing is rebuilt for the release, so it doesn't matter
+its evidence: `release.yml` publishes only if the tag's `pack.fs sha256` and `linux image
+sha256` match the CI artifacts of the tagged commit. Nothing is rebuilt for the release, so it doesn't matter
 whether a rebuild would reproduce the same bits.
 
 Versions are tags `vMAJOR.MINOR.PATCH`. They are independent of the stages' own versions,
@@ -17,13 +18,15 @@ so in its tag message (docs/APP_DEVELOPMENT.md, "Hardware revisions and compatib
 
 ## 1. Get the release candidate
 
-Every push to `main` uploads `vux9k-dist-<sha>` (kept 90 days) from the CI run:
+Every push to `main` uploads `vux9k-dist-<sha>` and, from the job `linux`, `vux9k-linux-<sha>`
+(kept 90 days) from the CI run:
 
 ```sh
 SHA=$(git rev-parse origin/main)
 RUN=$(gh run list --workflow ci.yml --commit $SHA --event push --status success --json databaseId --jq '.[0].databaseId')
 gh run download $RUN --name vux9k-dist-$SHA --dir build/candidate
 tar -xzf build/candidate/vux9k-dist.tar.gz -C build/candidate    # -> build/candidate/dist
+gh run download $RUN --name vux9k-linux-$SHA --dir build/candidate/linux
 ```
 
 ## 2. Test it on the board
@@ -32,6 +35,7 @@ tar -xzf build/candidate/vux9k-dist.tar.gz -C build/candidate    # -> build/cand
 make test-hw-dist DIST=build/candidate/dist
 make test-hw-irq-echo-dist DIST=build/candidate/dist
 make test-hw-upgrade DIST=build/candidate/dist
+make test-hw-linux-dist DIST=build/candidate/dist LINUX=build/candidate/linux
 git switch --detach $SHA && make timing hw-smoke
 ```
 
@@ -54,12 +58,17 @@ the card, which must hold the candidate's second stage (run `test-hw-dist` first
 half, a card as v0.3.x left it through docs/APP_DEVELOPMENT.md's "Upgrading from v0.3.x" steps,
 is the emulator's `sim/emu/test_upgrade.py`, which CI runs.
 
+`test-hw-linux-dist` puts the candidate's kernel on the card (`\VUX9K\LINUX\`, ~6 min for the
+Image; `HW_LINUX_FLAGS=--keep-card` when the card already holds this very kernel), loads the
+candidate's `pack.fs` and boots the kernel through both stages to busybox's shell (~26 s), runs a
+few commands and loads `pack.fs` again.
+
 ## 3. Tag
 
 ```sh
-python3 scripts/release_check.py template build/candidate/dist --version vX.Y.Z > build/tag-message.txt
+python3 scripts/release_check.py template build/candidate/dist --linux build/candidate/linux --version vX.Y.Z > build/tag-message.txt
 $EDITOR build/tag-message.txt      # fill in the results, compatibility and the release notes
-python3 scripts/release_check.py verify build/candidate/dist build/tag-message.txt --commit $SHA
+python3 scripts/release_check.py verify build/candidate/dist build/tag-message.txt --linux build/candidate/linux --commit $SHA
 git tag -a vX.Y.Z $SHA -F build/tag-message.txt --cleanup=verbatim
 git push origin vX.Y.Z
 ```
@@ -67,19 +76,21 @@ git push origin vX.Y.Z
 The message is three parts separated by blank lines: the version, the fields (one
 `key: value` per line), and the release notes in Markdown (`--cleanup=verbatim` keeps
 their `#` headings, which git would otherwise strip as comments). The template takes the
-commit, the `pack.fs` hash, the seed and both stages' versions from the dist, and `verify`
-checks the hash and the versions against it again. Fill in every `<fill in>`:
-- `test-hw`, `hw-smoke` and `test-hw-upgrade`: the board results of step 2.
+commit, the `pack.fs` hash, the seed and both stages' versions from the dist and the Image's
+hash from the kernel, and `verify` checks the hashes and the versions against them again.
+Fill in every `<fill in>`:
+- `test-hw`, `hw-smoke`, `test-hw-upgrade` and `test-hw-linux`: the board results of step 2.
 - `compatibility`: whether the previous release's applications and SD cards keep working;
   if they don't, why the minor or major version went up.
 - The release notes: what changed since the previous release, how to upgrade, and any
   host setup a user must redo.
 
 `release.yml` then checks that the tag is annotated and on `main`, downloads the CI
-artifact of the tagged commit, runs `release_check.py verify` (SHA256SUMS, a clean build
-of that commit, `pack.fs` equal to the tested one, results filled in) and publishes:
-the archive `vux9k-<tag>-linux-x86_64.tar.gz`, the bitstream and the Zephyr BSP on their
-own, and `SHA256SUMS`, with release notes from `release_check.py notes`: the fields in a
+artifacts of the tagged commit, runs `release_check.py verify` (SHA256SUMS, clean builds
+of that commit, `pack.fs` and the Image equal to the tested ones, results filled in) and
+publishes: the archive `vux9k-<tag>-linux-x86_64.tar.gz` (`linux-x86_64` is the host the
+emulator and tools run on), the bitstream and the Zephyr BSP on their own, the kernel as
+`vux9k-<tag>-kernel.tar.gz` (its `VUX9K/LINUX/` goes on the card), and `SHA256SUMS`, with release notes from `release_check.py notes`: the fields in a
 code block, then the tag's release notes.
 
 ## Trying the workflow without publishing
