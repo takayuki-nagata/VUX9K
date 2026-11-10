@@ -2,6 +2,7 @@
 paths:
   - "linux_workspace/**"
   - "sim/emu/test_linux.py"
+  - "scripts/make_linux_dist.py"
   - "firmware/fw_common/src/linux.rs"
   - "sim/integration/linux_stub.py"
   - "emu/crates/vux9k_emu/src/profile.rs"
@@ -33,8 +34,16 @@ stage's `linux` does (`fw_common::linux`). Index and the rules that apply everyw
   busybox's shell and runs a few commands, twice: from `load_linux`, and from a FAT32 card
   (vux_tool's mkfat) through the first stage, the second stage and its `linux`. It runs only with `VUX9K_LINUX_TEST=1`, which that
   target sets, so `test-emu` (`pytest sim/emu`, CI) skips it even where an Image exists. None of
-  these targets is in CI. The first buildroot run takes ~40 min on a 2-vCPU
+  these targets is in `test-sim` or `test-slow`. The first buildroot run takes ~40 min on a 2-vCPU
   machine, a kernel rebuild ~6 min.
+- `make linux-dist` (`scripts/make_linux_dist.py`) puts the kernel as it goes on the card into
+  `build/linux-dist/` (`VUX9K/LINUX/Image` and `vux9k.dtb`, the kernel's `linux.config`,
+  `MANIFEST.json` with each card file's size and sha256, `SHA256SUMS`). It is not part of
+  `make dist`, which needs no Linux build. CI's job `linux` (beside `test`, so the kernel adds
+  nothing to that job's time) runs `make linux-dist test-linux-emu` and on pushes uploads the
+  tree as `vux9k-linux-<sha>`. It caches `build/buildroot` under an exact key (the source pins
+  and `linux_workspace/buildroot/`), never a partial match: buildroot would keep the packages
+  an older configuration built (below).
 - **The kernel runs on the real SoC (`Profile::Real`).** Its UART's liteuart registers
   (`periph/uart.rs`) are the RTL's (`uart_regs`), held to the RTL by the lockstep program
   `liteuart`, as its CLINT at `0x2000_0000` (`periph/clint.rs`, `timer_core`) is by `clint`.

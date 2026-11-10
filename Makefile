@@ -39,7 +39,7 @@ HACK_BUILD_DIR := $(BUILD_DIR)/hack
 ZEPHYR_BUILD_DIR ?= $(BUILD_DIR)/zephyr
 SYNTH_DIR := $(BUILD_DIR)/synth
 
-.PHONY: all hello apps micropython-src linux-src linux-rootfs linux test-linux-emu prev-release build-micropython sim-stage2 sim-zephyr-demo-gls sim-hw-suite-emu lint-rtl check-rtl-syntax coverage-fcov mutation act4-elfs test-act4 test-act4-gls test-act4-emu test-isa-waits emu emu-py emu-test emu-bench test-isa-emu test-emu test-fw-host test-fat firmware-size coverage-fw coverage-rust coverage-rust-tool sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hw-dist test-hw-irq-echo test-hw-irq-echo-dist test-hw-upgrade dist check-dist test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware hwtest hw-smoke sim-unit sim-psram-contract sim-psram-icarus sim-unit-random sim-boot sim-soc sim test-isa test-isa-gls zephyr-bc-lib build-zephyr build-zephyr-demo build-zephyr-irq-echo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-irq-echo-rtl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
+.PHONY: all hello apps micropython-src linux-src linux-rootfs linux linux-dist test-linux-emu prev-release build-micropython sim-stage2 sim-zephyr-demo-gls sim-hw-suite-emu lint-rtl check-rtl-syntax coverage-fcov mutation act4-elfs test-act4 test-act4-gls test-act4-emu test-isa-waits emu emu-py emu-test emu-bench test-isa-emu test-emu test-fw-host test-fat firmware-size coverage-fw coverage-rust coverage-rust-tool sim-lockstep sim-lockstep-slow veryl check check-paths fmt test test-ci test-hw test-hw-dist test-hw-irq-echo test-hw-irq-echo-dist test-hw-upgrade dist check-dist test-hardware build synth-top pnr bitstream build-hw prog-sram prog-flash clean venv setup firmware hwtest hw-smoke sim-unit sim-psram-contract sim-psram-icarus sim-unit-random sim-boot sim-soc sim test-isa test-isa-gls zephyr-bc-lib build-zephyr build-zephyr-demo build-zephyr-irq-echo sim-zephyr-repl sim-zephyr-demo-rtl sim-zephyr-irq-echo-rtl sim-zephyr submodule-sync install-hack-tools build-hack sim-hack-emu sim-hack-pytest sim-hack-rtl sim-hack sim-hw-flow sim-gls-hw-flow sim-soc-fast sim-soc-fast-icarus sim-soc-gls-fast sim-gls-unit sim-gls sim-soc-mmio sim-sd-quirks sim-hw-flow-icarus test-slow test-sim sta coverage eqy timing FORCE
 
 all: test-ci
 
@@ -454,6 +454,14 @@ linux: linux-rootfs $(LINUX_STAMP)
 	dtc -I dts -O dtb -o $(LINUX_OUT)/vux9k.dtb linux_workspace/dts/vux9k.dts
 	@ls -l $(LINUX_OUT)/arch/riscv/boot/Image $(LINUX_ROOTFS) $(LINUX_OUT)/vux9k.dtb
 
+# That kernel as it goes on the card (VUX9K/LINUX/Image and vux9k.dtb) with its .config,
+# MANIFEST.json and SHA256SUMS in build/linux-dist/: CI's vux9k-linux-<sha> artifact, which
+# test-hw-linux takes (LINUX=) and a release attaches
+LINUX_DIST = $(BUILD_DIR)/linux-dist
+linux-dist: linux
+	$(PYTHON) scripts/make_linux_dist.py --linux-out $(LINUX_OUT) --out $(LINUX_DIST) \
+		--linux-version $(LINUX_VERSION) --buildroot-version $(BUILDROOT_VERSION)
+
 # The previous release's archive, as GitHub publishes it, for the upgrade tests from it
 # (sim/emu/test_upgrade.py, test-hw-upgrade); a build input, so in build/
 PREV_RELEASE = v0.3.0
@@ -569,8 +577,9 @@ test-isa-emu: emu-py
 	$(PYTHON) scripts/run_riscv_tests.py --backend emu
 
 # noMMU Linux to busybox's shell on the emulator's real profile (sim/emu/test_linux.py, which
-# skips without make linux's Image): by hand, not in test-sim (make linux builds buildroot)
-test-linux-emu: emu-py linux
+# skips without make linux's Image), from load_linux and through both stages from a card: not
+# in test-sim (make linux builds buildroot), CI's linux job runs it
+test-linux-emu: emu-py firmware linux
 	VUX9K_LINUX_TEST=1 $(PYTHON) -m pytest -s sim/emu/test_linux.py
 
 LOCKSTEP_TRACE_FILE = $(BUILD_DIR)/sim/verilator/tb_soc_top/run_test_soc_lockstep/lockstep.trace

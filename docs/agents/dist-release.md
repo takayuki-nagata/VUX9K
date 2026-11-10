@@ -17,7 +17,8 @@ Read before changing `make dist`, the release scripts or workflows, or the appli
 developer gets (docs/APP_DEVELOPMENT.md is its guide); `make check-dist` copies it away
 from the repo and runs the demos with the shipped emulator and Python module, then
 `release_check.py selftest`. CI runs both after `make sta` and, on pushes, uploads the tree
-as `vux9k-dist-<sha>`. `release.yml` publishes that artifact for an annotated `v*` tag only
+as `vux9k-dist-<sha>`. The Linux kernel is not in it: CI's job `linux` uploads `make
+linux-dist`'s tree as `vux9k-linux-<sha>` (linux.md, "What exists, and where it runs"). `release.yml` publishes the dist's artifact for an annotated `v*` tag only
 if the tag message's `pack.fs sha256` matches it (docs/RELEASING.md): tag the commit whose
 CI artifact was tested on the board, never a local build. The upgrade from the previous
 release (`PREV_RELEASE`, v0.3.0) is tested on the board (`test-hw-upgrade`, the bitstreams) and

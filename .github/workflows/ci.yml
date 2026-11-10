@@ -44,7 +44,7 @@ jobs:
       - name: Install Host Dependencies
         run: |
           sudo apt-get update
-          # flex bison bc cpio: make linux (buildroot and the kernel), run by hand, not in CI
+          # flex bison bc cpio: make linux (buildroot and the kernel) by hand; the job `linux` builds it in CI
           sudo apt-get install -y gcc-riscv64-linux-gnu device-tree-compiler ninja-build dosfstools mtools flex bison bc cpio
 
       - name: Install Rust Toolchain & Target
@@ -217,3 +217,87 @@ jobs:
             fi
             echo "Submodule $sub is 100% clean."
           done
+
+  # The noMMU Linux kernel (docs/agents/linux.md): buildroot's toolchain and busybox
+  # initramfs, the kernel and its device tree (make linux), its boot to busybox's shell on the
+  # emulator from load_linux and through both stages from a card (make test-linux-emu), and on
+  # pushes the kernel as it goes on the card (make linux-dist), the vux9k-linux-<sha> artifact
+  # a release attaches once a tag vouches for it (docs/RELEASING.md). A job of its own, beside
+  # `test`, so it adds nothing to that job's time; the first buildroot build is ~40 min
+  linux:
+    name: noMMU Linux (kernel, boot on the emulator)
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup uv Python Environment
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.6"
+          enable-cache: true
+          cache-dependency-glob: .github/workflows/ci.yml
+
+      - name: Install Host Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y device-tree-compiler flex bison bc cpio dosfstools mtools
+
+      - name: Install Rust Toolchain & Target
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95.0"
+          targets: riscv32im-unknown-none-elf
+
+      # The kernel's and buildroot's release trees, unpacked by `make linux-src` into vendor/,
+      # keyed on the Makefile's pinned sha256s (as MicroPython's in `test`)
+      - name: Linux source pins
+        id: linux-pin
+        run: echo "sha256=$(sed -n 's/^\(LINUX\|BUILDROOT\)_SHA256 = //p' Makefile | tr '\n' '-')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the Linux and buildroot sources
+        uses: actions/cache@v4
+        with:
+          path: |
+            vendor/linux-*/
+            vendor/buildroot-*/
+          key: ${{ runner.os }}-linux-src-${{ steps.linux-pin.outputs.sha256 }}
+
+      # buildroot's downloads are checked against its hashes, so an older set is a fine start
+      - name: Cache buildroot's downloads
+        uses: actions/cache@v4
+        with:
+          path: build/downloads/buildroot
+          key: ${{ runner.os }}-buildroot-dl-${{ steps.linux-pin.outputs.sha256 }}-${{ hashFiles('linux_workspace/buildroot/**') }}
+          restore-keys: ${{ runner.os }}-buildroot-dl-
+
+      # buildroot's output: the toolchain and rootfs.cpio. Exact key only, no restore-keys:
+      # buildroot does not rebuild a package its configuration changed (docs/agents/linux.md)
+      - name: Cache buildroot's output
+        uses: actions/cache@v4
+        with:
+          path: build/buildroot
+          key: ${{ runner.os }}-buildroot-out-${{ steps.linux-pin.outputs.sha256 }}-${{ hashFiles('linux_workspace/buildroot/**') }}
+
+      - name: Setup Python Virtualenv & Dependencies
+        run: |
+          uv python install 3.13
+          uv venv --python 3.13 .venv
+          uv pip install --python .venv/bin/python pytest==9.1.1 pyserial==3.5
+
+      - name: Build the Kernel and Boot It on the Emulator
+        run: |
+          export PATH=$PWD/.venv/bin:$HOME/.cargo/bin:$PATH
+          make linux-dist test-linux-emu
+
+      - name: Upload the Kernel
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: vux9k-linux-${{ github.sha }}
+          path: build/linux-dist/
+          retention-days: 90
+          if-no-files-found: error

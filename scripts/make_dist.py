@@ -91,10 +91,11 @@ def tool_pins():
         ci = f.read()
     pins = {}
     for name, pattern in PINS.items():
-        m = re.search(pattern, ci)
-        if not m:
-            sys.exit(f"make_dist: can't find the {name} pin in ci.yml ({pattern})")
-        pins[name] = m.group(1)
+        # Every job that pins it must pin the same value (the Rust toolchain: `test` and `linux`)
+        found = set(re.findall(pattern, ci))
+        if len(found) != 1:
+            sys.exit(f"make_dist: the {name} pin in ci.yml ({pattern}): {sorted(found) or 'not found'}")
+        pins[name] = found.pop()
     return pins
 
 
