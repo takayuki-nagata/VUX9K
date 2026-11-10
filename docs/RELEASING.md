@@ -108,10 +108,15 @@ Delete the tag afterwards (`git push origin :dryrun-1 && git tag -d dryrun-1`).
 
 ## When it fails
 
-- **No artifact** (the CI run is older than 90 days, or it failed): re-run CI for the
-  commit, then test the new artifact (step 2) and tag again. A rebuild may or may not
-  produce the same `pack.fs`; only a tested one is published.
+- **No artifact** (`vux9k-dist-<sha>` or `vux9k-linux-<sha>`: the CI run is older than 90
+  days, or it failed): re-run CI for the commit, then test the new artifacts (step 2) and tag
+  again. A rebuild may or may not produce the same `pack.fs`, and never the same Image (the
+  kernel's banner carries its build time); only tested ones are published.
 - **`pack.fs` mismatch:** the tag names a bitstream other than CI's for that commit, e.g.
   the board test used a local build. Test the CI artifact itself.
+- **Image mismatch:** the tag names a kernel other than CI's for that commit, e.g. the board
+  test used a local `make linux-dist`. `test-hw-linux-dist` checks that the console prints the
+  tree's own `Linux version` line, so a run with `--keep-card` fails on another build left on
+  the card.
 - To retry a tag, delete it (`git push origin :vX.Y.Z`, `git tag -d vX.Y.Z`) and push it
   again, or run `release.yml` by hand with `dry_run` off.

@@ -153,6 +153,62 @@ def test_linux_script_files(tmp_path):
         hw_linux.card_files(linux_tree(tmp_path / "bad", 65))
 
 
+class ShellPort:
+    """A port that answers hw_linux.boot as the second stage and the kernel would: the second
+    stage's prompt, `linux` with linux_line and the console up to the shell's prompt, and
+    each command line with its echo, its reply from replies and the prompt."""
+
+    def __init__(self, linux_line: str, console: str, replies: dict[str, str]):
+        self.linux_line, self.console, self.replies = linux_line, console, replies
+        self.out = b"s2> "
+        self.typed = b""
+
+    def write(self, data: bytes):
+        self.typed += data
+        if self.typed.endswith((b"\r", b"\n")):
+            line, self.typed = self.typed.strip().decode(), b""
+            if line == "linux":
+                self.out += f"linux\n{self.linux_line}\n\n{self.console}/ # ".encode()
+            else:
+                self.out += f"{line}\r\n{self.replies.get(line, '')}/ # ".encode()
+
+    def flush(self):
+        pass
+
+    def read(self, n: int) -> bytes:
+        data, self.out = self.out[:n], self.out[n:]
+        return data
+
+
+def test_linux_script_reports_what_the_board_got_wrong():
+    """hw_linux.boot on a scripted console: the good one passes; a boot line missing, the
+    console's `Linux version` line not the Image's (another build of the same size on the
+    card), the files' sizes not the tree's, a command's reply missing each fail."""
+    import hw_linux
+    import linux_checks
+
+    version = "Linux version 7.3.0 (x@y) (gcc) #28 PREEMPT Tue Nov 10 14:49:15 UTC 2026"
+    image = b"\0" * 64 + version.encode() + b"\n" + b"\0" * 64
+    dtb = b"D" * 8
+    good_line = f"[LINUX] Image {len(image)} B, DTB {len(dtb)} B, starting at 0x80000000"
+    console = f"[    0.000000] {version}\r\n" + "".join(f"{ln}\r\n" for ln in linux_checks.BOOT_LINES)
+    replies = {cmd: " ".join(want) + "\r\n" for cmd, want in linux_checks.COMMANDS.items()}
+
+    def failures(linux_line=good_line, console=console, replies=replies):
+        return hw_linux.boot(ShellPort(linux_line, console, replies), 0.0, image, dtb, {})
+
+    assert failures() == []
+    got = failures(console=console.replace("hush - the humble shell", "hush"))
+    assert len(got) == 1 and "boot lines missing" in got[0], got
+    got = failures(console=console.replace("#28 ", "#27 "))
+    assert len(got) == 1 and "not the tree's kernel" in got[0], got
+    got = failures(linux_line=good_line.replace(f"Image {len(image)} B", "Image 1 B"))
+    assert len(got) == 1 and "not the tree's" in got[0], got
+    got = failures(replies=replies | {"uname -a": "Linux (none) 6.0\r\n"})
+    assert len(got) == 1 and got[0].startswith("uname -a: missing"), got
+    assert hw_linux.banner(b"no banner here") is None
+
+
 def test_bitstream_load_errors(tmp_path):
     assert test_hardware.load_bitstream(None, str(tmp_path / "pack.fs")) == "no openFPGALoader (--loader)"
     assert "missing" in test_hardware.load_bitstream("openFPGALoader", str(tmp_path / "pack.fs"))

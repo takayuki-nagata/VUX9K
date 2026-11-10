@@ -23,6 +23,7 @@ board.
 import argparse
 import json
 import os
+import re
 import sys
 import time
 
@@ -50,6 +51,8 @@ CARD_FILES = ("VUX9K/LINUX/Image", "VUX9K/LINUX/vux9k.dtb")
 # boot ~12.5 s at 18 MHz, a command ~1 s (docs/agents/linux.md, "Speed"); a put of the
 # 3.2 MB Image ~6 min at ~9 KB/s
 S2_TIMEOUT = 30.0
+# The first stage boots the second ~0.7 s after the load (the board, 2026-11-11)
+S2_PROMPT_WAIT = 5.0
 LOAD_TIMEOUT = 120.0
 BOOT_TIMEOUT = 180.0
 COMMAND_TIMEOUT = 30.0
@@ -84,13 +87,22 @@ def put_files(ser, files: dict[str, bytes], times: dict[str, float]) -> None:
         times[f"put {os.path.basename(path)} ({len(data)} B)"] = time.monotonic() - t
 
 
+def banner(image: bytes) -> str | None:
+    """The kernel's `Linux version ...` line as the Image holds it: its build number and
+    time tell this build from another of the same size, so the console must print it."""
+    m = re.search(rb"Linux version [ -~]*#\d+ [ -~]*", image)
+    return m.group().decode() if m else None
+
+
 def boot(ser, t0: float, image: bytes, dtb: bytes, times: dict[str, float]) -> list[str]:
     """From the first stage's own boot of the second stage (started at t0) to the shell's
     prompt, then the commands; returns the failures."""
     failures = []
-    got, text = vux_tool.read_until(ser, (vux_tool.S2_PROMPT,), S2_TIMEOUT)
+    got, text = vux_tool.read_until(ser, (vux_tool.S2_PROMPT,), S2_PROMPT_WAIT)
     if not got:
-        # The prompt went by before the port was open, or the first stage stayed at its own
+        # The prompt went by before the port was open, or the first stage stayed at its own:
+        # the time to the prompt then includes this wait
+        print(f"[INFO] no second-stage prompt within {S2_PROMPT_WAIT} s of the load: typing for it")
         text += vux_tool.enter_s2(ser, timeout=S2_TIMEOUT)
     times["load to the second stage's prompt"] = time.monotonic() - t0
     t = time.monotonic()
@@ -108,6 +120,9 @@ def boot(ser, t0: float, image: bytes, dtb: bytes, times: dict[str, float]) -> l
     lost = linux_checks.missing(console, linux_checks.BOOT_LINES)
     if lost:
         failures.append(f"boot lines missing: {lost}")
+    version = banner(image)
+    if version is None or version not in console:
+        failures.append(f"not the tree's kernel: the console lacks its {version or 'Linux version'!r} line")
     print(console.rstrip())
     for cmd, wanted in linux_checks.COMMANDS.items():
         t = time.monotonic()
@@ -210,7 +225,7 @@ def main(argv=None):
         if not emulator:
             ser, t0 = load(ser)
         failures = boot(ser, t0, image, dtb, times)
-    except (TimeoutError, RuntimeError, StopIteration, vux_tool.UploadError, vux_tool.S2Error) as e:
+    except Exception as e:  # the port gone too: the bitstream is still loaded and the times printed
         hint = vux_tool.garbled_hint(str(e))
         failures.append(f"{type(e).__name__}: {e}" + (f"\n       -> {hint}" if hint else ""))
     finally:

@@ -117,6 +117,13 @@ binaries land in the single shared `firmware/target/riscv32im-unknown-none-elf/`
   writes only the PSRAM below the second stage and the device tree's slot at
   `map::LINUX_DTB_ADDR` in the second stage's window, above its image and below its stack
   (linux.md, "What exists, and where it runs").
+- **The second stage's stack is its window's top 8 KB** (`map::STAGE2_STACK_BYTES`), right
+  above the device tree's slot. `sim/emu/test_stage2.py` measures its high-water mark
+  (2026-11-10): `linux` ~5.4 KB, held to 6 KB so the device tree it read first stays intact;
+  `install` the deepest at ~7.9 KB, 100 bytes short of the slot (empty then, as `linux` has
+  not run). A change that takes more fails those tests: make the stack larger
+  (`STAGE2_STACK_BYTES` and `link.x`'s `_stack_zero` assert; `LINUX_DTB_MAX` shrinks with it)
+  rather than raising the bounds.
 - **`fw_common` code that only the second stage needs stays out of the first stage's
   build**: merely adding `launch` to `lib.rs` changed the first stage's binary (36 bytes), so
   it is behind `fat-full`, as is the table-driven `crc32_update` (the bitwise one, which the

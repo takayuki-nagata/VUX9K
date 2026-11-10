@@ -252,19 +252,18 @@ jobs:
           toolchain: "1.95.0"
           targets: riscv32im-unknown-none-elf
 
-      # The kernel's and buildroot's release trees, unpacked by `make linux-src` into vendor/,
-      # keyed on the Makefile's pinned sha256s (as MicroPython's in `test`)
+      # buildroot's release tree, unpacked by `make linux-src` into vendor/, keyed on the
+      # Makefile's pinned sha256 (as MicroPython's in `test`); the kernel's (~1.5 GB unpacked)
+      # is fetched each run instead, to keep the repository's cache space for `test`
       - name: Linux source pins
         id: linux-pin
         run: echo "sha256=$(sed -n 's/^\(LINUX\|BUILDROOT\)_SHA256 = //p' Makefile | tr '\n' '-')" >> "$GITHUB_OUTPUT"
 
-      - name: Cache the Linux and buildroot sources
+      - name: Cache the buildroot source
         uses: actions/cache@v4
         with:
-          path: |
-            vendor/linux-*/
-            vendor/buildroot-*/
-          key: ${{ runner.os }}-linux-src-${{ steps.linux-pin.outputs.sha256 }}
+          path: vendor/buildroot-*/
+          key: ${{ runner.os }}-buildroot-src-${{ steps.linux-pin.outputs.sha256 }}
 
       # buildroot's downloads are checked against its hashes, so an older set is a fine start
       - name: Cache buildroot's downloads

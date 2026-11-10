@@ -965,7 +965,7 @@ test-hw-irq-echo-dist:
 # CI's vux9k-linux-<sha>) put on the card in \VUX9K\LINUX\ and booted by the second stage to
 # busybox's shell, timed from the bitstream's load into SRAM; the bitstream is loaded again at
 # the end. HW_LINUX_FLAGS=--keep-card boots the files already on the card (the put takes ~6 min)
-LINUX ?= $(LINUX_DIST)
+LINUX = $(LINUX_DIST)
 test-hw-linux:
 	$(PYTHON) scripts/hw_linux.py --linux $(LINUX) --loader $(OPENFPGALOADER) $(HW_LINUX_FLAGS)
 

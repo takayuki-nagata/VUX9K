@@ -47,7 +47,9 @@ stage's `linux` does (`fw_common::linux`). Index and the rules that apply everyw
   nothing to that job's time) runs `make linux-dist test-linux-emu` and on pushes uploads the
   tree as `vux9k-linux-<sha>`. It caches `build/buildroot` under an exact key (the source pins
   and `linux_workspace/buildroot/`), never a partial match: buildroot would keep the packages
-  an older configuration built (below).
+  an older configuration built (below). Its size counts against the repository's 10 GB of
+  Actions cache that `test`'s caches share (evicted least recently used); the unpacked kernel
+  tree is fetched each run rather than cached.
 - **The kernel runs on the real SoC (`Profile::Real`).** Its UART's liteuart registers
   (`periph/uart.rs`) are the RTL's (`uart_regs`), held to the RTL by the lockstep program
   `liteuart`, as its CLINT at `0x2000_0000` (`periph/clint.rs`, `timer_core`) is by `clint`.
