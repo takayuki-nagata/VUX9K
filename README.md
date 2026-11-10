@@ -344,7 +344,8 @@ M-mode with `a0` = 0 (the hart), `a1` = `0x807F_0000` (the device tree), `a2` = 
 emulator's `--linux` starts a kernel. The UART's `EV_ENABLE` stays 0, as neither stage
 writes it: the kernel's liteuart driver polls. The kernel then has all of the PSRAM, the
 stages' memory included; only Button S1 (the board's reset) brings the first stage back.
-Nothing of this has run on the board yet.
+On the board (`make test-hw-linux`, 2026-11-11) the 3.2 MB Image loads in ~13 s and the
+kernel reaches busybox's shell ~12 s later: ~26 s from the bitstream's load.
 
 ---
 

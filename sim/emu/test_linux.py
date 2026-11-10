@@ -12,7 +12,8 @@ board. Each boots to busybox's shell on the console, then commands are typed at 
 
 The cycles, retired instructions and the caches' hit rates to the prompt (for the card: the
 second stage's load, `linux` typed to its [LINUX] line, and the kernel's boot from there) and
-for each command are printed by test_record_measurements. Nothing here runs on the board.
+for each command are printed by test_record_measurements. The board's test is scripts/hw_linux.py
+(make test-hw-linux), which test_board_script_on_the_emulator runs here against the CLI.
 """
 
 import os

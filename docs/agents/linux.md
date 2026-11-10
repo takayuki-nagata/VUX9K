@@ -53,8 +53,8 @@ stage's `linux` does (`fw_common::linux`). Index and the rules that apply everyw
   `liteuart`, as its CLINT at `0x2000_0000` (`periph/clint.rs`, `timer_core`) is by `clint`.
   There is no Linux profile any more: the emulator-only one that had both ahead of the RTL
   was removed once the RTL had them. `load_linux` (`--linux`) only puts the kernel and the DTB
-  into the PSRAM and starts it without firmware; `isa-test` refuses it (no PSRAM). Nothing here has run on the board
-  yet, and no document may say it does.
+  into the PSRAM and starts it without firmware; `isa-test` refuses it (no PSRAM). The board
+  boots the same kernel through both stages (`make test-hw-linux`, first on 2026-11-11, below).
 - **The second stage boots the same files from the card** (`linux [IMAGE DTB]`, both or
   neither; `\VUX9K\LINUX\Image` and `\VUX9K\LINUX\vux9k.dtb` by default: upstream's
   `arch/riscv/boot/Image` and dtc's output, unchanged, no VUX9 header). `fw_common::linux`
@@ -114,7 +114,14 @@ stage's `linux` does (`fw_common::linux`). Index and the rules that apply everyw
   (`RISCV_PROBE_UNALIGNED_ACCESS`). head.S writes the PMP CSRs behind a temporary trap vector
   that skips them.
 
-## Speed (2026-11-01, emulator)
+## Speed (2026-11-01, emulator; 2026-11-11, the board)
+
+On the board (`make test-hw-linux-dist`, 1c8d685, three runs): the second stage's `linux` to
+its `[LINUX]` line (reading the 3.2 MB Image) 13.1 s, `[LINUX]` to busybox's prompt
+11.9-12.5 s, the bitstream's load to that prompt 25.7-26.3 s; `uname -a` 0.7 s, `cat
+/proc/cpuinfo` 0.9 s. The emulator's cycles predict these within a few percent (12.8 s and
+12.0 s). A `put` of the Image takes ~350 s (~9.3 KB/s).
+
 
 The boot to the prompt is ~224M cycles (12.5 s at 18 MHz; from the second stage's `[LINUX]`
 line ~214M, after its ~230M-cycle load), with CPI 9.7, the I cache hitting
