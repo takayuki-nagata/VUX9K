@@ -3,14 +3,15 @@
 # SPDX-License-Identifier: MIT
 
 """
-The upgrade from the previous release on the board, its bitstream half: the previous
-release's bitstream (v0.3.x, a CPU without RV32M) loaded into the FPGA's SRAM, its first stage
-booting the candidate's second stage on the card (as test-hw-dist leaves it), which says it
-needs RV32M and stops: the card written before the flash. Then the candidate's bitstream, whose
-first stage boots the same second stage to `s2> `. Both are SRAM loads (the flash is left
-alone) and neither writes the card. The card half, a v0.3.x card through
-docs/APP_DEVELOPMENT.md's steps, is sim/emu/test_upgrade.py. Both trees' SHA256SUMS are checked
-first. Ends on the candidate's bitstream.
+The upgrade from the previous releases on the board, its bitstream half, with the candidate's
+second stage on the card (as test-hw-dist leaves it). First v0.3.x's bitstream (a CPU without
+RV32M), whose first stage boots that second stage, which says it needs RV32M and stops: the
+card written before the flash. Then the previous release's bitstream (the Makefile's
+PREV_RELEASE), whose first stage boots the same second stage to `s2> `: a patch release's card
+on the previous bitstream. Then the candidate's, whose first stage boots it to `s2> `. All are
+SRAM loads (the flash is left alone) and none writes the card. The card half, cards as both
+releases left them, is sim/emu/test_upgrade.py. The trees' SHA256SUMS are checked first. Ends
+on the candidate's bitstream.
 """
 
 import argparse
@@ -46,8 +47,8 @@ def load(loader, dist, port, baud):
 
 
 def old_bitstream(ser, _versions):
-    """The previous release's first stage boots the card's second stage on its own, and the
-    second stage stops at its RV32M check. What was printed before the port was open is
+    """v0.3.x's first stage boots the card's second stage on its own, and the second stage
+    stops at its RV32M check. What was printed before the port was open is
     handed over at the open; the first stage's banner may be cut there, so only the second
     stage's message is required. Returns the text."""
     got, out = vux_tool.read_until(ser, (NO_M,), OLD_TIMEOUT)
@@ -56,10 +57,10 @@ def old_bitstream(ser, _versions):
     return out
 
 
-def new_stages(ser, versions):
-    """The candidate's first stage, soft-reset from its prompt, boots the card's second stage
-    on its own: the candidate's, as test-hw-dist leaves it (a stale STAGE2.BIN fails).
-    Returns the text."""
+def boots_the_second_stage(ser, versions):
+    """The loaded bitstream's first stage (version s1), soft-reset from its prompt, boots the
+    card's second stage (version s2) on its own: the candidate's, as test-hw-dist leaves it (a
+    stale STAGE2.BIN fails). Returns the text."""
     s1_version, s2_version = versions
     vux_tool.enter_s1(ser, timeout=30.0)
     ser.write(b"r")
@@ -75,16 +76,17 @@ def new_stages(ser, versions):
 def main():
     p = argparse.ArgumentParser(description=__doc__.strip().split("\n\n")[0])
     p.add_argument("--old", required=True, metavar="DIR", help="the previous release's tree (make prev-release)")
+    p.add_argument("--v03", required=True, metavar="DIR", help="v0.3.x's release tree (make prev-release)")
     p.add_argument("--new", required=True, metavar="DIR", help="the candidate's `make dist` tree")
     p.add_argument("--port", default="auto", help="Serial/FTDI port URL (default: auto)")
     p.add_argument("--baud", type=int, default=115200, help="UART baud rate (default: 115200)")
     p.add_argument("--loader", default="openFPGALoader", help="openFPGALoader (default: on PATH)")
     args = p.parse_args()
 
-    for dist in (args.old, args.new):
+    for dist in (args.v03, args.old, args.new):
         release_check.check_sums(dist)
-    new = manifest(args.new)
-    versions = (new["stage1_version"], new["stage2_version"])
+    old, new = manifest(args.old), manifest(args.new)
+    s2_version = new["stage2_version"]
     loader = find_loader(args.loader)
     if not loader:
         sys.exit("no openFPGALoader (--loader)")
@@ -100,8 +102,19 @@ def main():
 
     ok = True
     for name, dist, check, version in (
-        ("1. The previous release's bitstream: the second stage needs RV32M", args.old, old_bitstream, versions),
-        ("2. The candidate's bitstream: its first stage boots the second stage", args.new, new_stages, versions),
+        ("1. v0.3.x's bitstream: the second stage needs RV32M", args.v03, old_bitstream, None),
+        (
+            "2. The previous release's bitstream: its first stage boots the second stage",
+            args.old,
+            boots_the_second_stage,
+            (old["stage1_version"], s2_version),
+        ),
+        (
+            "3. The candidate's bitstream: its first stage boots the second stage",
+            args.new,
+            boots_the_second_stage,
+            (new["stage1_version"], s2_version),
+        ),
     ):
         try:
             ser = load(loader, dist, args.port, args.baud)
@@ -111,7 +124,7 @@ def main():
                 ser.close()
             print(f"[PASS] {name}")
         except Exception as e:
-            # Step 2 runs after a failed step 1 too: the board ends on the candidate
+            # The later steps run after a failed one too: the board ends on the candidate
             print(f"[FAIL] {name}: {e}")
             ok = False
     print("Upgrade on the board: " + ("PASSED" if ok else "FAILED"))

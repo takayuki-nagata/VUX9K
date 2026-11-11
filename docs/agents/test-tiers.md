@@ -127,16 +127,19 @@ clock-and-board.md, "Board UART output that is noise: ModemManager and the bridg
   `[TIME]` lines from the load to the shell's prompt, and `pack.fs` loaded again at the end.
   `make test-linux-emu` runs the script against the emulator's CLI at full speed
   (`test_board_script_on_the_emulator`).
-- `make test-hw-upgrade DIST=<dir>` (`scripts/test_hw_upgrade.py`): the previous release's
-  `pack.fs` (`make prev-release`: `PREV_RELEASE`, v0.3.0, fetched into `build/previous/`) into
-  SRAM, its first stage booting the card's second stage (the tree's, as `test-hw-dist` leaves
-  it), which stops at its RV32M check; then the tree's `pack.fs`, its first stage booting the
-  same second stage to `s2> `; no card writes. The output before the port reopens after a load
-  may be cut, so step 1 waits only for the second stage's message. The card half is
-  `sim/emu/test_upgrade.py` in `test-emu`: a card with v0.3.0's second stage and demos given to
-  this tree's first stage, which refuses that second stage (older than `MIN_STAGE2_VERSION`)
-  and stays at `s1> `, then docs/APP_DEVELOPMENT.md's upgrade steps with this tree's
-  `vux_tool` (`install-stage2` from there, `put`, `run-app`, `r` back to the new second
-  stage), and v0.3.0's first stage on a CPU without M (`m_ext`) and with its MMIO, the TIMER
-  page and the UART's older registers (`v03_mmio`), booting this tree's second stage, which
-  prints its no-M message through that UART.
+- `make test-hw-upgrade DIST=<dir>` (`scripts/test_hw_upgrade.py`; `make prev-release` fetches
+  `V03_RELEASE`, v0.3.0, and `PREV_RELEASE`, v0.4.0, into `build/previous/`), with the tree's
+  second stage on the card (as `test-hw-dist` leaves it) and no card writes: v0.3.0's `pack.fs`
+  into SRAM, its first stage booting that second stage, which stops at its RV32M check; then
+  the previous release's `pack.fs`, its first stage booting the same second stage to `s2> `;
+  then the tree's, the same. The output before the port reopens after a load may be cut, so
+  step 1 waits only for the second stage's message. The card half is `sim/emu/test_upgrade.py`
+  in `test-emu`. From v0.3.0: a card with its second stage and demos given to this tree's first
+  stage, which refuses that second stage (older than `MIN_STAGE2_VERSION`) and stays at `s1> `,
+  then docs/APP_DEVELOPMENT.md's upgrade steps with this tree's `vux_tool` (`install-stage2`
+  from there, `put`, `run-app`, `r` back to the new second stage); and v0.3.0's first stage on
+  a CPU without M (`m_ext`) and with its MMIO, the TIMER page and the UART's older registers
+  (`v03_mmio`), booting this tree's second stage, which prints its no-M message through that
+  UART. From the previous release: its card on this tree's first stage, whose second stage
+  boots and runs its HELLO and HACK as they are, then the same install steps; and its first
+  stage booting this tree's second stage to `s2> `.

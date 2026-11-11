@@ -49,14 +49,17 @@ suite. The candidate's seed is one of them (`MANIFEST.json`); if the local `pack
 the same SHA-256 as the candidate's, hw-smoke tested exactly its placement (note it in
 the tag).
 
-`test-hw-upgrade` is the upgrade from the previous release (the Makefile's `PREV_RELEASE`,
-which `make prev-release` fetches from GitHub and checks), its bitstream half: the previous
-release's `pack.fs` into SRAM, whose first stage boots the candidate's second stage from the
-card and the second stage stops at its RV32M check (the card written before the flash), then
-the candidate's, whose first stage boots the same second stage to its prompt; it doesn't write
-the card, which must hold the candidate's second stage (run `test-hw-dist` first). The card
-half, a card as v0.3.x left it through docs/APP_DEVELOPMENT.md's "Upgrading from v0.3.x" steps,
-is the emulator's `sim/emu/test_upgrade.py`, which CI runs.
+`test-hw-upgrade` is the upgrade from the previous releases (the Makefile's `PREV_RELEASE`
+and `V03_RELEASE`, which `make prev-release` fetches from GitHub and checks), its bitstream half,
+with the candidate's second stage on the card: v0.3.x's `pack.fs` into SRAM, whose first stage
+boots that second stage, which stops at its RV32M check (the card written before the flash);
+then the previous release's, whose first stage boots it to its prompt; then the candidate's,
+whose first stage boots it too. It doesn't write the card, which must hold the candidate's
+second stage (run `test-hw-dist` first). The card half is the emulator's
+`sim/emu/test_upgrade.py`, which CI runs: a card as v0.3.x left it through docs/APP_DEVELOPMENT.md's
+"Upgrading from v0.3.x" steps, and a card as the previous release left it, which boots and runs
+its applications as they are before taking the candidate's second stage and applications.
+After the release, `PREV_RELEASE` and `PREV_SHA256` follow it.
 
 `test-hw-linux-dist` puts the candidate's kernel on the card (`\VUX9K\LINUX\`, ~6 min for the
 Image; `HW_LINUX_FLAGS=--keep-card` when the card already holds this very kernel), loads the

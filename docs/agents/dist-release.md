@@ -22,9 +22,12 @@ linux-dist`'s tree as `vux9k-linux-<sha>` (linux.md, "What exists, and where it 
 if the tag message's `pack.fs sha256` matches it and its `linux image sha256` the kernel's
 `vux9k-linux-<sha>`, which it attaches as `vux9k-<tag>-kernel.tar.gz` (docs/RELEASING.md): tag
 the commit whose CI artifacts were tested on the board, never a local build. The upgrade from the previous
-release (`PREV_RELEASE`, v0.3.0) is tested on the board (`test-hw-upgrade`, the bitstreams) and
-on the emulator (`sim/emu/test_upgrade.py`, a v0.3.x card through docs/APP_DEVELOPMENT.md's
-"Upgrading from v0.3.x" steps, command by command: change the two together). The tag message's
+release (`PREV_RELEASE`, v0.4.0: its cards, applications and bitstream keep working) and from
+v0.3.x (`V03_RELEASE`, v0.3.0, the breaking upgrade) is tested on the board (`test-hw-upgrade`,
+the bitstreams) and on the emulator (`sim/emu/test_upgrade.py`, each release's card through
+docs/APP_DEVELOPMENT.md's upgrade steps, command by command: change the two together). After a
+release, `PREV_RELEASE`/`PREV_SHA256` follow it; a release that breaks cards gets its own
+variable like `V03_RELEASE` while its upgrade steps are documented. The tag message's
 fields (`release_check.py`'s `FIELDS`, all required) and the release notes built from it
 (`release_check.py notes`) live in that script, not in the workflow. Keep in sync:
 - The dist's contents live in `make_dist.py`'s `FILES` (plus what it writes itself: the

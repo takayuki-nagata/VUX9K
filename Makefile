@@ -463,16 +463,26 @@ linux-dist: linux
 		--linux-version $(LINUX_VERSION) --buildroot-version $(BUILDROOT_VERSION)
 
 # The previous release's archive, as GitHub publishes it, for the upgrade tests from it
-# (sim/emu/test_upgrade.py, test-hw-upgrade); a build input, so in build/
-PREV_RELEASE = v0.3.0
-PREV_SHA256 = d743cba65941e6f61bd422178e3d5288a68f2573796650c9a8931e7715477112
-PREV_URL = https://github.com/takayuki-nagata/VUX9K/releases/download/$(PREV_RELEASE)/vux9k-$(PREV_RELEASE)-linux-x86_64.tar.gz
+# (sim/emu/test_upgrade.py, test-hw-upgrade); a build input, so in build/. PREV_RELEASE is the
+# release before the next one, whose cards and applications a patch release keeps working;
+# V03_RELEASE the last release before the CPU gained RV32M and the timer and UART moved, whose
+# upgrade docs/APP_DEVELOPMENT.md's "Upgrading from v0.3.x" describes
+PREV_RELEASE = v0.4.0
+PREV_SHA256 = 841c4b39317b24407331df8823352aac99a40b6adfc04cc5f3f8971e5c6e60a7
+V03_RELEASE = v0.3.0
+V03_SHA256 = d743cba65941e6f61bd422178e3d5288a68f2573796650c9a8931e7715477112
+release_url = https://github.com/takayuki-nagata/VUX9K/releases/download/$(1)/vux9k-$(1)-linux-x86_64.tar.gz
 PREV_DIR = $(BUILD_DIR)/previous/vux9k-$(PREV_RELEASE)
 PREV_STAMP = $(PREV_DIR)/.vux9k-fetched-$(PREV_SHA256)
-prev-release: $(PREV_STAMP)
+V03_DIR = $(BUILD_DIR)/previous/vux9k-$(V03_RELEASE)
+V03_STAMP = $(V03_DIR)/.vux9k-fetched-$(V03_SHA256)
+prev-release: $(PREV_STAMP) $(V03_STAMP)
 
 $(PREV_STAMP):
-	$(call fetch_archive,$(PREV_URL),$(PREV_SHA256),$(PREV_DIR),$(PREV_STAMP))
+	$(call fetch_archive,$(call release_url,$(PREV_RELEASE)),$(PREV_SHA256),$(PREV_DIR),$(PREV_STAMP))
+
+$(V03_STAMP):
+	$(call fetch_archive,$(call release_url,$(V03_RELEASE)),$(V03_SHA256),$(V03_DIR),$(V03_STAMP))
 
 # mpy-cross (compiles the frozen modules) built into build/ from the same tree: MicroPython's
 # CMake would build it inside the vendor tree
@@ -945,10 +955,10 @@ test-hw-dist:
 	$(PYTHON) scripts/test_hardware.py --dist $(DIST) --loader $(OPENFPGALOADER)
 
 # The upgrade from the previous release on the board, its bitstream half (the card half is
-# sim/emu/test_upgrade.py): the previous release's pack.fs, then the candidate's (DIST), both
-# into SRAM; the card is not written
+# sim/emu/test_upgrade.py): v0.3.x's pack.fs, the previous release's, then the candidate's
+# (DIST), all into SRAM; the card is not written
 test-hw-upgrade: prev-release
-	$(PYTHON) scripts/test_hw_upgrade.py --old $(PREV_DIR) --new $(DIST) --loader $(OPENFPGALOADER)
+	$(PYTHON) scripts/test_hw_upgrade.py --old $(PREV_DIR) --v03 $(V03_DIR) --new $(DIST) --loader $(OPENFPGALOADER)
 
 # The interrupt-driven UART echo on the board: put on the card and started by the second
 # stage that is running (bitstream and card as test-hw left them), then the bitstream loaded
