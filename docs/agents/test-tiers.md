@@ -141,5 +141,6 @@ clock-and-board.md, "Board UART output that is noise: ModemManager and the bridg
   a CPU without M (`m_ext`) and with its MMIO, the TIMER page and the UART's older registers
   (`v03_mmio`), booting this tree's second stage, which prints its no-M message through that
   UART. From the previous release: its card on this tree's first stage, whose second stage
-  boots and runs its HELLO and HACK as they are, then the same install steps; and its first
+  boots and runs its HELLO and HACK as they are, then `install-stage2`, the same HELLO and HACK
+  under this tree's second stage, and the rest of the install steps; and its first
   stage booting this tree's second stage to `s2> `.

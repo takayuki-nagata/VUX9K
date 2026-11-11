@@ -463,10 +463,10 @@ linux-dist: linux
 		--linux-version $(LINUX_VERSION) --buildroot-version $(BUILDROOT_VERSION)
 
 # The previous release's archive, as GitHub publishes it, for the upgrade tests from it
-# (sim/emu/test_upgrade.py, test-hw-upgrade); a build input, so in build/. PREV_RELEASE is the
-# release before the next one, whose cards and applications a patch release keeps working;
-# V03_RELEASE the last release before the CPU gained RV32M and the timer and UART moved, whose
-# upgrade docs/APP_DEVELOPMENT.md's "Upgrading from v0.3.x" describes
+# (sim/emu/test_upgrade.py, test-hw-upgrade); a build input, so in build/. PREV_RELEASE: the
+# latest release; the next patch release must keep its cards and applications working.
+# V03_RELEASE: the last release before RV32M, the CLINT and liteuart's UART; its upgrade is
+# docs/APP_DEVELOPMENT.md's "Upgrading from v0.3.x"
 PREV_RELEASE = v0.4.0
 PREV_SHA256 = 841c4b39317b24407331df8823352aac99a40b6adfc04cc5f3f8971e5c6e60a7
 V03_RELEASE = v0.3.0

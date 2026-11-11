@@ -18,8 +18,8 @@ the new second stage, which says so through the old UART and stops.
 From the previous release (PREV_RELEASE), whose cards and applications a patch release keeps
 working (docs/APP_DEVELOPMENT.md, "6. Hardware revisions and compatibility"): a card as it
 left it boots on this tree's first stage and runs its applications, then takes this tree's
-second stage and applications the same way; and its first stage boots this tree's second
-stage. A release that breaks either raises the minor or major version: these tests then
+second stage, which runs them too, and this tree's applications the same way; and its first
+stage boots this tree's second stage. A release that breaks either raises the minor or major version: these tests then
 change with its upgrade steps."""
 
 import json
@@ -111,13 +111,21 @@ def emu_tool(soc, monkeypatch, capsys):
     return tool
 
 
-def install_and_run(soc, tool, tmp_path):
+def install_and_run(soc, tool, tmp_path, *, old_apps=False):
     """docs/APP_DEVELOPMENT.md's upgrade steps from `install-stage2` on, the files as this
-    tree's dist ships them, then a Hack application too, in its segments."""
+    tree's dist ships them, then a Hack application too, in its segments. With old_apps, the
+    card's applications (the previous release's) run first under the installed second stage,
+    before `put` replaces them."""
     stage2_bin = tmp_path / "STAGE2.BIN"
     stage2_bin.write_bytes(stage2())
     out = tool("install-stage2", str(stage2_bin))
     assert "[INSTALL] OK" in out and S2_BANNER in out, out
+    if old_apps:
+        run_hello(soc, tool)
+        soc.uart_send(b"r")
+        out = wait_for(soc, S2_PROMPT, S2_BOOT_CYCLES, start=len(soc.uart_received()))
+        assert S2_BANNER in out, out
+        run_hack(soc, tool)
     for name in ("HELLO.BIN", "HACK.BIN"):
         (tmp_path / name).write_bytes(app(name))
         assert "[PUT] OK" in tool("put", str(tmp_path / name), f"VUX9K/APPS/{name}")
@@ -162,7 +170,8 @@ def test_upgrade_from_v03(v03, monkeypatch, capsys, tmp_path):
 
 def test_upgrade_from_the_previous_release(prev, monkeypatch, capsys, tmp_path):
     """The previous release's card on the new bitstream: its second stage boots and runs its
-    applications as they are; then this tree's, installed the same way."""
+    applications as they are; then this tree's second stage, installed the same way, runs them
+    too before this tree's applications replace them."""
     soc = start(release_card(PREV_DIR))
     tool = emu_tool(soc, monkeypatch, capsys)
     old = prev["stage2_version"]
@@ -174,12 +183,15 @@ def test_upgrade_from_the_previous_release(prev, monkeypatch, capsys, tmp_path):
     wait_for(soc, S2_PROMPT, S2_BOOT_CYCLES, start=len(soc.uart_received()))
     run_hack(soc, tool)
 
-    install_and_run(soc, tool, tmp_path)
+    install_and_run(soc, tool, tmp_path, old_apps=True)
 
 
 def test_the_previous_bitstream_boots_the_new_second_stage(prev):
     """The card first, while the flash still holds the previous release's bitstream: its first
-    stage boots this tree's second stage to its prompt."""
+    stage boots this tree's second stage to its prompt. The SoC is this tree's (the previous
+    release's first stage on it): while the hardware hasn't changed since that release, that is
+    its bitstream; once it has, model the old one as `v03_mmio` does, or leave this to the
+    board's scripts/test_hw_upgrade.py."""
     soc = new_soc()
     preload_firmware(soc, os.path.join(PREV_DIR, "emu", "firmware"))
     soc.sd_insert(card({"VUX9K/STAGE2.BIN": stage2(), "VUX9K/APPS/HELLO.BIN": app("HELLO.BIN")}))

@@ -24,8 +24,10 @@ if the tag message's `pack.fs sha256` matches it and its `linux image sha256` th
 the commit whose CI artifacts were tested on the board, never a local build. The upgrade from the previous
 release (`PREV_RELEASE`, v0.4.0: its cards, applications and bitstream keep working) and from
 v0.3.x (`V03_RELEASE`, v0.3.0, the breaking upgrade) is tested on the board (`test-hw-upgrade`,
-the bitstreams) and on the emulator (`sim/emu/test_upgrade.py`, each release's card through
-docs/APP_DEVELOPMENT.md's upgrade steps, command by command: change the two together). After a
+the bitstreams) and on the emulator (`sim/emu/test_upgrade.py`: v0.3.x's card through docs/APP_DEVELOPMENT.md's "Upgrading from
+v0.3.x" steps, command by command, so change the two together; the previous release's card
+against section 6's promise, its applications running as they are under both second stages,
+then the same steps from `install-stage2` on). After a
 release, `PREV_RELEASE`/`PREV_SHA256` follow it; a release that breaks cards gets its own
 variable like `V03_RELEASE` while its upgrade steps are documented. The tag message's
 fields (`release_check.py`'s `FIELDS`, all required) and the release notes built from it
