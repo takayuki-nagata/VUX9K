@@ -379,7 +379,7 @@ async def test_reset_sweeps_valid_lines(dut):
     # A fill under way, another tag on line 0, reset in the middle
     w = (tag_of(words[0]) ^ 1) << TAG_SHIFT
     for _ in range(4):
-        await b.tick(1, idx_of(w), True, True, w)
+        await b.tick(1, idx_of(w), True, True, w, hold=0)
     assert b.filling
     await b.reset()
     await b.sweep()
