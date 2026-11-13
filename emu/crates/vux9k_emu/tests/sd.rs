@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: MIT
 
 //! SD: the SPI master's busy window and bit-by-bit shift register, and the card's
-//! answers (initialization, CMD17/CMD24, SDSC/strict addressing, injected faults).
+//! answers (initialization, CMD17/CMD24, SDSC/strict addressing, injected faults, and
+//! what Linux's mmc_spi adds: registers, status, CMD18/CMD12, CMD25, CRC).
 
 use vux9k_emu::periph::sdspi::{transfer, HALF_PERIOD, MIN_HALF_PERIOD};
 use vux9k_emu::periph::SdSpi;
-use vux9k_emu::sdcard::{SdCard, SECTOR};
+use vux9k_emu::sdcard::{crc16, crc7, SdCard, SECTOR};
 use vux9k_emu::{Profile, Soc};
 
 const DATA: u32 = 0x4000_2000;
@@ -201,10 +202,10 @@ fn initialization_sequence_and_ocr() {
     h.deselect();
     assert_eq!(h.cmd(16, 512), 0x00);
     h.deselect();
-    assert_eq!(h.cmd(13, 0), 0xFF, "unknown commands get no answer");
+    assert_eq!(h.cmd(56, 0), 0xFF, "unknown commands get no answer");
     h.deselect();
     let cmds: Vec<u8> = h.card().commands.iter().map(|c| c.0).collect();
-    assert_eq!(cmds, [0, 8, 55, 41, 58, 55, 8, 16, 13]);
+    assert_eq!(cmds, [0, 8, 55, 41, 58, 55, 8, 16, 56]);
     assert_eq!(h.card().idle_clocks(), 17 * 8);
 }
 
@@ -224,7 +225,7 @@ fn read_and_write_blocks() {
     assert_eq!(h.bytes(1), [0xFE]);
     let data = h.bytes(SECTOR);
     assert!(data.iter().enumerate().all(|(i, &b)| b == i as u8));
-    assert_eq!(h.bytes(2), [0x12, 0x34]);
+    assert_eq!(h.bytes(2), crc16(&data).to_be_bytes(), "the data's CRC16");
     h.deselect();
 
     // Write sector 200 (past the image: it grows)
@@ -311,6 +312,130 @@ fn deselect_drops_a_partial_command() {
     h.deselect();
     assert_eq!(h.cmd(0, 0), 0x01);
     assert_eq!(h.card().commands, [(0, 0)]);
+}
+
+#[test]
+fn crcs_match_known_values() {
+    assert_eq!(crc16(&[0xFF; SECTOR]), 0x7FA1, "SD spec example");
+    assert_eq!(crc7(&[0x40, 0, 0, 0, 0]) << 1 | 1, 0x95, "CMD0");
+    assert_eq!(crc7(&[0x48, 0, 0, 1, 0xAA]) << 1 | 1, 0x87, "CMD8");
+}
+
+/// The data block after an R1: FF, FE, `n` bytes, CRC16 (checked).
+fn data_block(h: &mut Host, n: usize) -> Vec<u8> {
+    assert_eq!(h.bytes(2), [0xFF, 0xFE]);
+    let d = h.bytes(n);
+    assert_eq!(h.bytes(2), crc16(&d).to_be_bytes());
+    d
+}
+
+#[test]
+fn registers_status_and_application_commands() {
+    // 9 MB: C_SIZE rounds up to 18 units of 512 KB
+    let mut h = Host::new(SdCard::new(vec![0; 9 << 20]));
+    h.init();
+    h.deselect();
+    assert_eq!(h.cmd(10, 0), 0x00);
+    let cid = data_block(&mut h, 16);
+    assert_eq!(&cid[3..8], b"VUX9K");
+    assert_eq!(cid[15], crc7(&cid[..15]) << 1 | 1);
+    h.deselect();
+    assert_eq!(h.cmd(9, 0), 0x00);
+    let csd = data_block(&mut h, 16);
+    assert_eq!(csd[0] >> 6, 1, "CSD version 2");
+    let c_size = u32::from_be_bytes([0, csd[7] & 0x3F, csd[8], csd[9]]);
+    assert_eq!(c_size, 17);
+    let ccc = (csd[4] as u16) << 4 | (csd[5] >> 4) as u16;
+    assert_eq!(ccc & (1 << 10 | 1 << 5), 0, "no switch, no erase");
+    assert_eq!(csd[15], crc7(&csd[..15]) << 1 | 1);
+    h.deselect();
+    assert_eq!(h.cmd(13, 0), 0x00, "SEND_STATUS: R2");
+    assert_eq!(h.bytes(2), [0x00, 0xFF]);
+    h.deselect();
+    assert_eq!(h.cmd(51, 0), 0xFF, "51 without CMD55: no answer");
+    h.deselect();
+    assert_eq!(h.cmd(55, 0), 0x00);
+    h.deselect();
+    assert_eq!(h.cmd(51, 0), 0x00);
+    assert_eq!(data_block(&mut h, 8)[..2], [0x02, 0x35]);
+    h.deselect();
+    assert_eq!(h.cmd(55, 0), 0x00);
+    h.deselect();
+    assert_eq!(h.cmd(13, 0), 0x00, "ACMD13: R2 and the SD status");
+    assert_eq!(h.bytes(1), [0x00]);
+    assert_eq!(data_block(&mut h, 64), [0; 64]);
+    h.deselect();
+    assert_eq!(h.cmd(59, 1), 0x00);
+    h.deselect();
+}
+
+#[test]
+fn multiple_block_read_stops_at_cmd12() {
+    let image: Vec<u8> = (0..4 * SECTOR).map(|i| (i / SECTOR) as u8 + 1).collect();
+    let mut h = Host::new(SdCard::new(image));
+    h.init();
+    h.deselect();
+    assert_eq!(h.cmd(18, 1), 0x00);
+    assert_eq!(data_block(&mut h, SECTOR), [2; SECTOR]);
+    assert_eq!(data_block(&mut h, SECTOR), [3; SECTOR]);
+    // CMD12 while the card sends the next block; then a stuff byte and R1
+    for b in [0x4C, 0, 0, 0, 0, 0x61] {
+        h.xfer(b);
+    }
+    assert_eq!(h.bytes(3), [0xFF, 0x00, 0xFF]);
+    h.deselect();
+    assert_eq!(h.cmd(17, 0), 0x00, "the card listens again");
+    assert_eq!(data_block(&mut h, SECTOR), [1; SECTOR]);
+    h.deselect();
+    // Ended by CS: the rest of the block is dropped
+    assert_eq!(h.cmd(18, 2), 0x00);
+    h.bytes(10);
+    h.deselect();
+    assert_eq!(h.cmd(55, 0), 0x00);
+    h.deselect();
+    let cmds: Vec<u8> = h.card().commands.iter().map(|c| c.0).collect();
+    assert_eq!(cmds[5..], [18, 12, 17, 18, 55]);
+}
+
+#[test]
+fn multiple_block_write_and_crc() {
+    let mut h = Host::new(SdCard::new(vec![]));
+    h.init();
+    h.deselect();
+    let block = |h: &mut Host, token: u8, v: u8, good: bool| {
+        h.xfer(0xFF);
+        h.xfer(token);
+        for _ in 0..SECTOR {
+            h.xfer(v);
+        }
+        let crc = crc16(&[v; SECTOR]) ^ !good as u16;
+        for b in crc.to_be_bytes() {
+            h.xfer(b);
+        }
+        h.bytes(2)
+    };
+    assert_eq!(h.cmd(25, 4), 0x00);
+    assert_eq!(block(&mut h, 0xFC, 0x11, false), [0x05, 0x3F], "CRC off");
+    assert_eq!(block(&mut h, 0xFC, 0x22, true), [0x05, 0x3F]);
+    h.xfer(0xFD);
+    assert_eq!(h.bytes(3), [0xFF, 0x00, 0xFF], "N(BR), busy, ready");
+    h.deselect();
+    assert_eq!((h.card().sector(4)[0], h.card().sector(5)[0]), (0x11, 0x22));
+
+    assert_eq!(h.cmd(59, 1), 0x00);
+    h.deselect();
+    assert_eq!(h.cmd(24, 6), 0x00);
+    assert_eq!(
+        block(&mut h, 0xFE, 0x33, false),
+        [0x0B, 0xFF],
+        "CRC on: refused"
+    );
+    h.deselect();
+    assert_eq!(h.cmd(24, 6), 0x00);
+    assert_eq!(block(&mut h, 0xFE, 0x44, true), [0x05, 0x3F]);
+    h.deselect();
+    assert_eq!(h.card().sector(6)[0], 0x44);
+    assert!(h.card().violations.is_empty(), "not strict");
 }
 
 fn i(op: u32, imm: i32, rs1: u32, f3: u32, rd: u32) -> u32 {

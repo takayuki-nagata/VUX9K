@@ -31,7 +31,7 @@ import pytest
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(REPO_ROOT, "sim", "integration"))
-from sdcard_protocol import SECTOR, SdCardProtocol  # noqa: E402
+from sdcard_protocol import SECTOR, SdCardProtocol, crc7, crc16  # noqa: E402
 
 DIR = os.path.join(REPO_ROOT, "sim", "sd_transcripts")
 
@@ -91,6 +91,38 @@ class Recorder:
             if r != 0xFF:
                 return r
         return 0xFF
+
+    def cmd_crc(self, cmd, arg):
+        """A command with its real CRC7, as Linux's mmc_spi sends every command."""
+        frame = bytes([0x40 | cmd]) + arg.to_bytes(4, "big")
+        return self.cmd(cmd, arg, crc7(frame) << 1 | 1)
+
+    def data(self, n):
+        """A data block after the R1 (mmc_spi's token search): token, n bytes, CRC16."""
+        for _ in range(8):
+            if self.xfer(0xFF) == 0xFE:
+                break
+        else:
+            return None
+        data = self.read(n)
+        crc = self.read(2)
+        assert int.from_bytes(crc, "big") == crc16(data), "data CRC16"
+        return data
+
+    def write_blocks(self, token, blocks, crc_ok=True):
+        """mmc_spi's block writes after CMD24/CMD25: one FF, the token, the block, its
+        CRC16, then four bytes of status (the data response and the busy bytes)."""
+        resps = []
+        for data in blocks:
+            self.xfer(0xFF)
+            self.xfer(token)
+            for b in data:
+                self.xfer(b)
+            crc = crc16(data) ^ (0 if crc_ok else 1)
+            self.xfer(crc >> 8)
+            self.xfer(crc & 0xFF)
+            resps.append(self.read(4))
+        return resps
 
     def deselect(self):
         self.cs(False)
@@ -188,7 +220,7 @@ def sdhc_read_write():
     h.xfer(0x51)  # partial command dropped by CS
     h.xfer(0)
     h.deselect()
-    h.cmd(13, 0)  # unknown: no answer
+    h.cmd(56, 0)  # unknown: no answer
     h.deselect()
     return h.finish(expect_sectors=[3, 7])
 
@@ -263,6 +295,120 @@ def sclk_fast_power_up():
     return h.finish()
 
 
+def linux_init():
+    """Linux's mmc_core over mmc_spi (SD, SPI mode): the identification and the setup of
+    the card, its registers' data blocks, the CRC turned on, the status poll."""
+    h = Recorder("linux_init")
+    h.sector(16383, pattern(9))  # an 8 MB card: C_SIZE 15
+    h.deselect()
+    for _ in range(10):
+        h.xfer(0xFF)
+    h.cmd_crc(0, 0)
+    h.deselect()
+    if h.cmd_crc(8, 0x1AA) == 0x01:
+        h.read(4)
+    h.deselect()
+    h.cmd_crc(5, 0)  # SDIO probe: no answer
+    h.deselect()
+    h.cmd_crc(58, 0)
+    h.read(4)
+    h.deselect()
+    for _ in range(3):
+        h.cmd_crc(55, 0)
+        h.deselect()
+        r = h.cmd_crc(41, 0x4000_0000)
+        h.deselect()
+        if r == 0:
+            break
+    h.cmd_crc(58, 0)
+    h.read(4)
+    h.deselect()
+    if h.cmd_crc(10, 0) == 0:
+        h.data(16)  # CID
+    h.deselect()
+    h.cmd_crc(59, 1)
+    h.deselect()
+    if h.cmd_crc(9, 0) == 0:
+        h.data(16)  # CSD
+    h.deselect()
+    h.cmd_crc(55, 0)
+    h.deselect()
+    if h.cmd_crc(51, 0) == 0:
+        h.data(8)  # SCR
+    h.deselect()
+    h.cmd_crc(55, 0)
+    h.deselect()
+    if h.cmd_crc(13, 0) == 0:
+        h.read(1)  # R2's second byte
+        h.data(64)  # SD status
+    h.deselect()
+    h.cmd_crc(13, 0)  # SEND_STATUS (also the 1 s card-detect poll)
+    h.read(1)
+    h.deselect()
+    return h.finish()
+
+
+def multi_block_read():
+    """CMD18 + CMD12 sent while the card streams, then a CMD18 ended by CS alone."""
+    h = Recorder("multi_block_read", strict=True)
+    for lba in range(10, 14):
+        h.sector(lba, pattern(lba))
+    h.deselect()
+    for _ in range(10):
+        h.xfer(0xFF)
+    h.init()
+    h.cmd_crc(18, 10)
+    for _ in range(3):
+        h.data(SECTOR)
+    for b in bytes([0x40 | 12, 0, 0, 0, 0]):
+        h.xfer(b)
+    h.xfer(crc7(bytes([0x4C, 0, 0, 0, 0])) << 1 | 1)
+    h.read(4)  # stuff byte, R1, not busy
+    h.deselect()
+    h.cmd_crc(18, 12)
+    h.data(SECTOR)
+    h.read(5)  # into the next block
+    h.deselect()  # stops the stream: the next command is answered
+    h.cmd_crc(13, 0)
+    h.read(1)
+    h.deselect()
+    return h.finish()
+
+
+def multi_block_write():
+    """CMD25: blocks with token FC, the stop token FD; then CMD24, with CRC on and off."""
+    h = Recorder("multi_block_write", strict=True)
+    h.deselect()
+    for _ in range(10):
+        h.xfer(0xFF)
+    h.init()
+    h.cmd_crc(25, 20)
+    h.write_blocks(0xFC, [pattern(20), pattern(21), pattern(22)])
+    h.xfer(0xFD)
+    h.read(4)  # N(BR), busy, not busy
+    h.deselect()
+    h.cmd_crc(59, 1)
+    h.deselect()
+    h.cmd_crc(25, 30)
+    h.write_blocks(0xFC, [pattern(30)])
+    h.write_blocks(0xFC, [pattern(31)], crc_ok=False)  # refused: 0B
+    h.xfer(0xFD)
+    h.read(4)
+    h.deselect()
+    h.cmd_crc(24, 40)
+    h.write_blocks(0xFE, [pattern(40)], crc_ok=False)
+    h.deselect()
+    h.cmd(13, 0, 0xFF)  # a wrong CRC7 with CRC on: a violation (strict)
+    h.read(1)
+    h.deselect()
+    h.cmd_crc(59, 0)
+    h.deselect()
+    h.cmd_crc(24, 41)
+    h.write_blocks(0xFE, [pattern(41)], crc_ok=False)  # CRC off: written
+    h.deselect()
+    return h.finish(expect_sectors=[20, 21, 22, 23, 30, 31, 40, 41])
+
+
 SCENARIOS = {
     f.__name__: f
     for f in (
@@ -274,6 +420,9 @@ SCENARIOS = {
         mute_cmd0,
         sclk_switch,
         sclk_fast_power_up,
+        linux_init,
+        multi_block_read,
+        multi_block_write,
     )
 }
 

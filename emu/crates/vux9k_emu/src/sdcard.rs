@@ -6,14 +6,28 @@
 //!
 //! It answers like sim/integration/sdcard_model.py (the model the RTL tests use):
 //! - CMD0 FF 01; CMD8 FF 01 00 00 01 AA; CMD55 FF 01 (00 once ready); ACMD41 and
-//!   CMD1 FF 00;
-//!   CMD58 FF 00 + OCR (C0|80) FF 80 00; CMD16 FF 00; other commands no answer.
-//! - CMD17 FF 00 FF FE, 512 data bytes, CRC 12 34.
+//!   CMD1 FF 00 (CMD41 also without CMD55);
+//!   CMD58 FF 00 + OCR (C0|80) FF 80 00; CMD16 FF 00; CMD59 (CRC_ON_OFF) FF 00;
+//!   CMD13 (SEND_STATUS) R2 FF 00 00; CMD12 outside a multiple-block read FF 00;
+//!   other commands no answer. A command right after CMD55 is an application command
+//!   (ACMD13, ACMD51; ACMD41 as CMD41).
+//! - Data blocks: FF FE, the data, and its CRC16 (CCITT, as the SD spec's data CRC):
+//!   CMD17 FF 00 + a 512-byte block; CMD9 (CSD) and CMD10 (CID) FF 00 + a 16-byte block;
+//!   ACMD51 (SCR) FF 00 + 8 bytes; ACMD13 (SD status) R2 FF 00 00 + 64 bytes. The CSD
+//!   is version 2 with the capacity of the image (`csd`); its command classes leave
+//!   out switch (CMD6) and erase.
+//! - CMD18 FF 00, then one block after the other, from consecutive sectors, while the
+//!   card keeps reading MOSI: CMD12 stops it (FF 00 after it: a stuff byte, R1). CS
+//!   going high stops it too, dropping the rest of the block.
 //! - CMD24 FF 00, then data token FE, 512 bytes and 2 CRC bytes; data response 05 and a
 //!   busy byte 3F. After that the card listens for a new command only once CS has
 //!   gone high (the Python model loses byte alignment there until CS rises).
-//! - Faults (`Faults`): unanswered commands, ACMD41 never ready, CMD17 error token
-//!   (always or for given sectors), CMD24 data rejected.
+//!   CMD25 FF 00, then blocks with token FC, each answered 05 3F, until the stop token
+//!   FD (answered FF 00: N(BR) and one busy byte); then the card listens for commands.
+//! - CRC: CMD59 with bit 0 set turns it on. A written block whose CRC16 is wrong is then
+//!   refused (data response 0B), and strict mode records a command whose CRC7 is wrong.
+//! - Faults (`Faults`): unanswered commands, ACMD41 never ready, CMD17/CMD18 error token
+//!   (always or for given sectors; CMD18 then stops), CMD24/CMD25 data rejected.
 //! - Answers are sent whatever CS does; a partial command, a wait for a data token or
 //!   a partial data block is dropped when CS goes high.
 //!
@@ -60,12 +74,21 @@ enum State {
         buf: [u8; 6],
         n: usize,
     },
+    /// After CMD24 (`multi` false) or CMD25.
     WaitToken {
         lba: u32,
+        multi: bool,
     },
     Data {
         lba: u32,
+        multi: bool,
         buf: Vec<u8>,
+    },
+    /// CMD18: blocks from `lba` on, while a command is parsed from MOSI.
+    ReadStream {
+        lba: u32,
+        buf: [u8; 6],
+        n: usize,
     },
     /// After a write: ignore everything until CS goes high.
     Resync,
@@ -80,6 +103,10 @@ pub struct SdCard {
     state: State,
     resp: VecDeque<u8>,
     ready: bool,
+    /// The previous command was CMD55: this one is an application command.
+    app: bool,
+    /// CMD59: CRC checking on.
+    crc_on: bool,
     first_cmd_seen: bool,
     idle_clocks: u64,
     sclk_hz: u64,
@@ -104,6 +131,8 @@ impl SdCard {
             state: State::Idle,
             resp: VecDeque::new(),
             ready: false,
+            app: false,
+            crc_on: false,
             first_cmd_seen: false,
             idle_clocks: 0,
             sclk_hz: INIT_SCLK_HZ,
@@ -151,8 +180,17 @@ impl SdCard {
     /// CS changed (true = selected).
     pub fn set_cs(&mut self, selected: bool) {
         if !selected {
+            if matches!(self.state, State::ReadStream { .. }) {
+                self.resp.clear();
+            }
             self.state = State::Idle;
         }
+    }
+
+    /// Capacity in sectors, as the CSD gives it: the image, rounded up to whole
+    /// sectors (the Python card: its highest sector + 1).
+    fn sectors(&self) -> u32 {
+        self.image.len().div_ceil(SECTOR) as u32
     }
 
     /// One byte exchanged with CS at `selected` for the whole byte: returns MISO.
@@ -167,7 +205,35 @@ impl SdCard {
                 self.sclk_hz
             ));
         }
-        if let Some(b) = self.resp.pop_front() {
+        if self.resp.is_empty() {
+            if let State::ReadStream { lba, .. } = &mut self.state {
+                let at = *lba;
+                *lba = lba.wrapping_add(1);
+                if !self.read_block(at) {
+                    self.state = State::Idle;
+                }
+            }
+        }
+        let answer = self.resp.pop_front();
+        if let State::ReadStream { buf, n, .. } = &mut self.state {
+            if selected {
+                if *n > 0 || mosi & 0xC0 == 0x40 {
+                    buf[*n] = mosi;
+                    *n += 1;
+                }
+                if *n == 6 {
+                    let cmd = *buf;
+                    *n = 0;
+                    if cmd[0] & 0x3F == 12 {
+                        self.resp.clear();
+                        self.state = State::Idle;
+                        self.command(cmd);
+                    }
+                }
+            }
+            return answer.unwrap_or(0xFF);
+        }
+        if let Some(b) = answer {
             return b;
         }
         if !selected {
@@ -185,27 +251,40 @@ impl SdCard {
                 buf[*n] = mosi;
                 *n += 1;
                 if *n == 6 {
-                    let cmd = buf[0] & 0x3F;
-                    let arg = u32::from_be_bytes([buf[1], buf[2], buf[3], buf[4]]);
+                    let cmd = *buf;
                     self.state = State::Idle;
-                    self.command(cmd, arg);
+                    self.command(cmd);
                 }
             }
-            State::WaitToken { lba } => {
-                if mosi == 0xFE {
+            State::WaitToken { lba, multi } => {
+                let (lba, multi) = (*lba, *multi);
+                if mosi == if multi { 0xFC } else { 0xFE } {
                     self.state = State::Data {
-                        lba: *lba,
+                        lba,
+                        multi,
                         buf: Vec::with_capacity(SECTOR + 2),
                     };
+                } else if multi && mosi == 0xFD {
+                    self.state = State::Idle;
+                    self.resp.extend([0xFF, 0x00]);
                 }
             }
-            State::Data { lba, buf } => {
+            State::Data { lba, multi, buf } => {
                 buf.push(mosi);
                 if buf.len() == SECTOR + 2 {
-                    let lba = *lba;
+                    let (lba, multi) = (*lba, *multi);
                     let data = std::mem::take(buf);
-                    self.state = State::Resync;
-                    if self.faults.write_reject {
+                    let crc = u16::from_be_bytes([data[SECTOR], data[SECTOR + 1]]);
+                    let bad_crc = self.crc_on && crc != crc16(&data[..SECTOR]);
+                    self.state = if multi {
+                        State::WaitToken {
+                            lba: lba.wrapping_add(1),
+                            multi,
+                        }
+                    } else {
+                        State::Resync
+                    };
+                    if self.faults.write_reject || bad_crc {
                         self.resp.push_back(0x0B);
                     } else {
                         self.set_sector(lba, &data[..SECTOR]);
@@ -213,9 +292,71 @@ impl SdCard {
                     }
                 }
             }
-            State::Resync => {}
+            State::ReadStream { .. } | State::Resync => {}
         }
         0xFF
+    }
+
+    /// Queues FF FE, `data` and its CRC16.
+    fn data_block(&mut self, data: &[u8]) {
+        self.resp.extend([0xFF, 0xFE]);
+        self.resp.extend(data);
+        self.resp.extend(crc16(data).to_be_bytes());
+    }
+
+    /// Queues sector `lba` as a data block, or the error token FF 08 (faults). Returns
+    /// false on an error.
+    fn read_block(&mut self, lba: u32) -> bool {
+        let reads = self.reads.entry(lba).or_insert(0);
+        let worn = self
+            .faults
+            .fail_after
+            .iter()
+            .any(|&(s, n)| s == lba && *reads >= n);
+        if self.faults.read_error || self.faults.bad_sectors.contains(&lba) || worn {
+            self.resp.extend([0xFF, 0x08]);
+            return false;
+        }
+        *reads += 1;
+        let data = self.sector(lba);
+        self.data_block(&data);
+        true
+    }
+
+    /// CSD version 2.0 (SDHC/SDXC layout) for the image's capacity, 16 bytes with its
+    /// CRC7. C_SIZE counts 512 KB units, rounded up; command classes 0, 2, 4, 7, 8.
+    pub fn csd(&self) -> [u8; 16] {
+        let c_size = self.sectors().div_ceil(1024).max(1) - 1;
+        let mut c = [
+            0x40, // CSD_STRUCTURE 1
+            0x0E, // TAAC
+            0x00, // NSAC
+            0x32, // TRAN_SPEED: 25 MHz
+            0x19, // CCC[11:4] = 0x195 >> 4
+            0x59, // CCC[3:0] = 5, READ_BL_LEN 9
+            0x00, // READ_BL_PARTIAL, misalign, DSR_IMP: 0
+            (c_size >> 16) as u8 & 0x3F,
+            (c_size >> 8) as u8,
+            c_size as u8,
+            0x7F, // ERASE_BLK_EN 1, SECTOR_SIZE[6:1] (0x7F)...
+            0x80, // ...SECTOR_SIZE bit 0, WP_GRP_SIZE 0
+            0x0A, // WP_GRP_ENABLE 0, R2W_FACTOR 2, WRITE_BL_LEN[3:2] = 2
+            0x40, // WRITE_BL_LEN[1:0] = 1, WRITE_BL_PARTIAL 0
+            0x00, // FILE_FORMAT_GRP, COPY, PERM/TMP_WRITE_PROTECT, FILE_FORMAT: 0
+            0x00,
+        ];
+        c[15] = crc7(&c[..15]) << 1 | 1;
+        c
+    }
+
+    /// CID: manufacturer 0x56, OEM "VX", product "VUX9K", revision 1.0, serial 1,
+    /// November 2026.
+    pub fn cid() -> [u8; 16] {
+        let mut c = [
+            0x56, b'V', b'X', b'V', b'U', b'X', b'9', b'K', 0x10, 0, 0, 0, 1, 0x01, 0xAB, 0,
+        ];
+        c[15] = crc7(&c[..15]) << 1 | 1;
+        c
     }
 
     fn lba(&mut self, cmd: u8, arg: u32) -> u32 {
@@ -233,8 +374,18 @@ impl SdCard {
         arg >> 9
     }
 
-    fn command(&mut self, cmd: u8, arg: u32) {
+    fn command(&mut self, buf: [u8; 6]) {
+        let cmd = buf[0] & 0x3F;
+        let arg = u32::from_be_bytes([buf[1], buf[2], buf[3], buf[4]]);
+        let app = std::mem::take(&mut self.app);
         self.commands.push((cmd, arg));
+        let want = crc7(&buf[..5]) << 1 | 1;
+        if self.strict && self.crc_on && buf[5] != want {
+            self.violations.push(format!(
+                "CMD{cmd}: CRC7 byte 0x{:02X}, expected 0x{want:02X} (CRC on)",
+                buf[5]
+            ));
+        }
         if !self.first_cmd_seen {
             self.first_cmd_seen = true;
             if self.strict && self.idle_clocks < POWER_UP_CLOCKS {
@@ -255,7 +406,10 @@ impl SdCard {
                 r.extend([0xFF, 0x01]);
             }
             8 => r.extend([0xFF, 0x01, 0x00, 0x00, 0x01, 0xAA]),
-            55 => r.extend([0xFF, if self.ready { 0x00 } else { 0x01 }]),
+            55 => {
+                self.app = true;
+                r.extend([0xFF, if self.ready { 0x00 } else { 0x01 }]);
+            }
             // CMD1 (SEND_OP_COND, MMC): initialization without CMD55/ACMD41
             1 | 41 => {
                 self.ready = !self.faults.never_ready;
@@ -270,32 +424,86 @@ impl SdCard {
                 0x80,
                 0x00,
             ]),
-            16 => r.extend([0xFF, 0x00]),
+            16 | 12 => r.extend([0xFF, 0x00]),
+            59 => {
+                self.crc_on = arg & 1 != 0;
+                r.extend([0xFF, 0x00]);
+            }
+            13 if app => {
+                r.extend([0xFF, 0x00, 0x00]);
+                self.data_block(&[0; 64]);
+            }
+            13 => r.extend([0xFF, 0x00, 0x00]),
+            51 if app => {
+                r.extend([0xFF, 0x00]);
+                // SCR: structure 0, SD spec 2.00, security SDHC, bus widths 1 and 4
+                self.data_block(&[0x02, 0x35, 0, 0, 0, 0, 0, 0]);
+            }
+            9 => {
+                r.extend([0xFF, 0x00]);
+                let csd = self.csd();
+                self.data_block(&csd);
+            }
+            10 => {
+                r.extend([0xFF, 0x00]);
+                self.data_block(&Self::cid());
+            }
             17 => {
                 let lba = self.lba(cmd, arg);
-                let r = &mut self.resp;
-                let reads = self.reads.entry(lba).or_insert(0);
-                let worn = self
-                    .faults
-                    .fail_after
-                    .iter()
-                    .any(|&(s, n)| s == lba && *reads >= n);
-                if self.faults.read_error || self.faults.bad_sectors.contains(&lba) || worn {
-                    r.extend([0xFF, 0x00, 0xFF, 0x08]);
-                } else {
-                    *reads += 1;
-                    r.extend([0xFF, 0x00, 0xFF, 0xFE]);
-                    let data = self.sector(lba);
-                    self.resp.extend(data);
-                    self.resp.extend([0x12, 0x34]);
-                }
+                self.resp.extend([0xFF, 0x00]);
+                self.read_block(lba);
             }
-            24 => {
+            18 => {
                 let lba = self.lba(cmd, arg);
                 self.resp.extend([0xFF, 0x00]);
-                self.state = State::WaitToken { lba };
+                if self.read_block(lba) {
+                    self.state = State::ReadStream {
+                        lba: lba.wrapping_add(1),
+                        buf: [0; 6],
+                        n: 0,
+                    };
+                }
+            }
+            24 | 25 => {
+                let lba = self.lba(cmd, arg);
+                self.resp.extend([0xFF, 0x00]);
+                self.state = State::WaitToken {
+                    lba,
+                    multi: cmd == 25,
+                };
             }
             _ => {}
         }
     }
+}
+
+/// CRC7 of SD commands and registers (x^7 + x^3 + 1), MSB first.
+pub fn crc7(data: &[u8]) -> u8 {
+    let mut crc = 0u8;
+    for &b in data {
+        for i in (0..8).rev() {
+            let bit = (b >> i) & 1 ^ (crc >> 6) & 1;
+            crc = (crc << 1) & 0x7F;
+            if bit != 0 {
+                crc ^= 0x09;
+            }
+        }
+    }
+    crc
+}
+
+/// CRC16 of SD data blocks (CCITT x^16 + x^12 + x^5 + 1, initial 0), MSB first.
+pub fn crc16(data: &[u8]) -> u16 {
+    let mut crc = 0u16;
+    for &b in data {
+        crc ^= (b as u16) << 8;
+        for _ in 0..8 {
+            crc = if crc & 0x8000 != 0 {
+                crc << 1 ^ 0x1021
+            } else {
+                crc << 1
+            };
+        }
+    }
+    crc
 }
