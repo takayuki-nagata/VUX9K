@@ -1,0 +1,179 @@
+From: VUX9K
+Subject: [PATCH] spi: VUX9K SD card SPI controller (polled)
+
+The VUX9K SoC's SD card port as an SPI controller, for mmc_spi: one chip
+select, 8-bit words, no interrupt. This tree's own patch, not sent upstream
+(docs/agents/linux.md, "Kernel patches").
+
+---
+diff --git a/drivers/spi/Kconfig b/drivers/spi/Kconfig
+index a0f37e2..0f962b7 100644
+--- a/drivers/spi/Kconfig
++++ b/drivers/spi/Kconfig
+@@ -569,6 +569,14 @@ config SPI_JCORE
+ 	  This enables support for the SPI master controller in the J-Core
+ 	  synthesizable, open source SoC.
+ 
++config SPI_VUX9K_SD
++	tristate "VUX9K SD card SPI controller"
++	depends on OF && HAS_IOMEM
++	help
++	  The SD card port of the VUX9K SoC (a soft RISC-V core on the Tang
++	  Nano 9K board): a polled, byte-wide SPI master with one chip select
++	  and no interrupt. The card on it is driven by MMC_SPI.
++
+ config SPI_KSPI2
+ 	tristate "Support for KEBA SPI master type 2 hardware"
+ 	depends on HAS_IOMEM
+diff --git a/drivers/spi/Makefile b/drivers/spi/Makefile
+index a18814f..f3b2de0 100644
+--- a/drivers/spi/Makefile
++++ b/drivers/spi/Makefile
+@@ -79,6 +79,7 @@ obj-$(CONFIG_SPI_INTEL_PCI)		+= spi-intel-pci.o
+ obj-$(CONFIG_SPI_INTEL_PLATFORM)	+= spi-intel-platform.o
+ obj-$(CONFIG_SPI_LANTIQ_SSC)		+= spi-lantiq-ssc.o
+ obj-$(CONFIG_SPI_JCORE)			+= spi-jcore.o
++obj-$(CONFIG_SPI_VUX9K_SD)		+= spi-vux9k-sd.o
+ obj-$(CONFIG_SPI_KSPI2)			+= spi-kspi2.o
+ obj-$(CONFIG_SPI_LJCA)			+= spi-ljca.o
+ obj-$(CONFIG_SPI_LM70_LLP)		+= spi-lm70llp.o
+diff --git b/drivers/spi/spi-vux9k-sd.c b/drivers/spi/spi-vux9k-sd.c
+new file mode 100644
+index 0000000..f9f4292
+--- /dev/null
++++ b/drivers/spi/spi-vux9k-sd.c
+@@ -0,0 +1,134 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * VUX9K SD card SPI controller, polled.
++ *
++ * The SoC's SD card port is a byte-wide SPI master (mode 0, MSB first) with one chip
++ * select and no interrupt:
++ *   0x0 DATA    write: starts an 8-bit exchange; read: the byte received
++ *   0x4 CS      bit 0: the chip select line's level (1: high, the card deselected)
++ *   0x8 STATUS  bit 0: busy (an exchange is running)
++ *   0xc DIV     SCLK half period in clocks, 3..255: SCLK = clock / (2 * DIV)
++ * The port ignores every register write made while it is busy, so each write waits
++ * for busy to clear.
++ *
++ * Device tree: compatible "vux9k,sd-spi", reg, clock-frequency (the SoC clock), and
++ * the card as a child node, "mmc-spi-slot" (drivers/mmc/host/mmc_spi.c).
++ */
++#include <linux/io.h>
++#include <linux/minmax.h>
++#include <linux/mod_devicetable.h>
++#include <linux/module.h>
++#include <linux/platform_device.h>
++#include <linux/property.h>
++#include <linux/spi/spi.h>
++
++#define VUX9K_SD_DATA		0x0
++#define VUX9K_SD_CS		0x4
++#define VUX9K_SD_STATUS		0x8
++#define VUX9K_SD_DIV		0xc
++#define VUX9K_SD_BUSY		BIT(0)
++#define VUX9K_SD_DIV_MIN	3
++#define VUX9K_SD_DIV_MAX	255
++/* An exchange takes at most 16 * 255 clocks; a poll takes several */
++#define VUX9K_SD_POLLS		100000
++
++struct vux9k_sd_spi {
++	void __iomem *base;
++	u32 clock_hz;
++	u32 speed_hz;	/* of the divider written last; 0 before the first transfer */
++};
++
++static int vux9k_sd_spi_wait(struct vux9k_sd_spi *hw)
++{
++	unsigned int n;
++
++	for (n = 0; n < VUX9K_SD_POLLS; n++)
++		if (!(readl_relaxed(hw->base + VUX9K_SD_STATUS) & VUX9K_SD_BUSY))
++			return 0;
++	return -ETIMEDOUT;
++}
++
++static void vux9k_sd_spi_set_cs(struct spi_device *spi, bool level)
++{
++	struct vux9k_sd_spi *hw = spi_controller_get_devdata(spi->controller);
++
++	if (vux9k_sd_spi_wait(hw))
++		dev_err(&spi->dev, "busy: chip select not changed\n");
++	writel_relaxed(level, hw->base + VUX9K_SD_CS);
++}
++
++static int vux9k_sd_spi_transfer_one(struct spi_controller *host,
++				     struct spi_device *spi,
++				     struct spi_transfer *t)
++{
++	struct vux9k_sd_spi *hw = spi_controller_get_devdata(host);
++	const u8 *tx = t->tx_buf;
++	u8 *rx = t->rx_buf;
++	unsigned int i;
++
++	if (vux9k_sd_spi_wait(hw))
++		return -ETIMEDOUT;
++	if (t->speed_hz != hw->speed_hz) {
++		u32 div = clamp_t(u32, DIV_ROUND_UP(hw->clock_hz, 2 * t->speed_hz),
++				  VUX9K_SD_DIV_MIN, VUX9K_SD_DIV_MAX);
++
++		writel_relaxed(div, hw->base + VUX9K_SD_DIV);
++		hw->speed_hz = t->speed_hz;
++	}
++	for (i = 0; i < t->len; i++) {
++		writel_relaxed(tx ? tx[i] : 0xff, hw->base + VUX9K_SD_DATA);
++		if (vux9k_sd_spi_wait(hw))
++			return -ETIMEDOUT;
++		if (rx)
++			rx[i] = readl_relaxed(hw->base + VUX9K_SD_DATA);
++	}
++	return 0;
++}
++
++static int vux9k_sd_spi_probe(struct platform_device *pdev)
++{
++	struct spi_controller *host;
++	struct vux9k_sd_spi *hw;
++
++	host = devm_spi_alloc_host(&pdev->dev, sizeof(*hw));
++	if (!host)
++		return -ENOMEM;
++	hw = spi_controller_get_devdata(host);
++	hw->base = devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(hw->base))
++		return PTR_ERR(hw->base);
++	if (device_property_read_u32(&pdev->dev, "clock-frequency", &hw->clock_hz) ||
++	    !hw->clock_hz)
++		return dev_err_probe(&pdev->dev, -EINVAL, "no clock-frequency\n");
++
++	host->dev.of_node = pdev->dev.of_node;
++	host->bus_num = -1;
++	host->num_chipselect = 1;
++	/* mmc_spi raises CS while it clocks the card's power-up cycles */
++	host->mode_bits = SPI_CS_HIGH;
++	host->bits_per_word_mask = SPI_BPW_MASK(8);
++	host->min_speed_hz = DIV_ROUND_UP(hw->clock_hz, 2 * VUX9K_SD_DIV_MAX);
++	host->max_speed_hz = hw->clock_hz / (2 * VUX9K_SD_DIV_MIN);
++	host->set_cs = vux9k_sd_spi_set_cs;
++	host->transfer_one = vux9k_sd_spi_transfer_one;
++
++	return devm_spi_register_controller(&pdev->dev, host);
++}
++
++static const struct of_device_id vux9k_sd_spi_of_match[] = {
++	{ .compatible = "vux9k,sd-spi" },
++	{}
++};
++MODULE_DEVICE_TABLE(of, vux9k_sd_spi_of_match);
++
++static struct platform_driver vux9k_sd_spi_driver = {
++	.probe = vux9k_sd_spi_probe,
++	.driver = {
++		.name = "vux9k-sd-spi",
++		.of_match_table = vux9k_sd_spi_of_match,
++	},
++};
++module_platform_driver(vux9k_sd_spi_driver);
++
++MODULE_DESCRIPTION("VUX9K SD card SPI controller");
++MODULE_LICENSE("GPL");

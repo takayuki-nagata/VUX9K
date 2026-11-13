@@ -442,7 +442,18 @@ LINUX_OUT = $(BUILD_DIR)/linux
 LINUX_FRAGMENT = linux_workspace/kernel/vux9k_nommu.config
 LINUX_MAKE = $(MAKE) -C $(LINUX_DIR) O=$(CURDIR)/$(LINUX_OUT) ARCH=riscv \
 	CROSS_COMPILE=$(CURDIR)/$(BUILDROOT_OUT)/host/bin/riscv32-buildroot-linux-uclibc-
-linux: linux-rootfs $(LINUX_STAMP)
+# This tree's kernel patches (linux_workspace/kernel/patches/*.patch, in name order, patch -p1)
+# go onto a fresh unpack of the tarball, once: the stamp names the set's hash, and a tree that
+# holds another set is unpacked again (docs/agents/linux.md, "Kernel patches")
+LINUX_PATCHES = $(sort $(wildcard linux_workspace/kernel/patches/*.patch))
+LINUX_PATCHED = $(LINUX_DIR)/.vux9k-patched-$(shell cat $(LINUX_PATCHES) /dev/null | sha256sum | cut -c1-16)
+$(LINUX_PATCHED): $(LINUX_STAMP)
+	@if ls $(LINUX_DIR)/.vux9k-patched-* >/dev/null 2>&1; then \
+		echo "$(LINUX_DIR) holds another patch set: unpacking it again"; \
+		rm -rf $(LINUX_DIR) && $(MAKE) --no-print-directory $(LINUX_STAMP); fi
+	for p in $(LINUX_PATCHES); do patch -d $(LINUX_DIR) -p1 --forward --batch < $$p || exit 1; done
+	touch $@
+linux: linux-rootfs $(LINUX_PATCHED)
 	@mkdir -p $(LINUX_OUT)
 	echo 'CONFIG_INITRAMFS_SOURCE="$(CURDIR)/$(LINUX_ROOTFS)"' > $(LINUX_OUT)/initramfs.config
 	$(LINUX_MAKE) rv32_nommu_virt_defconfig

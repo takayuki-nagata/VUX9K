@@ -118,6 +118,36 @@ stage's `linux` does (`fw_common::linux`). Index and the rules that apply everyw
   (`RISCV_PROBE_UNALIGNED_ACCESS`). head.S writes the PMP CSRs behind a temporary trap vector
   that skips them.
 
+## Kernel patches
+
+The kernel is upstream's tarball plus this tree's patches, `linux_workspace/kernel/patches/*.patch`
+(the first: `0001-spi-vux9k-sd.patch`, the SD card's SPI controller, below). Keep them few and
+small, and prefer an upstream driver and binding where one fits (the UART is upstream's liteuart).
+- `make linux` applies them in name order with `patch -p1` onto a fresh unpack, once, behind the
+  stamp `vendor/linux-*/.vux9k-patched-<hash of the set>`. A tree that holds another set (a patch
+  changed, was added or removed) is deleted and unpacked again first: patches are never applied
+  over each other. So edit a patch, not the files in `vendor/linux-*`: an edit there is lost at
+  the next unpack, and CI unpacks every run.
+- Write a patch with `git diff --no-index` between a copy of the upstream files and the changed
+  ones (`a/` and `b/` paths, `-p1`); `scripts/checkpatch.pl --no-tree` on it finds the kernel's
+  style problems (its "Missing Signed-off-by" doesn't apply here).
+- `patch` is a host tool buildroot already requires; CI's container and the remote host have it.
+
+## The SD card
+
+- The SoC's SD port (`0x4000_2000`: data, CS, busy, divider; README's address map) is driven by
+  `spi-vux9k-sd` (`CONFIG_SPI_VUX9K_SD`, the patch above, DT `vux9k,sd-spi` with
+  `clock-frequency`), polled: no interrupt, every register write waits for busy to clear (the
+  port ignores writes while busy, CS and divider ones too). The card on it is upstream's
+  `mmc_spi` (`mmc-spi-slot`), with its data CRC on (`mmc_core.use_spi_crc`'s default).
+- With no card-detect line, mmc_spi polls the card every second (CMD13, `MMC_CAP_NEEDS_POLL`).
+- Both card models (sim/integration/sdcard_protocol.py and the emulator's sdcard.rs) answer
+  what mmc_spi sends: CMD59, CMD9/CMD10, CMD13, ACMD51/ACMD13, CMD18 + CMD12, CMD25 with
+  tokens FC/FD, real CRC16s. Their CSD leaves out the switch (CMD6) and erase classes, so Linux
+  sends neither; it prints "card lacks mandatory switch function, performance might suffer".
+- The card is found after the driver probes, in the background (mmc's rescan work), so it can
+  appear after init has started: whatever uses it at boot waits for `/dev/mmcblk0p1`.
+
 ## Memory budget
 
 What the userland can run is bounded by the **largest free block** of contiguous pages, not by

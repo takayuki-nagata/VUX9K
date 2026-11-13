@@ -21,6 +21,8 @@ COMMANDS = {
     "uname -a": ("Linux (none) 7.3.0",),
     "ls /": ("bin", "dev", "proc", "sbin"),
     "cat /proc/cpuinfo": ("rv32ima",),
+    # The SD card (mmc_spi on spi-vux9k-sd) and its MBR's FAT32 partition
+    "cat /proc/partitions": ("mmcblk0", "mmcblk0p1"),
     # This tree's own program (linux_workspace/userland/memprobe/): the largest free block
     # allocated, with a copy of itself in RAM
     "memprobe": ("memprobe: MemFree ", "), allocated"),

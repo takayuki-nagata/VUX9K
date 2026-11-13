@@ -62,5 +62,25 @@
 			compatible = "litex,liteuart";
 			reg = <0x40000000 0x100>;
 		};
+
+		/*
+		 * The SD card's SPI port (this tree's spi-vux9k-sd, linux_workspace/kernel/patches/):
+		 * polled, SCLK = clock-frequency / (2 * divider), 3 MHz at most. The card is
+		 * mmc_spi's; with no card-detect line it polls the card every second.
+		 */
+		spi@40002000 {
+			compatible = "vux9k,sd-spi";
+			reg = <0x40002000 0x10>;
+			clock-frequency = <18000000>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			mmc@0 {
+				compatible = "mmc-spi-slot";
+				reg = <0>;
+				spi-max-frequency = <3000000>;
+				voltage-ranges = <3300 3300>;
+			};
+		};
 	};
 };

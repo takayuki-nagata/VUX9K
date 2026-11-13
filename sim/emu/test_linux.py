@@ -70,8 +70,16 @@ class Booted:
     how: str  # the boot path, for the measurements' labels
 
 
+def card(image: bytes, dtb: bytes) -> bytes:
+    """The card both boot paths have in the socket (the kernel mounts it): the second stage,
+    and the Image and device tree where its `linux` looks for them."""
+    files = {"VUX9K/STAGE2.BIN": s1_env.stage2(), "VUX9K/LINUX/Image": image, "VUX9K/LINUX/vux9k.dtb": dtb}
+    return vux_tool.build_fat32_image(files, part_sectors=CARD_SECTORS)
+
+
 def boot_direct(image: bytes, dtb: bytes) -> Booted:
     soc = new_soc()
+    soc.sd_insert(card(image, dtb))
     soc.load_linux(image, dtb)
     meter = Meter(soc, MEASURED)
     boot = wait_for(soc, PROMPT, timeout_cycles=BOOT_CYCLES)
@@ -80,8 +88,7 @@ def boot_direct(image: bytes, dtb: bytes) -> Booted:
 
 
 def boot_from_card(image: bytes, dtb: bytes) -> Booted:
-    files = {"VUX9K/STAGE2.BIN": s1_env.stage2(), "VUX9K/LINUX/Image": image, "VUX9K/LINUX/vux9k.dtb": dtb}
-    soc, _ = s1_env.boot_s2(image=vux_tool.build_fat32_image(files, part_sectors=CARD_SECTORS))
+    soc, _ = s1_env.boot_s2(image=card(image, dtb))
     soc.run(50 * UART_BIT)
     mark = len(soc.uart_received())
     meter = Meter(soc, MEASURED)
