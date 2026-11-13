@@ -13,3 +13,6 @@ define UCLIBC_FLOAT_CONFIG
 	$(call KCONFIG_ENABLE_OPT,DO_C99_MATH)
 endef
 endif
+
+# This tree's own packages
+include $(sort $(wildcard $(BR2_EXTERNAL_VUX9K_PATH)/package/*/*.mk))

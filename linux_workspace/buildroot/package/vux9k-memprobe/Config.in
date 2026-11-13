@@ -1,0 +1,6 @@
+config BR2_PACKAGE_VUX9K_MEMPROBE
+	bool "vux9k-memprobe"
+	help
+	  The largest free block of contiguous pages, allocated once
+	  (linux_workspace/userland/memprobe/). VUX9K's noMMU userland
+	  runs an executable only from such a block.

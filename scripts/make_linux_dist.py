@@ -7,7 +7,9 @@
 Apart from `make dist`'s tree, which needs no Linux build: the kernel `make linux` built
 (upstream's arch/riscv/boot/Image with buildroot's busybox initramfs in it, and dtc's
 vux9k.dtb), laid out as they go on the card (VUX9K/LINUX/, where the second stage's
-`linux` finds them by default), and the kernel's .config. MANIFEST.json records the
+`linux` finds them by default), this tree's programs for the card (VUX9K/LINUX/BIN/, from
+buildroot's images/sd/, where its own packages install them: docs/agents/linux.md, "Userland
+packages"), and the kernel's .config. MANIFEST.json records the
 commit, the kernel's and buildroot's versions and each card file's size and sha256 (a
 release's tag message carries the Image's, docs/RELEASING.md); SHA256SUMS covers every
 other file. CI uploads the tree as vux9k-linux-<sha> (docs/agents/linux.md).
@@ -32,6 +34,24 @@ FILES = CARD_FILES | {"linux.config": ".config"}
 # key -> the path under --linux-out (the Image) or --buildroot-out
 SIZES_LINUX = {"image": "arch/riscv/boot/Image"}
 SIZES_BUILDROOT = {"rootfs_cpio": "images/rootfs.cpio", "busybox": "target/bin/busybox"}
+# Under --buildroot-out: the card's tree this repository's buildroot packages install, copied as
+# it is (its paths start with VUX9K/LINUX/BIN/)
+SD_TREE = os.path.join("images", "sd")
+SD_PREFIX = "VUX9K/LINUX/BIN/"
+
+
+def sd_files(buildroot_out: str) -> dict[str, str]:
+    """images/sd/'s files: their path in the tree -> the file; exits on one outside SD_PREFIX."""
+    root = os.path.join(buildroot_out, SD_TREE)
+    files = {}
+    for top, _, names in os.walk(root):
+        for name in names:
+            path = os.path.join(top, name)
+            rel = os.path.relpath(path, root).replace(os.sep, "/")
+            if not rel.startswith(SD_PREFIX):
+                sys.exit(f"make_linux_dist: {path} is not under {SD_PREFIX}")
+            files[rel] = path
+    return dict(sorted(files.items()))
 
 
 def main():
@@ -61,6 +81,13 @@ def main():
         os.makedirs(os.path.dirname(out), exist_ok=True)
         shutil.copyfile(os.path.join(args.linux_out, src), out)
         os.chmod(out, 0o644)
+    bins = sd_files(args.buildroot_out)
+    for dst, src in bins.items():
+        out = os.path.join(args.out, dst)
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        shutil.copyfile(src, out)
+        os.chmod(out, 0o755)
+    card = [*CARD_FILES, *bins]
 
     manifest = {
         "git_sha": git("rev-parse", "HEAD"),
@@ -70,7 +97,7 @@ def main():
         "buildroot_version": args.buildroot_version,
         "card_files": {
             dst: {"size": os.path.getsize(os.path.join(args.out, dst)), "sha256": sha256(os.path.join(args.out, dst))}
-            for dst in CARD_FILES
+            for dst in card
         },
         "sizes": {key: os.path.getsize(path) for key, path in sized.items()},
     }
@@ -78,7 +105,7 @@ def main():
         json.dump(manifest, f, indent=2)
         f.write("\n")
 
-    sums = [f"{sha256(os.path.join(args.out, rel))}  {rel}" for rel in sorted([*FILES, "MANIFEST.json"])]
+    sums = [f"{sha256(os.path.join(args.out, rel))}  {rel}" for rel in sorted([*FILES, *bins, "MANIFEST.json"])]
     with open(os.path.join(args.out, "SHA256SUMS"), "w") as f:
         f.write("\n".join(sums) + "\n")
 

@@ -1,2 +1,2 @@
 name: VUX9K
-desc: The VUX9K noMMU Linux userland (busybox initramfs) and its toolchain
+desc: The VUX9K noMMU Linux userland (busybox initramfs and this tree's programs) and its toolchain

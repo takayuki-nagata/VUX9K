@@ -4,7 +4,8 @@
 """What make linux's kernel must print on the console, shared by its emulator test
 (sim/emu/test_linux.py) and its board test (scripts/hw_linux.py): the lines of its boot to
 busybox's shell, and commands typed at the shell with what each must answer (one of them a
-builtin, the others busybox executed again: FLAT, copied into RAM at each exec)."""
+builtin, the others busybox or this tree's programs executed: FLAT, copied into RAM at each
+exec)."""
 
 PROMPT = "/ # "
 BOOT_LINES = (
@@ -20,6 +21,9 @@ COMMANDS = {
     "uname -a": ("Linux (none) 7.3.0",),
     "ls /": ("bin", "dev", "proc", "sbin"),
     "cat /proc/cpuinfo": ("rv32ima",),
+    # This tree's own program (linux_workspace/userland/memprobe/): the largest free block
+    # allocated, with a copy of itself in RAM
+    "memprobe": ("memprobe: MemFree ", "), allocated"),
 }
 
 

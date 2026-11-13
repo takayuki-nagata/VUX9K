@@ -1,4 +1,6 @@
 # Copyright (c) 2026 Takayuki Nagata
 # SPDX-License-Identifier: MIT
 
-# No packages of our own: the external tree holds only the defconfig and the board's scripts
+# This tree's own programs (docs/agents/linux.md, "Userland packages"); each is also in the
+# Makefile's VUX9K_BR_PACKAGES and enabled in configs/vux9k_nommu_defconfig
+source "$BR2_EXTERNAL_VUX9K_PATH/package/vux9k-memprobe/Config.in"

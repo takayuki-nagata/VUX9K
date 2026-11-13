@@ -41,8 +41,10 @@ stage's `linux` does (`fw_common::linux`). Index and the rules that apply everyw
   these targets is in `test-sim` or `test-slow`. The first buildroot run takes ~40 min on a 2-vCPU
   machine, a kernel rebuild ~6 min.
 - `make linux-dist` (`scripts/make_linux_dist.py`) puts the kernel as it goes on the card into
-  `build/linux-dist/` (`VUX9K/LINUX/Image` and `vux9k.dtb`, the kernel's `linux.config`,
-  `MANIFEST.json` with each card file's size and sha256, `SHA256SUMS`). It is not part of
+  `build/linux-dist/` (`VUX9K/LINUX/Image` and `vux9k.dtb`, this tree's programs for the card in
+  `VUX9K/LINUX/BIN/` ("Userland packages"), the kernel's `linux.config`, `MANIFEST.json` with
+  each card file's size and sha256 and the build's sizes for the memory table, `SHA256SUMS`;
+  `sim/emu/test_make_linux_dist.py`). It is not part of
   `make dist`, which needs no Linux build. CI's job `linux` (beside `test`, so the kernel adds
   nothing to that job's time) runs `make linux-dist test-linux-emu` and on pushes uploads the
   tree as `vux9k-linux-<sha>`. It caches `build/buildroot` under an exact key (the source pins
@@ -136,6 +138,40 @@ paths (`test_linux.py`'s `test_record_measurements`), the board's `hw_linux.py` 
 - A failed allocation of a high order is not a quiet probe: the kernel prints a page allocation
   failure, a stack trace and a dump of its memory to the console (`warn_alloc`). Don't measure the
   largest block by allocating until it fails; read buddyinfo.
+
+## Userland packages
+
+This repository's own programs are buildroot packages of the external tree, one per program
+(the first: `vux9k-memprobe`, which `linux_checks.COMMANDS` runs):
+- The source is in `linux_workspace/userland/<name>/` (with a `Makefile` that builds from
+  buildroot's `CC`/`CFLAGS`/`LDFLAGS`); the package in
+  `linux_workspace/buildroot/package/<pkg>/` (`Config.in` and `<pkg>.mk`: `generic-package`,
+  `SITE_METHOD = local`, `SITE` the userland directory). A new one is also `source`d by the
+  tree's `Config.in`, enabled in `configs/vux9k_nommu_defconfig`, and listed in the Makefile's
+  `VUX9K_BR_PACKAGES` (`external.mk` includes every `package/*/*.mk`).
+- **`make linux-rootfs` runs `<pkg>-rebuild` for each of `VUX9K_BR_PACKAGES`** before the build
+  that writes `rootfs.cpio`: buildroot never rebuilds a package it has built (above), and for a
+  local site `-rebuild` rsyncs the source again. The sources stay outside
+  `linux_workspace/buildroot/`, so changing one leaves CI's exact cache key for
+  `build/buildroot` alone (ci.yml) and costs a rebuild of the package, not of buildroot.
+- **A FLAT executable's stack is fixed at link time** (elf2flt `-s`; nothing grows it). Give
+  each package `<PKG>_FLAT_STACKSIZE` (buildroot passes it to elf2flt, `package/Makefile.in`);
+  `riscv32-buildroot-linux-uclibc-flthdr -p` on the built file shows it.
+- **Mind each program's size**: it is linked statically, copied whole at each exec, and in the
+  initramfs it is RAM for good. uClibc's stdio pulled in by `printf`/`sscanf` made memprobe
+  120 KB; with `read`/`write` and its own number parsing it is 71 KB (2026-11), so even a
+  program without stdio costs tens of KB in the initramfs.
+- **Install into the initramfs, the card, or both.** `INSTALL_TARGET_CMDS` puts the program in
+  the initramfs (every byte there is RAM for good: the memory table shows it). For the card,
+  `INSTALL_IMAGES_CMDS` installs it into buildroot's `images/sd/VUX9K/LINUX/BIN/`, which `make
+  linux-dist` copies as it is into its tree (with each file's size and sha256 in
+  `MANIFEST.json`'s `card_files`, and `SHA256SUMS`): the card's programs go with the kernel
+  (`vux9k-linux-<sha>`, a release's kernel archive), not in `make dist`, which builds no Linux.
+  `make_linux_dist.py` refuses anything in `images/sd/` outside `VUX9K/LINUX/BIN/`. Nothing
+  runs a program from the card yet (the kernel has no driver for the card yet): `hw_linux.py` puts
+  only the Image and the device tree, and `memprobe` runs from the initramfs. Artifacts lose the
+  files' modes (`upload-artifact` zips), which a FAT card doesn't keep anyway. Removing a
+  package does not remove what it installed there or in `target/`: clean `build/buildroot` then.
 
 ## Speed (2026-11-01, emulator; 2026-11-11, the board)
 

@@ -424,8 +424,13 @@ BUILDROOT_OUT = $(BUILD_DIR)/buildroot
 BUILDROOT_MAKE = FORCE_UNSAFE_CONFIGURE=1 $(MAKE) -C $(BUILDROOT_DIR) O=$(CURDIR)/$(BUILDROOT_OUT) \
 	BR2_EXTERNAL=$(CURDIR)/linux_workspace/buildroot BR2_DL_DIR=$(CURDIR)/$(BUILD_DIR)/downloads/buildroot
 LINUX_ROOTFS = $(BUILDROOT_OUT)/images/rootfs.cpio
+# This tree's own packages (linux_workspace/buildroot/package/), rebuilt from their sources in
+# linux_workspace/userland/ on every run: buildroot keeps a package it has built, and those
+# sources are outside CI's cache key for build/buildroot (docs/agents/linux.md, "Userland packages")
+VUX9K_BR_PACKAGES = vux9k-memprobe
 linux-rootfs: $(BUILDROOT_STAMP)
 	$(BUILDROOT_MAKE) vux9k_nommu_defconfig
+	$(BUILDROOT_MAKE) $(addsuffix -rebuild,$(VUX9K_BR_PACKAGES))
 	$(BUILDROOT_MAKE)
 
 # The kernel from vendor/linux-*, built with that toolchain: rv32_nommu_virt_defconfig with
