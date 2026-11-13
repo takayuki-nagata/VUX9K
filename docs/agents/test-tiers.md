@@ -124,7 +124,9 @@ clock-and-board.md, "Board UART output that is noise: ModemManager and the bridg
   `HW_LINUX_FLAGS=--keep-card` boots the files already there), then `pack.fs` loaded into SRAM,
   the first stage booting the second, whose `linux` starts the kernel; the boot lines and
   commands of `sim/integration/linux_checks.py` (the emulator's `test_linux.py` checks the same),
-  `[TIME]` lines from the load to the shell's prompt, and `pack.fs` loaded again at the end.
+  `[TIME]` lines from the load to the shell's prompt, `[MEM]` lines with the memory table read
+  right after the boot (`linux_checks.MEM_PROBES`; linux.md, "Memory budget"), and `pack.fs`
+  loaded again at the end.
   `make test-linux-emu` runs the script against the emulator's CLI at full speed
   (`test_board_script_on_the_emulator`).
 - `make test-hw-upgrade DIST=<dir>` (`scripts/test_hw_upgrade.py`; `make prev-release` fetches

@@ -116,6 +116,27 @@ stage's `linux` does (`fw_common::linux`). Index and the rules that apply everyw
   (`RISCV_PROBE_UNALIGNED_ACCESS`). head.S writes the PMP CSRs behind a temporary trap vector
   that skips them.
 
+## Memory budget
+
+What the userland can run is bounded by the **largest free block** of contiguous pages, not by
+MemFree: an exec copies the whole FLAT executable into one block (above). So every stage that
+changes the kernel or the initramfs records this table, from `sim/integration/linux_checks.py`
+(`memory`): the Image's, the initramfs' (`rootfs.cpio`) and busybox's sizes (make linux-dist's
+`MANIFEST.json`, `sizes`), MemTotal and MemFree, the largest free block with its order, and the
+free blocks of order 6 and up (`/proc/buddyinfo`). `make test-linux-emu` prints it for both boot
+paths (`test_linux.py`'s `test_record_measurements`), the board's `hw_linux.py` as `[MEM]` lines.
+- It is read right after the boot with the shell's builtins only (`MEM_PROBES`: hush's `exec`,
+  `read` and `echo` over `/proc/meminfo` and `/proc/buddyinfo`). `cat` would exec busybox and
+  measure memory with a copy of it in RAM. busybox has no `free`.
+- **This hush drops a loop's redirection after the first pass**: `while read l; do echo $l;
+  done < FILE` prints the file's first line, then its `read` waits on the console (a regular
+  file in the initramfs as much as `/proc`; the lines typed next come out twice, echoed and
+  then by the loop). Open the file on a descriptor and redirect each `read` instead:
+  `exec 3<FILE; while read l <&3; ...; done; exec 3<&-`.
+- A failed allocation of a high order is not a quiet probe: the kernel prints a page allocation
+  failure, a stack trace and a dump of its memory to the console (`warn_alloc`). Don't measure the
+  largest block by allocating until it fails; read buddyinfo.
+
 ## Speed (2026-11-01, emulator; 2026-11-11, the board)
 
 On the board (`make test-hw-linux-dist`, 1c8d685, three runs): the second stage's `linux` to

@@ -16,6 +16,7 @@ for each command are printed by test_record_measurements. The board's test is sc
 (make test-hw-linux), which test_board_script_on_the_emulator runs here against the CLI.
 """
 
+import json
 import os
 import socket
 import subprocess
@@ -58,6 +59,8 @@ LOAD_CYCLES = 3_000_000_000
 CARD_SECTORS = 16384
 
 MEASURED: dict[str, tuple[int, int, dict[str, int]]] = {}
+# The memory table of each boot path (linux_checks.memory), read right after the boot
+MEMORY: dict[str, dict[str, str]] = {}
 
 
 @dataclass
@@ -121,6 +124,22 @@ def test_boot_banner(linux):
     assert not linux_checks.missing(linux.boot, linux_checks.BOOT_LINES), linux.boot[-2000:]
 
 
+def build_sizes() -> dict[str, int]:
+    """The Image's, the initramfs' and busybox's sizes in make linux-dist's MANIFEST.json."""
+    try:
+        with open(os.path.join(LINUX_DIST, "MANIFEST.json")) as f:
+            return json.load(f).get("sizes", {})
+    except FileNotFoundError:
+        return {}
+
+
+def test_memory(linux):
+    """The memory the userland has after the boot, read with the shell's builtins (no exec):
+    recorded for test_record_measurements, not held to a budget here."""
+    meminfo, buddyinfo = (command(linux, line) for line in linux_checks.MEM_PROBES)
+    MEMORY[linux.how] = linux_checks.memory(meminfo, buddyinfo, build_sizes())
+
+
 @pytest.mark.parametrize("line", list(linux_checks.COMMANDS))
 def test_command(linux, line):
     out = command(linux, line)
@@ -181,7 +200,7 @@ def test_board_script_on_the_emulator(tmp_path):
 
 def test_record_measurements(record_property, capsys):
     """Asserts nothing about speed: prints what the tests above measured (run last)."""
-    if not MEASURED:
+    if not MEASURED and not MEMORY:
         pytest.skip("nothing measured")
     with capsys.disabled():
         print(f"\nnoMMU Linux on the emulator (18 MHz: {CLK_HZ:,} cycles a second)")
@@ -193,3 +212,8 @@ def test_record_measurements(record_property, capsys):
                 f"  CPI {cpi:.1f}  {hit_rates(stats)}"
             )
             record_property(label, f"{cycles} cycles, {instret} instret, {hit_rates(stats)}")
+        for how, rows in MEMORY.items():
+            print(f"\nnoMMU Linux memory after the boot ({how})")
+            for name, value in rows.items():
+                print(f"  {name:<28} {value}")
+                record_property(f"{how}: memory: {name}", value)

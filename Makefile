@@ -459,7 +459,7 @@ linux: linux-rootfs $(LINUX_STAMP)
 # test-hw-linux takes (LINUX=) and a release attaches
 LINUX_DIST = $(BUILD_DIR)/linux-dist
 linux-dist: linux
-	$(PYTHON) scripts/make_linux_dist.py --linux-out $(LINUX_OUT) --out $(LINUX_DIST) \
+	$(PYTHON) scripts/make_linux_dist.py --linux-out $(LINUX_OUT) --buildroot-out $(BUILDROOT_OUT) --out $(LINUX_DIST) \
 		--linux-version $(LINUX_VERSION) --buildroot-version $(BUILDROOT_VERSION)
 
 # The previous release's archive, as GitHub publishes it, for the upgrade tests from it

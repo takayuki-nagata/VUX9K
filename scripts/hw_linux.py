@@ -9,10 +9,11 @@ busybox's shell, timed from the bitstream's load: its Image and vux9k.dtb put on
 --keep-card uses those already there), then pack.fs loaded into the FPGA's SRAM, the first
 stage booting the card's second stage by itself, whose `linux` loads both files and starts
 the kernel. The console must show sim/integration/linux_checks.py's boot lines and answer its
-commands, as on the emulator (sim/emu/test_linux.py). Linux never returns to the first stage,
-so pack.fs is loaded once more at the end (not openFPGALoader --reset, which loads the
-flash's bitstream). [TIME] lines give the wall-clock seconds: the put, the load to the
-second stage's prompt, `linux` to its [LINUX] line (reading the card), [LINUX] to the
+commands, as on the emulator (sim/emu/test_linux.py); right after the boot the shell's builtins
+read /proc/meminfo and /proc/buddyinfo, and [MEM] lines give linux_checks' memory table.
+Linux never returns to the first stage, so pack.fs is loaded once more at the end (not
+openFPGALoader --reset, which loads the flash's bitstream). [TIME] lines give the wall-clock
+seconds: the put, the load to the second stage's prompt, `linux` to its [LINUX] line (reading the card), [LINUX] to the
 shell's prompt (the kernel's boot), the bitstream's load to that prompt, and each command.
 With --dist the bitstream comes from a `make dist` tree. Against the emulator
 (--port socket://...) there is no bitstream to load: the times start when the port opens.
@@ -94,9 +95,21 @@ def banner(image: bytes) -> str | None:
     return m.group().decode() if m else None
 
 
-def boot(ser, t0: float, image: bytes, dtb: bytes, times: dict[str, float]) -> list[str]:
+def run_command(ser, cmd: str) -> str | None:
+    """One command typed at the shell: what follows its echo up to the next prompt, None
+    without the echo."""
+    send_line(ser, cmd)
+    # The echo, the reply and the next prompt can come in one read: read to the prompt
+    out = read_until(ser, linux_checks.PROMPT, COMMAND_TIMEOUT)
+    at = out.find(cmd)
+    return None if at < 0 else out[at + len(cmd) :]
+
+
+def boot(
+    ser, t0: float, image: bytes, dtb: bytes, times: dict[str, float], sizes: dict[str, int], mem: dict[str, str]
+) -> list[str]:
     """From the first stage's own boot of the second stage (started at t0) to the shell's
-    prompt, then the commands; returns the failures."""
+    prompt, then the memory table (into mem) and the commands; returns the failures."""
     failures = []
     got, text = vux_tool.read_until(ser, (vux_tool.S2_PROMPT,), S2_PROMPT_WAIT)
     if not got:
@@ -124,27 +137,30 @@ def boot(ser, t0: float, image: bytes, dtb: bytes, times: dict[str, float]) -> l
     if version is None or version not in console:
         failures.append(f"not the tree's kernel: the console lacks its {version or 'Linux version'!r} line")
     print(console.rstrip())
+    probes = [run_command(ser, cmd) for cmd in linux_checks.MEM_PROBES]
+    try:
+        if None in probes:
+            raise ValueError("no echo of a probe")
+        mem.update(linux_checks.memory(probes[0] or "", probes[1] or "", sizes))
+    except ValueError as e:
+        failures.append(f"memory: {e}: {probes!r}"[:600])
     for cmd, wanted in linux_checks.COMMANDS.items():
         t = time.monotonic()
-        send_line(ser, cmd)
-        # The echo, the reply and the next prompt can come in one read: read to the prompt
-        out = read_until(ser, linux_checks.PROMPT, COMMAND_TIMEOUT)
+        reply = run_command(ser, cmd)
         times[f"command: {cmd}"] = time.monotonic() - t
-        at = out.find(cmd)
-        if at < 0:
-            failures.append(f"{cmd}: no echo in {out!r}")
+        if reply is None:
+            failures.append(f"{cmd}: no echo")
             continue
-        reply = out[at + len(cmd) :]
-        print(out[at:].rstrip())
+        print((cmd + reply).rstrip())
         lost = linux_checks.missing(reply, wanted)
         if lost:
             failures.append(f"{cmd}: missing {lost}")
     return failures
 
 
-def card_files(linux_dir: str) -> tuple[bytes, bytes]:
+def card_files(linux_dir: str) -> tuple[bytes, bytes, dict[str, int]]:
     """The Image and the device tree of a make linux-dist tree, checked against its
-    MANIFEST.json."""
+    MANIFEST.json, and the build's sizes it records (for the memory table)."""
     with open(os.path.join(linux_dir, "MANIFEST.json")) as f:
         manifest = json.load(f)
     datas = []
@@ -155,7 +171,7 @@ def card_files(linux_dir: str) -> tuple[bytes, bytes]:
             sys.exit(f"hw_linux: {rel} is not the size its MANIFEST.json gives")
         datas.append(data)
     print(f"[INFO] kernel: {manifest['git_describe']}, Linux {manifest['linux_version']}")
-    return datas[0], datas[1]
+    return datas[0], datas[1], manifest.get("sizes", {})
 
 
 def parse_args(argv=None):
@@ -181,7 +197,7 @@ def pack_fs_of(args) -> str:
 
 def main(argv=None):
     args = parse_args(argv)
-    image, dtb = card_files(args.linux)
+    image, dtb, sizes = card_files(args.linux)
     emulator = str(args.port).startswith("socket://")
     pack_fs = pack_fs_of(args)
     loader = None if emulator else find_loader(args.loader)
@@ -208,6 +224,7 @@ def main(argv=None):
             print(f"[FAIL] {mm_hint}")
             return 1
     times: dict[str, float] = {}
+    mem: dict[str, str] = {}
     failures = []
     t0 = time.monotonic()
     try:
@@ -224,7 +241,7 @@ def main(argv=None):
                 t0 = time.monotonic()
         if not emulator:
             ser, t0 = load(ser)
-        failures = boot(ser, t0, image, dtb, times)
+        failures = boot(ser, t0, image, dtb, times, sizes, mem)
     except Exception as e:  # the port gone too: the bitstream is still loaded and the times printed
         hint = vux_tool.garbled_hint(str(e))
         failures.append(f"{type(e).__name__}: {e}" + (f"\n       -> {hint}" if hint else ""))
@@ -241,6 +258,8 @@ def main(argv=None):
                 print(f"[WARN] {err}: the board stays in Linux until the bitstream is loaded")
     for label, secs in times.items():
         print(f"[TIME] {label}: {secs:.1f} s")
+    for name, value in mem.items():
+        print(f"[MEM] {name}: {value}")
     for f in failures:
         print(f"[FAIL] {f}")
     print("Linux on the board: " + ("FAILED" if failures else "PASSED"))

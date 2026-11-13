@@ -131,7 +131,7 @@ def linux_tree(tmp_path, image_size: int):
     (tree / "VUX9K" / "LINUX" / "Image").write_bytes(b"I" * 64)
     (tree / "VUX9K" / "LINUX" / "vux9k.dtb").write_bytes(b"D" * 8)
     files = {"VUX9K/LINUX/Image": {"size": image_size}, "VUX9K/LINUX/vux9k.dtb": {"size": 8}}
-    manifest = {"git_describe": "test", "linux_version": "7.3", "card_files": files}
+    manifest = {"git_describe": "test", "linux_version": "7.3", "card_files": files, "sizes": {"image": 64}}
     (tree / "MANIFEST.json").write_text(json.dumps(manifest))
     return str(tree)
 
@@ -148,7 +148,7 @@ def test_linux_script_files(tmp_path):
     assert pack_fs("--dist", "D", "--pack-fs", "P") == "P"
     assert pack_fs("--dist", "D") == os.path.join("D", "bitstream", "pack.fs")
     assert pack_fs() == os.path.join(REPO_ROOT, "build", "synth", "pack.fs")
-    assert hw_linux.card_files(linux_tree(tmp_path, 64)) == (b"I" * 64, b"D" * 8)
+    assert hw_linux.card_files(linux_tree(tmp_path, 64)) == (b"I" * 64, b"D" * 8, {"image": 64})
     with pytest.raises(SystemExit):
         hw_linux.card_files(linux_tree(tmp_path / "bad", 65))
 
@@ -181,9 +181,10 @@ class ShellPort:
 
 
 def test_linux_script_reports_what_the_board_got_wrong():
-    """hw_linux.boot on a scripted console: the good one passes; a boot line missing, the
-    console's `Linux version` line not the Image's (another build of the same size on the
-    card), the files' sizes not the tree's, a command's reply missing each fail."""
+    """hw_linux.boot on a scripted console: the good one passes and fills the memory table; a
+    boot line missing, the console's `Linux version` line not the Image's (another build of
+    the same size on the card), the files' sizes not the tree's, a command's reply missing,
+    the memory probes' output missing each fail."""
     import hw_linux
     import linux_checks
 
@@ -193,11 +194,18 @@ def test_linux_script_reports_what_the_board_got_wrong():
     good_line = f"[LINUX] Image {len(image)} B, DTB {len(dtb)} B, starting at 0x80000000"
     console = f"[    0.000000] {version}\r\n" + "".join(f"{ln}\r\n" for ln in linux_checks.BOOT_LINES)
     replies = {cmd: " ".join(want) + "\r\n" for cmd, want in linux_checks.COMMANDS.items()}
+    meminfo, buddyinfo = linux_checks.MEM_PROBES
+    replies |= {meminfo: "MemTotal: 7960 kB\r\nMemFree: 3912 kB\r\n", buddyinfo: "Node 0, zone Normal 1 0 1\r\n"}
+    mem: dict[str, str] = {}
 
     def failures(linux_line=good_line, console=console, replies=replies):
-        return hw_linux.boot(ShellPort(linux_line, console, replies), 0.0, image, dtb, {})
+        mem.clear()
+        return hw_linux.boot(ShellPort(linux_line, console, replies), 0.0, image, dtb, {}, {"image": 64}, mem)
 
     assert failures() == []
+    assert mem["Image"] == "64 B" and mem["MemFree"] == "3,912 kB" and mem["largest free block"] == "16 kB (order 2)"
+    got = failures(replies=replies | {buddyinfo: ""})
+    assert len(got) == 1 and got[0].startswith("memory: the probes' output lacks buddyinfo"), got
     got = failures(console=console.replace("hush - the humble shell", "hush"))
     assert len(got) == 1 and "boot lines missing" in got[0], got
     got = failures(console=console.replace("#28 ", "#27 "))

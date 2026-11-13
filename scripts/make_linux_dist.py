@@ -28,20 +28,31 @@ CARD_FILES = {
     "VUX9K/LINUX/vux9k.dtb": "vux9k.dtb",
 }
 FILES = CARD_FILES | {"linux.config": ".config"}
+# The sizes MANIFEST.json records for the memory table (sim/integration/linux_checks.py): its
+# key -> the path under --linux-out (the Image) or --buildroot-out
+SIZES_LINUX = {"image": "arch/riscv/boot/Image"}
+SIZES_BUILDROOT = {"rootfs_cpio": "images/rootfs.cpio", "busybox": "target/bin/busybox"}
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--linux-out", default=os.path.join(REPO_ROOT, "build", "linux"), help="make linux's output")
+    p.add_argument(
+        "--buildroot-out", default=os.path.join(REPO_ROOT, "build", "buildroot"), help="make linux-rootfs's output"
+    )
     p.add_argument("--out", default=os.path.join(REPO_ROOT, "build", "linux-dist"))
     p.add_argument("--linux-version", required=True)
     p.add_argument("--buildroot-version", required=True)
     args = p.parse_args()
 
-    missing = [src for src in FILES.values() if not os.path.isfile(os.path.join(args.linux_out, src))]
+    sized = {key: os.path.join(args.linux_out, src) for key, src in SIZES_LINUX.items()} | {
+        key: os.path.join(args.buildroot_out, src) for key, src in SIZES_BUILDROOT.items()
+    }
+    inputs = [os.path.join(args.linux_out, src) for src in FILES.values()] + list(sized.values())
+    missing = [path for path in inputs if not os.path.isfile(path)]
     if missing:
         listed = "\n  ".join(missing)
-        sys.exit(f"make_linux_dist: missing in {args.linux_out} (run `make linux-dist`):\n  {listed}")
+        sys.exit(f"make_linux_dist: missing (run `make linux-dist`):\n  {listed}")
 
     if os.path.exists(args.out):
         shutil.rmtree(args.out)
@@ -61,6 +72,7 @@ def main():
             dst: {"size": os.path.getsize(os.path.join(args.out, dst)), "sha256": sha256(os.path.join(args.out, dst))}
             for dst in CARD_FILES
         },
+        "sizes": {key: os.path.getsize(path) for key, path in sized.items()},
     }
     with open(os.path.join(args.out, "MANIFEST.json"), "w") as f:
         json.dump(manifest, f, indent=2)
