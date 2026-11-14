@@ -84,8 +84,8 @@ upstream `Image` and its device tree unchanged (by default `\VUX9K\LINUX\Image` 
 a release attaches it as `vux9k-<tag>-kernel.tar.gz`: copy its `VUX9K/LINUX/` to the card (or
 `put` its files there: the two, and its programs in `VUX9K/LINUX/BIN/`). The kernel mounts the
 card's partition on `/mnt/sd` (read and write; sync or umount before power goes) and runs
-programs from `/mnt/sd/VUX9K/LINUX/BIN/`, which is on the shell's `PATH`. On the board the second stage reads the 3.2 MB Image in ~13 s and
-the kernel reaches busybox's shell ~12 s later.
+programs from `/mnt/sd/VUX9K/LINUX/BIN/`, which is on the shell's `PATH`. On the board the second stage reads the 3.7 MB Image in ~15 s and
+the kernel reaches busybox's shell ~13 s later.
 `sd/VUX9K/APPS/` holds the demos as v4 files for the card; copy the directory to
 `\VUX9K\APPS\` (or `put` them there; `put` needs the directory, which `mkdir` makes, at the
 prompt or as `vux_tool.py mkdir VUX9K/APPS`) and start one with `run`:

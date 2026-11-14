@@ -269,7 +269,16 @@ This repository's own programs are buildroot packages of the external tree, one 
   files' modes (`upload-artifact` zips), which a FAT card doesn't keep anyway. Removing a
   package does not remove what it installed there or in `target/`: clean `build/buildroot` then.
 
-## Speed (2026-11-01, emulator; 2026-11-11, the board)
+## Speed (2026-11-01, emulator; 2026-11-11 and 2026-11-14, the board)
+
+With the SD card (2026-11-14, the board, 1bc6b3b's kernel, a 128 GB SDXC card): `linux` to
+`[LINUX]` (the 3.7 MB Image) 14.9 s, `[LINUX]` to the prompt 12.7 s (the emulator: 10.6 s; init
+waits for the real card's partition longer), the bitstream's load to the prompt 28.6 s. On the
+card: a 256 KB `dd` 15.1 s (the emulator 14.0 s), a write and `sync` 1.4 s, but the first exec
+of memprobe from it 9.6 s and the first `ls /mnt/sd/VUX9K` 3.2 s (the emulator 3.3 s and 0.9 s):
+a real card answers a read only after a wait (N(AC) bytes of FF), and mmc_spi searches for the
+data token one byte per SPI message, so small reads (FAT, directories, a cold exec) pay for
+the SPI core's per-message cost far more than on the emulator's card, which answers at once.
 
 On the board (`make test-hw-linux-dist`, 1c8d685, three runs): the second stage's `linux` to
 its `[LINUX]` line (reading the 3.2 MB Image) 13.1 s, `[LINUX]` to busybox's prompt

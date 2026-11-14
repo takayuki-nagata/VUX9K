@@ -345,8 +345,8 @@ M-mode with `a0` = 0 (the hart), `a1` = `0x807F_0000` (the device tree), `a2` = 
 emulator's `--linux` starts a kernel. The UART's `EV_ENABLE` stays 0, as neither stage
 writes it: the kernel's liteuart driver polls. The kernel then has all of the PSRAM, the
 stages' memory included; only Button S1 (the board's reset) brings the first stage back.
-On the board (`make test-hw-linux`, 2026-11-11) the 3.2 MB Image loads in ~13 s and the
-kernel reaches busybox's shell ~12 s later: ~26 s from the bitstream's load. The kernel drives
+On the board (`make test-hw-linux`, 2026-11-14) the 3.7 MB Image loads in ~15 s and the
+kernel reaches busybox's shell ~13 s later: ~29 s from the bitstream's load. The kernel drives
 the SD card itself (upstream `mmc_spi` on this tree's driver for the SPI master, polled) and
 mounts its FAT32 partition on `/mnt/sd`, read and write; the stages read what it writes.
 
