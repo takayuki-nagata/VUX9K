@@ -165,6 +165,9 @@ def boot(
     for cmd in linux_checks.CARD_CLEANUP:
         if run_command(ser, cmd) is None:
             failures.append(f"{cmd}: no echo")
+    mounts = run_command(ser, linux_checks.MOUNTS_PROBE)
+    if mounts is None or linux_checks.CARD_MOUNTED in mounts:
+        failures.append(f"the card is still mounted after {linux_checks.CARD_CLEANUP[-1]!r}: {mounts!r}"[:600])
     return failures
 
 

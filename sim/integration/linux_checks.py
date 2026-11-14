@@ -9,7 +9,7 @@ exec)."""
 
 PROMPT = "/ # "
 # A file the commands write on the card
-SD_TEST_FILE = "/mnt/sd/VUX9K/U1TEST.TXT"
+SD_TEST_FILE = "/mnt/sd/VUX9K/SDTEST.TXT"
 BOOT_LINES = (
     "Linux version 7.3",
     "clint: clint@20000000: timer running at 18000000 Hz",
@@ -43,9 +43,15 @@ COMMANDS = {
     # The card's read speed (the command's time): 256 KB from the start of the card
     "dd if=/dev/mmcblk0 of=/dev/null bs=4096 count=64": ("64+0 records in",),
 }
-# What the board's test removes from its card after COMMANDS (the emulator's card is thrown
-# away: sim/emu/test_linux.py checks it with the first and second stage after an umount)
-CARD_CLEANUP = (f"rm {SD_TEST_FILE}; sync",)
+# What the board's test does to its card after COMMANDS: the file removed and the card
+# unmounted, so the FAT's dirty bit is clear when the bitstream is loaded again (the emulator's
+# card is thrown away: sim/emu/test_linux.py checks it with the first and second stage after an
+# umount)
+CARD_CLEANUP = (f"rm {SD_TEST_FILE}; sync", "umount /mnt/sd")
+# The mount table, read with the shell's builtins (umount's own exec can fail with only the
+# kernel's report on the console); the card is unmounted when its output lacks CARD_MOUNTED
+MOUNTS_PROBE = "exec 3</proc/mounts; while read l <&3; do echo $l; done; exec 3<&-"
+CARD_MOUNTED = " /mnt/sd "
 
 
 def missing(out: str, wanted) -> list[str]:

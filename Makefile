@@ -451,7 +451,8 @@ $(LINUX_PATCHED): $(LINUX_STAMP)
 	@if ls $(LINUX_DIR)/.vux9k-patched-* >/dev/null 2>&1; then \
 		echo "$(LINUX_DIR) holds another patch set: unpacking it again"; \
 		rm -rf $(LINUX_DIR) && $(MAKE) --no-print-directory $(LINUX_STAMP); fi
-	for p in $(LINUX_PATCHES); do patch -d $(LINUX_DIR) -p1 --forward --batch < $$p || exit 1; done
+	for p in $(LINUX_PATCHES); do patch -d $(LINUX_DIR) -p1 --forward --batch < $$p || \
+		{ echo "$$p failed: $(LINUX_DIR) removed, as it holds part of the set"; rm -rf $(LINUX_DIR); exit 1; }; done
 	touch $@
 linux: linux-rootfs $(LINUX_PATCHED)
 	@mkdir -p $(LINUX_OUT)

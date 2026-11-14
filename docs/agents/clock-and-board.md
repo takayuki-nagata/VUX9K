@@ -37,7 +37,9 @@ eqy can't see this (zero-delay models, and both sides of eqy come from Yosys). S
   assert holds to `TICKS_PER_MS`; its delays and `fw_drivers::sdcard`'s 10 us CS delay follow
   `map::TICKS_PER_*`), the first stage's banner, Zephyr
   (`timebase-frequency`/`clock-frequency` in `vux9k-common.dtsi`,
-  `SYS_CLOCK_HW_CYCLES_PER_SEC`), and the test constants (`tb_soc_top.sv`'s half period,
+  `SYS_CLOCK_HW_CYCLES_PER_SEC`), the Linux device tree (`linux_workspace/dts/vux9k.dts`:
+  `timebase-frequency`, the SD port's `clock-frequency`) and `linux_checks.BOOT_LINES`' CLINT
+  line, and the test constants (`tb_soc_top.sv`'s half period,
   `soc_env.py`, `virtual_serial.py`, `lockstep_programs.UART_BIT`, `sim/emu/vux9k.py`,
   `test_sdcard_spi.CLK_DIV_HALF`, `test_sd_transcripts.SLOW_HZ`/`FAST_HZ`, `test_psram_contract.CLK_HZ`,
   the tests' waits for `stage1`'s `AUTOBOOT_MS` window in cycles), and the docs' Python example

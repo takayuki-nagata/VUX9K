@@ -178,10 +178,9 @@ def test_card_after_linux(linux, tmp_path):
     Linux's vfat share the card."""
     out = command(linux, "umount /mnt/sd")
     assert "umount:" not in out, out
-    # Unmounted indeed (umount's own exec can fail and print only the kernel's report): the
-    # mount table read with the shell's builtins
-    mounts = command(linux, "exec 3</proc/mounts; while read l <&3; do echo $l; done; exec 3<&-")
-    assert "/proc proc" in mounts and " /mnt/sd " not in mounts, mounts
+    # Unmounted indeed (linux_checks.MOUNTS_PROBE)
+    mounts = command(linux, linux_checks.MOUNTS_PROBE)
+    assert "/proc proc" in mounts and linux_checks.CARD_MOUNTED not in mounts, mounts
     image = linux.soc.sd_image()
     if shutil.which("fsck.fat"):
         path = tmp_path / "card.img"

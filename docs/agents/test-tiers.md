@@ -125,7 +125,7 @@ clock-and-board.md, "Board UART output that is noise: ModemManager and the bridg
   there), then `pack.fs` loaded into SRAM, the first stage booting the second, whose `linux`
   starts the kernel; the boot lines and commands of `sim/integration/linux_checks.py` (the
   emulator's `test_linux.py` checks the same; the kernel mounts the card, runs a program from
-  it, writes `\VUX9K\U1TEST.TXT` and reads it back, and `CARD_CLEANUP` removes it),
+  it, writes `\VUX9K\SDTEST.TXT` and reads it back, and `CARD_CLEANUP` removes it and unmounts the card),
   `[TIME]` lines from the load to the shell's prompt, `[MEM]` lines with the memory table read
   right after the boot (`linux_checks.MEM_PROBES`; linux.md, "Memory budget"), and `pack.fs`
   loaded again at the end.

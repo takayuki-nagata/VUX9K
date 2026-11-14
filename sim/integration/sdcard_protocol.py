@@ -25,7 +25,10 @@ Answers (the model's behavior, not a full SD implementation):
 - CMD18 FF 00, then one block after the other from consecutive sectors, while the card
   keeps reading MOSI: CMD12 stops it (FF 00 after it: a stuff byte, R1); another command
   stops it and is answered as usual. CS going high pauses it (MISO FF, nothing sent)
-  without ending it: Linux's mmc_spi raises CS after each block it reads.
+  without ending it: Linux's mmc_spi raises CS after each block it reads. (sdcard_model.py
+  asks begin_byte for a byte's MISO before that byte's CS is known, so on the RTL the first
+  byte after CS falls again in a stream is an FF the Rust card doesn't send; nothing is lost,
+  and no RTL test reads with CMD18.)
 - CMD24 FF 00, then data token FE, 512 bytes + 2 CRC; data response 05 and a busy
   byte 3F. The card then listens for a new command only after CS has gone high.
   CMD25 FF 00, then blocks with token FC, each answered 05 3F, until the stop token FD

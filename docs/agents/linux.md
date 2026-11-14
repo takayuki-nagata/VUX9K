@@ -12,6 +12,11 @@ paths:
   - "emu/crates/vux9k_emu/src/periph/clint.rs"
   - "emu/crates/vux9k_emu/src/periph/uart.rs"
   - "emu/crates/vux9k_emu/tests/linux.rs"
+  - "emu/crates/vux9k_emu/src/sdcard.rs"
+  - "emu/crates/vux9k_emu/src/periph/sdspi.rs"
+  - "sim/integration/sdcard_protocol.py"
+  - "sim/emu/test_sd_transcripts.py"
+  - "soc/sdcard_spi.veryl"
 ---
 
 # noMMU Linux (linux_workspace/, the kernel on the emulator)
@@ -131,7 +136,7 @@ small, and prefer an upstream driver and binding where one fits (the UART is ups
 - Write a patch with `git diff --no-index` between a copy of the upstream files and the changed
   ones (`a/` and `b/` paths, `-p1`); `scripts/checkpatch.pl --no-tree` on it finds the kernel's
   style problems (its "Missing Signed-off-by" doesn't apply here).
-- `patch` is a host tool buildroot already requires; CI's container and the remote host have it.
+- `patch` is a host tool buildroot already requires, so any machine that builds the userland has it.
 
 ## The SD card
 
@@ -201,7 +206,7 @@ exec needed. Init does without exec what the inittab and buildroot's `/init` scr
 - SIGTERM, SIGUSR1 and SIGUSR2 (what busybox's `reboot`, `halt` and `poweroff` send to process 1
   when it isn't busybox init): sync, umount the card, `reboot(2)`.
 No inittab any more (`board/post-build.sh` removes it): a process that should run beside the
-shell (U2's monitor daemon) is started, and restarted, by init.
+shell (a daemon) is started, and restarted, by init.
 
 ## Memory budget
 
