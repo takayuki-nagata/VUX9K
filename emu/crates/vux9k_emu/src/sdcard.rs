@@ -17,8 +17,9 @@
 //!   is version 2 with the capacity of the image (`csd`); its command classes leave
 //!   out switch (CMD6) and erase.
 //! - CMD18 FF 00, then one block after the other, from consecutive sectors, while the
-//!   card keeps reading MOSI: CMD12 stops it (FF 00 after it: a stuff byte, R1). CS
-//!   going high stops it too, dropping the rest of the block.
+//!   card keeps reading MOSI: CMD12 stops it (FF 00 after it: a stuff byte, R1); another
+//!   command stops it and is answered as usual. CS going high pauses it (MISO FF, nothing
+//!   sent) without ending it: Linux's mmc_spi raises CS after each block it reads.
 //! - CMD24 FF 00, then data token FE, 512 bytes and 2 CRC bytes; data response 05 and a
 //!   busy byte 3F. After that the card listens for a new command only once CS has
 //!   gone high (the Python model loses byte alignment there until CS rises).
@@ -28,8 +29,8 @@
 //!   refused (data response 0B), and strict mode records a command whose CRC7 is wrong.
 //! - Faults (`Faults`): unanswered commands, ACMD41 never ready, CMD17/CMD18 error token
 //!   (always or for given sectors; CMD18 then stops), CMD24/CMD25 data rejected.
-//! - Answers are sent whatever CS does; a partial command, a wait for a data token or
-//!   a partial data block is dropped when CS goes high.
+//! - Answers are sent whatever CS does (but during CMD18); a partial command, a wait for
+//!   a data token or a partial data block is dropped when CS goes high.
 //!
 //! Addressing (CMD17/CMD24): by default forgiving, `arg < 0x10000 ? arg : arg >> 9`.
 //! `strict` uses exactly the card type's rule (SDHC block address, SDSC byte address)
@@ -180,10 +181,11 @@ impl SdCard {
     /// CS changed (true = selected).
     pub fn set_cs(&mut self, selected: bool) {
         if !selected {
-            if matches!(self.state, State::ReadStream { .. }) {
-                self.resp.clear();
+            if let State::ReadStream { n, .. } = &mut self.state {
+                *n = 0;
+            } else {
+                self.state = State::Idle;
             }
-            self.state = State::Idle;
         }
     }
 
@@ -205,6 +207,9 @@ impl SdCard {
                 self.sclk_hz
             ));
         }
+        if !selected && matches!(self.state, State::ReadStream { .. }) {
+            return 0xFF;
+        }
         if self.resp.is_empty() {
             if let State::ReadStream { lba, .. } = &mut self.state {
                 let at = *lba;
@@ -216,20 +221,15 @@ impl SdCard {
         }
         let answer = self.resp.pop_front();
         if let State::ReadStream { buf, n, .. } = &mut self.state {
-            if selected {
-                if *n > 0 || mosi & 0xC0 == 0x40 {
-                    buf[*n] = mosi;
-                    *n += 1;
-                }
-                if *n == 6 {
-                    let cmd = *buf;
-                    *n = 0;
-                    if cmd[0] & 0x3F == 12 {
-                        self.resp.clear();
-                        self.state = State::Idle;
-                        self.command(cmd);
-                    }
-                }
+            if *n > 0 || mosi & 0xC0 == 0x40 {
+                buf[*n] = mosi;
+                *n += 1;
+            }
+            if *n == 6 {
+                let cmd = *buf;
+                self.resp.clear();
+                self.state = State::Idle;
+                self.command(cmd);
             }
             return answer.unwrap_or(0xFF);
         }

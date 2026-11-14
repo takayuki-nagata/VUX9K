@@ -377,6 +377,9 @@ fn multiple_block_read_stops_at_cmd12() {
     h.deselect();
     assert_eq!(h.cmd(18, 1), 0x00);
     assert_eq!(data_block(&mut h, SECTOR), [2; SECTOR]);
+    // mmc_spi's SPI messages raise CS after each block: the stream goes on
+    h.cs(false);
+    h.cs(true);
     assert_eq!(data_block(&mut h, SECTOR), [3; SECTOR]);
     // CMD12 while the card sends the next block; then a stuff byte and R1
     for b in [0x4C, 0, 0, 0, 0, 0x61] {
@@ -387,10 +390,14 @@ fn multiple_block_read_stops_at_cmd12() {
     assert_eq!(h.cmd(17, 0), 0x00, "the card listens again");
     assert_eq!(data_block(&mut h, SECTOR), [1; SECTOR]);
     h.deselect();
-    // Ended by CS: the rest of the block is dropped
+    // CS high with a byte clocked: nothing sent, the stream keeps its place
     assert_eq!(h.cmd(18, 2), 0x00);
-    h.bytes(10);
+    assert_eq!(h.bytes(3), [0xFF, 0xFE, 3]);
     h.deselect();
+    h.cs(true);
+    assert_eq!(h.bytes(2), [3, 3]);
+    // Another command than CMD12 ends it and is answered
+    h.bytes(SECTOR - 3 + 2);
     assert_eq!(h.cmd(55, 0), 0x00);
     h.deselect();
     let cmds: Vec<u8> = h.card().commands.iter().map(|c| c.0).collect();

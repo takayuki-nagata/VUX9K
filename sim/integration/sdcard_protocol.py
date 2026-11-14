@@ -23,8 +23,9 @@ Answers (the model's behavior, not a full SD implementation):
   with the capacity of the sectors held (`csd`); its command classes leave out switch
   (CMD6) and erase.
 - CMD18 FF 00, then one block after the other from consecutive sectors, while the card
-  keeps reading MOSI: CMD12 stops it (FF 00 after it: a stuff byte, R1). CS going high
-  stops it too, dropping the rest of the block.
+  keeps reading MOSI: CMD12 stops it (FF 00 after it: a stuff byte, R1); another command
+  stops it and is answered as usual. CS going high pauses it (MISO FF, nothing sent)
+  without ending it: Linux's mmc_spi raises CS after each block it reads.
 - CMD24 FF 00, then data token FE, 512 bytes + 2 CRC; data response 05 and a busy
   byte 3F. The card then listens for a new command only after CS has gone high.
   CMD25 FF 00, then blocks with token FC, each answered 05 3F, until the stop token FD
@@ -123,6 +124,7 @@ class SdCardProtocol:
         self._multi = False  # wait_token/data: CMD25 (else CMD24)
         self._app = False  # the previous command was CMD55
         self._crc_on = False  # CMD59
+        self._selected = False  # CS, as set_cs last gave it
 
     # --- storage ----------------------------------------------------------------
     def get_sector(self, lba: int) -> bytes:
@@ -146,10 +148,10 @@ class SdCardProtocol:
     # --- bus ----------------------------------------------------------------------
     def set_cs(self, selected: bool):
         """CS changed (True = selected)."""
+        self._selected = selected
         if not selected:
-            if self._state == "read_stream":
-                self._resp = bytearray()
-            self._state = "idle"
+            if self._state != "read_stream":
+                self._state = "idle"
             self._buf = bytearray()
 
     def set_sclk_hz(self, hz: int):
@@ -158,6 +160,9 @@ class SdCardProtocol:
 
     def begin_byte(self) -> int:
         """MISO byte for the next byte clocked (it can't depend on that byte's MOSI)."""
+        if self._state == "read_stream" and not self._selected:
+            self._answering = False
+            return 0xFF
         if not self._resp and self._state == "read_stream":
             lba = self._lba
             self._lba = (lba + 1) & 0xFFFF_FFFF
@@ -183,10 +188,9 @@ class SdCardProtocol:
                     self._buf.append(mosi)
                 if len(self._buf) == 6:
                     buf, self._buf = bytes(self._buf), bytearray()
-                    if buf[0] & 0x3F == 12:
-                        self._resp = bytearray()
-                        self._state = "idle"
-                        self._command(buf)
+                    self._resp = bytearray()
+                    self._state = "idle"
+                    self._command(buf)
             return
         if self._answering or not selected:
             return

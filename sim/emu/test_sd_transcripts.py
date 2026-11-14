@@ -349,7 +349,9 @@ def linux_init():
 
 
 def multi_block_read():
-    """CMD18 + CMD12 sent while the card streams, then a CMD18 ended by CS alone."""
+    """CMD18 as Linux's mmc_spi reads it: CS raised after each block (the SPI core ends the
+    block's message so) and lowered for the next, then CMD12 sent while the card streams;
+    then a CMD18 that a CS pulse with bytes clocked doesn't end, but another command does."""
     h = Recorder("multi_block_read", strict=True)
     for lba in range(10, 14):
         h.sector(lba, pattern(lba))
@@ -360,6 +362,8 @@ def multi_block_read():
     h.cmd_crc(18, 10)
     for _ in range(3):
         h.data(SECTOR)
+        h.cs(False)
+        h.cs(True)
     for b in bytes([0x40 | 12, 0, 0, 0, 0]):
         h.xfer(b)
     h.xfer(crc7(bytes([0x4C, 0, 0, 0, 0])) << 1 | 1)
@@ -368,8 +372,10 @@ def multi_block_read():
     h.cmd_crc(18, 12)
     h.data(SECTOR)
     h.read(5)  # into the next block
-    h.deselect()  # stops the stream: the next command is answered
-    h.cmd_crc(13, 0)
+    h.deselect()  # CS high, a byte clocked: the card sends nothing and keeps its place
+    h.cs(True)
+    h.read(SECTOR - 4)  # the rest of the block
+    h.cmd_crc(13, 0)  # not CMD12: ends the stream, answered (R2)
     h.read(1)
     h.deselect()
     return h.finish()
