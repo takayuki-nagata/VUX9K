@@ -194,6 +194,7 @@ one formatted without a partition table is refused). What VUX9K uses is in the d
 | `\VUX9K\STAGE2.OLD` | The previous one, booted when `STAGE2.BIN` is missing, broken or too old |
 | `\VUX9K\APPS\` | Applications as VUX9 v4 files, started by the second stage's `run` (a release ships the demos as `sd/VUX9K/APPS/`) |
 | `\VUX9K\LINUX\Image`, `\VUX9K\LINUX\vux9k.dtb` | A noMMU Linux kernel and its device tree as `make linux` builds them (`build/linux/arch/riscv/boot/Image`, `build/linux/vux9k.dtb`), copied unchanged; the second stage's `linux` boots them (a release ships neither) |
+| `\VUX9K\LINUX\BIN\` | Programs for that Linux (`make linux-dist`'s `VUX9K/LINUX/BIN/`, e.g. `memprobe`): the kernel mounts the card's partition on `/mnt/sd` and has this directory on the shell's `PATH` |
 
 The second stage reads FAT32 only, with 8.3 and long names (long names are read only, and
 shown in ASCII with `?` for other characters); the files and directories it makes get 8.3
@@ -345,7 +346,9 @@ emulator's `--linux` starts a kernel. The UART's `EV_ENABLE` stays 0, as neither
 writes it: the kernel's liteuart driver polls. The kernel then has all of the PSRAM, the
 stages' memory included; only Button S1 (the board's reset) brings the first stage back.
 On the board (`make test-hw-linux`, 2026-11-11) the 3.2 MB Image loads in ~13 s and the
-kernel reaches busybox's shell ~12 s later: ~26 s from the bitstream's load.
+kernel reaches busybox's shell ~12 s later: ~26 s from the bitstream's load. The kernel drives
+the SD card itself (upstream `mmc_spi` on this tree's driver for the SPI master, polled) and
+mounts its FAT32 partition on `/mnt/sd`, read and write; the stages read what it writes.
 
 ---
 
