@@ -1,0 +1,30 @@
+From: VUX9K
+Subject: [PATCH] iomap: ioend mempools of 2 entries
+
+The block layer selects FS_IOMAP, whose ioend biosets each reserve
+4 * (PAGE_SIZE / SECTOR_SIZE) bios with BIO_MAX_VECS vecs at boot: ~256 KB
+of unmovable slab in a kernel that has 8 MB and keeps contiguous blocks free
+for every exec (noMMU, FLAT). No filesystem here writes back through iomap
+(vfat uses buffer heads), so 2 entries each keep the forward-progress
+guarantee for the rare user. This tree's own patch, not sent upstream
+(docs/agents/linux.md, "Kernel patches").
+
+---
+diff --git a/fs/iomap/ioend.c b/fs/iomap/ioend.c
+index 7bbbb41..77570b8 100644
+--- a/fs/iomap/ioend.c
++++ b/fs/iomap/ioend.c
+@@ -514,7 +514,12 @@ EXPORT_SYMBOL_GPL(iomap_split_ioend);
+ 
+ static int __init iomap_ioend_init(void)
+ {
+-	const unsigned int nr_mempool_entries = 4 * (PAGE_SIZE / SECTOR_SIZE);
++	/*
++	 * VUX9K: 2, not 4 * (PAGE_SIZE / SECTOR_SIZE): each entry keeps a bio with
++	 * BIO_MAX_VECS vecs from boot on, ~256 KB for the two sets, and no filesystem
++	 * here writes back through iomap (vfat uses buffer heads)
++	 */
++	const unsigned int nr_mempool_entries = 2;
+ 	int error;
+ 
+ 	error = bioset_init(&iomap_ioend_bioset, nr_mempool_entries,

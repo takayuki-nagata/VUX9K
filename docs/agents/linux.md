@@ -157,6 +157,16 @@ small, and prefer an upstream driver and binding where one fits (the UART is ups
   request with its scatterlist when the card is found, unmovable slab spread over the RAM:
   with upstream's values Slab was 920 kB after the boot and the largest free block fell to
   order 6-7, so busybox's exec (order 7) failed.
+- **What the block layer costs in RAM** (2026-11, the emulator; SLUB_TINY has no slabinfo, so
+  the slab pages were counted per cache by reading `mem_map` and `slab_caches` from the
+  emulator's PSRAM with `Soc.xmem_word`): kernel code 1,770K → 2,191K, Slab 368 →
+  792 kB. The largest part of the slab was iomap's two ioend biosets (`BLOCK` selects
+  `FS_IOMAP`), 32 `biovec-max` entries each reserved at boot, ~256 kB that vfat never uses:
+  patches/0003-iomap-small-ioend-pools.patch makes them 2. The printk buffer went from 64 KB
+  (264 KB with its metadata) to 16 KB (`LOG_BUF_SHIFT=14`).
+- Small allocations made after the boot (an inode, a page of a FAT) land in the middle of
+  free space and split the largest blocks: with ~2.4 MB free, a single page in a 512 kB block
+  is enough to make busybox's exec fail. Keep the free total high, not only the largest block.
 - The card is found after the driver probes, in the background (mmc's rescan work), so it can
   appear after init has started: whatever uses it at boot waits for `/dev/mmcblk0p1`.
 - **Init mounts it on `/mnt/sd`** (`board/post-build.sh`: `/etc/init.d/sdcard`, a sysinit line
