@@ -145,6 +145,18 @@ small, and prefer an upstream driver and binding where one fits (the UART is ups
   what mmc_spi sends: CMD59, CMD9/CMD10, CMD13, ACMD51/ACMD13, CMD18 + CMD12, CMD25 with
   tokens FC/FD, real CRC16s. Their CSD leaves out the switch (CMD6) and erase classes, so Linux
   sends neither; it prints "card lacks mandatory switch function, performance might suffer".
+- **CS goes high after every block mmc_spi reads**: the block's SPI message has no
+  `cs_change` on its last transfer, so the SPI core deselects the card, and selects it again
+  for the next block of the same CMD18 (mmc_spi's header says "many cards seem OK with
+  chipselect flapping"). A card that ends a CMD18 at CS high gets one block per request: the
+  models did at first, and mmc_blk retried every request a block at a time, with a CMD13
+  each, so a 256 KB `dd` didn't finish in minutes. The transcript `multi_block_read` reads as
+  mmc_spi does.
+- **mmc's queue is small** (patches/0002-mmc-small-queue.patch): `MMC_QUEUE_DEPTH` 4 instead
+  of 64, and mmc_spi's requests at most 16 blocks instead of 128. The queue allocates every
+  request with its scatterlist when the card is found, unmovable slab spread over the RAM:
+  with upstream's values Slab was 920 kB after the boot and the largest free block fell to
+  order 6-7, so busybox's exec (order 7) failed.
 - The card is found after the driver probes, in the background (mmc's rescan work), so it can
   appear after init has started: whatever uses it at boot waits for `/dev/mmcblk0p1`.
 - **Init mounts it on `/mnt/sd`** (`board/post-build.sh`: `/etc/init.d/sdcard`, a sysinit line

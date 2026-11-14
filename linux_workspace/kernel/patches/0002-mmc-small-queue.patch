@@ -1,0 +1,44 @@
+From: VUX9K
+Subject: [PATCH] mmc: a queue of 4 requests of at most 8 KB
+
+mmc's queue allocates all its requests when the card is found, each with a
+scatterlist of the host's max_segs entries: 64 requests of 128 entries for
+mmc_spi took a few hundred KB of unmovable slab, scattered over the 8 MB that
+must keep contiguous blocks free for every exec (noMMU, FLAT), and the
+largest free block fell below what busybox needs. 4 requests of at most 16
+blocks (8 KB) are plenty for one polled SPI card. This tree's own patch, not
+sent upstream (docs/agents/linux.md, "Kernel patches").
+
+---
+diff --git a/drivers/mmc/core/queue.c b/drivers/mmc/core/queue.c
+index 5d187e0..10bb4c0 100644
+--- a/drivers/mmc/core/queue.c
++++ b/drivers/mmc/core/queue.c
+@@ -418,8 +418,10 @@ static inline bool mmc_merge_capable(struct mmc_host *host)
+ 	return host->caps2 & MMC_CAP2_MERGE_CAPABLE;
+ }
+ 
+-/* Set queue depth to get a reasonable value for q->nr_requests */
+-#define MMC_QUEUE_DEPTH 64
++/* Set queue depth to get a reasonable value for q->nr_requests. VUX9K: 4, as each
++ * request keeps its memory (a scatterlist) from the start, in 8 MB of RAM that also
++ * holds every running program as one contiguous block (noMMU, FLAT) */
++#define MMC_QUEUE_DEPTH 4
+ 
+ /**
+  * mmc_init_queue - initialise a queue structure.
+diff --git a/drivers/mmc/host/mmc_spi.c b/drivers/mmc/host/mmc_spi.c
+index 5217d71..e1a7168 100644
+--- a/drivers/mmc/host/mmc_spi.c
++++ b/drivers/mmc/host/mmc_spi.c
+@@ -86,7 +86,9 @@
+  * than 64 KBytes at a time. So use this value until there is any indication
+  * that we should do more here.
+  */
+-#define MMC_SPI_BLOCKSATONCE	128
++/* VUX9K: 8 KB, so that each of the queue's requests keeps a scatterlist of 16
++ * entries, not 128; the polled port is slow per byte whatever the size */
++#define MMC_SPI_BLOCKSATONCE	16
+ 
+ /****************************************************************************/
+ 
