@@ -199,6 +199,11 @@ struct Fake {
     leds_at_sample: Vec<u32>,
     /// /proc/buddyinfo at each read, the last one again once it is the only one left
     buddyinfo: VecDeque<Vec<u8>>,
+    buddyinfo_reads: u32,
+    /// Cached at each read of /proc/meminfo (in place of `meminfo`), the last one again once
+    /// it is the only one left
+    cached: VecDeque<u64>,
+    meminfo_reads: u32,
     /// The intervals (by the uptime reads before them) at which the page cache was dropped
     drops: Vec<usize>,
     /// What was written to /proc/sys/vm/drop_caches, in order
@@ -214,10 +219,23 @@ impl Sys for Fake {
                 self.leds_at_sample.push(self.leds);
                 self.stat.pop_front()?
             }
-            b"/proc/meminfo\0" => self.meminfo.clone(),
+            b"/proc/meminfo\0" => {
+                self.meminfo_reads += 1;
+                match self.cached.len() {
+                    0 => self.meminfo.clone(),
+                    1 => meminfo_cached(self.cached[0]),
+                    _ => meminfo_cached(self.cached.pop_front()?),
+                }
+            }
             b"/proc/loadavg\0" => self.loadavg.clone(),
-            b"/proc/buddyinfo\0" if self.buddyinfo.len() > 1 => self.buddyinfo.pop_front()?,
-            b"/proc/buddyinfo\0" => self.buddyinfo.front()?.clone(),
+            b"/proc/buddyinfo\0" => {
+                self.buddyinfo_reads += 1;
+                if self.buddyinfo.len() > 1 {
+                    self.buddyinfo.pop_front()?
+                } else {
+                    self.buddyinfo.front()?.clone()
+                }
+            }
             _ => return None,
         };
         let n = text.len().min(buf.len());
@@ -551,13 +569,18 @@ fn cached_is_not_swap_cached() {
     assert_eq!(parse_cached_kb(MEMINFO), None);
 }
 
-/// A fake for the reclaim: memory as `buddyinfo` gives it, Cached `cached` kB
+/// A fake for the reclaim: memory as `buddyinfo` gives it (one per look), Cached `cached` kB
 fn reclaim_fake(buddyinfo: Vec<Vec<u8>>, cached: u64, intervals: u32) -> Fake {
+    reclaim_fake_cached(buddyinfo, vec![cached], intervals)
+}
+
+/// The same with Cached at each read of /proc/meminfo, the last one again once it is left
+fn reclaim_fake_cached(buddyinfo: Vec<Vec<u8>>, cached: Vec<u64>, intervals: u32) -> Fake {
     Fake {
         stat: (0..=intervals)
             .map(|k| stat(0, 100 * u64::from(k)))
             .collect(),
-        meminfo: meminfo_cached(cached),
+        cached: cached.into(),
         buddyinfo: buddyinfo.into(),
         ..Fake::default()
     }
@@ -573,15 +596,20 @@ fn run_for(f: &mut Fake, intervals: u32, reclaim_kb: u32, verbose: bool) {
     assert_eq!(run(f, o), 0);
 }
 
+/// Fake::drops' value for a drop at the reclaim's look number `look` (from 0): the uptime reads
+/// before it, one before the first interval and one in each up to that look's
+fn at_look(look: u32) -> usize {
+    (look * RECLAIM_EVERY) as usize + 2
+}
+
 #[test]
 fn it_drops_the_page_cache_when_no_large_block_is_left() {
-    // Whole for two intervals, then the card's reads leave it in pieces; the drop brings an
+    // Whole at the first look, then the card's reads leave it in pieces; the drop brings an
     // order-8 block back
-    let seq = vec![buddy(WHOLE), buddy(WHOLE), buddy(FRAGMENTED), buddy(WHOLE)];
-    let mut f = reclaim_fake(seq, 1112, 5);
-    run_for(&mut f, 5, RECLAIM_CACHED_KB, true);
-    // At the end of the third interval (its uptime read is the fourth: one before the first)
-    assert_eq!(f.drops, [4]);
+    let seq = vec![buddy(WHOLE), buddy(FRAGMENTED), buddy(WHOLE)];
+    let mut f = reclaim_fake(seq, 1112, 2 * RECLAIM_EVERY + 1);
+    run_for(&mut f, 2 * RECLAIM_EVERY + 1, RECLAIM_CACHED_KB, true);
+    assert_eq!(f.drops, [at_look(1)]);
     // The kernel's line silenced at the start, then the drop
     assert_eq!(f.drop_writes, b"41");
     assert!(
@@ -591,43 +619,59 @@ fn it_drops_the_page_cache_when_no_large_block_is_left() {
         "{:?}",
         f.out
     );
+    // buddyinfo read at the looks only
+    assert!(f.buddyinfo.len() == 1);
 }
 
 #[test]
-fn a_drop_that_helped_leaves_the_next_one_free_to_come() {
+fn it_looks_every_few_intervals_only() {
+    let intervals = 4 * RECLAIM_EVERY;
+    let mut f = reclaim_fake(vec![buddy(WHOLE)], 600, intervals);
+    run_for(&mut f, intervals, RECLAIM_CACHED_KB, false);
+    assert_eq!(f.buddyinfo_reads, 4);
+    assert_eq!(f.meminfo_reads, 0);
+}
+
+#[test]
+fn after_a_drop_the_next_needs_cache_above_what_it_left() {
+    // The first drop at any Cached; what it left (520 kB, the initramfs') is the floor; in
+    // pieces again with 40 kB more cached: no drop; with 300 kB more: a drop
     let seq = vec![
         buddy(FRAGMENTED),
         buddy(WHOLE),
-        buddy(WHOLE),
         buddy(FRAGMENTED),
-        buddy(WHOLE),
+        buddy(FRAGMENTED),
     ];
-    let mut f = reclaim_fake(seq, 800, 5);
-    run_for(&mut f, 5, RECLAIM_CACHED_KB, false);
-    assert_eq!(f.drops, [2, 5]);
-    // Not said without -v (the kernel says the first itself)
+    let looks = 4;
+    let mut f = reclaim_fake_cached(seq, vec![1112, 520, 560, 820], looks * RECLAIM_EVERY);
+    run_for(&mut f, looks * RECLAIM_EVERY, RECLAIM_CACHED_KB, false);
+    assert_eq!(f.drops, [at_look(0), at_look(3)]);
+    // Not said without -v
     assert!(!f.out.iter().any(|l| l.contains("dropped")), "{:?}", f.out);
 }
 
 #[test]
 fn a_drop_that_brought_nothing_back_holds_the_next_ones_off() {
     // In pieces all along (not the page cache's): one drop, its check, RECLAIM_HOLDOFF
-    // intervals without, then another
-    let intervals = RECLAIM_HOLDOFF + 4;
+    // intervals without a look, then a drop again once more has been cached
+    let intervals = RECLAIM_HOLDOFF + 6 * RECLAIM_EVERY;
+    let mut f = reclaim_fake_cached(vec![buddy(FRAGMENTED)], vec![600, 600, 700], intervals);
+    run_for(&mut f, intervals, RECLAIM_CACHED_KB, false);
+    // The check is the look at interval RECLAIM_EVERY; the next look the first after the
+    // holdoff
+    let next = (RECLAIM_EVERY + 1 + RECLAIM_HOLDOFF).div_ceil(RECLAIM_EVERY);
+    assert_eq!(f.drops, [at_look(0), at_look(next)]);
+    // With Cached at the floor all along, no second drop
     let mut f = reclaim_fake(vec![buddy(FRAGMENTED)], 600, intervals);
     run_for(&mut f, intervals, RECLAIM_CACHED_KB, false);
-    let first = 2;
-    assert_eq!(f.drops, [first, first + 2 + RECLAIM_HOLDOFF as usize]);
+    assert_eq!(f.drops, [at_look(0)]);
 }
 
 #[test]
-fn no_drop_below_the_cached_it_needs_or_when_off() {
-    let mut f = reclaim_fake(vec![buddy(FRAGMENTED)], 200, 3);
-    run_for(&mut f, 3, RECLAIM_CACHED_KB, false);
-    assert!(f.drops.is_empty());
+fn no_drop_when_off_or_without_buddyinfo() {
     let mut f = reclaim_fake(vec![buddy(FRAGMENTED)], 1112, 3);
     run_for(&mut f, 3, 0, false);
-    assert!(f.drops.is_empty());
+    assert!(f.drops.is_empty() && f.drop_writes.is_empty());
     // Without buddyinfo (the fake's other tests): nothing
     let mut f = reclaim_fake(vec![], 1112, 3);
     run_for(&mut f, 3, RECLAIM_CACHED_KB, false);

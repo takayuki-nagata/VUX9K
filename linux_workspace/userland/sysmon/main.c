@@ -3,7 +3,8 @@
 
 // sysmon's system calls (src/lib.rs is the program: uClibc has no Rust target, so the Rust code
 // is a no_std staticlib, built PIC as buildroot builds this C, linked into this executable):
-//   - files read whole (/proc/uptime, /proc/meminfo, /proc/loadavg);
+//   - files read whole (/proc/uptime, /proc/meminfo, /proc/loadavg, /proc/buddyinfo), each
+//     opened once;
 //   - the LEDs through the LED class, /sys/class/leds/ledN/brightness (the device tree's
 //     gpio-leds), each opened once;
 //   - the button S2 through the GPIO character device: the gpiochip labelled "button" (the
@@ -32,14 +33,45 @@ static int led_fd[LEDS] = {-1, -1, -1, -1, -1, -1};
 // The button's line: -1 not opened yet, -2 none
 static int button_fd = -1;
 
+// Each file opened once and read again from its start: /proc's files (seq_file) are written
+// anew at each read from offset 0, and the open's path walk was most of a read's cost
+#define FILES 4
+static struct {
+    const char *path;
+    int fd;
+} files[FILES];
+
 long vux9k_read_file(const char *path, unsigned char *buf, unsigned long cap) {
-    int fd = open(path, O_RDONLY);
+    int slot = -1, fd = -1;
     long len = 0, n = 0;
-    if (fd < 0)
-        return -1;
-    while (len < (long)cap && (n = read(fd, buf + len, cap - len)) > 0)
-        len += n;
-    close(fd);
+    for (int i = 0; i < FILES; i++) {
+        if (files[i].path && !strcmp(files[i].path, path)) {
+            slot = i;
+            fd = files[i].fd;
+            break;
+        }
+        if (!files[i].path && slot < 0)
+            slot = i;
+    }
+    if (fd < 0) {
+        if ((fd = open(path, O_RDONLY)) < 0)
+            return -1;
+        if (slot >= 0) {
+            files[slot].path = path;
+            files[slot].fd = fd;
+        }
+    }
+    if (lseek(fd, 0, SEEK_SET) == 0)
+        while (len < (long)cap && (n = read(fd, buf + len, cap - len)) > 0)
+            len += n;
+    else
+        n = -1;
+    // Closed again on an error (opened anew the next time), or with no room in the table
+    if (n < 0 || slot < 0) {
+        if (slot >= 0)
+            files[slot].path = 0;
+        close(fd);
+    }
     return n < 0 ? -1 : len;
 }
 

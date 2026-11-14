@@ -252,8 +252,9 @@ shell (a daemon) is started, and restarted, by init; what it does stays out of p
   any use lighting the first; a load at 0.25, 0.5, 1, 2); the button, read every `-b` (200 ms),
   steps cpu -> mem -> load; `-m` the first mode, `-n` a number of intervals, `-v` a line per
   interval (`sysmon: cpu 37% bar 2`) and one per drop of the page cache (`sysmon: dropped the
-  page cache (no free block of order 6, Cached 1112 kB)`), `-r KB` the Cached that drop needs
-  (256; `-r 0` none: "Memory budget"). Without `-v` a drop says nothing (init's sysmon has no
+  page cache (no free block of order 6, Cached 1112 kB)`), `-r KB` the Cached above its floor
+  that drop needs (64; `-r 0` no reclaim at all: "Memory budget"); it looks every 3
+  intervals. Without `-v` a drop says nothing (init's sysmon has no
   `-v`: a line every few seconds would land in the shell's or vi's screen); a
   `/proc/sys/vm/drop_caches` it can't write it says once (`sysmon: cannot write
   /proc/sys/vm/drop_caches`) and reclaims no more. It writes an LED's `brightness` when it changes, and all
@@ -307,20 +308,35 @@ paths (`test_linux.py`'s `test_record_measurements`), the board's `hw_linux.py` 
   droppable, keeps the blocks it lies in split. In a spike (2026-11-15, the emulator), 2 MB
   read from the card left `5:3 6:0` (Cached 1,116 kB, MemFree 640 kB), and then busybox's
   exec failed; `echo 1 > /proc/sys/vm/drop_caches` (~20M cycles, ~1.1 s) brought back `6:2
-  8:1` (Cached 520 kB, MemFree 3,352 kB). So every interval sysmon reads `/proc/buddyinfo`
-  and, with no block of order 6 or above, `/proc/meminfo`'s Cached; at `-r` kB or more (256)
-  it writes `1` to `/proc/sys/vm/drop_caches`. The file takes 1 to 4 only (`extra1`/`extra2`
+  8:1` (Cached 520 kB, MemFree 3,352 kB). So every 3 intervals (`RECLAIM_EVERY`) sysmon reads
+  `/proc/buddyinfo` and, with no block of order 6 or above, `/proc/meminfo`'s Cached; at `-r`
+  kB (64) above the lowest Cached it has seen, or at any Cached before it has seen one, it
+  writes `1` to `/proc/sys/vm/drop_caches`. The file takes 1 to 4 only (`extra1`/`extra2`
   of its sysctl; a `5` is refused with EINVAL): at its start sysmon writes `4`, which drops
   nothing and leaves the kernel's `sysmon (N): drop_caches: 4` the only such line on the
-  console (the later drops', the shell's writes' too, say nothing). Cached is not what a drop
-  frees: the initramfs is ramfs, whose ~520 kB of pages count in it and stay, so a threshold
-  under that only keeps sysmon from dropping a cache that is next to empty. What stops
-  useless drops is the check one interval later: a drop that brought back no block of order
-  6 (the pieces are someone else's) is followed by 30 intervals (`RECLAIM_HOLDOFF`) without
-  one. The kernel itself never drops it; the price is that the next exec of a program on the
-  card reads it from the card again. With sysmon stopped nothing reclaims: `test_linux.py`'s
-  `test_sysmon` starts one again from the shell at its end, and `test_page_cache_reclaim`
-  reads 2 MB more from the card and wants the block back within 3 s.
+  console (the later drops', the shell's writes' too, say nothing).
+  - **The threshold is above a floor**: Cached is not what a drop frees, since the initramfs
+    is ramfs, whose ~520 kB of pages count in it and stay. An absolute threshold under that
+    is always met; one above it would also need the droppable part to pass it. So the floor
+    is the lowest Cached sysmon has read (it reads Cached at every look that finds no large
+    block, and after each drop: what a drop leaves is the floor), and a drop needs `-r` kB of
+    cache above it. Before any drop the floor may still hold the card's cache, so the first
+    drop needs no margin. 64 kB, not more: the spike's pieces came with 100 to 600 kB above
+    the floor. A drop that brought back no block of order 6 (the pieces are someone else's) is
+    followed by 30 intervals (`RECLAIM_HOLDOFF`) without one.
+  - **Every 3 intervals, the files kept open**: a read of `/proc/buddyinfo` every interval
+    took sysmon's CPU over an idle shell from 3.5-3.7% to 5.0-5.1% (2026-11-15, the
+    emulator: ~0.15% a read). It looks every 3 s instead, and main.c keeps each `/proc` file
+    it reads open and reads it again from offset 0 (seq_file writes it anew), without the
+    path walk of an open. A card read that breaks the blocks takes seconds; a person typing
+    the next command leaves sysmon those 3 s (the tests wait for it: `wait_large`).
+  - The kernel itself never drops it; the price is that the next exec of a program on the
+    card reads it from the card again. With sysmon stopped nothing reclaims:
+    `test_linux.py`'s `test_sysmon` starts one again from the shell at its end.
+    `test_page_cache_reclaim` stops it, reads 2 MB from the card, has sleeping busyboxes take
+    the free blocks of order 6 and up that are left (every dd or sleep is an exec of busybox,
+    which needs such a block: reads alone can't leave none), and wants none back from a
+    `sysmon -r 0`, then one back with sysmon's `dropped the page cache` line.
 - **The card's busyboxes stay at order 5** (bbawk at 6; "Text tools and vi"), and their build
   stops above it: the processes of a pipe (`grep x F | sort | uniq -c`) each hold their block
   at once, and after the card's reads the free memory is in pieces, many of order 5 and below
@@ -460,9 +476,9 @@ each use** (package `vux9k-bbtools`, `linux_workspace/userland/bbtools/`), in
   `hw_linux.py`) runs each one on two files the shell writes into `/mnt/sd/TOOLS` (which
   `CARD_CLEANUP` removes), one command at a time; `PIPE_COMMANDS` then two pipes, one with
   `{ }`, which need sysmon's reclaim of the page cache after the card's reads ("Memory
-  budget"; `test_linux.py` runs them at the end of `test_page_cache_reclaim`). Each test
+  budget"; `test_linux.py`'s `test_pipe_command`). Each test
   there waits first (`wait_large`, up to 10 s) for a free block of order 6, which sysmon gives
-  back within an interval of a read: a person typing leaves it that time.
+  back within 3 intervals of a read: a person typing leaves it that time.
 - The memory table has a row for them (`sizes` in make linux-dist's `MANIFEST.json`, each by
   its name): they are RAM only while one runs.
 

@@ -72,15 +72,18 @@ MEMORY: dict[str, dict[str, str]] = {}
 # The CPU init's sysmon took over IDLE_S seconds of an idle shell, per boot path (%)
 SYSMON_CPU: dict[str, float] = {}
 IDLE_S = 10
-# test_page_cache_reclaim's free blocks of order >= RECLAIM_ORDER after the card's reads and
-# after sysmon's intervals, per boot path
+# What test_page_cache_reclaim saw, per boot path
 RECLAIM: dict[str, str] = {}
-# sysmon's reclaim (linux_workspace/userland/sysmon/src/lib.rs, RECLAIM_ORDER): the order of
-# the initramfs' busybox's exec
+# sysmon's reclaim (linux_workspace/userland/sysmon/src/lib.rs, RECLAIM_ORDER, RECLAIM_EVERY):
+# the order of the initramfs' busybox's exec, and every how many intervals it looks
 RECLAIM_ORDER = 6
+RECLAIM_EVERY = 3
 # 2 x 1 MB from the card, other blocks than the commands' reads before (the spike, 2026-11-15:
 # the largest free block order 5 after them, Cached ~1,100 kB)
 RECLAIM_READS = tuple(f"dd if=/dev/mmcblk0 of=/dev/null bs=4096 count=256 skip={s}" for s in (512, 768))
+# The processes that hold the free blocks of RECLAIM_ORDER and up that the reads left (each a
+# copy of busybox, one such block), at most
+RECLAIM_HOLDERS = 12
 # The kernel's line for sysmon's write of 4 at its start, the one drop_caches line it prints
 DROP_CACHES_QUIET = "): drop_caches: 4"
 # How long a test waits for sysmon to give back a free block of RECLAIM_ORDER (its interval is
@@ -273,40 +276,16 @@ def test_tool_command(linux, line):
     assert not linux_checks.missing(out, linux_checks.TOOL_COMMANDS[line]), out
 
 
-def test_page_cache_reclaim(linux):
-    """init's sysmon drops the page cache when the card's reads have left no free block of
-    order 6 (noMMU has no compaction: docs/agents/linux.md, "Memory budget"): after 2 MB read
-    from the card and a few of its intervals such a block is back, and busybox's execs (`ls`,
-    `ps`) find it. Each dd is an exec of busybox too: it waits for the block first. Whether
-    the reads left none is recorded (sysmon may already have dropped while the last dd ran).
-    The kernel printed one drop_caches line, sysmon's 4 at its start. Then the text tools'
-    pipes (linux_checks.PIPE_COMMANDS) give their results."""
-    for line in RECLAIM_READS:
-        assert wait_large(linux), f"no free block of order {RECLAIM_ORDER} before {line!r}"
-        out = command(linux, line)
-        assert "256+0 records in" in out, out[-600:]
-    after_reads = free_large(linux)
-    linux.soc.run(ms(3000))
-    after_wait = free_large(linux)
-    RECLAIM[linux.how] = f"after the reads {after_reads}, 3 s later {after_wait}"
-    assert after_wait > 0, RECLAIM[linux.how]
-    for line, wanted in (("ls /", ("bin", "proc")), ("ps", (linux_checks.SYSMON,))):
-        out = command(linux, line)
-        assert not any(e in out for e in EXEC_FAILED), out[:600]
-        assert not linux_checks.missing(out, wanted), out
-    console = linux.soc.uart_received().decode(errors="replace")
-    lines = [ln for ln in console.splitlines() if "): drop_caches: " in ln]
-    assert len(lines) == 1 and DROP_CACHES_QUIET in lines[0] and f"{linux_checks.SYSMON} (" in lines[0], lines
-    assert "sysmon: cannot write /proc/sys/vm/drop_caches" not in console
-    # The pipes of the text tools (on test_tool_command's files), whose processes each hold a
-    # block at once, the { } one busybox's too
-    for line, piped in linux_checks.PIPE_COMMANDS.items():
-        assert wait_large(linux), f"no free block of order {RECLAIM_ORDER} before {line!r}"
-        out = command(linux, line)
-        assert not any(e in out for e in EXEC_FAILED), out[:600]
-        # The lines without uniq -c's alignment
-        got = [" ".join(o.split()) for o in out.splitlines()[1:]]
-        assert all(w in got for w in piped), out
+@pytest.mark.parametrize("line", list(linux_checks.PIPE_COMMANDS))
+def test_pipe_command(linux, line):
+    """The text tools' pipes (on test_tool_command's files), whose processes each hold a block
+    at once, the { } one busybox's too (docs/agents/linux.md, "Text tools and vi")."""
+    assert wait_large(linux), f"no free block of order {RECLAIM_ORDER} before {line!r}"
+    out = command(linux, line)
+    assert not any(e in out for e in EXEC_FAILED), out[:600]
+    # The lines without uniq -c's alignment
+    got = [" ".join(o.split()) for o in out.splitlines()[1:]]
+    assert all(w in got for w in linux_checks.PIPE_COMMANDS[line]), out
 
 
 def wait_console(linux: Booted, token: str, start: int) -> str:
@@ -372,6 +351,60 @@ def test_sysmon(linux):
     assert linux_checks.pids(command(linux, "ps"), linux_checks.SYSMON) == []
     # One again from the shell, for the tests after this one: its reclaim of the page cache
     background(linux, linux_checks.SYSMON)
+
+
+def test_page_cache_reclaim(linux):
+    """sysmon drops the page cache when the card's reads have left no free block of order 6
+    (noMMU has no compaction: docs/agents/linux.md, "Memory budget"), and only then. With no
+    sysmon running (test_sysmon's last one stopped), 2 MB read from the card, and the free
+    blocks of order 6 and up that are left taken by sleeping busyboxes (each dd and each sleep
+    is an exec of busybox, which needs such a block itself: the reads can't leave none), none
+    is free. A sysmon with -r 0 (no reclaim) leaves it so for two of its looks; one with the
+    reclaim says it dropped the page cache, and a block is free again while the sleepers still
+    hold theirs. The kernel printed one drop_caches line in all, init's sysmon's 4 at its
+    start."""
+    soc = linux.soc
+    mark = len(soc.uart_received())
+    command(linux, f"kill {sysmon_pid(linux)}")
+    wait_console(linux, "sysmon: stopped", mark)
+    reads = 0
+    for line in RECLAIM_READS:
+        if not free_large(linux):
+            break
+        assert "256+0 records in" in command(linux, line)
+        reads += 1
+    holders: list[int] = []
+    while free_large(linux) and len(holders) < RECLAIM_HOLDERS:
+        holders.append(background(linux, "sleep 600"))
+    buddyinfo = command(linux, linux_checks.MEM_PROBES[1])
+    seen = f"{reads} reads, {len(holders)} sleepers"
+    RECLAIM[linux.how] = seen
+    assert sum(linux_checks.parse_buddyinfo(buddyinfo)[RECLAIM_ORDER:]) == 0, f"{seen}: {buddyinfo}"
+    try:
+        # No reclaim: nothing comes back
+        mark = len(soc.uart_received())
+        background(linux, f"sysmon -r 0 -v -n {2 * RECLAIM_EVERY}")
+        wait_console(linux, "sysmon: stopped", mark)
+        without = free_large(linux)
+        RECLAIM[linux.how] = seen = f"{seen}; free blocks after sysmon -r 0 {without}"
+        assert without == 0, seen
+        # The reclaim: a drop at its first look, and a block back
+        mark = len(soc.uart_received())
+        background(linux, f"sysmon -v -n {2 * RECLAIM_EVERY}")
+        dropped = wait_console(linux, "sysmon: dropped the page cache", mark)
+        wait_console(linux, "sysmon: stopped", mark)
+        after = free_large(linux)
+        RECLAIM[linux.how] = seen = f"{seen}, after sysmon's drop {after}"
+        assert after > 0, f"{seen}: {dropped[-300:]}"
+    finally:
+        if holders:
+            command(linux, "kill " + " ".join(str(p) for p in holders))
+    # In place of init's, for the tests after this one
+    background(linux, linux_checks.SYSMON)
+    console = soc.uart_received().decode(errors="replace")
+    lines = [ln for ln in console.splitlines() if "): drop_caches: " in ln]
+    assert len(lines) == 1 and DROP_CACHES_QUIET in lines[0] and f"{linux_checks.SYSMON} (" in lines[0], lines
+    assert "sysmon: cannot write /proc/sys/vm/drop_caches" not in console
 
 
 def test_card_after_linux(linux, tmp_path):
@@ -469,7 +502,7 @@ def test_record_measurements(record_property, capsys):
             print(f"  {how}: sysmon's CPU over {IDLE_S} s of an idle shell: {pct:.1f}%")
             record_property(f"{how}: sysmon CPU", f"{pct:.1f}%")
         for how, text in RECLAIM.items():
-            print(f"  {how}: free blocks of order >= {RECLAIM_ORDER} around sysmon's reclaim: {text}")
+            print(f"  {how}: sysmon's reclaim (free blocks of order >= {RECLAIM_ORDER}): {text}")
             record_property(f"{how}: reclaim", text)
         for how, rows in MEMORY.items():
             print(f"\nnoMMU Linux memory after the boot ({how})")
