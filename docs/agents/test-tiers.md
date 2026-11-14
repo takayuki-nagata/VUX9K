@@ -8,11 +8,31 @@ paths:
   - "scripts/test_hw_upgrade.py"
   - "firmware/stage1/**"
   - "firmware/stage2/**"
+  - "linux_workspace/**"
 ---
 
 # Test tiers
 
 What `test-sim` and `test-slow` cover, and which long tests to run by hand for which change. Index and the rules that apply everywhere: [`AGENTS.md`](../../AGENTS.md).
+
+## Which tests a change needs: by what it touches
+
+Pick the runs from the paths a branch changes, not from habit: a tier that cannot see the
+change only costs hours of the one CI machine, and the test that can see it may be in no tier.
+`make check` runs for every change (the pre-commit hook). Then:
+
+| The branch touches | Run | Not needed for it alone |
+|---|---|---|
+| `linux_workspace/` only (the kernel's fragment, patches and device tree, buildroot's tree, `userland/`) | `make linux-dist test-linux-emu` on each change that builds; at the end, the board's `make test-hw-linux-dist` with that `linux-dist` (CI's `linux` job does the same two targets) | `test-sim`, `test-slow`, `dist`: none of them builds or boots Linux, and `pack.fs` doesn't change |
+| The Linux test scripts (`scripts/hw_linux.py`, `scripts/make_linux_dist.py`, `sim/integration/linux_checks.py`, `sim/emu/test_linux.py`) | the above, and their unit tests: `pytest sim/emu/test_hw_dist.py sim/emu/test_make_linux_dist.py` | `test-sim`'s RTL and GLS runs |
+| `emu/`, the card models (`sim/integration/sdcard_protocol.py`), `sim/sd_transcripts/`, `firmware/`, `tools/`, other `scripts/` and `sim/` | `make test-sim` (plus `test-linux-emu` when Linux boots on what changed: the emulator's devices, the second stage's `linux`) | `test-slow`, unless a row of sync-points.md asks for one of its targets |
+| `soc/` (RTL), the cocotb harness (`sim/runners/`, `soc_env.py`, `tb_soc_top.sv`), `Veryl.toml`, a submodule | `make test-sim`, then at the end of the branch `make test-slow` (GLS, Icarus, the long lockstep), `make timing` and the board's `hw-smoke` | — |
+| `docs/`, the agent guides | `make check` (it checks the guides' paths and cited sections) | everything else |
+
+The board tier follows the same rule: `test-hw-dist` when the stages, the bitstream or the
+card's files change, `test-hw-linux-dist` when the kernel or its userland does. A stage that
+changes nothing below `linux_workspace/` is verified by the first row alone, at its end on the
+board. Record what was run and why in the branch's notes, including what was left out.
 
 ## Test tiers: what `test-sim` does and doesn't cover
 
@@ -76,11 +96,14 @@ Also run `sim-gls-hw-flow` (not in `test-sim`) explicitly whenever you touch:
 - transfer v2 (`fw_common::upload`, `vux_tool.send_upload_v2`), the first stage's RAM
   boot (`fw_common::boot::RamBoot`) or the second stage's install,
 - the SD boot chain (`firmware/stage1`, `fw_common::fat`, `fw_drivers::sdcard`), or
-- anything under `sim/integration/` that talks to the virtual UART/SD models
-  (`sdcard_model.py`, `virtual_serial.py`) — a change there can silently
-  desync `test_soc_hardware_flow.py`'s own protocol assumptions from the
-  firmware's actual behavior (this happened during the 2026-09 `sim/` reorg with the
-  first stage's predecessor, undetected until this test was actually run).
+- the harness that drives the virtual UART/SD models (`sdcard_model.py`'s pin-level
+  wrapper, `virtual_serial.py`) — a change there can silently desync
+  `test_soc_hardware_flow.py`'s own protocol assumptions from the firmware's actual behavior
+  (this happened during the 2026-09 `sim/` reorg with the first stage's predecessor,
+  undetected until this test was actually run). A change to the card's answers alone
+  (`sdcard_protocol.py`, held to the emulator's card by `sim/sd_transcripts/`) is what the
+  RTL `sim-hw-flow` in `test-sim` already runs with the same model; the netlist adds nothing
+  to it while the RTL is unchanged.
 
 It's also worth running once as a final check after any `sim/` directory
 layout change (as opposed to content change), even though the fast tests all
