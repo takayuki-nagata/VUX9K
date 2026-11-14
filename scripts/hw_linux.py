@@ -54,13 +54,15 @@ CARD_BIN = "VUX9K/LINUX/BIN"
 CARD_FILES = ("VUX9K/LINUX/Image", "VUX9K/LINUX/vux9k.dtb")
 # Wall-clock bounds, not measurements: on the emulator the Image's load took ~13 s and the
 # boot ~12.5 s at 18 MHz, a command ~1 s (docs/agents/linux.md, "Speed"); a put of the
-# 3.2 MB Image ~6 min at ~9 KB/s
+# 3.2 MB Image ~6 min at ~9 KB/s. A command's first exec of a program on the card reads it
+# from there, ~3 times as slowly as on the emulator: ~15 s for the card's largest busybox
+# (docs/agents/linux.md, "Text tools and vi"), and a command may run two
 S2_TIMEOUT = 30.0
 # The first stage boots the second ~0.7 s after the load (the board, 2026-11-11)
 S2_PROMPT_WAIT = 5.0
 LOAD_TIMEOUT = 120.0
 BOOT_TIMEOUT = 180.0
-COMMAND_TIMEOUT = 30.0
+COMMAND_TIMEOUT = 60.0
 PUT_LINE_TIMEOUT = 30.0
 
 

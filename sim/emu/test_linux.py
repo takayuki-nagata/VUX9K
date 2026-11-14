@@ -60,8 +60,11 @@ PROMPT = linux_checks.PROMPT.encode()
 BOOT_CYCLES = 10_000_000_000
 COMMAND_CYCLES = 2_000_000_000
 LOAD_CYCLES = 3_000_000_000
-# The card: 8 MB, room for the Image, the device tree and the second stage
+# The card: 8 MB, room for the Image, the device tree, the second stage and the programs for
+# the card
 CARD_SECTORS = 16384
+# Wall-clock seconds for scripts/hw_linux.py on the emulator's CLI
+BOARD_SCRIPT_TIMEOUT_S = 1500
 
 MEASURED: dict[str, tuple[int, int, dict[str, int]]] = {}
 # The memory table of each boot path (linux_checks.memory), read right after the boot
@@ -259,13 +262,25 @@ def wait_large(linux: Booted) -> int:
     return free_large(linux)
 
 
+@pytest.mark.parametrize("line", list(linux_checks.TOOL_COMMANDS))
+def test_tool_command(linux, line):
+    """The text tools, the card's busyboxes (docs/agents/linux.md, "Text tools and vi"), after
+    the card reads above: each exec finds its block, once sysmon has given back one of order 6
+    (bbawk's and busybox's; wait_large)."""
+    assert wait_large(linux), f"no free block of order {RECLAIM_ORDER} before {line!r}"
+    out = command(linux, line)
+    assert not any(e in out for e in EXEC_FAILED), out[:600]
+    assert not linux_checks.missing(out, linux_checks.TOOL_COMMANDS[line]), out
+
+
 def test_page_cache_reclaim(linux):
     """init's sysmon drops the page cache when the card's reads have left no free block of
     order 6 (noMMU has no compaction: docs/agents/linux.md, "Memory budget"): after 2 MB read
     from the card and a few of its intervals such a block is back, and busybox's execs (`ls`,
     `ps`) find it. Each dd is an exec of busybox too: it waits for the block first. Whether
     the reads left none is recorded (sysmon may already have dropped while the last dd ran).
-    The kernel printed one drop_caches line, sysmon's 4 at its start."""
+    The kernel printed one drop_caches line, sysmon's 4 at its start. Then the text tools'
+    pipes (linux_checks.PIPE_COMMANDS) give their results."""
     for line in RECLAIM_READS:
         assert wait_large(linux), f"no free block of order {RECLAIM_ORDER} before {line!r}"
         out = command(linux, line)
@@ -283,6 +298,15 @@ def test_page_cache_reclaim(linux):
     lines = [ln for ln in console.splitlines() if "): drop_caches: " in ln]
     assert len(lines) == 1 and DROP_CACHES_QUIET in lines[0] and f"{linux_checks.SYSMON} (" in lines[0], lines
     assert "sysmon: cannot write /proc/sys/vm/drop_caches" not in console
+    # The pipes of the text tools (on test_tool_command's files), whose processes each hold a
+    # block at once, the { } one busybox's too
+    for line, piped in linux_checks.PIPE_COMMANDS.items():
+        assert wait_large(linux), f"no free block of order {RECLAIM_ORDER} before {line!r}"
+        out = command(linux, line)
+        assert not any(e in out for e in EXEC_FAILED), out[:600]
+        # The lines without uniq -c's alignment
+        got = [" ".join(o.split()) for o in out.splitlines()[1:]]
+        assert all(w in got for w in piped), out
 
 
 def wait_console(linux: Booted, token: str, start: int) -> str:
@@ -415,7 +439,9 @@ def test_board_script_on_the_emulator(tmp_path):
             ],
             capture_output=True,
             text=True,
-            timeout=900,
+            # The Image's put and boot, then the card's busyboxes (~0.7 MB more to put, and
+            # each one's first exec from the card)
+            timeout=BOARD_SCRIPT_TIMEOUT_S,
         )
     finally:
         emu.kill()

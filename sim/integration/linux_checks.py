@@ -64,12 +64,58 @@ LED_COMMANDS = {
         "sysmon: stopped",
     ),
 }
-COMMANDS = BASE_COMMANDS | LED_COMMANDS
-# What the board's test does to its card after COMMANDS: the file removed and the card
+# The text tools (docs/agents/linux.md, "Text tools and vi"): the card's busyboxes, each run by
+# the link in the initramfs' /usr/bin that names an applet of it, on two files the shell's
+# builtins write into TOOLS_DIR. One command at a time, no pipe: hush re-executes busybox for a
+# pipe's builtins, and a pipe's processes each need a block at once. Each line stays short of
+# the console's 80 columns with the prompt: a longer one wraps in the shell's line editor,
+# which then echoes more than was typed.
+TOOLS_DIR = "/mnt/sd/TOOLS"
+TOOLS_A, TOOLS_B, TOOLS_SORTED, TOOLS_COPY = (f"{TOOLS_DIR}/{n}" for n in "ABSC")
+TOOL_COMMANDS = {
+    f"rm -rf {TOOLS_DIR}; mkdir {TOOLS_DIR}": (),
+    f"for w in pear apple pear fig; do echo $w >>{TOOLS_A}; done": (),
+    f"for w in pear apple plum fig; do echo $w >>{TOOLS_B}; done": (),
+    # bbgrep
+    f"grep -n apple {TOOLS_A}": ("2:apple",),
+    f"egrep -v 'pear|fig' {TOOLS_B}": ("apple", "plum"),
+    # bbsed
+    f"sed -n 's/^p\\(.*\\)/P-\\1/p' {TOOLS_B}": ("P-ear", "P-lum"),
+    # bbsort: uniq counts the two pears only once sort has put them together
+    f"sort {TOOLS_A} >{TOOLS_SORTED}; uniq -c {TOOLS_SORTED}": ("2 pear",),
+    f"cut -c2-3 {TOOLS_B}": ("pp", "lu"),
+    f"tr a-z A-Z <{TOOLS_B}": ("APPLE", "PLUM"),
+    # bbawk (its libm too), bbcalc
+    "awk 'BEGIN{print 6*7, sqrt(2)}'": ("42 1.41421",),
+    "expr 6 '*' 7": ("42",),
+    # The small dc runs -e SCRIPT (its other arguments are files)
+    "dc -e '1234 5 * p'": ("6170",),
+    # bbfiles: the card's files, the two files' difference
+    "find /mnt/sd/VUX9K -name '*.BIN'": ("/mnt/sd/VUX9K/STAGE2.BIN",),
+    f"diff {TOOLS_A} {TOOLS_B}": ("@@ -1,4 +1,4 @@", "-pear", "+plum"),
+    f"cmp {TOOLS_A} {TOOLS_B}": ("differ:", "line 3"),
+    "stty -a": ("speed ", " baud;"),
+    # bbedit: less is cat when its output is not a terminal (vi needs keys: not here)
+    f"less {TOOLS_B} >{TOOLS_COPY}": (),
+    f"cmp {TOOLS_B} {TOOLS_COPY}; echo cmp-$?": ("cmp-0",),
+    # The initramfs' busybox (order 6) after all of them
+    "ls /mnt/sd": ("TOOLS", "VUX9K"),
+}
+# Pipes of the text tools on TOOL_COMMANDS' files: one with the shell's syntax, whose { } hush
+# runs in busybox executed again (order 6; docs/agents/linux.md, "Text tools and vi"), and one
+# of the tools only. Each process holds its block at once, so they need the large free blocks
+# that sysmon's reclaim of the page cache gives back after the card's reads (docs/agents/
+# linux.md, "Memory budget"). uniq -c's counts are right-aligned: the lines end with these.
+PIPE_COMMANDS = {
+    "{ echo b; echo a; echo b; } | grep . | sort | uniq -c": ("1 a", "2 b"),
+    f"grep . {TOOLS_A} | sort | uniq -c": ("1 apple", "1 fig", "2 pear"),
+}
+COMMANDS = BASE_COMMANDS | LED_COMMANDS | TOOL_COMMANDS | PIPE_COMMANDS
+# What the board's test does to its card after COMMANDS: the files removed and the card
 # unmounted, so the FAT's dirty bit is clear when the bitstream is loaded again (the emulator's
 # card is thrown away: sim/emu/test_linux.py checks it with the first and second stage after an
 # umount)
-CARD_CLEANUP = (f"rm {SD_TEST_FILE}; sync", "umount /mnt/sd")
+CARD_CLEANUP = (f"rm -r {SD_TEST_FILE} {TOOLS_DIR}; sync", "umount /mnt/sd")
 # The mount table, read with the shell's builtins (umount's own exec can fail with only the
 # kernel's report on the console); the card is unmounted when its output lacks CARD_MOUNTED
 MOUNTS_PROBE = "exec 3</proc/mounts; while read l <&3; do echo $l; done; exec 3<&-"
@@ -109,11 +155,15 @@ MEM_PROBES = tuple(
     f"exec 3<{path}; while read l <&3; do echo $l; done; exec 3<&-" for path in ("/proc/meminfo", "/proc/buddyinfo")
 )
 PAGE_KB = 4
+# The sizes' keys of the card's busyboxes (scripts/make_linux_dist.py's BBTOOLS_PREFIX: their
+# names on the card)
+BBTOOLS_PREFIX = "bb"
 # What the table holds, in its order; the sizes come from make linux-dist's MANIFEST.json
 TABLE_ROWS = (
     "Image",
     "initramfs (rootfs.cpio)",
     "busybox",
+    "the card's busyboxes",
     "MemTotal",
     "MemFree",
     "largest free block",
@@ -160,6 +210,14 @@ def memory(meminfo: str, buddyinfo: str, sizes: dict[str, int] | None = None) ->
     for name, key in (("Image", "image"), ("initramfs (rootfs.cpio)", "rootfs_cpio"), ("busybox", "busybox")):
         if sizes and key in sizes:
             rows[name] = f"{sizes[key]:,} B"
+    # The text tools (make linux-dist's sizes of VUX9K/LINUX/BIN/bb*): on the card, copied into
+    # RAM only while one runs, so the total and the largest
+    tools = {k: v for k, v in (sizes or {}).items() if k.startswith(BBTOOLS_PREFIX)}
+    if tools:
+        big = max(tools, key=lambda k: tools[k])
+        rows["the card's busyboxes"] = (
+            f"{sum(tools.values()):,} B in {len(tools)} (the largest {big}, {tools[big]:,} B)"
+        )
     rows["MemTotal"] = f"{info['MemTotal']:,} kB"
     rows["MemFree"] = f"{info['MemFree']:,} kB"
     rows["largest free block"] = "none" if largest is None else f"{PAGE_KB << largest:,} kB (order {largest})"

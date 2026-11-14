@@ -31,6 +31,7 @@ def fake_build(tmp_path):
     write(buildroot / "images" / "rootfs.cpio", b"R" * 7)
     write(buildroot / "target" / "bin" / "busybox", b"B" * 5)
     write(buildroot / "images" / "sd" / "VUX9K" / "LINUX" / "BIN" / "memprobe", b"M" * 4)
+    write(buildroot / "images" / "sd" / "VUX9K" / "LINUX" / "BIN" / "bbsed", b"S" * 6)
     return linux, buildroot
 
 
@@ -46,9 +47,15 @@ def test_tree_with_the_cards_programs(tmp_path):
     r = run(linux, buildroot, out)
     assert r.returncode == 0, r.stderr
     manifest = json.loads((out / "MANIFEST.json").read_text())
-    assert manifest["sizes"] == {"image": 10, "rootfs_cpio": 7, "busybox": 5}
+    # The card's busyboxes' sizes too (the memory table), not memprobe's
+    assert manifest["sizes"] == {"image": 10, "rootfs_cpio": 7, "busybox": 5, "bbsed": 6}
     card = manifest["card_files"]
-    assert sorted(card) == ["VUX9K/LINUX/BIN/memprobe", "VUX9K/LINUX/Image", "VUX9K/LINUX/vux9k.dtb"]
+    assert sorted(card) == [
+        "VUX9K/LINUX/BIN/bbsed",
+        "VUX9K/LINUX/BIN/memprobe",
+        "VUX9K/LINUX/Image",
+        "VUX9K/LINUX/vux9k.dtb",
+    ]
     assert card["VUX9K/LINUX/BIN/memprobe"] == {"size": 4, "sha256": hashlib.sha256(b"M" * 4).hexdigest()}
     assert (out / "VUX9K" / "LINUX" / "BIN" / "memprobe").read_bytes() == b"M" * 4
     sums = dict(reversed(line.split("  ")) for line in (out / "SHA256SUMS").read_text().splitlines())

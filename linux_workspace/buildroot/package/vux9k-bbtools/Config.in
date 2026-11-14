@@ -1,0 +1,9 @@
+config BR2_PACKAGE_VUX9K_BBTOOLS
+	bool "vux9k-bbtools"
+	depends on BR2_PACKAGE_BUSYBOX
+	help
+	  The text tools as small busyboxes on the card, one for each
+	  use (vi and less; grep; sed; sort, uniq, cut, tr and tail;
+	  awk; expr and dc; find, xargs, diff, cmp and stty), with
+	  their applets' links in the initramfs
+	  (linux_workspace/userland/bbtools/).

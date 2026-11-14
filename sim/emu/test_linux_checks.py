@@ -33,8 +33,10 @@ def test_buddyinfo_sums_zones():
 
 
 def test_table():
-    rows = linux_checks.memory(MEMINFO, BUDDYINFO, {"image": 3244488, "rootfs_cpio": 1000, "busybox": 330000})
+    sizes = {"image": 3244488, "rootfs_cpio": 1000, "busybox": 330000, "bbedit": 87144, "bbawk": 133172}
+    rows = linux_checks.memory(MEMINFO, BUDDYINFO, sizes)
     assert list(rows) == list(linux_checks.TABLE_ROWS)
+    assert rows["the card's busyboxes"] == "220,316 B in 2 (the largest bbawk, 133,172 B)"
     assert rows["MemFree"] == "3,912 kB"
     assert rows["largest free block"] == "1,024 kB (order 8)"
     assert rows["free blocks of order >= 6"] == "6:1 7:0 8:1 9:0 10:0"
@@ -43,8 +45,20 @@ def test_table():
 
 def test_table_without_sizes_or_free_blocks():
     rows = linux_checks.memory(MEMINFO, "Node 0, zone Normal 0 0 0 0 0")
-    assert "Image" not in rows
+    assert "Image" not in rows and "the card's busyboxes" not in rows
     assert rows["largest free block"] == "none"
+
+
+def test_commands_are_each_ones():
+    """COMMANDS joins its parts' dicts: a command in two of them would run once, at the first's
+    place, with the second's expectations."""
+    parts = (
+        linux_checks.BASE_COMMANDS,
+        linux_checks.LED_COMMANDS,
+        linux_checks.TOOL_COMMANDS,
+        linux_checks.PIPE_COMMANDS,
+    )
+    assert len(linux_checks.COMMANDS) == sum(len(p) for p in parts)
 
 
 def test_missing_output_raises():

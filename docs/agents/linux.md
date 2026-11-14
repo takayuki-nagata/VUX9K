@@ -278,8 +278,8 @@ shell (a daemon) is started, and restarted, by init; what it does stays out of p
 What the userland can run is bounded by the **largest free block** of contiguous pages, not by
 MemFree: an exec copies the whole FLAT executable into one block (above). So every stage that
 changes the kernel or the initramfs records this table, from `sim/integration/linux_checks.py`
-(`memory`): the Image's, the initramfs' (`rootfs.cpio`) and busybox's sizes (make linux-dist's
-`MANIFEST.json`, `sizes`), MemTotal and MemFree, the largest free block with its order, and the
+(`memory`): the Image's, the initramfs' (`rootfs.cpio`), busybox's and the card's busyboxes'
+sizes ("Text tools and vi"; make linux-dist's `MANIFEST.json`, `sizes`), MemTotal and MemFree, the largest free block with its order, and the
 free blocks of order 6 and up (`/proc/buddyinfo`). `make test-linux-emu` prints it for both boot
 paths (`test_linux.py`'s `test_record_measurements`), the board's `hw_linux.py` as `[MEM]` lines.
 - It is read right after the boot with the shell's builtins only (`MEM_PROBES`: hush's `exec`,
@@ -321,6 +321,13 @@ paths (`test_linux.py`'s `test_record_measurements`), the board's `hw_linux.py` 
   card reads it from the card again. With sysmon stopped nothing reclaims: `test_linux.py`'s
   `test_sysmon` starts one again from the shell at its end, and `test_page_cache_reclaim`
   reads 2 MB more from the card and wants the block back within 3 s.
+- **The card's busyboxes stay at order 5** (bbawk at 6; "Text tools and vi"), and their build
+  stops above it: the processes of a pipe (`grep x F | sort | uniq -c`) each hold their block
+  at once, and after the card's reads the free memory is in pieces, many of order 5 and below
+  and one or none of order 6 (2 MB read in the spike: `5:3 6:0`), until sysmon's drop above
+  (the spike's two pipes of `PIPE_COMMANDS` both failed then, with `Unable to allocate RAM`,
+  and passed after the drop). A pipe whose processes are each order 5 fits where one more
+  order-6 exec would not.
 - **What every program carries from libc** (each is linked statically and copied whole): the
   toolchain is uClibc built without a thread library (`BR2_PTHREADS_NONE`: with linuxthreads
   its start-up pulled `__pthread_handles`, 16 KB of data, `pthread_keys`, 8 KB, and through
@@ -375,6 +382,89 @@ This repository's own programs are buildroot packages of the external tree, one 
   boot and after the page cache drops it). Artifacts lose the
   files' modes (`upload-artifact` zips), which a FAT card doesn't keep anyway. Removing a
   package does not remove what it installed there or in `target/`: clean `build/buildroot` then.
+- **A package can build busybox again from buildroot's tarball** (`vux9k-bbtools`, "Text tools
+  and vi"): no `SITE_METHOD = local`, but `<PKG>_SOURCE`/`_SITE` busybox's (`BUSYBOX_VERSION`,
+  `BUSYBOX_SITE`), `_DL_SUBDIR = busybox` (the download busybox has already), the tarball's
+  sha256 in its own `.hash` (`BR2_DOWNLOAD_FORCE_CHECK_HASHES` refuses a file without one), and
+  buildroot's `package/busybox/*.patch` applied by a post-patch hook. Its configurations and
+  their Makefile stay in `linux_workspace/userland/bbtools/` (CI's cache key, above), read
+  where they are; `-rebuild` builds the extracted tree again, and each run writes the
+  `.config`s again, so a changed fragment is built.
+
+## Text tools and vi
+
+The initramfs' busybox has only what a boot and a shell need ("Memory budget": its exec's block
+is order 6 with 24 KB to spare), so the text tools are **small busyboxes on the card, one for
+each use** (package `vux9k-bbtools`, `linux_workspace/userland/bbtools/`), in
+`VUX9K/LINUX/BIN/` with the other programs for the card ("Userland packages"):
+
+| On the card | Applets |
+|---|---|
+| `bbedit` | vi, less |
+| `bbgrep` | grep, egrep |
+| `bbsed` | sed |
+| `bbsort` | sort, uniq, cut, tr, tail |
+| `bbawk` | awk |
+| `bbcalc` | expr, dc |
+| `bbfiles` | find, xargs, diff, cmp, stty |
+
+- **Each is built from `common.config` and its own fragment over allnoconfig**
+  (`bbconfig.sh`): busybox's kconfig resets every bool in allnoconfig, `KCONFIG_ALLCONFIG`'s
+  too, and oldconfig alone takes the defaults (mostly y) of what an applet brings in, so the
+  script puts the fragment's lines over allnoconfig and turns off again what each oldconfig
+  pass adds that no fragment names. It stops when a fragment's line is not in the result (a
+  misspelt option, or its dependencies off). head, wc and test stay the initramfs' (busybox
+  and hush); an applet the initramfs has stops the install.
+- **The applets' names are links in the initramfs, to the card**: vfat holds no symbolic
+  links, so `/usr/bin/vi` is a link in the initramfs to `/mnt/sd/VUX9K/LINUX/BIN/bbedit`
+  (from each build's `busybox.links`; the host can't run the riscv busybox to ask it). The
+  exec follows it, argv[0] stays `vi`, and busybox picks the applet by it. Without the card
+  they are dangling links: `not found`. The names on the card are 8.3 (the Makefile refuses a
+  longer one).
+- **Each exec's block has an order it may not pass**: order 5 (128 KB), bbawk's order 6
+  (`VUX9K_BBTOOLS_ORDERS` in the `.mk`). `flthdr.sh` computes the block from `flthdr -p`
+  (Data End + max(BSS End - Data End + the stack, 4 x the relocations) + 1 KB for the
+  arguments and the environment) and stops the build when one passes its order; its table
+  is `build/buildroot/images/bbtools-flthdr.txt`. Why order 5: a pipe's processes each need
+  their block at the same time, from free memory the card's page cache has left in pieces
+  ("Memory budget"). awk alone is above order 5 (and is rarely more than one stage of a
+  pipe). grep with sed was order 6 too (the spike's `bbgrep`, 135,440 B): they are two.
+- **noMMU's hush executes busybox again for a pipe's builtins, `{ }` and `$( )`**: without fork
+  a subshell is a new exec of `/proc/self/exe`, the initramfs' busybox, order 6. So `{ echo b;
+  echo a; } | sort` needs busybox's block beside sort's, and `grep x F | sort` only the tools'.
+- **The spike's numbers** (2026-11-15, the emulator at 18 MHz; each a command that runs the
+  tool once, its first run reading it from the card at ~36 KB/s, the second from the page
+  cache; the board's first is ~3 times as slow, "Speed"):
+
+  | Busybox | Size | Exec's block (BSS End + stack) | First | Second |
+  |---|---|---|---|---|
+  | bbedit | 87,144 B | 112,544 B, order 5 | 4.6 s | 1.7 s |
+  | bbgrep with sed | 110,096 B | 135,440 B, order 6 | 4.4 s | 1.4 s |
+  | bbsort | 58,360 B | 83,696 B, order 5 | 2.8 s | 1.2 s |
+  | bbawk | 133,172 B | 157,664 B, order 6 | 5.0 s | 1.4 s |
+  | bbcalc | 102,884 B | 128,176 B, order 5 | 3.4 s | 0.5 s |
+  | bbfiles | 91,520 B | 116,880 B, order 5 | 3.5 s | 0.8 s |
+  | all in one | 232,980 B | order 6 | 8.1 s | 2.0 s |
+
+  Split (2026-11-15's build): bbgrep 96,332 B (block 122,704 B), bbsed 102,788 B (129,168 B);
+  bbsort, without regex, is ~60 KB smaller than either, which is uClibc's regex (~40 KB) and
+  the applet. One busybox with all of them would be order 6 for every stage of a pipe, and
+  slower to start.
+- **A fragment names every feature it wants**: bbconfig.sh turns off what no fragment names,
+  default y or not (the first build's awk had no math functions: `Math support is not compiled
+  in`). The fragments have their applets' useful defaults back, except regex where it isn't
+  already linked (vi's and less's search: ~40 KB, order 6 for bbedit) and anything in bbsed
+  and bbcalc, whose blocks are ~2 KB short of order 6 (expr's 64-bit numbers, dc's power and
+  exp). Each fragment says what it leaves out.
+- `linux_checks.TOOL_COMMANDS` (in `COMMANDS`: the emulator's `test_linux.py` and the board's
+  `hw_linux.py`) runs each one on two files the shell writes into `/mnt/sd/TOOLS` (which
+  `CARD_CLEANUP` removes), one command at a time; `PIPE_COMMANDS` then two pipes, one with
+  `{ }`, which need sysmon's reclaim of the page cache after the card's reads ("Memory
+  budget"; `test_linux.py` runs them at the end of `test_page_cache_reclaim`). Each test
+  there waits first (`wait_large`, up to 10 s) for a free block of order 6, which sysmon gives
+  back within an interval of a read: a person typing leaves it that time.
+- The memory table has a row for them (`sizes` in make linux-dist's `MANIFEST.json`, each by
+  its name): they are RAM only while one runs.
 
 ## Speed (2026-11-01, emulator; 2026-11-11 and 2026-11-14, the board)
 

@@ -38,6 +38,9 @@ SIZES_BUILDROOT = {"rootfs_cpio": "images/rootfs.cpio", "busybox": "target/bin/b
 # it is (its paths start with VUX9K/LINUX/BIN/)
 SD_TREE = os.path.join("images", "sd")
 SD_PREFIX = "VUX9K/LINUX/BIN/"
+# The card's busyboxes (package vux9k-bbtools: the text tools), whose sizes the memory table
+# also shows: SD_PREFIX + this prefix, the size under the file's name
+BBTOOLS_PREFIX = SD_PREFIX + "bb"
 
 
 def sd_files(buildroot_out: str) -> dict[str, str]:
@@ -99,7 +102,8 @@ def main():
             dst: {"size": os.path.getsize(os.path.join(args.out, dst)), "sha256": sha256(os.path.join(args.out, dst))}
             for dst in card
         },
-        "sizes": {key: os.path.getsize(path) for key, path in sized.items()},
+        "sizes": {key: os.path.getsize(path) for key, path in sized.items()}
+        | {os.path.basename(dst): os.path.getsize(src) for dst, src in bins.items() if dst.startswith(BBTOOLS_PREFIX)},
     }
     with open(os.path.join(args.out, "MANIFEST.json"), "w") as f:
         json.dump(manifest, f, indent=2)
