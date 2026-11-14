@@ -1,0 +1,5 @@
+# The firmware's toolchain (firmware/rust-toolchain.toml), whose bare RV32IM target CI installs
+[toolchain]
+channel = "1.95.0"
+components = ["rustfmt"]
+targets = ["riscv32im-unknown-none-elf"]

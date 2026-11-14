@@ -206,8 +206,13 @@ exec needed. Init does without exec what the inittab and buildroot's `/init` scr
   exec would loop); every orphan reaped;
 - SIGTERM, SIGUSR1 and SIGUSR2 (what busybox's `reboot`, `halt` and `poweroff` send to process 1
   when it isn't busybox init): sync, umount the card, `reboot(2)`.
+- the system monitor `/usr/sbin/sysmon` ("LEDs and the system monitor") beside the shell, in
+  its own session, stdin `/dev/null`, its output on the console: when it dies (a signal other
+  than SIGTERM/SIGINT, or a status other than 0: `init: /usr/sbin/sysmon killed by signal 11`)
+  init starts it again 5 s later (`alarm`, which ends init's `wait`); when it was stopped
+  (`kill <pid>`, it ends with status 0: `init: /usr/sbin/sysmon stopped`) init leaves it so.
 No inittab any more (`board/post-build.sh` removes it): a process that should run beside the
-shell (a daemon) is started, and restarted, by init.
+shell (a daemon) is started, and restarted, by init; what it does stays out of process 1.
 
 ## LEDs and the system monitor
 
@@ -235,7 +240,29 @@ shell (a daemon) is started, and restarted, by init.
   device (`/dev/gpiochipN`, the chip labelled `button`, `GPIO_V2_GET_LINE_IOCTL` then
   `GPIO_V2_LINE_GET_VALUES_IOCTL`), polled. `gpio-keys` would need `INPUT` (left out for size)
   and, for edges, an interrupt the SoC doesn't route; GPIO sysfs is off (deprecated). One
-  process at a time holds the line.
+  process at a time holds the line: a second sysmon says `sysmon: no button` and runs without.
+- **sysmon** (`linux_workspace/userland/sysmon/`, package `vux9k-sysmon`, in the initramfs:
+  init starts it at boot): every interval (`-i`, 1000 ms) one of `/proc/uptime` (the CPU's use
+  since the last sample), `/proc/meminfo` (MemTotal - MemFree over MemTotal) or
+  `/proc/loadavg` (1 minute) as a bar of 0-4 LEDs on led2-led5 (a percentage in quarters,
+  any use lighting the first; a load at 0.25, 0.5, 1, 2); the button, read every `-b` (200 ms),
+  steps cpu -> mem -> load; `-m` the first mode, `-n` a number of intervals, `-v` a line per
+  interval (`sysmon: cpu 37% bar 2`). It writes an LED's `brightness` when it changes, and all
+  four every 10 intervals (`REFRESH_INTERVALS`): another process (a second sysmon ending, the
+  shell's `echo`) may have changed one.
+  SIGTERM/SIGINT: its LEDs off, `sysmon: stopped`, status 0.
+- **Rust in the FLAT userland.** uClibc has no Rust target, so sysmon is a `no_std` staticlib
+  (`src/lib.rs`: the parsing, the bar, the loop behind a `Sys` trait) for the bare
+  `riscv32im-unknown-none-elf` (CI's one Rust target; RV32IM code runs on RV32IMA, and the
+  ilp32 soft-float ABI is the same) linked by buildroot's gcc with a C `main.c` (the system
+  calls). It must be built as buildroot builds C for FLAT, **`-C relocation-model=pic -C
+  code-model=medium`** (`.cargo/config.toml`): PC-relative code and pointers in data as
+  `R_RISCV_32` relocations, which `elf2flt -r` turns into the file's relocations (`flthdr -p`:
+  `Has-PIC-GOT`; the default code model's absolute `lui` addresses have no FLAT relocation). No
+  `core::fmt` (numbers are written by hand: `Line`), no allocator, `panic = "abort"` with a
+  handler that prints and `_exit`s. `make test-sysmon-host` (a dependency of
+  `test-linux-emu`) runs its tests on the host with a fake `Sys`; `cargo test` there needs
+  `--lib`, since the staticlib has no panic runtime on the host.
 
 ## Memory budget
 

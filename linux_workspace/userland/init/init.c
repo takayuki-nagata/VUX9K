@@ -12,6 +12,10 @@
 //   - the login shell (-/bin/sh, which reads /etc/profile) on the console, in its own session
 //     with the console as its controlling tty, started again when it exits (after a pause if
 //     it lived less than a second: an exec that fails would loop);
+//   - the system monitor (SYSMON, linux_workspace/userland/sysmon/) beside the shell, in its own
+//     session on the console's output; started again RESTART_S later when it dies (a signal
+//     other than SIGTERM or SIGINT, or a status other than 0), not when it was stopped
+//     (`kill <pid>`: it ends with status 0); a missing SYSMON is skipped;
 //   - reaping every orphan the kernel hands to it;
 //   - SIGTERM (reboot), SIGUSR1 (halt) and SIGUSR2 (poweroff), which busybox's reboot, halt and
 //     poweroff send to process 1: every process sent SIGTERM, then SIGKILL (a shell in /mnt/sd
@@ -35,16 +39,32 @@
 #define CARD_DIR "/mnt/sd"
 #define CARD_WAIT_MS 5000
 #define SHELL "/bin/sh"
+#define SYSMON "/usr/sbin/sysmon"
+#define RESTART_S 5
+#define TEXT(x) #x
+#define NUMBER(x) TEXT(x)
 
 static volatile sig_atomic_t stop_signal;
+static volatile sig_atomic_t alarm_rang;
 
+// One line, in one write: the console interleaves other processes' writes (the shell's prompt)
+// between separate ones
 static void say(const char *a, const char *b) {
-    write(2, "init: ", 6);
-    write(2, a, strlen(a));
-    if (b) {
-        write(2, b, strlen(b));
+    char line[160];
+    size_t n = 0;
+    const char *parts[] = {"init: ", a, b ? b : "", "\n"};
+    for (size_t i = 0; i < sizeof parts / sizeof parts[0]; i++) {
+        size_t len = strlen(parts[i]);
+        if (len > sizeof line - 1 - n) {
+            len = sizeof line - 1 - n;
+        }
+        memcpy(line + n, parts[i], len);
+        n += len;
     }
-    write(2, "\n", 1);
+    if (line[n - 1] != '\n') {
+        line[n - 1] = '\n';
+    }
+    write(2, line, n);
 }
 
 static void sleep_ms(long ms) {
@@ -123,8 +143,60 @@ static pid_t start_shell(void) {
     return pid;
 }
 
+// The daemon in its own session (no signals from the console's keys), stdin /dev/null, its
+// output on the console; -1 if it can't be started
+static pid_t start_sysmon(void) {
+    if (access(SYSMON, X_OK) < 0) {
+        return -1;
+    }
+    pid_t pid = vfork();
+    if (pid == 0) {
+        static char *const argv[] = {"sysmon", 0};
+        static char *const envp[] = {"PATH=/sbin:/usr/sbin:/bin:/usr/bin", 0};
+        signal(SIGINT, SIG_DFL);
+        signal(SIGHUP, SIG_DFL);
+        setsid();
+        int fd = open("/dev/null", O_RDONLY);
+        if (fd > 0) {
+            dup2(fd, 0);
+            close(fd);
+        }
+        execve(SYSMON, argv, envp);
+        write(2, "init: cannot run " SYSMON "\n", sizeof "init: cannot run " SYSMON "\n" - 1);
+        _exit(127);
+    }
+    if (pid < 0) {
+        say("cannot start " SYSMON ": ", strerror(errno));
+    }
+    return pid;
+}
+
+// The daemon's end: whether init starts it again (it died, or its exec failed)
+static int sysmon_died(int status) {
+    static char num[12];
+    char *p = num + sizeof num - 1;
+    int n = WIFSIGNALED(status) ? WTERMSIG(status) : WEXITSTATUS(status);
+    if (WIFEXITED(status) && n == 0) {
+        say(SYSMON " stopped", 0);
+        return 0;
+    }
+    *p = 0;
+    do {
+        *--p = (char)('0' + n % 10);
+        n /= 10;
+    } while (n);
+    say(WIFSIGNALED(status) ? SYSMON " killed by signal " : SYSMON " exited with status ", p);
+    say("restarting " SYSMON " in " NUMBER(RESTART_S) " s", 0);
+    return 1;
+}
+
 static void on_stop(int sig) {
     stop_signal = sig;
+}
+
+static void on_alarm(int sig) {
+    (void)sig;
+    alarm_rang = 1;
 }
 
 static void stop(void) {
@@ -159,6 +231,9 @@ int main(void) {
     sigaction(SIGTERM, &sa, 0);
     sigaction(SIGUSR1, &sa, 0);
     sigaction(SIGUSR2, &sa, 0);
+    // No SA_RESTART: the alarm ends init's wait for its children
+    sa.sa_handler = on_alarm;
+    sigaction(SIGALRM, &sa, 0);
     signal(SIGINT, SIG_IGN);
     signal(SIGHUP, SIG_IGN);
 
@@ -169,18 +244,23 @@ int main(void) {
     if (mount("proc", "/proc", "proc", 0, 0) < 0) {
         say("/proc not mounted: ", strerror(errno));
     }
-    // The LED class and the GPIO chips' names (the shell's echo > .../brightness)
+    // The LED class and the GPIO chips' names (sysmon, the shell's echo > .../brightness)
     if (mount("sysfs", "/sys", "sysfs", 0, 0) < 0) {
         say("/sys not mounted: ", strerror(errno));
     }
     mount_card();
 
+    pid_t sysmon = start_sysmon();
     for (;;) {
         unsigned long started = now_ms();
         pid_t shell = start_shell();
         for (;;) {
             if (stop_signal) {
                 stop();
+            }
+            if (alarm_rang) {
+                alarm_rang = 0;
+                sysmon = start_sysmon();
             }
             int status;
             pid_t pid = wait(&status);
@@ -189,6 +269,12 @@ int main(void) {
             }
             if (pid == shell) {
                 break;
+            }
+            if (pid > 0 && pid == sysmon) {
+                sysmon = -1;
+                if (sysmon_died(status)) {
+                    alarm(RESTART_S);
+                }
             }
         }
         if (now_ms() - started < 1000) {

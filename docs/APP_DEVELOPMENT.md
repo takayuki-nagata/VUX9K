@@ -86,6 +86,12 @@ a release attaches it as `vux9k-<tag>-kernel.tar.gz`: copy its `VUX9K/LINUX/` to
 card's partition on `/mnt/sd` (read and write; sync or umount before power goes) and runs
 programs from `/mnt/sd/VUX9K/LINUX/BIN/`, which is on the shell's `PATH`. On the board the second stage reads the 3.7 MB Image in ~15 s and
 the kernel reaches busybox's shell ~13 s later.
+The board's six LEDs are the kernel's LED class: `/sys/class/leds/led0` (the kernel's
+`heartbeat` trigger, faster under load), `led1` (`mmc0`: the card's accesses) and
+`led2`-`led5`, the bar of `sysmon`, a system monitor (Rust) that init starts at boot: the CPU's
+use in quarters, and with the button S2 the memory in use and then the 1-minute load
+(`sysmon -m cpu|mem|load -i MS -v`; `kill` it to free its LEDs). Any LED takes another trigger
+(`echo timer > /sys/class/leds/led0/trigger`, `none`) or a value (`echo 1 > .../brightness`).
 `sd/VUX9K/APPS/` holds the demos as v4 files for the card; copy the directory to
 `\VUX9K\APPS\` (or `put` them there; `put` needs the directory, which `mkdir` makes, at the
 prompt or as `vux_tool.py mkdir VUX9K/APPS`) and start one with `run`:

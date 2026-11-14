@@ -20,7 +20,9 @@ ROOT = Path(__file__).resolve().parents[2]
 # Python the repo's ruff/mypy configuration covers (pyproject.toml)
 PY_DIRS = ("sim/", "tools/", "scripts/", ".claude/hooks/")
 # Rust crates `make check`/`emu-test` format, by directory
-CARGO_DIRS = ("firmware/", "emu/")
+# The Rust crates: the firmware workspace, the emulator's, and sysmon (a staticlib in the Linux
+# userland, docs/agents/linux.md)
+CARGO_DIRS = ("firmware/", "emu/", "linux_workspace/userland/sysmon/")
 MAX_LINES = 40
 
 

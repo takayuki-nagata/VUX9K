@@ -18,6 +18,7 @@ for each command are printed by test_record_measurements. The board's test is sc
 
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -40,6 +41,7 @@ from vux9k import (  # noqa: E402
     hit_rates,
     ms,
     new_soc,
+    press_button,
     send_paced,
     vux_tool,
     wait_for,
@@ -64,6 +66,11 @@ CARD_SECTORS = 16384
 MEASURED: dict[str, tuple[int, int, dict[str, int]]] = {}
 # The memory table of each boot path (linux_checks.memory), read right after the boot
 MEMORY: dict[str, dict[str, str]] = {}
+# The CPU init's sysmon took over IDLE_S seconds of an idle shell, per boot path (%)
+SYSMON_CPU: dict[str, float] = {}
+IDLE_S = 10
+# The LEDs sysmon's bar has (led2-led5)
+BAR = 0b111100
 
 
 @dataclass
@@ -220,6 +227,69 @@ def test_leds(linux):
     assert "[mmc0]" in command(linux, "cat /sys/class/leds/led1/trigger")
 
 
+def wait_console(linux: Booted, token: str, start: int) -> str:
+    """Runs until the console shows token after index start (a line init or a background
+    process prints, not the shell's prompt)."""
+    return wait_for(linux.soc, token.encode(), timeout_cycles=COMMAND_CYCLES, start=start)
+
+
+def background(linux: Booted, line: str) -> int:
+    """A command started in the background at the shell; its process id ($!)."""
+    out = command(linux, f"{line} & echo bg=$!")
+    m = re.search(r"bg=(\d+)", out)
+    assert m, out
+    return int(m.group(1))
+
+
+def sysmon_pid(linux: Booted) -> int:
+    out = command(linux, "ps")
+    found = linux_checks.pids(out, linux_checks.SYSMON)
+    assert len(found) == 1, (found, out)
+    return found[0]
+
+
+def test_sysmon(linux):
+    """init's system monitor on the GPIO register's led2-led5 (soc.leds): its CPU over an idle
+    shell, its bar under a busy loop of the shell's own (no exec), the button stepping its
+    mode, started again after it is killed, then stopped (its LEDs dark) by SIGTERM and left
+    so. Its lines are on the console."""
+    soc = linux.soc
+    pid = sysmon_pid(linux)
+    ticks = linux_checks.cpu_ticks(command(linux, f"cat /proc/{pid}/stat"))
+    soc.run(IDLE_S * CLK_HZ)
+    ticks = linux_checks.cpu_ticks(command(linux, f"cat /proc/{pid}/stat")) - ticks
+    SYSMON_CPU[linux.how] = ticks / IDLE_S  # 100 ticks a second (HZ 100): % of the CPU
+    idle = soc.leds & BAR
+    loop = background(linux, "while :; do :; done")
+    soc.run(ms(3000))
+    busy = soc.leds & BAR
+    command(linux, f"kill {loop}")
+    assert busy == BAR and idle != BAR, (hex(idle), hex(busy))
+
+    # Held and released for longer than sysmon's 200 ms between reads of the button: a shorter
+    # release between two presses is one press to it
+    mark = len(soc.uart_received())
+    press_button(soc, hold_ms=500, after_ms=500)
+    wait_console(linux, "sysmon: mode mem", mark)
+    press_button(soc, hold_ms=500, after_ms=500)
+    wait_console(linux, "sysmon: mode load", mark)
+
+    # Killed by a signal: init starts it again, a new process
+    mark = len(soc.uart_received())
+    command(linux, f"kill -SEGV {pid}")
+    wait_console(linux, f"init: {linux_checks.SYSMON_PATH} killed by signal 11", mark)
+    wait_console(linux, "sysmon: mode cpu", mark)
+    pid2 = sysmon_pid(linux)
+    assert pid2 != pid
+    # Stopped: its LEDs off, and init leaves it stopped
+    mark = len(soc.uart_received())
+    command(linux, f"kill {pid2}")
+    wait_console(linux, f"init: {linux_checks.SYSMON_PATH} stopped", mark)
+    assert soc.leds & BAR == 0, hex(soc.leds)
+    soc.run(ms(6000))
+    assert linux_checks.pids(command(linux, "ps"), linux_checks.SYSMON) == []
+
+
 def test_card_after_linux(linux, tmp_path):
     """The card as Linux leaves it after the commands' write (linux_checks.SD_TEST_FILE) and an
     umount: fsck.fat finds nothing wrong (dosfstools, which CI's job has), and the first stage
@@ -295,7 +365,7 @@ def test_board_script_on_the_emulator(tmp_path):
 
 def test_record_measurements(record_property, capsys):
     """Asserts nothing about speed: prints what the tests above measured (run last)."""
-    if not MEASURED and not MEMORY:
+    if not MEASURED and not MEMORY and not SYSMON_CPU:
         pytest.skip("nothing measured")
     with capsys.disabled():
         print(f"\nnoMMU Linux on the emulator (18 MHz: {CLK_HZ:,} cycles a second)")
@@ -307,6 +377,9 @@ def test_record_measurements(record_property, capsys):
                 f"  CPI {cpi:.1f}  {hit_rates(stats)}"
             )
             record_property(label, f"{cycles} cycles, {instret} instret, {hit_rates(stats)}")
+        for how, pct in SYSMON_CPU.items():
+            print(f"  {how}: sysmon's CPU over {IDLE_S} s of an idle shell: {pct:.1f}%")
+            record_property(f"{how}: sysmon CPU", f"{pct:.1f}%")
         for how, rows in MEMORY.items():
             print(f"\nnoMMU Linux memory after the boot ({how})")
             for name, value in rows.items():

@@ -349,6 +349,12 @@ On the board (`make test-hw-linux`, 2026-11-14) the 3.7 MB Image loads in ~15 s 
 kernel reaches busybox's shell ~13 s later: ~29 s from the bitstream's load. The kernel drives
 the SD card itself (upstream `mmc_spi` on this tree's driver for the SPI master, polled) and
 mounts its FAT32 partition on `/mnt/sd`, read and write; the stages read what it writes.
+The board's six LEDs are the kernel's LED class: `/sys/class/leds/led0` (the kernel's
+`heartbeat` trigger, faster under load), `led1` (`mmc0`: the card's accesses) and
+`led2`-`led5`, the bar of `sysmon`, a system monitor (Rust) that init starts at boot: the CPU's
+use in quarters, and with the button S2 the memory in use and then the 1-minute load
+(`sysmon -m cpu|mem|load -i MS -v`; `kill` it to free its LEDs). Any LED takes another trigger
+(`echo timer > /sys/class/leds/led0/trigger`, `none`) or a value (`echo 1 > .../brightness`).
 
 ---
 

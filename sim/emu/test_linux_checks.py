@@ -52,3 +52,23 @@ def test_missing_output_raises():
         linux_checks.memory("MemTotal: 1 kB", BUDDYINFO)
     with pytest.raises(ValueError):
         linux_checks.memory(MEMINFO, "nothing")
+
+
+def test_pids_from_busybox_ps():
+    # As busybox's ps prints it, with no header (2026-11, the emulator)
+    out = (
+        "ps\r\n    1 root        24 S    /init\r\n    2 root         0 SW   [kthreadd]\r\n"
+        "   21 root         0 IW<  [kworker/0:1H-kb]\r\n   22 root        24 S    sysmon\r\n"
+        "   52 root        24 S    /usr/sbin/sysmon -v\r\n   23 root       316 S    -sh\r\n"
+        "   33 root       312 R    ps\r\n/ # "
+    )
+    assert linux_checks.pids(out, "sysmon") == [22, 52]
+    assert linux_checks.pids(out, "init") == [1]
+    assert linux_checks.pids(out, "sh") == []
+    assert linux_checks.pids(out, "kthreadd") == []
+
+
+def test_cpu_ticks_counts_user_and_system_time():
+    assert linux_checks.cpu_ticks("47 (sysmon) S 1 47 47 0 -1 4194560 10 0 0 0 7 3 0 0 20 0 1 0 100") == 10
+    # A command with spaces and parentheses in it
+    assert linux_checks.cpu_ticks("9 (a (b) c) R 1 9 9 0 -1 0 0 0 0 0 1 2 0 0 20 0 1 0 5") == 3

@@ -8,6 +8,9 @@ builtin, the others busybox or this tree's programs executed: FLAT, copied into 
 exec)."""
 
 PROMPT = "/ # "
+# The system monitor init starts (linux_workspace/userland/init/), its name in ps
+SYSMON = "sysmon"
+SYSMON_PATH = "/usr/sbin/sysmon"
 # A file the commands write on the card
 SD_TEST_FILE = "/mnt/sd/VUX9K/SDTEST.TXT"
 BOOT_LINES = (
@@ -20,7 +23,7 @@ BOOT_LINES = (
     "hush - the humble shell",
 )
 # command -> what its output must contain: the shell and the card (BASE_COMMANDS), then the
-# LEDs (LED_COMMANDS), which sim/emu/test_linux.py runs with its own tests between
+# LEDs and sysmon (LED_COMMANDS), which sim/emu/test_linux.py runs with its own tests between
 BASE_COMMANDS = {
     "echo hello-vux9k": ("hello-vux9k",),
     "uname -a": ("Linux (none) 7.3.0",),
@@ -46,10 +49,20 @@ BASE_COMMANDS = {
 }
 LED_COMMANDS = {
     # The board's LEDs in the LED class (the device tree's gpio-leds on upstream's gpio-mmio),
-    # led0 and led1 with the kernel's triggers
+    # led0 and led1 with the kernel's triggers, the others sysmon's
     "ls /sys/class/leds": tuple(f"led{n}" for n in range(6)),
     "cat /sys/class/leds/led0/trigger": ("[heartbeat]",),
     "cat /sys/class/leds/led1/trigger": ("[mmc0]",),
+    # The system monitor (linux_workspace/userland/sysmon/), which init started at boot, and a
+    # second one for two intervals: the first holds the button's line, so this one has none
+    "ps": (SYSMON,),
+    "sysmon -m mem -i 200 -n 2 -v": (
+        "sysmon: no button",
+        "sysmon: mode mem",
+        "sysmon: mem ",
+        "% bar ",
+        "sysmon: stopped",
+    ),
 }
 COMMANDS = BASE_COMMANDS | LED_COMMANDS
 # What the board's test does to its card after COMMANDS: the file removed and the card
@@ -66,6 +79,24 @@ CARD_MOUNTED = " /mnt/sd "
 def missing(out: str, wanted) -> list[str]:
     """What of wanted is not in out."""
     return [w for w in wanted if w not in out]
+
+
+def pids(ps_out: str, name: str) -> list[int]:
+    """The processes busybox's ps lists with that command, its arguments aside. This busybox's
+    ps prints `  PID USER       VSZ STAT COMMAND` lines without that header (2026-11)."""
+    found = []
+    for line in ps_out.splitlines():
+        f = line.split()
+        if len(f) >= 5 and f[0].isdigit() and (f[4] == name or f[4].endswith("/" + name)):
+            found.append(int(f[0]))
+    return found
+
+
+def cpu_ticks(stat: str) -> int:
+    """A process's CPU time so far in clock ticks (utime + stime) from its /proc/<pid>/stat."""
+    # The command (field 2) is in parentheses and may hold spaces: count from its end
+    f = stat[stat.rindex(")") + 2 :].split()
+    return int(f[11]) + int(f[12])
 
 
 # The memory the userland has, read at the shell with its builtins only (hush's `exec`, `read`

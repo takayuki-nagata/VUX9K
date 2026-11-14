@@ -1,0 +1,6 @@
+# buildroot builds riscv FLAT executables with -fPIC and links them with elf2flt -r
+# (docs/agents/linux.md, "Things that are not obvious"): the Rust code reaches its data
+# PC-relatively, as gcc's -fPIC code does, and leaves its pointers in data as R_RISCV_32
+# relocations, which elf2flt turns into the FLAT file's relocations
+[target.riscv32im-unknown-none-elf]
+rustflags = ["-C", "relocation-model=pic", "-C", "code-model=medium"]

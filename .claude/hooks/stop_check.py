@@ -103,6 +103,11 @@ def plan(paths: list[str]) -> tuple[list[tuple[str, list[str], Path]], list[tupl
         checks.append((f"cargo check (firmware/{crate})", cmd, ROOT / "firmware" / crate))
     if "emu/" in rust:
         checks.append(("cargo check (emu)", ["cargo", "check", "--quiet", "--workspace"], ROOT / "emu"))
+    if "linux_workspace/userland/sysmon/" in rust:
+        # Its target's: on the host a no_std staticlib has no panic runtime (test-sysmon-host
+        # builds the tests)
+        cmd = ["cargo", "check", "--quiet", "--target", "riscv32im-unknown-none-elf"]
+        checks.append(("cargo check (sysmon)", cmd, ROOT / "linux_workspace/userland/sysmon"))
     if paths:
         checks.append(("check_no_absolute_paths", ["python3", "scripts/check_no_absolute_paths.py"], ROOT))
     return fmt, checks
