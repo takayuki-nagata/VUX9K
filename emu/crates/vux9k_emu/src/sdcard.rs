@@ -28,7 +28,9 @@
 //! - CRC: CMD59 with bit 0 set turns it on. A written block whose CRC16 is wrong is then
 //!   refused (data response 0B), and strict mode records a command whose CRC7 is wrong.
 //! - Faults (`Faults`): unanswered commands, ACMD41 never ready, CMD17/CMD18 error token
-//!   (always or for given sectors; CMD18 then stops), CMD24/CMD25 data rejected.
+//!   (always or for given sectors; CMD18 then stops), CMD24/CMD25 data rejected, and a
+//!   read wait: more FF before each data block's token (or the error token), as a real
+//!   card's N(AC) (the Rust card only, like `fail_after`).
 //! - Answers are sent whatever CS does (but during CMD18); a partial command, a wait for
 //!   a data token or a partial data block is dropped when CS goes high.
 //!
@@ -66,6 +68,11 @@ pub struct Faults {
     pub fail_after: Vec<(u32, u32)>,
     /// CMD24's data response is 0B (CRC error): the block is not written.
     pub write_reject: bool,
+    /// FF bytes the card sends before a data block's token (or the error token) beyond the
+    /// one it always sends, a real card's wait (N(AC)): one entry per block in turn, from
+    /// the first again after the last; empty is none. Every block that has a token waits:
+    /// CMD17's, each of CMD18's, and the registers' (CMD9, CMD10, ACMD13, ACMD51).
+    pub read_waits: Vec<u32>,
 }
 
 #[derive(Clone, Debug)]
@@ -117,6 +124,8 @@ pub struct SdCard {
     pub commands: Vec<(u8, u32)>,
     /// Good CMD17 reads so far, per sector (for `Faults::fail_after`).
     reads: std::collections::HashMap<u32, u32>,
+    /// Data blocks sent so far (for `Faults::read_waits`).
+    blocks: usize,
     /// Protocol problems (strict mode).
     pub violations: Vec<String>,
 }
@@ -140,6 +149,7 @@ impl SdCard {
             fast_reported: false,
             commands: Vec::new(),
             reads: std::collections::HashMap::new(),
+            blocks: 0,
             violations: Vec::new(),
         }
     }
@@ -297,9 +307,22 @@ impl SdCard {
         0xFF
     }
 
-    /// Queues FF FE, `data` and its CRC16.
+    /// Queues FF, the next read wait's FF (`Faults::read_waits`) and `token`.
+    fn token(&mut self, token: u8) {
+        let waits = &self.faults.read_waits;
+        let n = if waits.is_empty() {
+            0
+        } else {
+            waits[self.blocks % waits.len()]
+        };
+        self.blocks += 1;
+        self.resp.extend(std::iter::repeat_n(0xFF, 1 + n as usize));
+        self.resp.push_back(token);
+    }
+
+    /// Queues FF FE (after the read wait), `data` and its CRC16.
     fn data_block(&mut self, data: &[u8]) {
-        self.resp.extend([0xFF, 0xFE]);
+        self.token(0xFE);
         self.resp.extend(data);
         self.resp.extend(crc16(data).to_be_bytes());
     }
@@ -314,7 +337,7 @@ impl SdCard {
             .iter()
             .any(|&(s, n)| s == lba && *reads >= n);
         if self.faults.read_error || self.faults.bad_sectors.contains(&lba) || worn {
-            self.resp.extend([0xFF, 0x08]);
+            self.token(0x08);
             return false;
         }
         *reads += 1;

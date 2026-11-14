@@ -489,6 +489,13 @@ def test_card_errors():
     assert "X" not in s2_cmd(soc, "ls").split()
 
 
+def test_card_with_read_waits():
+    """A card that sends more FF before each block's token, as a real card does (the
+    emulator's Faults::read_waits, in turn): both stages wait for it."""
+    soc, _ = boot_s2({"README.TXT": b"hi\n"}, sd_card={"read_waits": [0, 5, 40, 1]})
+    assert s2_cmd(soc, "cat README.TXT") == "hi\n"
+
+
 def test_no_card(tool):
     """RAM-booted without a card: the second stage tries to initialize one and says
     there is none."""

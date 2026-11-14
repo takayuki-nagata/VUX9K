@@ -480,3 +480,63 @@ fn cpu_sees_busy_from_the_cycle_after_its_store() {
     }
     assert_eq!((soc.regs[3], soc.regs[4]), (1, 1), "busy, deselected");
 }
+
+/// The FF bytes up to a token, then the token: (FF count, token).
+fn wait_token(h: &mut Host) -> (usize, u8) {
+    for n in 0..100 {
+        let b = h.xfer(0xFF);
+        if b != 0xFF {
+            return (n, b);
+        }
+    }
+    panic!("no token");
+}
+
+#[test]
+fn read_waits_go_before_every_token_in_turn() {
+    let image: Vec<u8> = (0..4 * SECTOR).map(|i| (i / SECTOR) as u8 + 1).collect();
+    let mut card = SdCard::new(image);
+    card.faults.read_waits = vec![0, 15, 30];
+    let mut h = Host::new(card);
+    h.init();
+    h.deselect();
+    // CMD17: the card's one FF, the first wait's none, the token, the data, its CRC
+    assert_eq!(h.cmd(17, 0), 0x00);
+    assert_eq!(wait_token(&mut h), (1, 0xFE));
+    let d = h.bytes(SECTOR);
+    assert_eq!(d, [1; SECTOR]);
+    assert_eq!(h.bytes(2), crc16(&d).to_be_bytes());
+    h.deselect();
+    // CMD18: each block the next wait, from the first again after the last
+    assert_eq!(h.cmd(18, 1), 0x00);
+    for (wait, v) in [(15, 2), (30, 3), (0, 4)] {
+        assert_eq!(wait_token(&mut h), (1 + wait, 0xFE), "block {v}");
+        let d = h.bytes(SECTOR);
+        assert_eq!(d, [v; SECTOR]);
+        assert_eq!(h.bytes(2), crc16(&d).to_be_bytes());
+        h.cs(false);
+        h.cs(true);
+    }
+    for b in [0x4C, 0, 0, 0, 0, 0x61] {
+        h.xfer(b);
+    }
+    assert_eq!(h.bytes(3), [0xFF, 0x00, 0xFF]);
+    h.deselect();
+    // The registers' blocks wait too: the next wait after the block CMD12 cut off (15)
+    assert_eq!(h.cmd(9, 0), 0x00);
+    assert_eq!(wait_token(&mut h), (31, 0xFE));
+    let csd = h.bytes(16);
+    assert_eq!(csd, h.card().csd());
+    assert_eq!(h.bytes(2), crc16(&csd).to_be_bytes());
+    h.deselect();
+    // And the error token
+    let mut card = SdCard::new(vec![]);
+    card.faults.read_waits = vec![7];
+    card.faults.read_error = true;
+    let mut h = Host::new(card);
+    h.init();
+    h.deselect();
+    assert_eq!(h.cmd(17, 0), 0x00);
+    assert_eq!(wait_token(&mut h), (8, 0x08));
+    h.deselect();
+}
