@@ -157,6 +157,13 @@ small, and prefer an upstream driver and binding where one fits (the UART is ups
   request with its scatterlist when the card is found, unmovable slab spread over the RAM:
   with upstream's values Slab was 920 kB after the boot and the largest free block fell to
   order 6-7, so busybox's exec (order 7) failed.
+- **Reading the card from Linux is ~500 cycles a byte** (~36 KB/s at 18 MHz, the emulator,
+  2026-11; the second stage reads at ~100): a profile of a `dd` from the card put ~27% in the
+  driver's byte loop (48 cycles a byte are the wire at 3 MHz), ~16% in the SPI core (mmc_spi
+  sends several one-byte messages per block, e.g. its token search), ~6% in the CRC16 and ~32%
+  in the timer tick and the scheduler, which take ~23% of the CPU even when it is idle (one HZ
+  100 tick is ~40k cycles here). The block device's readahead (128 KB) also reads past what a
+  short sequential read asks for: a 256 KB `dd` read 496 KB.
 - **What the block layer costs in RAM** (2026-11, the emulator; SLUB_TINY has no slabinfo, so
   the slab pages were counted per cache by reading `mem_map` and `slab_caches` from the
   emulator's PSRAM with `Soc.xmem_word`): kernel code 1,770K → 2,191K, Slab 368 →
@@ -249,7 +256,11 @@ This repository's own programs are buildroot packages of the external tree, one 
   directory is on the login shell's PATH (`/etc/profile`, after the initramfs' directories), as
   `/mnt/sd/VUX9K/LINUX/BIN` once init has mounted the card ("The SD card"); `hw_linux.py` puts
   it on the board's card with the Image and the device tree, `test_linux.py` builds it into the
-  emulator's card, and `linux_checks.COMMANDS` runs memprobe from there by its path. Artifacts lose the
+  emulator's card, and `linux_checks.COMMANDS` runs memprobe from there by its name and path.
+  **Prefer the card** for anything not needed before init has mounted it (memprobe is there
+  only), but mind that a program's first exec from the card reads it at ~36 KB/s ("The SD
+  card"); busybox stays in the initramfs for that reason (its 327 KB would take ~9 s at each
+  boot and after the page cache drops it). Artifacts lose the
   files' modes (`upload-artifact` zips), which a FAT card doesn't keep anyway. Removing a
   package does not remove what it installed there or in `target/`: clean `build/buildroot` then.
 

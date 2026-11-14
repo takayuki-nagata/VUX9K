@@ -107,6 +107,8 @@ static pid_t start_shell(void) {
             }
         }
         execve(SHELL, argv, envp);
+        // No block of contiguous pages for busybox's copy, typically
+        write(2, "init: cannot run " SHELL "\n", sizeof "init: cannot run " SHELL "\n" - 1);
         _exit(127);
     }
     if (pid < 0) {

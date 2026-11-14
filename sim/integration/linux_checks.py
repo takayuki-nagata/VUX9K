@@ -26,15 +26,15 @@ COMMANDS = {
     "ls /": ("bin", "dev", "proc", "sbin"),
     "cat /proc/cpuinfo": ("rv32ima",),
     # The SD card (mmc_spi on spi-vux9k-sd) and its MBR's FAT32 partition, which init mounts
-    # (linux_workspace/buildroot/board/post-build.sh)
+    # (linux_workspace/userland/init/)
     "cat /proc/partitions": ("mmcblk0", "mmcblk0p1"),
     "mount": ("/dev/mmcblk0p1 on /mnt/sd type vfat",),
-    # This tree's own program (linux_workspace/userland/memprobe/): the largest free block
-    # allocated, with a copy of itself in RAM
-    "memprobe": ("memprobe: MemFree ", "), allocated"),
     # The card's programs (make linux-dist's VUX9K/LINUX/BIN/) are on the login shell's PATH,
-    # after the initramfs': memprobe from the card by its path
+    # after the initramfs': this tree's own program memprobe (linux_workspace/userland/memprobe/:
+    # the largest free block allocated, with a copy of itself in RAM), on the card only, by its
+    # name and its path
     "echo $PATH": ("/mnt/sd/VUX9K/LINUX/BIN",),
+    "memprobe": ("memprobe: MemFree ", "), allocated"),
     "ls /mnt/sd/VUX9K": ("LINUX", "STAGE2.BIN"),
     "/mnt/sd/VUX9K/LINUX/BIN/memprobe": ("memprobe: MemFree ", "), allocated"),
     # A write to the card, read back by another command (the first's echo holds its text)
