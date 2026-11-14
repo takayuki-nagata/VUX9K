@@ -14,6 +14,11 @@ BR2_RISCV_32=y
 BR2_RISCV_ABI_ILP32=y
 BR2_BINFMT_FLAT=y
 BR2_KERNEL_HEADERS_6_18=y
+# No thread library: with linuxthreads, uClibc's start-up initializes it in every program and
+# pulls in its tables (__pthread_handles 16 KB of data, pthread_keys 8 KB) and, through
+# sysconf's fopen, stdio and its 8 KB of buffers: ~70 KB for a program that writes a line
+# (memprobe, 2026-11). Nothing here uses threads, and on noMMU each process holds its own copy.
+BR2_PTHREADS_NONE=y
 # Size (an executable needs its size in contiguous RAM): no uClibc utilities (getconf, 272 KB),
 # a small busybox of our own (board/busybox.config) in place of busybox-minimal.config
 # BR2_UCLIBC_INSTALL_UTILS is not set
