@@ -12,6 +12,8 @@ VUX9K_SYSMON_VERSION = 1.0
 VUX9K_SYSMON_SITE = $(BR2_EXTERNAL_VUX9K_PATH)/../userland/sysmon
 VUX9K_SYSMON_SITE_METHOD = local
 VUX9K_SYSMON_LICENSE = MIT
+# Not the host's cargo output (make test-sysmon-host, the Stop hook's cargo check)
+VUX9K_SYSMON_OVERRIDE_SRCDIR_RSYNC_EXCLUSIONS = --exclude target
 # FLAT's stack is fixed at link time; the program's deepest frame holds a 1.5 KB file buffer
 VUX9K_SYSMON_FLAT_STACKSIZE = 0x2000
 

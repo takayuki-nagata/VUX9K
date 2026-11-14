@@ -209,8 +209,11 @@ exec needed. Init does without exec what the inittab and buildroot's `/init` scr
 - the system monitor `/usr/sbin/sysmon` ("LEDs and the system monitor") beside the shell, in
   its own session, stdin `/dev/null`, its output on the console: when it dies (a signal other
   than SIGTERM/SIGINT, or a status other than 0: `init: /usr/sbin/sysmon killed by signal 11`)
-  init starts it again 5 s later (`alarm`, which ends init's `wait`); when it was stopped
-  (`kill <pid>`, it ends with status 0: `init: /usr/sbin/sysmon stopped`) init leaves it so.
+  init starts it again 5 s later (`alarm`), twice as late after each end within a minute of
+  its start (an exec that fails, up to 320 s); when it was stopped (`kill <pid>`, it ends with
+  status 0: `init: /usr/sbin/sysmon stopped`) init leaves it so. init keeps the signals it
+  waits for blocked but in `sigsuspend`: a signal between its check of their flags and its
+  sleep would otherwise wait for the next child's end (an idle shell: never).
 No inittab any more (`board/post-build.sh` removes it): a process that should run beside the
 shell (a daemon) is started, and restarted, by init; what it does stays out of process 1.
 

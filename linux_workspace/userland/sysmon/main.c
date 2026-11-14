@@ -3,7 +3,7 @@
 
 // sysmon's system calls (src/lib.rs is the program: uClibc has no Rust target, so the Rust code
 // is a no_std staticlib, built PIC as buildroot builds this C, linked into this executable):
-//   - files read whole (/proc/stat, /proc/meminfo, /proc/loadavg);
+//   - files read whole (/proc/uptime, /proc/meminfo, /proc/loadavg);
 //   - the LEDs through the LED class, /sys/class/leds/ledN/brightness (the device tree's
 //     gpio-leds), each opened once;
 //   - the button S2 through the GPIO character device: the gpiochip labelled "button" (the

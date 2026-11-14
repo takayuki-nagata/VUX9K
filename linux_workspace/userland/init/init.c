@@ -14,8 +14,9 @@
 //     it lived less than a second: an exec that fails would loop);
 //   - the system monitor (SYSMON, linux_workspace/userland/sysmon/) beside the shell, in its own
 //     session on the console's output; started again RESTART_S later when it dies (a signal
-//     other than SIGTERM or SIGINT, or a status other than 0), not when it was stopped
-//     (`kill <pid>`: it ends with status 0); a missing SYSMON is skipped;
+//     other than SIGTERM or SIGINT, or a status other than 0), twice as late each time it
+//     dies within a minute (up to RESTART_MAX_S), not when it was stopped (`kill <pid>`: it
+//     ends with status 0); a missing SYSMON is skipped;
 //   - reaping every orphan the kernel hands to it;
 //   - SIGTERM (reboot), SIGUSR1 (halt) and SIGUSR2 (poweroff), which busybox's reboot, halt and
 //     poweroff send to process 1: every process sent SIGTERM, then SIGKILL (a shell in /mnt/sd
@@ -40,12 +41,17 @@
 #define CARD_WAIT_MS 5000
 #define SHELL "/bin/sh"
 #define SYSMON "/usr/sbin/sysmon"
+// The first restart's delay, doubled after each end that came within RESTART_RESET_S of its
+// start (an exec that fails, a program that can't run here), up to RESTART_MAX_S
 #define RESTART_S 5
-#define TEXT(x) #x
-#define NUMBER(x) TEXT(x)
+#define RESTART_MAX_S 320
+#define RESTART_RESET_S 60
 
 static volatile sig_atomic_t stop_signal;
 static volatile sig_atomic_t alarm_rang;
+// The signal mask init's children start with: init blocks the signals it waits for, so that
+// one can't come between its check of their flags and its sleep (sigsuspend)
+static sigset_t child_mask;
 
 // One line, in one write: the console interleaves other processes' writes (the shell's prompt)
 // between separate ones
@@ -118,9 +124,11 @@ static pid_t start_shell(void) {
         static char *const argv[] = {"-sh", 0};
         static char *const envp[] = {"HOME=/", "PATH=/sbin:/usr/sbin:/bin:/usr/bin", "SHELL=" SHELL,
                                      "USER=root", "TERM=linux", 0};
-        // init ignores these; the shell and its programs must not (SIG_IGN survives execve)
+        // init ignores these; the shell and its programs must not (SIG_IGN survives execve,
+        // as does the signal mask)
         signal(SIGINT, SIG_DFL);
         signal(SIGHUP, SIG_DFL);
+        sigprocmask(SIG_SETMASK, &child_mask, 0);
         setsid();
         int fd = open("/dev/console", O_RDWR);
         if (fd >= 0) {
@@ -144,10 +152,10 @@ static pid_t start_shell(void) {
 }
 
 // The daemon in its own session (no signals from the console's keys), stdin /dev/null, its
-// output on the console; -1 if it can't be started
+// output on the console; -1 if vfork failed, -2 if there is no SYSMON
 static pid_t start_sysmon(void) {
     if (access(SYSMON, X_OK) < 0) {
-        return -1;
+        return -2;
     }
     pid_t pid = vfork();
     if (pid == 0) {
@@ -155,6 +163,7 @@ static pid_t start_sysmon(void) {
         static char *const envp[] = {"PATH=/sbin:/usr/sbin:/bin:/usr/bin", 0};
         signal(SIGINT, SIG_DFL);
         signal(SIGHUP, SIG_DFL);
+        sigprocmask(SIG_SETMASK, &child_mask, 0);
         setsid();
         int fd = open("/dev/null", O_RDONLY);
         if (fd > 0) {
@@ -171,23 +180,43 @@ static pid_t start_sysmon(void) {
     return pid;
 }
 
-// The daemon's end: whether init starts it again (it died, or its exec failed)
-static int sysmon_died(int status) {
-    static char num[12];
-    char *p = num + sizeof num - 1;
-    int n = WIFSIGNALED(status) ? WTERMSIG(status) : WEXITSTATUS(status);
-    if (WIFEXITED(status) && n == 0) {
-        say(SYSMON " stopped", 0);
-        return 0;
-    }
+// n in decimal, in buf (12 bytes)
+static const char *decimal(char *buf, unsigned n) {
+    char *p = buf + 11;
     *p = 0;
     do {
         *--p = (char)('0' + n % 10);
         n /= 10;
     } while (n);
-    say(WIFSIGNALED(status) ? SYSMON " killed by signal " : SYSMON " exited with status ", p);
-    say("restarting " SYSMON " in " NUMBER(RESTART_S) " s", 0);
+    return p;
+}
+
+// The daemon's end: whether init starts it again (it died, or its exec failed)
+static int sysmon_died(int status) {
+    char num[12];
+    int n = WIFSIGNALED(status) ? WTERMSIG(status) : WEXITSTATUS(status);
+    if (WIFEXITED(status) && n == 0) {
+        say(SYSMON " stopped", 0);
+        return 0;
+    }
+    say(WIFSIGNALED(status) ? SYSMON " killed by signal " : SYSMON " exited with status ",
+        decimal(num, (unsigned)n));
     return 1;
+}
+
+// Restarts the daemon after delay seconds: its message, and the alarm that ends init's wait
+static void restart_sysmon_in(unsigned delay) {
+    char line[48] = "restarting " SYSMON " in ", num[12];
+    size_t n = strlen(line);
+    const char *d = decimal(num, delay);
+    memcpy(line + n, d, strlen(d));
+    memcpy(line + n + strlen(d), " s", 3);
+    say(line, 0);
+    alarm(delay);
+}
+
+static void on_child(int sig) {
+    (void)sig;
 }
 
 static void on_stop(int sig) {
@@ -231,9 +260,11 @@ int main(void) {
     sigaction(SIGTERM, &sa, 0);
     sigaction(SIGUSR1, &sa, 0);
     sigaction(SIGUSR2, &sa, 0);
-    // No SA_RESTART: the alarm ends init's wait for its children
     sa.sa_handler = on_alarm;
     sigaction(SIGALRM, &sa, 0);
+    // A handler, so that a child's end ends sigsuspend (SIGCHLD's default is to ignore it)
+    sa.sa_handler = on_child;
+    sigaction(SIGCHLD, &sa, 0);
     signal(SIGINT, SIG_IGN);
     signal(SIGHUP, SIG_IGN);
 
@@ -250,7 +281,23 @@ int main(void) {
     }
     mount_card();
 
+    // The signals init waits for stay blocked but in sigsuspend, which takes them atomically:
+    // a flag is checked, then init sleeps, and a signal between the two still wakes it
+    sigset_t waited;
+    sigemptyset(&waited);
+    sigaddset(&waited, SIGTERM);
+    sigaddset(&waited, SIGUSR1);
+    sigaddset(&waited, SIGUSR2);
+    sigaddset(&waited, SIGALRM);
+    sigaddset(&waited, SIGCHLD);
+    sigprocmask(SIG_BLOCK, &waited, &child_mask);
+
+    unsigned delay = RESTART_S;
+    unsigned long sysmon_started = now_ms();
     pid_t sysmon = start_sysmon();
+    if (sysmon == -1) {
+        restart_sysmon_in(delay);
+    }
     for (;;) {
         unsigned long started = now_ms();
         pid_t shell = start_shell();
@@ -260,20 +307,35 @@ int main(void) {
             }
             if (alarm_rang) {
                 alarm_rang = 0;
+                sysmon_started = now_ms();
                 sysmon = start_sysmon();
+                if (sysmon == -1) {
+                    restart_sysmon_in(delay);
+                }
             }
             int status;
-            pid_t pid = wait(&status);
-            if (pid < 0 && errno == ECHILD) {
-                break;
+            pid_t pid = waitpid(-1, &status, WNOHANG);
+            if (pid == 0) {
+                sigsuspend(&child_mask);
+                continue;
+            }
+            if (pid < 0) {
+                if (errno == ECHILD) {
+                    break;
+                }
+                continue;
             }
             if (pid == shell) {
                 break;
             }
-            if (pid > 0 && pid == sysmon) {
+            if (pid == sysmon) {
                 sysmon = -1;
                 if (sysmon_died(status)) {
-                    alarm(RESTART_S);
+                    if (now_ms() - sysmon_started >= RESTART_RESET_S * 1000UL) {
+                        delay = RESTART_S;
+                    }
+                    restart_sysmon_in(delay);
+                    delay = delay * 2 > RESTART_MAX_S ? RESTART_MAX_S : delay * 2;
                 }
             }
         }
