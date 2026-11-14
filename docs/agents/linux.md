@@ -89,7 +89,7 @@ stage's `linux` does (`fw_common::linux`). Index and the rules that apply everyw
   code reaches its data PC-relatively, so the two must stay at their linked distance (a
   try ended in SIGILL at an unrelocated text address). FDPIC is in the kernel but not in
   buildroot's riscv toolchain. So busybox is kept small (`board/busybox.config`: allnoconfig
-  plus hush and core applets, ~330 KB), and init is this tree's own small program ("Init"),
+  plus hush and core applets, ~207 KB; "Memory budget"), and init is this tree's own small program ("Init"),
   not busybox's. Buildroot's `busybox-minimal.config` (780 KB) needed order-8 allocations that 8 MB
   could not keep.
 - **All 8 MB of the PSRAM go to the kernel.** The stages' memory (from `0x806F_0000`) is free
@@ -225,6 +225,27 @@ paths (`test_linux.py`'s `test_record_measurements`), the board's `hw_linux.py` 
   file in the initramfs as much as `/proc`; the lines typed next come out twice, echoed and
   then by the loop). Open the file on a descriptor and redirect each `read` instead:
   `exec 3<FILE; while read l <&3; ...; done; exec 3<&-`.
+- **Reading the card leaves the free memory in pieces.** noMMU has no compaction (it needs
+  an MMU), so a high-order block that page cache or a small allocation lands in stays broken
+  until every page in it is freed. A 256 KB `dd` from the card (with readahead ~500 KB of page
+  cache) broke the one free order-8 block after the boot (`6:4 7:1 8:1` -> `6:5 7:2 8:0`,
+  MemFree 3,372 -> 2,772 kB, 2026-11); a second one and a few commands later no order-7 block
+  was left, and busybox's exec, then an order-7 block, failed. So **keep busybox's exec at
+  order 6**: binfmt_flat allocates text + data + max(bss + stack, relocations) in one block
+  of a power of two pages, and busybox's is ~232 KB of 256 KB (`flthdr -p`: Data End, BSS End
+  and its stack, 16,000 B, fixed by busybox's Makefile); `test_linux.py`'s
+  `test_exec_after_card_reads` reads 1.5 MB more from the card, an exec after each.
+- **What every program carries from libc** (each is linked statically and copied whole): the
+  toolchain is uClibc built without a thread library (`BR2_PTHREADS_NONE`: with linuxthreads
+  its start-up pulled `__pthread_handles`, 16 KB of data, `pthread_keys`, 8 KB, and through
+  `sysconf`'s `fopen` stdio with 8 KB of buffers into every program: memprobe was ~70 KB, init
+  75 KB), without unwind tables (`external.mk`'s `UCLIBC_EXTRA_CFLAGS`: libc.a's `.eh_frame`
+  was ~19 KB of busybox) and with a double, not long double, for printf's and strtod's
+  arithmetic (`board/patches/uclibc/` with `UCLIBC_HAS_LONG_DOUBLE_MATH` off: riscv32's
+  128-bit soft-float long double pulled ~22 KB of libgcc into busybox). busybox has no `mount`
+  (`board/busybox.config`): init mounts what it needs and `/proc/mounts` lists it, and the
+  applet linked in libc's resolver and `getaddrinfo` (~36 KB). Measured 2026-11: busybox
+  327 KB -> 207 KB, init 75 KB -> 13 KB, memprobe 71 KB -> 4 KB.
 - A failed allocation of a high order is not a quiet probe: the kernel prints a page allocation
   failure, a stack trace and a dump of its memory to the console (`warn_alloc`). Don't measure the
   largest block by allocating until it fails; read buddyinfo.
@@ -249,8 +270,8 @@ This repository's own programs are buildroot packages of the external tree, one 
   `riscv32-buildroot-linux-uclibc-flthdr -p` on the built file shows it.
 - **Mind each program's size**: it is linked statically, copied whole at each exec, and in the
   initramfs it is RAM for good. uClibc's stdio pulled in by `printf`/`sscanf` made memprobe
-  120 KB; with `read`/`write` and its own number parsing it is 71 KB (2026-11), so even a
-  program without stdio costs tens of KB in the initramfs.
+  120 KB; with `read`/`write` and its own number parsing it is 4 KB ("Memory budget": the
+  libc this toolchain has).
 - **Install into the initramfs, the card, or both.** `INSTALL_TARGET_CMDS` puts the program in
   the initramfs (every byte there is RAM for good: the memory table shows it). For the card,
   `INSTALL_IMAGES_CMDS` installs it into buildroot's `images/sd/VUX9K/LINUX/BIN/`, which `make
@@ -264,7 +285,7 @@ This repository's own programs are buildroot packages of the external tree, one 
   emulator's card, and `linux_checks.COMMANDS` runs memprobe from there by its name and path.
   **Prefer the card** for anything not needed before init has mounted it (memprobe is there
   only), but mind that a program's first exec from the card reads it at ~36 KB/s ("The SD
-  card"); busybox stays in the initramfs for that reason (its 327 KB would take ~9 s at each
+  card"); busybox stays in the initramfs for that reason (its 327 KB took ~9 s at each
   boot and after the page cache drops it). Artifacts lose the
   files' modes (`upload-artifact` zips), which a FAT card doesn't keep anyway. Removing a
   package does not remove what it installed there or in `target/`: clean `build/buildroot` then.

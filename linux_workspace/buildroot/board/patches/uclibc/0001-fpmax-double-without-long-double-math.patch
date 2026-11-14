@@ -1,0 +1,22 @@
+uClibc: printf's and strtod's maximal type is double without long double math
+
+On riscv32 long double is 128 bits, soft-float: uClibc's __fpmax_t
+pulled libgcc's __addtf3/__subtf3/__multf3/__divtf3 (~22 KB) into every
+program that links printf or strtod (busybox). FPMAX_TYPE 2 (double) is
+one uClibc already supports; this tree turns UCLIBC_HAS_LONG_DOUBLE_MATH
+off (linux_workspace/buildroot/external.mk).
+
+---
+--- a/libc/sysdeps/linux/common/bits/uClibc_fpmax.h
++++ b/libc/sysdeps/linux/common/bits/uClibc_fpmax.h
+@@ -17,7 +17,9 @@
+ 
+ #ifdef __UCLIBC_HAS_FLOATS__
+ 
+-#if defined(LDBL_MANT_DIG)
++/* Long double only with its math: printf's and strtod's arithmetic in a soft-float long
++ * double (riscv32's is 128 bits) pulls in libgcc's quad-precision routines. */
++#if defined(LDBL_MANT_DIG) && defined(__UCLIBC_HAS_LONG_DOUBLE_MATH__)
+ 
+ typedef long double __fpmax_t;
+ #define FPMAX_TYPE           3

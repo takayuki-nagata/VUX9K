@@ -28,7 +28,7 @@ COMMANDS = {
     # The SD card (mmc_spi on spi-vux9k-sd) and its MBR's FAT32 partition, which init mounts
     # (linux_workspace/userland/init/)
     "cat /proc/partitions": ("mmcblk0", "mmcblk0p1"),
-    "mount": ("/dev/mmcblk0p1 on /mnt/sd type vfat",),
+    "cat /proc/mounts": ("/dev/mmcblk0p1 /mnt/sd vfat ",),
     # The card's programs (make linux-dist's VUX9K/LINUX/BIN/) are on the login shell's PATH,
     # after the initramfs': this tree's own program memprobe (linux_workspace/userland/memprobe/:
     # the largest free block allocated, with a copy of itself in RAM), on the card only, by its

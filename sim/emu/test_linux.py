@@ -171,6 +171,22 @@ def test_command(linux, line):
     assert not linux_checks.missing(out, linux_checks.COMMANDS[line]), out
 
 
+EXEC_FAILED = ("page allocation failure", "Unable to allocate RAM")
+# 1.5 MB read: more page cache than the free memory's largest blocks
+READS = 6
+
+
+def test_exec_after_card_reads(linux):
+    """Busybox's exec after each of READS more 256 KB reads from the card (other blocks than
+    COMMANDS' dd): the page cache they leave breaks the free memory's large blocks (noMMU
+    has no compaction), and busybox must still find a block for its copy (docs/agents/linux.md,
+    "Memory budget")."""
+    for k in range(1, READS + 1):
+        command(linux, f"dd if=/dev/mmcblk0 of=/dev/null bs=4096 count=64 skip={64 * k}")
+        out = command(linux, "ls /")
+        assert not any(e in out for e in EXEC_FAILED), f"after read {k}: {out[:300]}"
+
+
 def test_card_after_linux(linux, tmp_path):
     """The card as Linux leaves it after the commands' write (linux_checks.SD_TEST_FILE) and an
     umount: fsck.fat finds nothing wrong (dosfstools, which CI's job has), and the first stage
