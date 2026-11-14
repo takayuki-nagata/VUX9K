@@ -8,13 +8,24 @@
 //! LEDs on led1-led4; the button S2 moves to the next of the three. Its options:
 //!
 //! ```text
-//! sysmon [-m cpu|mem|load] [-i MS] [-b MS] [-n COUNT] [-v]
+//! sysmon [-m cpu|mem|load] [-i MS] [-b MS] [-n COUNT] [-r KB] [-v]
 //! ```
 //!
 //! `-i` the interval (default 1000 ms), `-b` how often the button is read (default 200 ms),
 //! `-n` stop after that many intervals, `-v` a line per interval. It writes the LEDs that change,
 //! and all four every [`REFRESH_INTERVALS`]. SIGTERM (or SIGINT) turns its
 //! LEDs off and ends it with status 0.
+//!
+//! Every interval it also reclaims the page cache when no large free block is left
+//! ([`Reclaim`]; docs/agents/linux.md, "Memory budget"): /proc/buddyinfo has no free block of
+//! [`RECLAIM_ORDER`] or above (an exec of the initramfs' busybox needs one, and noMMU has no
+//! compaction to make one) and /proc/meminfo's Cached is at least `-r` kB (default
+//! [`RECLAIM_CACHED_KB`]; `-r 0` turns it off), so it drops the clean page cache
+//! (/proc/sys/vm/drop_caches, `1`). A drop that brings no such block back is followed by
+//! [`RECLAIM_HOLDOFF`] intervals without one. At its start it writes `4` there, which drops
+//! nothing but keeps the kernel's `drop_caches: N` line on the console to that one write.
+//! `-v` says each drop; without it a drop says nothing. If the file can't be written it says
+//! so once and reclaims no more.
 //!
 //! This crate is the logic: parsing, the bar, the loop. The system calls are main.c's (uClibc
 //! has no Rust target), reached through [`Sys`]; host tests drive the loop with a fake.
@@ -122,6 +133,39 @@ pub fn parse_mem_percent(text: &[u8]) -> Option<u32> {
     Some(((used * 100 + total / 2) / total) as u32)
 }
 
+/// /proc/meminfo's Cached, in kB (the page cache, the initramfs' ramfs pages included).
+pub fn parse_cached_kb(text: &[u8]) -> Option<u64> {
+    Some(number(line_after(text, b"Cached:")?)?.0)
+}
+
+/// The free blocks of `order` pages or more in /proc/buddyinfo, over all its zones
+/// (`Node 0, zone   Normal   n0 n1 ...`: one count per order from 0); None without a zone.
+pub fn free_blocks_from(text: &[u8], order: usize) -> Option<u64> {
+    let mut zones = 0;
+    let mut free = 0u64;
+    for line in text.split(|&c| c == b'\n') {
+        let mut words = line
+            .split(|&c| c == b' ' || c == b'\t')
+            .filter(|w| !w.is_empty());
+        if words.next() != Some(b"Node") || words.nth(1) != Some(b"zone") || words.next().is_none()
+        {
+            continue;
+        }
+        for (k, w) in words.enumerate() {
+            match number(w) {
+                Some((n, rest)) if rest.is_empty() => {
+                    if k >= order {
+                        free = free.saturating_add(n);
+                    }
+                }
+                _ => return None,
+            }
+        }
+        zones += 1;
+    }
+    (zones > 0).then_some(free)
+}
+
 /// A decimal number with a fraction at the start of s (after spaces), in hundredths (further
 /// digits dropped), and what follows it.
 fn decimal(s: &[u8]) -> Option<(u64, &[u8])> {
@@ -164,6 +208,8 @@ pub struct Options {
     pub button_ms: u32,
     /// Intervals until it stops; 0: until a signal
     pub count: u32,
+    /// The page cache's reclaim: the Cached it needs, in kB; 0: off
+    pub reclaim_kb: u32,
     pub verbose: bool,
 }
 
@@ -174,8 +220,17 @@ impl Default for Options {
             interval_ms: 1000,
             button_ms: 200,
             count: 0,
+            reclaim_kb: RECLAIM_CACHED_KB,
             verbose: false,
         }
+    }
+}
+
+/// A whole number argument up to max.
+fn parse_u32(s: &[u8], max: u32) -> Option<u32> {
+    match number(s)? {
+        (v, rest) if rest.is_empty() && v <= u64::from(max) => Some(v as u32),
+        _ => None,
     }
 }
 
@@ -196,12 +251,9 @@ pub fn parse_args<'a>(args: impl IntoIterator<Item = &'a [u8]>) -> Option<Option
             b"-m" => o.mode = Mode::parse(it.next()?)?,
             b"-i" => o.interval_ms = parse_ms(it.next()?)?,
             b"-b" => o.button_ms = parse_ms(it.next()?)?,
-            b"-n" => {
-                o.count = match number(it.next()?)? {
-                    (v, rest) if rest.is_empty() && v <= u64::from(u32::MAX) => v as u32,
-                    _ => return None,
-                }
-            }
+            b"-n" => o.count = parse_u32(it.next()?, u32::MAX)?,
+            // More than the RAM is never cached: 8 MB
+            b"-r" => o.reclaim_kb = parse_u32(it.next()?, 8192)?,
             _ => return None,
         }
     }
@@ -213,9 +265,9 @@ pub fn bar_leds(n: u32) -> u32 {
     ((1u32 << n.min(BAR_LEDS)) - 1) << FIRST_LED
 }
 
-/// A line of output, built without core::fmt.
+/// A line of output, built without core::fmt (main.c's vux9k_say takes up to 127 bytes).
 pub struct Line {
-    buf: [u8; 64],
+    buf: [u8; 96],
     len: usize,
 }
 
@@ -228,7 +280,7 @@ impl Default for Line {
 impl Line {
     pub fn new() -> Self {
         let mut l = Line {
-            buf: [0; 64],
+            buf: [0; 96],
             len: 0,
         };
         l.push(b"sysmon: ");
@@ -285,6 +337,9 @@ pub trait Sys {
     fn stopping(&mut self) -> bool;
     /// One line to stdout (a newline added).
     fn say(&mut self, line: &[u8]);
+    /// Writes /proc/sys/vm/drop_caches: `1` drops the clean page cache, `4` only stops the
+    /// kernel's line about it after this write; false if it can't be written.
+    fn drop_caches(&mut self, what: u8) -> bool;
 }
 
 /// The value the mode shows, from its file; the CPU's needs the previous sample.
@@ -320,6 +375,78 @@ fn say_mode(sys: &mut impl Sys, o: &Options) {
 /// and a write costs (sysfs, the LED class, the GPIO chip) at 18 MHz.
 pub const REFRESH_INTERVALS: u32 = 10;
 
+/// The order of the free block an exec of the initramfs' busybox needs (docs/agents/linux.md,
+/// "Memory budget"): 64 pages, 256 KB.
+pub const RECLAIM_ORDER: usize = 6;
+/// The Cached (kB) the reclaim needs by default. The initramfs' ramfs pages count in it and
+/// can't be dropped (~520 kB after a drop), so it doesn't tell what a drop frees: the free
+/// blocks decide, and RECLAIM_HOLDOFF stops drops that don't help.
+pub const RECLAIM_CACHED_KB: u32 = 256;
+/// The intervals without a drop after one that brought back no block of RECLAIM_ORDER: the
+/// pieces are then not the page cache's, and a drop every interval would only cost.
+pub const RECLAIM_HOLDOFF: u32 = 30;
+
+/// The page cache's reclaim, one step per interval: noMMU has no compaction, and an
+/// allocation above order 3 gives up after one try at reclaim, so page cache (the card's
+/// reads) left in large blocks fails an exec that MemFree would allow.
+#[derive(Default)]
+pub struct Reclaim {
+    /// /proc/sys/vm/drop_caches can't be written: no more reclaim
+    off: bool,
+    /// Intervals left without a drop
+    holdoff: u32,
+    /// A drop at the last step: this one checks what it brought back
+    dropped: bool,
+}
+
+impl Reclaim {
+    /// At the start: the kernel's `drop_caches` line kept to this one write (`4`). Without
+    /// the file (-r 0 aside) the reclaim is off, and it says so once.
+    pub fn start(&mut self, sys: &mut impl Sys, cached_kb: u32) {
+        if cached_kb != 0 && !sys.drop_caches(b'4') {
+            self.fail(sys);
+        }
+    }
+
+    fn fail(&mut self, sys: &mut impl Sys) {
+        self.off = true;
+        sys.say(b"sysmon: cannot write /proc/sys/vm/drop_caches");
+    }
+
+    /// Drops the page cache if no free block of RECLAIM_ORDER is left and Cached is at least
+    /// `cached_kb`; the Cached it dropped at, or None.
+    pub fn step(&mut self, sys: &mut impl Sys, cached_kb: u32) -> Option<u64> {
+        if cached_kb == 0 || self.off {
+            return None;
+        }
+        if self.holdoff > 0 {
+            self.holdoff -= 1;
+            return None;
+        }
+        let mut buf = [0u8; 1536];
+        let n = sys.read_file(b"/proc/buddyinfo\0", &mut buf)?;
+        let large = free_blocks_from(&buf[..n], RECLAIM_ORDER)?;
+        if core::mem::take(&mut self.dropped) && large == 0 {
+            self.holdoff = RECLAIM_HOLDOFF;
+            return None;
+        }
+        if large > 0 {
+            return None;
+        }
+        let n = sys.read_file(b"/proc/meminfo\0", &mut buf)?;
+        let cached = parse_cached_kb(&buf[..n])?;
+        if cached < u64::from(cached_kb) {
+            return None;
+        }
+        if !sys.drop_caches(b'1') {
+            self.fail(sys);
+            return None;
+        }
+        self.dropped = true;
+        Some(cached)
+    }
+}
+
 /// Writes the bar's LEDs whose state differs from `lit` (what sysmon wrote last), or all of them
 /// when `lit` is None; false if one can't be written.
 fn show(sys: &mut impl Sys, lit: &mut Option<u32>, want: u32) -> bool {
@@ -342,6 +469,10 @@ pub fn run(sys: &mut impl Sys, mut o: Options) -> i32 {
         sys.say(b"sysmon: cannot write /sys/class/leds/led1-4");
         return 1;
     }
+    // First, as init starts it before the shell: the kernel's one drop_caches line comes
+    // before the shell's prompt
+    let mut reclaim = Reclaim::default();
+    reclaim.start(sys, o.reclaim_kb);
     let mut pressed = match sys.button() {
         Some(p) => p,
         None => {
@@ -399,6 +530,17 @@ pub fn run(sys: &mut impl Sys, mut o: Options) -> i32 {
             l.push(b" bar ").num(n);
             sys.say(l.as_bytes());
         }
+        if let Some(cached) = reclaim.step(sys, o.reclaim_kb) {
+            if o.verbose {
+                let mut l = Line::new();
+                l.push(b"dropped the page cache (no free block of order ")
+                    .num(RECLAIM_ORDER as u32)
+                    .push(b", Cached ")
+                    .num(cached.min(u64::from(u32::MAX)) as u32)
+                    .push(b" kB)");
+                sys.say(l.as_bytes());
+            }
+        }
         done += 1;
         if o.count != 0 && done >= o.count {
             break 'run 0;
@@ -423,6 +565,7 @@ mod board {
         fn vux9k_sleep_ms(ms: u32);
         fn vux9k_stopping() -> i32;
         fn vux9k_say(p: *const u8, len: usize);
+        fn vux9k_drop_caches(what: u8) -> i32;
         fn _exit(code: i32) -> !;
     }
 
@@ -451,6 +594,9 @@ mod board {
         fn say(&mut self, line: &[u8]) {
             unsafe { vux9k_say(line.as_ptr(), line.len()) }
         }
+        fn drop_caches(&mut self, what: u8) -> bool {
+            unsafe { vux9k_drop_caches(what) == 0 }
+        }
     }
 
     /// The C string at p.
@@ -469,7 +615,8 @@ mod board {
         match parse_args(args) {
             Some(o) => run(&mut Board, o),
             None => {
-                let usage = b"usage: sysmon [-m cpu|mem|load] [-i MS] [-b MS] [-n COUNT] [-v]";
+                let usage =
+                    b"usage: sysmon [-m cpu|mem|load] [-i MS] [-b MS] [-n COUNT] [-r KB] [-v]";
                 vux9k_say(usage.as_ptr(), usage.len());
                 2
             }

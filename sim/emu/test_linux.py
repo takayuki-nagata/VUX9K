@@ -69,6 +69,20 @@ MEMORY: dict[str, dict[str, str]] = {}
 # The CPU init's sysmon took over IDLE_S seconds of an idle shell, per boot path (%)
 SYSMON_CPU: dict[str, float] = {}
 IDLE_S = 10
+# test_page_cache_reclaim's free blocks of order >= RECLAIM_ORDER after the card's reads and
+# after sysmon's intervals, per boot path
+RECLAIM: dict[str, str] = {}
+# sysmon's reclaim (linux_workspace/userland/sysmon/src/lib.rs, RECLAIM_ORDER): the order of
+# the initramfs' busybox's exec
+RECLAIM_ORDER = 6
+# 2 x 1 MB from the card, other blocks than the commands' reads before (the spike, 2026-11-15:
+# the largest free block order 5 after them, Cached ~1,100 kB)
+RECLAIM_READS = tuple(f"dd if=/dev/mmcblk0 of=/dev/null bs=4096 count=256 skip={s}" for s in (512, 768))
+# The kernel's line for sysmon's write of 4 at its start, the one drop_caches line it prints
+DROP_CACHES_QUIET = "): drop_caches: 4"
+# How long a test waits for sysmon to give back a free block of RECLAIM_ORDER (its interval is
+# 1 s), in seconds
+RECLAIM_WAIT_S = 10
 # The LEDs sysmon's bar has (led1-led4)
 BAR = 0b011110
 
@@ -227,6 +241,50 @@ def test_leds(linux):
     assert "[mmc0]" in command(linux, "cat /sys/class/leds/led5/trigger")
 
 
+def free_large(linux: Booted) -> int:
+    """The free blocks of order RECLAIM_ORDER and above, read with the shell's builtins."""
+    orders = linux_checks.parse_buddyinfo(command(linux, linux_checks.MEM_PROBES[1]))
+    assert orders, "no /proc/buddyinfo"
+    return sum(orders[RECLAIM_ORDER:])
+
+
+def wait_large(linux: Booted) -> int:
+    """Waits up to RECLAIM_WAIT_S for a free block of RECLAIM_ORDER (sysmon's reclaim), which
+    the next exec of busybox needs; the count, 0 if none came."""
+    for _ in range(RECLAIM_WAIT_S):
+        n = free_large(linux)
+        if n:
+            return n
+        linux.soc.run(ms(1000))
+    return free_large(linux)
+
+
+def test_page_cache_reclaim(linux):
+    """init's sysmon drops the page cache when the card's reads have left no free block of
+    order 6 (noMMU has no compaction: docs/agents/linux.md, "Memory budget"): after 2 MB read
+    from the card and a few of its intervals such a block is back, and busybox's execs (`ls`,
+    `ps`) find it. Each dd is an exec of busybox too: it waits for the block first. Whether
+    the reads left none is recorded (sysmon may already have dropped while the last dd ran).
+    The kernel printed one drop_caches line, sysmon's 4 at its start."""
+    for line in RECLAIM_READS:
+        assert wait_large(linux), f"no free block of order {RECLAIM_ORDER} before {line!r}"
+        out = command(linux, line)
+        assert "256+0 records in" in out, out[-600:]
+    after_reads = free_large(linux)
+    linux.soc.run(ms(3000))
+    after_wait = free_large(linux)
+    RECLAIM[linux.how] = f"after the reads {after_reads}, 3 s later {after_wait}"
+    assert after_wait > 0, RECLAIM[linux.how]
+    for line, wanted in (("ls /", ("bin", "proc")), ("ps", (linux_checks.SYSMON,))):
+        out = command(linux, line)
+        assert not any(e in out for e in EXEC_FAILED), out[:600]
+        assert not linux_checks.missing(out, wanted), out
+    console = linux.soc.uart_received().decode(errors="replace")
+    lines = [ln for ln in console.splitlines() if "): drop_caches: " in ln]
+    assert len(lines) == 1 and DROP_CACHES_QUIET in lines[0] and f"{linux_checks.SYSMON} (" in lines[0], lines
+    assert "sysmon: cannot write /proc/sys/vm/drop_caches" not in console
+
+
 def wait_console(linux: Booted, token: str, start: int) -> str:
     """Runs until the console shows token after index start (a line init or a background
     process prints, not the shell's prompt)."""
@@ -288,15 +346,19 @@ def test_sysmon(linux):
     assert soc.leds & BAR == 0, hex(soc.leds)
     soc.run(ms(6000))
     assert linux_checks.pids(command(linux, "ps"), linux_checks.SYSMON) == []
+    # One again from the shell, for the tests after this one: its reclaim of the page cache
+    background(linux, linux_checks.SYSMON)
 
 
 def test_card_after_linux(linux, tmp_path):
     """The card as Linux leaves it after the commands' write (linux_checks.SD_TEST_FILE) and an
     umount: fsck.fat finds nothing wrong (dosfstools, which CI's job has), and the first stage
     boots the second stage from it, which reads the file Linux wrote: the stages' FAT32 and
-    Linux's vfat share the card."""
+    Linux's vfat share the card. umount is an exec of busybox: it waits for its block (sysmon's
+    reclaim) first."""
+    assert wait_large(linux), f"no free block of order {RECLAIM_ORDER} for umount's exec"
     out = command(linux, "umount /mnt/sd")
-    assert "umount:" not in out, out
+    assert "umount:" not in out and not any(e in out for e in EXEC_FAILED), out
     # Unmounted indeed (linux_checks.MOUNTS_PROBE)
     mounts = command(linux, linux_checks.MOUNTS_PROBE)
     assert "/proc proc" in mounts and linux_checks.CARD_MOUNTED not in mounts, mounts
@@ -365,7 +427,7 @@ def test_board_script_on_the_emulator(tmp_path):
 
 def test_record_measurements(record_property, capsys):
     """Asserts nothing about speed: prints what the tests above measured (run last)."""
-    if not MEASURED and not MEMORY and not SYSMON_CPU:
+    if not MEASURED and not MEMORY and not SYSMON_CPU and not RECLAIM:
         pytest.skip("nothing measured")
     with capsys.disabled():
         print(f"\nnoMMU Linux on the emulator (18 MHz: {CLK_HZ:,} cycles a second)")
@@ -380,6 +442,9 @@ def test_record_measurements(record_property, capsys):
         for how, pct in SYSMON_CPU.items():
             print(f"  {how}: sysmon's CPU over {IDLE_S} s of an idle shell: {pct:.1f}%")
             record_property(f"{how}: sysmon CPU", f"{pct:.1f}%")
+        for how, text in RECLAIM.items():
+            print(f"  {how}: free blocks of order >= {RECLAIM_ORDER} around sysmon's reclaim: {text}")
+            record_property(f"{how}: reclaim", text)
         for how, rows in MEMORY.items():
             print(f"\nnoMMU Linux memory after the boot ({how})")
             for name, value in rows.items():

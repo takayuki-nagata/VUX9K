@@ -251,7 +251,12 @@ shell (a daemon) is started, and restarted, by init; what it does stays out of p
   `/proc/loadavg` (1 minute) as a bar of 0-4 LEDs on led1-led4 (a percentage in quarters,
   any use lighting the first; a load at 0.25, 0.5, 1, 2); the button, read every `-b` (200 ms),
   steps cpu -> mem -> load; `-m` the first mode, `-n` a number of intervals, `-v` a line per
-  interval (`sysmon: cpu 37% bar 2`). It writes an LED's `brightness` when it changes, and all
+  interval (`sysmon: cpu 37% bar 2`) and one per drop of the page cache (`sysmon: dropped the
+  page cache (no free block of order 6, Cached 1112 kB)`), `-r KB` the Cached that drop needs
+  (256; `-r 0` none: "Memory budget"). Without `-v` a drop says nothing (init's sysmon has no
+  `-v`: a line every few seconds would land in the shell's or vi's screen); a
+  `/proc/sys/vm/drop_caches` it can't write it says once (`sysmon: cannot write
+  /proc/sys/vm/drop_caches`) and reclaims no more. It writes an LED's `brightness` when it changes, and all
   four every 10 intervals (`REFRESH_INTERVALS`): another process (a second sysmon ending, the
   shell's `echo`) may have changed one.
   SIGTERM/SIGINT: its LEDs off, `sysmon: stopped`, status 0.
@@ -295,6 +300,27 @@ paths (`test_linux.py`'s `test_record_measurements`), the board's `hw_linux.py` 
   of a power of two pages, and busybox's is ~232 KB of 256 KB (`flthdr -p`: Data End, BSS End
   and its stack, 16,000 B, fixed by busybox's Makefile); `test_linux.py`'s
   `test_exec_after_card_reads` reads 1.5 MB more from the card, an exec after each.
+- **sysmon drops the page cache when no free block of order 6 is left** (`Reclaim` in its
+  `src/lib.rs`). An allocation above order 3 (`PAGE_ALLOC_COSTLY_ORDER`) tries reclaim once and
+  then gives up without compaction (mm/page_alloc.c: `if (costly_order && (!can_compact ||
+  ...)) goto nopage;`, and noMMU can't compact), so the card's page cache, clean and
+  droppable, keeps the blocks it lies in split. In a spike (2026-11-15, the emulator), 2 MB
+  read from the card left `5:3 6:0` (Cached 1,116 kB, MemFree 640 kB), and then busybox's
+  exec failed; `echo 1 > /proc/sys/vm/drop_caches` (~20M cycles, ~1.1 s) brought back `6:2
+  8:1` (Cached 520 kB, MemFree 3,352 kB). So every interval sysmon reads `/proc/buddyinfo`
+  and, with no block of order 6 or above, `/proc/meminfo`'s Cached; at `-r` kB or more (256)
+  it writes `1` to `/proc/sys/vm/drop_caches`. The file takes 1 to 4 only (`extra1`/`extra2`
+  of its sysctl; a `5` is refused with EINVAL): at its start sysmon writes `4`, which drops
+  nothing and leaves the kernel's `sysmon (N): drop_caches: 4` the only such line on the
+  console (the later drops', the shell's writes' too, say nothing). Cached is not what a drop
+  frees: the initramfs is ramfs, whose ~520 kB of pages count in it and stay, so a threshold
+  under that only keeps sysmon from dropping a cache that is next to empty. What stops
+  useless drops is the check one interval later: a drop that brought back no block of order
+  6 (the pieces are someone else's) is followed by 30 intervals (`RECLAIM_HOLDOFF`) without
+  one. The kernel itself never drops it; the price is that the next exec of a program on the
+  card reads it from the card again. With sysmon stopped nothing reclaims: `test_linux.py`'s
+  `test_sysmon` starts one again from the shell at its end, and `test_page_cache_reclaim`
+  reads 2 MB more from the card and wants the block back within 3 s.
 - **What every program carries from libc** (each is linked statically and copied whole): the
   toolchain is uClibc built without a thread library (`BR2_PTHREADS_NONE`: with linuxthreads
   its start-up pulled `__pthread_handles`, 16 KB of data, `pthread_keys`, 8 KB, and through

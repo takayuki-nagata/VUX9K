@@ -9,7 +9,9 @@
 //   - the button S2 through the GPIO character device: the gpiochip labelled "button" (the
 //     device tree's gpio-mmio on the button's register), its line 0 requested as an input,
 //     its value read with each poll (no interrupt);
-//   - nanosleep, which a signal ends early, and SIGTERM/SIGINT as a flag.
+//   - nanosleep, which a signal ends early, and SIGTERM/SIGINT as a flag;
+//   - the page cache dropped through /proc/sys/vm/drop_caches (the reclaim's decision is
+//     lib.rs').
 // No stdio: see memprobe.
 
 #include <errno.h>
@@ -109,6 +111,18 @@ void vux9k_say(const unsigned char *p, unsigned long len) {
     memcpy(line, p, len);
     line[len] = '\n';
     write(1, line, len + 1);
+}
+
+// what: '1' drops the clean page cache, '4' drops nothing but stops the kernel's
+// "drop_caches: N" line on the console after this write (the file takes 1 to 4 only)
+int vux9k_drop_caches(unsigned char what) {
+    int fd = open("/proc/sys/vm/drop_caches", O_WRONLY);
+    int ok;
+    if (fd < 0)
+        return -1;
+    ok = write(fd, &what, 1) == 1;
+    close(fd);
+    return ok ? 0 : -1;
 }
 
 static void on_stop(int sig) {

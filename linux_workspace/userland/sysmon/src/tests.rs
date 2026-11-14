@@ -128,7 +128,7 @@ fn args(s: &str) -> Option<Options> {
 #[test]
 fn options() {
     assert_eq!(args(""), Some(Options::default()));
-    let o = args("-m load -i 500 -b 50 -n 3 -v").unwrap();
+    let o = args("-m load -i 500 -b 50 -n 3 -r 0 -v").unwrap();
     assert_eq!(
         o,
         Options {
@@ -136,9 +136,12 @@ fn options() {
             interval_ms: 500,
             button_ms: 50,
             count: 3,
+            reclaim_kb: 0,
             verbose: true
         }
     );
+    assert_eq!(args("-r 1024").unwrap().reclaim_kb, 1024);
+    assert_eq!(Options::default().reclaim_kb, RECLAIM_CACHED_KB);
     for bad in [
         "-m",
         "-m disk",
@@ -148,6 +151,9 @@ fn options() {
         "-b",
         "-n -1",
         "-n 99999999999",
+        "-r",
+        "-r 8193",
+        "-r 1k",
         "-x",
         "cpu",
     ] {
@@ -171,7 +177,7 @@ fn lines() {
     for _ in 0..20 {
         l.push(b"0123456789");
     }
-    assert_eq!(l.as_bytes().len(), 64);
+    assert_eq!(l.as_bytes().len(), 96);
 }
 
 /// A fake system: files whose contents change at each read, a button that follows a script
@@ -191,6 +197,14 @@ struct Fake {
     meddle_at_ms: Option<u32>,
     /// The LEDs at each read of /proc/uptime
     leds_at_sample: Vec<u32>,
+    /// /proc/buddyinfo at each read, the last one again once it is the only one left
+    buddyinfo: VecDeque<Vec<u8>>,
+    /// The intervals (by the uptime reads before them) at which the page cache was dropped
+    drops: Vec<usize>,
+    /// What was written to /proc/sys/vm/drop_caches, in order
+    drop_writes: Vec<u8>,
+    /// /proc/sys/vm/drop_caches can't be written
+    no_drop_caches: bool,
 }
 
 impl Sys for Fake {
@@ -202,6 +216,8 @@ impl Sys for Fake {
             }
             b"/proc/meminfo\0" => self.meminfo.clone(),
             b"/proc/loadavg\0" => self.loadavg.clone(),
+            b"/proc/buddyinfo\0" if self.buddyinfo.len() > 1 => self.buddyinfo.pop_front()?,
+            b"/proc/buddyinfo\0" => self.buddyinfo.front()?.clone(),
             _ => return None,
         };
         let n = text.len().min(buf.len());
@@ -234,6 +250,16 @@ impl Sys for Fake {
     }
     fn say(&mut self, line: &[u8]) {
         self.out.push(String::from_utf8(line.to_vec()).unwrap());
+    }
+    fn drop_caches(&mut self, what: u8) -> bool {
+        if self.no_drop_caches {
+            return false;
+        }
+        self.drop_writes.push(what);
+        if what == b'1' {
+            self.drops.push(self.leds_at_sample.len());
+        }
+        true
     }
 }
 
@@ -457,6 +483,9 @@ fn only_the_leds_that_change_are_written() {
         fn say(&mut self, line: &[u8]) {
             self.0.say(line)
         }
+        fn drop_caches(&mut self, what: u8) -> bool {
+            self.0.drop_caches(what)
+        }
     }
     // 50% busy all along: bar 2 after the first interval, then unchanged for three
     let stat_seq = (0..=4).map(|k| stat(50 * k, 50 * k)).collect();
@@ -476,4 +505,185 @@ fn only_the_leds_that_change_are_written() {
     );
     // 4 at the start (all, dark), 2 for the bar, none for three intervals, 4 at the end (all)
     assert_eq!(c.1, 4 + 2 + 4);
+}
+
+/// /proc/buddyinfo as the kernel writes it (one zone; counts from order 0)
+fn buddy(counts: &[u64]) -> Vec<u8> {
+    let mut t = String::from("Node 0, zone   Normal");
+    for c in counts {
+        t += &format!(" {c:6}");
+    }
+    t.push('\n');
+    t.into_bytes()
+}
+
+const FRAGMENTED: &[u64] = &[3, 10, 2, 5, 2, 3, 0, 0, 0, 0, 0];
+const WHOLE: &[u64] = &[10, 12, 3, 9, 5, 8, 2, 0, 1, 0, 0];
+
+fn meminfo_cached(kb: u64) -> Vec<u8> {
+    format!(
+        "MemTotal: 7936 kB\nMemFree: 640 kB\nBuffers: 0 kB\nCached: {kb} kB\nSwapCached: 0 kB\n"
+    )
+    .into_bytes()
+}
+
+#[test]
+fn free_blocks_of_an_order_and_above() {
+    assert_eq!(free_blocks_from(&buddy(WHOLE), RECLAIM_ORDER), Some(3));
+    assert_eq!(free_blocks_from(&buddy(FRAGMENTED), RECLAIM_ORDER), Some(0));
+    assert_eq!(free_blocks_from(&buddy(FRAGMENTED), 5), Some(3));
+    assert_eq!(free_blocks_from(&buddy(&[1, 2]), RECLAIM_ORDER), Some(0));
+    // Every zone counts; tabs too
+    let two = b"Node 0, zone      DMA 1 0 0 0 0 0 1\nNode 0, zone\tNormal\t0 0 0 0 0 0 2 1\n";
+    assert_eq!(free_blocks_from(two, RECLAIM_ORDER), Some(4));
+    assert_eq!(free_blocks_from(b"", RECLAIM_ORDER), None);
+    assert_eq!(free_blocks_from(b"Node 0, zone Normal 1 x 3\n", 0), None);
+    assert_eq!(free_blocks_from(b"Node 0, zone\n", 0), None);
+}
+
+#[test]
+fn cached_is_not_swap_cached() {
+    assert_eq!(parse_cached_kb(&meminfo_cached(1112)), Some(1112));
+    assert_eq!(
+        parse_cached_kb(b"SwapCached: 5 kB\nCached: 520 kB\n"),
+        Some(520)
+    );
+    assert_eq!(parse_cached_kb(MEMINFO), None);
+}
+
+/// A fake for the reclaim: memory as `buddyinfo` gives it, Cached `cached` kB
+fn reclaim_fake(buddyinfo: Vec<Vec<u8>>, cached: u64, intervals: u32) -> Fake {
+    Fake {
+        stat: (0..=intervals)
+            .map(|k| stat(0, 100 * u64::from(k)))
+            .collect(),
+        meminfo: meminfo_cached(cached),
+        buddyinfo: buddyinfo.into(),
+        ..Fake::default()
+    }
+}
+
+fn run_for(f: &mut Fake, intervals: u32, reclaim_kb: u32, verbose: bool) {
+    let o = Options {
+        count: intervals,
+        reclaim_kb,
+        verbose,
+        ..Options::default()
+    };
+    assert_eq!(run(f, o), 0);
+}
+
+#[test]
+fn it_drops_the_page_cache_when_no_large_block_is_left() {
+    // Whole for two intervals, then the card's reads leave it in pieces; the drop brings an
+    // order-8 block back
+    let seq = vec![buddy(WHOLE), buddy(WHOLE), buddy(FRAGMENTED), buddy(WHOLE)];
+    let mut f = reclaim_fake(seq, 1112, 5);
+    run_for(&mut f, 5, RECLAIM_CACHED_KB, true);
+    // At the end of the third interval (its uptime read is the fourth: one before the first)
+    assert_eq!(f.drops, [4]);
+    // The kernel's line silenced at the start, then the drop
+    assert_eq!(f.drop_writes, b"41");
+    assert!(
+        f.out.contains(
+            &"sysmon: dropped the page cache (no free block of order 6, Cached 1112 kB)".into()
+        ),
+        "{:?}",
+        f.out
+    );
+}
+
+#[test]
+fn a_drop_that_helped_leaves_the_next_one_free_to_come() {
+    let seq = vec![
+        buddy(FRAGMENTED),
+        buddy(WHOLE),
+        buddy(WHOLE),
+        buddy(FRAGMENTED),
+        buddy(WHOLE),
+    ];
+    let mut f = reclaim_fake(seq, 800, 5);
+    run_for(&mut f, 5, RECLAIM_CACHED_KB, false);
+    assert_eq!(f.drops, [2, 5]);
+    // Not said without -v (the kernel says the first itself)
+    assert!(!f.out.iter().any(|l| l.contains("dropped")), "{:?}", f.out);
+}
+
+#[test]
+fn a_drop_that_brought_nothing_back_holds_the_next_ones_off() {
+    // In pieces all along (not the page cache's): one drop, its check, RECLAIM_HOLDOFF
+    // intervals without, then another
+    let intervals = RECLAIM_HOLDOFF + 4;
+    let mut f = reclaim_fake(vec![buddy(FRAGMENTED)], 600, intervals);
+    run_for(&mut f, intervals, RECLAIM_CACHED_KB, false);
+    let first = 2;
+    assert_eq!(f.drops, [first, first + 2 + RECLAIM_HOLDOFF as usize]);
+}
+
+#[test]
+fn no_drop_below_the_cached_it_needs_or_when_off() {
+    let mut f = reclaim_fake(vec![buddy(FRAGMENTED)], 200, 3);
+    run_for(&mut f, 3, RECLAIM_CACHED_KB, false);
+    assert!(f.drops.is_empty());
+    let mut f = reclaim_fake(vec![buddy(FRAGMENTED)], 1112, 3);
+    run_for(&mut f, 3, 0, false);
+    assert!(f.drops.is_empty());
+    // Without buddyinfo (the fake's other tests): nothing
+    let mut f = reclaim_fake(vec![], 1112, 3);
+    run_for(&mut f, 3, RECLAIM_CACHED_KB, false);
+    assert!(f.drops.is_empty());
+}
+
+#[test]
+fn without_drop_caches_it_says_so_once_and_reclaims_no_more() {
+    let mut f = reclaim_fake(vec![buddy(FRAGMENTED)], 1112, 5);
+    f.no_drop_caches = true;
+    run_for(&mut f, 5, RECLAIM_CACHED_KB, true);
+    let said: Vec<_> = f.out.iter().filter(|l| l.contains("drop_caches")).collect();
+    assert_eq!(said, ["sysmon: cannot write /proc/sys/vm/drop_caches"]);
+    assert!(f.drops.is_empty());
+    // -r 0: not even the start's write
+    let mut f = reclaim_fake(vec![buddy(FRAGMENTED)], 1112, 2);
+    run_for(&mut f, 2, 0, false);
+    assert!(f.drop_writes.is_empty());
+}
+
+#[test]
+fn a_drop_that_fails_stops_the_reclaim() {
+    /// drop_caches takes the start's 4 but refuses the drops
+    struct Refuses(Fake);
+    impl Sys for Refuses {
+        fn read_file(&mut self, path: &'static [u8], buf: &mut [u8]) -> Option<usize> {
+            self.0.read_file(path, buf)
+        }
+        fn led(&mut self, n: u32, on: bool) -> bool {
+            self.0.led(n, on)
+        }
+        fn button(&mut self) -> Option<bool> {
+            self.0.button()
+        }
+        fn sleep_ms(&mut self, ms: u32) {
+            self.0.sleep_ms(ms)
+        }
+        fn stopping(&mut self) -> bool {
+            self.0.stopping()
+        }
+        fn say(&mut self, line: &[u8]) {
+            self.0.say(line)
+        }
+        fn drop_caches(&mut self, what: u8) -> bool {
+            self.0.drop_writes.push(what);
+            what == b'4'
+        }
+    }
+    let mut r = Refuses(reclaim_fake(vec![buddy(FRAGMENTED)], 1112, 5));
+    let o = Options {
+        count: 5,
+        ..Options::default()
+    };
+    assert_eq!(run(&mut r, o), 0);
+    // One try, said once
+    assert_eq!(r.0.drop_writes, b"41");
+    let said = r.0.out.iter().filter(|l| l.contains("drop_caches")).count();
+    assert_eq!(said, 1);
 }
