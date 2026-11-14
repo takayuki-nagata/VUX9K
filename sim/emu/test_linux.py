@@ -18,6 +18,7 @@ for each command are printed by test_record_measurements. The board's test is sc
 
 import json
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -29,6 +30,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "integration"))
 import linux_checks  # noqa: E402
 import s1_env  # noqa: E402
+import test_fat_images  # noqa: E402
 from vux9k import (  # noqa: E402
     CLK_HZ,
     REPO_ROOT,
@@ -70,11 +72,27 @@ class Booted:
     how: str  # the boot path, for the measurements' labels
 
 
+def card_programs() -> dict[str, bytes]:
+    """make linux-dist's programs for the card (VUX9K/LINUX/BIN/), as its MANIFEST.json lists
+    them."""
+    try:
+        with open(os.path.join(LINUX_DIST, "MANIFEST.json")) as f:
+            listed = json.load(f)["card_files"]
+    except FileNotFoundError:
+        return {}
+    progs = {}
+    for rel in listed:
+        if rel.startswith("VUX9K/LINUX/BIN/"):
+            with open(os.path.join(LINUX_DIST, rel), "rb") as f:
+                progs[rel] = f.read()
+    return progs
+
+
 def card(image: bytes, dtb: bytes) -> bytes:
     """The card both boot paths have in the socket (the kernel mounts it): the second stage,
-    and the Image and device tree where its `linux` looks for them."""
+    the Image and device tree where its `linux` looks for them, and the programs for the card."""
     files = {"VUX9K/STAGE2.BIN": s1_env.stage2(), "VUX9K/LINUX/Image": image, "VUX9K/LINUX/vux9k.dtb": dtb}
-    return vux_tool.build_fat32_image(files, part_sectors=CARD_SECTORS)
+    return vux_tool.build_fat32_image(files | card_programs(), part_sectors=CARD_SECTORS)
 
 
 def boot_direct(image: bytes, dtb: bytes) -> Booted:
@@ -151,6 +169,24 @@ def test_memory(linux):
 def test_command(linux, line):
     out = command(linux, line)
     assert not linux_checks.missing(out, linux_checks.COMMANDS[line]), out
+
+
+def test_card_after_linux(linux, tmp_path):
+    """The card as Linux leaves it after the commands' write (linux_checks.SD_TEST_FILE) and an
+    umount: fsck.fat finds nothing wrong (dosfstools, which CI's job has), and the first stage
+    boots the second stage from it, which reads the file Linux wrote: the stages' FAT32 and
+    Linux's vfat share the card."""
+    out = command(linux, "umount /mnt/sd")
+    assert "umount:" not in out, out
+    image = linux.soc.sd_image()
+    if shutil.which("fsck.fat"):
+        path = tmp_path / "card.img"
+        path.write_bytes(image)
+        test_fat_images.fsck(str(path), str(tmp_path))
+    soc, _ = s1_env.boot_s2(image=image)
+    name = os.path.basename(linux_checks.SD_TEST_FILE)
+    assert name in s1_env.s2_cmd(soc, "ls VUX9K")
+    assert s1_env.s2_cmd(soc, f"cat VUX9K/{name}").strip() == "sd-write-ok"
 
 
 def test_board_script_on_the_emulator(tmp_path):

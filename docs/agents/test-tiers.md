@@ -120,10 +120,12 @@ clock-and-board.md, "Board UART output that is noise: ModemManager and the bridg
   once left the board on a weeks-old local `pack.fs` after a dist run.
 - `make test-hw-linux LINUX=<dir>` (`scripts/hw_linux.py`; `test-hw-linux-dist DIST=<dir>` takes
   that tree's `pack.fs`): the noMMU Linux kernel of a `make linux-dist` tree (CI's
-  `vux9k-linux-<sha>`) put on the card in `\VUX9K\LINUX\` (~6 min for the 3.2 MB Image;
-  `HW_LINUX_FLAGS=--keep-card` boots the files already there), then `pack.fs` loaded into SRAM,
-  the first stage booting the second, whose `linux` starts the kernel; the boot lines and
-  commands of `sim/integration/linux_checks.py` (the emulator's `test_linux.py` checks the same),
+  `vux9k-linux-<sha>`) put on the card in `\VUX9K\LINUX\`, its programs for the card in
+  `BIN\` (~6 min for the 3.2 MB Image; `HW_LINUX_FLAGS=--keep-card` boots the files already
+  there), then `pack.fs` loaded into SRAM, the first stage booting the second, whose `linux`
+  starts the kernel; the boot lines and commands of `sim/integration/linux_checks.py` (the
+  emulator's `test_linux.py` checks the same; the kernel mounts the card, runs a program from
+  it, writes `\VUX9K\U1TEST.TXT` and reads it back, and `CARD_CLEANUP` removes it),
   `[TIME]` lines from the load to the shell's prompt, `[MEM]` lines with the memory table read
   right after the boot (`linux_checks.MEM_PROBES`; linux.md, "Memory budget"), and `pack.fs`
   loaded again at the end.

@@ -147,6 +147,17 @@ small, and prefer an upstream driver and binding where one fits (the UART is ups
   sends neither; it prints "card lacks mandatory switch function, performance might suffer".
 - The card is found after the driver probes, in the background (mmc's rescan work), so it can
   appear after init has started: whatever uses it at boot waits for `/dev/mmcblk0p1`.
+- **Init mounts it on `/mnt/sd`** (`board/post-build.sh`: `/etc/init.d/sdcard`, a sysinit line
+  of the inittab, waits up to 5 s for the partition with hush's builtin `[`, then `mount -t
+  vfat`; no card is no error). buildroot's `/init` has mounted devtmpfs on `/dev` before (the
+  kernel mounts it only for a root that is not an initramfs). This hush has no arithmetic
+  (`FEATURE_SH_MATH` off): count with `for n in 1 2 3`.
+- **Writes**: busybox has `sync` and `dd`. The stages read what vfat writes (long names
+  beside the 8.3 ones, lowercase flags, deleted entries, fragmented files), but only a
+  clean card: a file whose chain doesn't match its size (a write cut off) is a `BadChain` to
+  `fw_common::fat`, which refuses it where fsck would mend it. Sync before power goes, and
+  umount where possible; `test_linux.py`'s `test_card_after_linux` writes, umounts, runs
+  `fsck.fat -n` on the card and boots the first and second stage from it.
 
 ## Memory budget
 
@@ -197,9 +208,11 @@ This repository's own programs are buildroot packages of the external tree, one 
   linux-dist` copies as it is into its tree (with each file's size and sha256 in
   `MANIFEST.json`'s `card_files`, and `SHA256SUMS`): the card's programs go with the kernel
   (`vux9k-linux-<sha>`, a release's kernel archive), not in `make dist`, which builds no Linux.
-  `make_linux_dist.py` refuses anything in `images/sd/` outside `VUX9K/LINUX/BIN/`. Nothing
-  runs a program from the card yet (the kernel has no driver for the card yet): `hw_linux.py` puts
-  only the Image and the device tree, and `memprobe` runs from the initramfs. Artifacts lose the
+  `make_linux_dist.py` refuses anything in `images/sd/` outside `VUX9K/LINUX/BIN/`. That
+  directory is on the login shell's PATH (`/etc/profile`, after the initramfs' directories), as
+  `/mnt/sd/VUX9K/LINUX/BIN` once init has mounted the card ("The SD card"); `hw_linux.py` puts
+  it on the board's card with the Image and the device tree, `test_linux.py` builds it into the
+  emulator's card, and `linux_checks.COMMANDS` runs memprobe from there by its path. Artifacts lose the
   files' modes (`upload-artifact` zips), which a FAT card doesn't keep anyway. Removing a
   package does not remove what it installed there or in `target/`: clean `build/buildroot` then.
 

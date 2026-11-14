@@ -130,7 +130,13 @@ def linux_tree(tmp_path, image_size: int):
     (tree / "VUX9K" / "LINUX").mkdir(parents=True)
     (tree / "VUX9K" / "LINUX" / "Image").write_bytes(b"I" * 64)
     (tree / "VUX9K" / "LINUX" / "vux9k.dtb").write_bytes(b"D" * 8)
-    files = {"VUX9K/LINUX/Image": {"size": image_size}, "VUX9K/LINUX/vux9k.dtb": {"size": 8}}
+    (tree / "VUX9K" / "LINUX" / "BIN").mkdir()
+    (tree / "VUX9K" / "LINUX" / "BIN" / "prog").write_bytes(b"P" * 4)
+    files = {
+        "VUX9K/LINUX/BIN/prog": {"size": 4},
+        "VUX9K/LINUX/Image": {"size": image_size},
+        "VUX9K/LINUX/vux9k.dtb": {"size": 8},
+    }
     manifest = {"git_describe": "test", "linux_version": "7.3", "card_files": files, "sizes": {"image": 64}}
     (tree / "MANIFEST.json").write_text(json.dumps(manifest))
     return str(tree)
@@ -138,7 +144,7 @@ def linux_tree(tmp_path, image_size: int):
 
 def test_linux_script_files(tmp_path):
     """hw_linux.py: the bitstream from --pack-fs, else the --dist tree's, else the working
-    tree's; the kernel's files from a make linux-dist tree, refused when they are not the
+    tree's; the card's files from a make linux-dist tree, refused when they are not the
     sizes its MANIFEST.json gives."""
     import hw_linux
 
@@ -148,7 +154,14 @@ def test_linux_script_files(tmp_path):
     assert pack_fs("--dist", "D", "--pack-fs", "P") == "P"
     assert pack_fs("--dist", "D") == os.path.join("D", "bitstream", "pack.fs")
     assert pack_fs() == os.path.join(REPO_ROOT, "build", "synth", "pack.fs")
-    assert hw_linux.card_files(linux_tree(tmp_path, 64)) == (b"I" * 64, b"D" * 8, {"image": 64})
+    files, sizes = hw_linux.card_files(linux_tree(tmp_path, 64))
+    # The kernel's files first (put before the programs), then the card's programs
+    assert list(files.items()) == [
+        ("VUX9K/LINUX/Image", b"I" * 64),
+        ("VUX9K/LINUX/vux9k.dtb", b"D" * 8),
+        ("VUX9K/LINUX/BIN/prog", b"P" * 4),
+    ]
+    assert sizes == {"image": 64}
     with pytest.raises(SystemExit):
         hw_linux.card_files(linux_tree(tmp_path / "bad", 65))
 

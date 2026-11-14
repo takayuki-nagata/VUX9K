@@ -8,6 +8,8 @@ builtin, the others busybox or this tree's programs executed: FLAT, copied into 
 exec)."""
 
 PROMPT = "/ # "
+# A file the commands write on the card
+SD_TEST_FILE = "/mnt/sd/VUX9K/U1TEST.TXT"
 BOOT_LINES = (
     "Linux version 7.3",
     "clint: clint@20000000: timer running at 18000000 Hz",
@@ -21,12 +23,27 @@ COMMANDS = {
     "uname -a": ("Linux (none) 7.3.0",),
     "ls /": ("bin", "dev", "proc", "sbin"),
     "cat /proc/cpuinfo": ("rv32ima",),
-    # The SD card (mmc_spi on spi-vux9k-sd) and its MBR's FAT32 partition
+    # The SD card (mmc_spi on spi-vux9k-sd) and its MBR's FAT32 partition, which init mounts
+    # (linux_workspace/buildroot/board/post-build.sh)
     "cat /proc/partitions": ("mmcblk0", "mmcblk0p1"),
+    "mount": ("/dev/mmcblk0p1 on /mnt/sd type vfat",),
     # This tree's own program (linux_workspace/userland/memprobe/): the largest free block
     # allocated, with a copy of itself in RAM
     "memprobe": ("memprobe: MemFree ", "), allocated"),
+    # The card's programs (make linux-dist's VUX9K/LINUX/BIN/) are on the login shell's PATH,
+    # after the initramfs': memprobe from the card by its path
+    "echo $PATH": ("/mnt/sd/VUX9K/LINUX/BIN",),
+    "ls /mnt/sd/VUX9K": ("LINUX", "STAGE2.BIN"),
+    "/mnt/sd/VUX9K/LINUX/BIN/memprobe": ("memprobe: MemFree ", "), allocated"),
+    # A write to the card, read back by another command (the first's echo holds its text)
+    f"echo sd-write-ok > {SD_TEST_FILE}; sync": (),
+    f"cat {SD_TEST_FILE}": ("sd-write-ok",),
+    # The card's read speed (the command's time): 256 KB from the start of the card
+    "dd if=/dev/mmcblk0 of=/dev/null bs=4096 count=64": ("64+0 records in",),
 }
+# What the board's test removes from its card after COMMANDS (the emulator's card is thrown
+# away: sim/emu/test_linux.py checks it with the first and second stage after an umount)
+CARD_CLEANUP = (f"rm {SD_TEST_FILE}; sync",)
 
 
 def missing(out: str, wanted) -> list[str]:

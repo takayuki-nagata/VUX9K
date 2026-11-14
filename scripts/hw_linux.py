@@ -5,11 +5,13 @@
 """
 The noMMU Linux kernel (make linux-dist, or CI's vux9k-linux-<sha>) booted on the board to
 busybox's shell, timed from the bitstream's load: its Image and vux9k.dtb put on the card as
-\\VUX9K\\LINUX\\Image and vux9k.dtb through the second stage (`put`, the files left there;
---keep-card uses those already there), then pack.fs loaded into the FPGA's SRAM, the first
-stage booting the card's second stage by itself, whose `linux` loads both files and starts
-the kernel. The console must show sim/integration/linux_checks.py's boot lines and answer its
-commands, as on the emulator (sim/emu/test_linux.py); right after the boot the shell's builtins
+\\VUX9K\\LINUX\\Image and vux9k.dtb, its programs for the card in \\VUX9K\\LINUX\\BIN\\,
+through the second stage (`put`, the files left there; --keep-card uses those already there),
+then pack.fs loaded into the FPGA's SRAM, the first stage booting the card's second stage by
+itself, whose `linux` loads both files and starts the kernel. The console must show
+sim/integration/linux_checks.py's boot lines and answer its commands, as on the emulator
+(sim/emu/test_linux.py; the kernel mounts the card, runs a program from it and writes a file,
+which linux_checks.CARD_CLEANUP removes again); right after the boot the shell's builtins
 read /proc/meminfo and /proc/buddyinfo, and [MEM] lines give linux_checks' memory table.
 Linux never returns to the first stage, so pack.fs is loaded once more at the end (not
 openFPGALoader --reset, which loads the flash's bitstream). [TIME] lines give the wall-clock
@@ -46,7 +48,9 @@ from test_hardware import (  # noqa: E402
 import tools.vux_tool as vux_tool  # noqa: E402 (needs REPO_ROOT on sys.path)
 
 CARD_LINUX = "VUX9K/LINUX"
-# make linux-dist's tree: its card files (as they go on the card) and its manifest
+CARD_BIN = "VUX9K/LINUX/BIN"
+# make linux-dist's tree: the kernel's files (as they go on the card); its manifest's
+# card_files also lists the programs for the card in CARD_BIN
 CARD_FILES = ("VUX9K/LINUX/Image", "VUX9K/LINUX/vux9k.dtb")
 # Wall-clock bounds, not measurements: on the emulator the Image's load took ~13 s and the
 # boot ~12.5 s at 18 MHz, a command ~1 s (docs/agents/linux.md, "Speed"); a put of the
@@ -79,9 +83,12 @@ def send_line(ser, line: str) -> None:
 
 
 def put_files(ser, files: dict[str, bytes], times: dict[str, float]) -> None:
-    """At the second stage's prompt: the kernel's files onto the card in \\VUX9K\\LINUX\\."""
+    """At the second stage's prompt: the kernel's files onto the card in \\VUX9K\\LINUX\\, the
+    programs in its BIN\\."""
     mkdir_p(ser, "VUX9K")
     mkdir_p(ser, CARD_LINUX)
+    if any(path.startswith(CARD_BIN + "/") for path in files):
+        mkdir_p(ser, CARD_BIN)
     for path, data in files.items():
         t = time.monotonic()
         print(vux_tool.put(ser, path, data, timeout=PUT_LINE_TIMEOUT))
@@ -155,23 +162,26 @@ def boot(
         lost = linux_checks.missing(reply, wanted)
         if lost:
             failures.append(f"{cmd}: missing {lost}")
+    for cmd in linux_checks.CARD_CLEANUP:
+        if run_command(ser, cmd) is None:
+            failures.append(f"{cmd}: no echo")
     return failures
 
 
-def card_files(linux_dir: str) -> tuple[bytes, bytes, dict[str, int]]:
-    """The Image and the device tree of a make linux-dist tree, checked against its
-    MANIFEST.json, and the build's sizes it records (for the memory table)."""
+def card_files(linux_dir: str) -> tuple[dict[str, bytes], dict[str, int]]:
+    """Every card file of a make linux-dist tree ({path on the card: data}, CARD_FILES first),
+    checked against its MANIFEST.json, and the build's sizes it records (for the memory table)."""
     with open(os.path.join(linux_dir, "MANIFEST.json")) as f:
         manifest = json.load(f)
-    datas = []
-    for rel in CARD_FILES:
+    files = {}
+    for rel in (*CARD_FILES, *sorted(set(manifest["card_files"]) - set(CARD_FILES))):
         with open(os.path.join(linux_dir, rel), "rb") as f:
             data = f.read()
         if len(data) != manifest["card_files"][rel]["size"]:
             sys.exit(f"hw_linux: {rel} is not the size its MANIFEST.json gives")
-        datas.append(data)
+        files[rel] = data
     print(f"[INFO] kernel: {manifest['git_describe']}, Linux {manifest['linux_version']}")
-    return datas[0], datas[1], manifest.get("sizes", {})
+    return files, manifest.get("sizes", {})
 
 
 def parse_args(argv=None):
@@ -197,7 +207,8 @@ def pack_fs_of(args) -> str:
 
 def main(argv=None):
     args = parse_args(argv)
-    image, dtb, sizes = card_files(args.linux)
+    files, sizes = card_files(args.linux)
+    image, dtb = (files[rel] for rel in CARD_FILES)
     emulator = str(args.port).startswith("socket://")
     pack_fs = pack_fs_of(args)
     loader = None if emulator else find_loader(args.loader)
@@ -233,7 +244,7 @@ def main(argv=None):
             # second stage's prompt
             ser, _ = load(ser)
             vux_tool.enter_s2(ser, timeout=S2_TIMEOUT)
-            put_files(ser, dict(zip(CARD_FILES, (image, dtb), strict=True)), times)
+            put_files(ser, files, times)
             if emulator:
                 # No bitstream to load: back to the first stage, which boots the card's second
                 ser.write(b"reset\r")
