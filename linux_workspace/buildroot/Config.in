@@ -3,4 +3,5 @@
 
 # This tree's own programs (docs/agents/linux.md, "Userland packages"); each is also in the
 # Makefile's VUX9K_BR_PACKAGES and enabled in configs/vux9k_nommu_defconfig
+source "$BR2_EXTERNAL_VUX9K_PATH/package/vux9k-init/Config.in"
 source "$BR2_EXTERNAL_VUX9K_PATH/package/vux9k-memprobe/Config.in"

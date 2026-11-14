@@ -15,6 +15,8 @@ BOOT_LINES = (
     "clint: clint@20000000: timer running at 18000000 Hz",
     "printk: legacy console [liteuart0] enabled",
     "Run /init as init process",
+    # This tree's init (linux_workspace/userland/init/)
+    "init: /dev/mmcblk0p1 mounted on /mnt/sd",
     "hush - the humble shell",
 )
 # command -> what its output must contain

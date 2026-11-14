@@ -1,0 +1,8 @@
+config BR2_PACKAGE_VUX9K_INIT
+	bool "vux9k-init"
+	help
+	  The initramfs' /init (linux_workspace/userland/init/): mounts
+	  /dev, /proc and the SD card, starts the login shell again and
+	  again, reaps orphans, and syncs and unmounts the card before a
+	  reboot; in place of busybox init, which kept a whole copy of
+	  busybox in RAM.

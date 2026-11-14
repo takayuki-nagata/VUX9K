@@ -84,8 +84,8 @@ stage's `linux` does (`fw_common::linux`). Index and the rules that apply everyw
   code reaches its data PC-relatively, so the two must stay at their linked distance (a
   try ended in SIGILL at an unrelocated text address). FDPIC is in the kernel but not in
   buildroot's riscv toolchain. So busybox is kept small (`board/busybox.config`: allnoconfig
-  plus init, hush and core applets, ~330 KB), and `board/post-build.sh` writes a two-line
-  inittab. Buildroot's `busybox-minimal.config` (780 KB) needed order-8 allocations that 8 MB
+  plus hush and core applets, ~330 KB), and init is this tree's own small program ("Init"),
+  not busybox's. Buildroot's `busybox-minimal.config` (780 KB) needed order-8 allocations that 8 MB
   could not keep.
 - **All 8 MB of the PSRAM go to the kernel.** The stages' memory (from `0x806F_0000`) is free
   once the kernel runs. The DTB sits in the top 64 KB (`soc::LINUX_DTB_ADDR`, `0x807F_0000`,
@@ -169,17 +169,32 @@ small, and prefer an upstream driver and binding where one fits (the UART is ups
   is enough to make busybox's exec fail. Keep the free total high, not only the largest block.
 - The card is found after the driver probes, in the background (mmc's rescan work), so it can
   appear after init has started: whatever uses it at boot waits for `/dev/mmcblk0p1`.
-- **Init mounts it on `/mnt/sd`** (`board/post-build.sh`: `/etc/init.d/sdcard`, a sysinit line
-  of the inittab, waits up to 5 s for the partition with hush's builtin `[`, then `mount -t
-  vfat`; no card is no error). buildroot's `/init` has mounted devtmpfs on `/dev` before (the
-  kernel mounts it only for a root that is not an initramfs). This hush has no arithmetic
-  (`FEATURE_SH_MATH` off): count with `for n in 1 2 3`.
+- **Init mounts it on `/mnt/sd`** ("Init": it waits up to 5 s for `/dev/mmcblk0p1`, then mounts
+  it vfat and prints `init: /dev/mmcblk0p1 mounted on /mnt/sd`, or `init: no card`).
 - **Writes**: busybox has `sync` and `dd`. The stages read what vfat writes (long names
   beside the 8.3 ones, lowercase flags, deleted entries, fragmented files), but only a
   clean card: a file whose chain doesn't match its size (a write cut off) is a `BadChain` to
   `fw_common::fat`, which refuses it where fsck would mend it. Sync before power goes, and
   umount where possible; `test_linux.py`'s `test_card_after_linux` writes, umounts, runs
   `fsck.fat -n` on the card and boots the first and second stage from it.
+
+## Init
+
+The initramfs' `/init` is this tree's own program (`linux_workspace/userland/init/`, package
+`vux9k-init`), not busybox init: on noMMU every process holds a whole copy of its executable
+(FLAT, above), so busybox init kept ~370 KB of busybox in RAM for good, one of the two
+order-7 blocks a boot left busy, and with the SD card's kernel that was the margin busybox's
+exec needed. Init does without exec what the inittab and buildroot's `/init` script did:
+- devtmpfs on `/dev` (the kernel mounts it only for a root that is not an initramfs; buildroot
+  installs its `/init` script only where there is none), the console on fds 0-2, proc;
+- the SD card on `/mnt/sd` ("The SD card");
+- the login shell `-/bin/sh` (it reads `/etc/profile`) in its own session with the console as
+  controlling tty, started again when it exits, after a second if it lived less (a failing
+  exec would loop); every orphan reaped;
+- SIGTERM, SIGUSR1 and SIGUSR2 (what busybox's `reboot`, `halt` and `poweroff` send to process 1
+  when it isn't busybox init): sync, umount the card, `reboot(2)`.
+No inittab any more (`board/post-build.sh` removes it): a process that should run beside the
+shell (U2's monitor daemon) is started, and restarted, by init.
 
 ## Memory budget
 
