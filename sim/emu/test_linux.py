@@ -38,6 +38,7 @@ from vux9k import (  # noqa: E402
     Meter,
     Soc,
     hit_rates,
+    ms,
     new_soc,
     send_paced,
     vux_tool,
@@ -165,10 +166,10 @@ def test_memory(linux):
     MEMORY[linux.how] = linux_checks.memory(meminfo, buddyinfo, build_sizes())
 
 
-@pytest.mark.parametrize("line", list(linux_checks.COMMANDS))
+@pytest.mark.parametrize("line", list(linux_checks.BASE_COMMANDS))
 def test_command(linux, line):
     out = command(linux, line)
-    assert not linux_checks.missing(out, linux_checks.COMMANDS[line]), out
+    assert not linux_checks.missing(out, linux_checks.BASE_COMMANDS[line]), out
 
 
 EXEC_FAILED = ("page allocation failure", "Unable to allocate RAM")
@@ -178,13 +179,45 @@ READS = 6
 
 def test_exec_after_card_reads(linux):
     """Busybox's exec after each of READS more 256 KB reads from the card (other blocks than
-    COMMANDS' dd): the page cache they leave breaks the free memory's large blocks (noMMU
+    BASE_COMMANDS' dd): the page cache they leave breaks the free memory's large blocks (noMMU
     has no compaction), and busybox must still find a block for its copy (docs/agents/linux.md,
     "Memory budget")."""
     for k in range(1, READS + 1):
         command(linux, f"dd if=/dev/mmcblk0 of=/dev/null bs=4096 count=64 skip={64 * k}")
         out = command(linux, "ls /")
         assert not any(e in out for e in EXEC_FAILED), f"after read {k}: {out[:300]}"
+
+
+@pytest.mark.parametrize("line", list(linux_checks.LED_COMMANDS))
+def test_led_command(linux, line):
+    out = command(linux, line)
+    assert not linux_checks.missing(out, linux_checks.LED_COMMANDS[line]), out
+
+
+def test_leds(linux):
+    """The LEDs on the GPIO register (soc.leds: bit n = LED n) from the LED class: a value
+    through brightness once the LED's trigger is gone, the timer trigger blinking it, the
+    default triggers given back."""
+    soc = linux.soc
+    command(linux, "echo none > /sys/class/leds/led1/trigger")
+    command(linux, "echo 1 > /sys/class/leds/led1/brightness")
+    assert soc.leds & 0b10, hex(soc.leds)
+    command(linux, "echo 0 > /sys/class/leds/led1/brightness")
+    assert soc.leds & 0b10 == 0, hex(soc.leds)
+    command(linux, "echo none > /sys/class/leds/led0/trigger")
+    command(linux, "echo 0 > /sys/class/leds/led0/brightness")
+    soc.run(ms(2000))
+    assert soc.leds & 0b11 == 0, "led0 or led1 changed without a trigger"
+    # The timer trigger: 500 ms on, 500 ms off
+    command(linux, "echo timer > /sys/class/leds/led0/trigger")
+    seen = set()
+    for _ in range(12):
+        soc.run(ms(200))
+        seen.add(soc.leds & 1)
+    assert seen == {0, 1}, seen
+    command(linux, "echo heartbeat > /sys/class/leds/led0/trigger")
+    command(linux, "echo mmc0 > /sys/class/leds/led1/trigger")
+    assert "[mmc0]" in command(linux, "cat /sys/class/leds/led1/trigger")
 
 
 def test_card_after_linux(linux, tmp_path):

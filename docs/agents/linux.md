@@ -198,7 +198,8 @@ The initramfs' `/init` is this tree's own program (`linux_workspace/userland/ini
 order-7 blocks a boot left busy, and with the SD card's kernel that was the margin busybox's
 exec needed. Init does without exec what the inittab and buildroot's `/init` script did:
 - devtmpfs on `/dev` (the kernel mounts it only for a root that is not an initramfs; buildroot
-  installs its `/init` script only where there is none), the console on fds 0-2, proc;
+  installs its `/init` script only where there is none), the console on fds 0-2, proc, sysfs
+  (the LED class; nothing mounted it once busybox init and its inittab were gone);
 - the SD card on `/mnt/sd` ("The SD card");
 - the login shell `-/bin/sh` (it reads `/etc/profile`) in its own session with the console as
   controlling tty, started again when it exits, after a second if it lived less (a failing
@@ -207,6 +208,34 @@ exec needed. Init does without exec what the inittab and buildroot's `/init` scr
   when it isn't busybox init): sync, umount the card, `reboot(2)`.
 No inittab any more (`board/post-build.sh` removes it): a process that should run beside the
 shell (a daemon) is started, and restarted, by init.
+
+## LEDs and the system monitor
+
+- **The GPIO block is upstream's `gpio-mmio`** (`GPIO_GENERIC_PLATFORM`, compatible
+  `wd,mbl-gpio`), twice, one 4-byte `dat` register each: the LEDs' at `0x4000_3000`
+  (`ngpios = <6>`; with no direction register gpio-mmio makes every line an output, and reads
+  the register back) and the button S2's at `0x4000_3004` (`ngpios = <1>`, `no-output`, label
+  `button`). Never a `reg` over `0x8`/`0xC`: the soft reset's registers. The block ignores byte
+  strobes, which gpio-mmio's 32-bit accesses of a 4-byte register never need.
+- **The LEDs are `gpio-leds`**: `/sys/class/leds/led0`-`led5` (the DT's `label`), active high
+  (the RTL inverts the pins). `led0` has the `heartbeat` trigger (faster under load), `led1`
+  `mmc0` (the card's accesses; mmc's host registers that trigger itself once `LEDS_TRIGGERS`
+  is set), `led2`-`led5` none (sysmon's). `timer`, `default-on` and `panic` are built in too:
+  `echo timer > /sys/class/leds/led0/trigger`. A trigger's LED changes behind `brightness`'s
+  back: `brightness` reads the LED class's value, not the register; only the emulator
+  (`soc.leds`) sees the register.
+- **They cost ~1.7 s of the boot** (2026-11, the emulator, an A/B with and without the GPIO and
+  LED options: the prompt at 12.0 s and 10.6 s): `initcall_debug` put 0.7 s into
+  `gpio_mmio_driver_init` (two chips) and 1.0 s into `gpio_led_driver_init` (six LED class
+  devices). Nothing waits there: every device the driver model registers costs ~0.1-0.3 s at
+  18 MHz (sysfs, devtmpfs, the bus's matching; `liteuart_init` took 0.7 s,
+  `param_sysfs_builtin_init` 1.3 s), and `fw_devlink=off` saved little. Count devices when
+  adding any.
+- **No interrupt, no input layer**: the button is a GPIO line read through the GPIO character
+  device (`/dev/gpiochipN`, the chip labelled `button`, `GPIO_V2_GET_LINE_IOCTL` then
+  `GPIO_V2_LINE_GET_VALUES_IOCTL`), polled. `gpio-keys` would need `INPUT` (left out for size)
+  and, for edges, an interrupt the SoC doesn't route; GPIO sysfs is off (deprecated). One
+  process at a time holds the line.
 
 ## Memory budget
 

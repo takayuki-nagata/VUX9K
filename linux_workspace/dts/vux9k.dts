@@ -82,5 +82,74 @@
 				voltage-ranges = <3300 3300>;
 			};
 		};
+
+		/*
+		 * The GPIO block (README's address map) as two of upstream's gpio-mmio chips, one
+		 * register each, 32-bit accesses (the block ignores byte strobes): the 6 LEDs'
+		 * register at 0x0 (bit n = LED n, 1 = lit, read back; no direction register, so
+		 * gpio-mmio makes every line an output), and the button S2's at 0x4 (bit 0, 1 while
+		 * pressed), input only. Neither covers 0x8/0xC, the soft reset's registers.
+		 * No interrupt: whoever reads the button polls it (sysmon).
+		 */
+		gpio_leds: gpio@40003000 {
+			compatible = "wd,mbl-gpio";
+			reg = <0x40003000 0x4>;
+			reg-names = "dat";
+			ngpios = <6>;
+			gpio-controller;
+			#gpio-cells = <2>;
+		};
+
+		gpio_button: gpio@40003004 {
+			compatible = "wd,mbl-gpio";
+			reg = <0x40003004 0x4>;
+			reg-names = "dat";
+			ngpios = <1>;
+			no-output;
+			gpio-controller;
+			#gpio-cells = <2>;
+			label = "button";
+		};
+	};
+
+	/*
+	 * /sys/class/leds/led0-5 (the flags cell 0: active high, the GPIO block inverts the
+	 * pins): led0 the kernel's heartbeat (faster under load), led1 the SD card's accesses
+	 * (mmc0), led2-5 sysmon's bar (linux_workspace/userland/sysmon/). The shell can give any
+	 * of them another trigger (echo timer > /sys/class/leds/led0/trigger) or none.
+	 */
+	leds {
+		compatible = "gpio-leds";
+
+		led-0 {
+			label = "led0";
+			gpios = <&gpio_leds 0 0>;
+			linux,default-trigger = "heartbeat";
+		};
+		led-1 {
+			label = "led1";
+			gpios = <&gpio_leds 1 0>;
+			linux,default-trigger = "mmc0";
+		};
+		led-2 {
+			label = "led2";
+			gpios = <&gpio_leds 2 0>;
+			default-state = "off";
+		};
+		led-3 {
+			label = "led3";
+			gpios = <&gpio_leds 3 0>;
+			default-state = "off";
+		};
+		led-4 {
+			label = "led4";
+			gpios = <&gpio_leds 4 0>;
+			default-state = "off";
+		};
+		led-5 {
+			label = "led5";
+			gpios = <&gpio_leds 5 0>;
+			default-state = "off";
+		};
 	};
 };

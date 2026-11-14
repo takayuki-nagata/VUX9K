@@ -19,8 +19,9 @@ BOOT_LINES = (
     "init: /dev/mmcblk0p1 mounted on /mnt/sd",
     "hush - the humble shell",
 )
-# command -> what its output must contain
-COMMANDS = {
+# command -> what its output must contain: the shell and the card (BASE_COMMANDS), then the
+# LEDs (LED_COMMANDS), which sim/emu/test_linux.py runs with its own tests between
+BASE_COMMANDS = {
     "echo hello-vux9k": ("hello-vux9k",),
     "uname -a": ("Linux (none) 7.3.0",),
     "ls /": ("bin", "dev", "proc", "sbin"),
@@ -43,6 +44,14 @@ COMMANDS = {
     # The card's read speed (the command's time): 256 KB from the start of the card
     "dd if=/dev/mmcblk0 of=/dev/null bs=4096 count=64": ("64+0 records in",),
 }
+LED_COMMANDS = {
+    # The board's LEDs in the LED class (the device tree's gpio-leds on upstream's gpio-mmio),
+    # led0 and led1 with the kernel's triggers
+    "ls /sys/class/leds": tuple(f"led{n}" for n in range(6)),
+    "cat /sys/class/leds/led0/trigger": ("[heartbeat]",),
+    "cat /sys/class/leds/led1/trigger": ("[mmc0]",),
+}
+COMMANDS = BASE_COMMANDS | LED_COMMANDS
 # What the board's test does to its card after COMMANDS: the file removed and the card
 # unmounted, so the FAT's dirty bit is clear when the bitstream is loaded again (the emulator's
 # card is thrown away: sim/emu/test_linux.py checks it with the first and second stage after an

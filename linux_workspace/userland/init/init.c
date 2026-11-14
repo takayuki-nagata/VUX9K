@@ -6,7 +6,7 @@
 // has its own copy of its executable), which the kernel with the SD card could not spare.
 // This one does without exec what the inittab and buildroot's /init script did:
 //   - devtmpfs on /dev (the kernel mounts it only for a root that is not an initramfs), the
-//     console on fds 0-2, proc on /proc;
+//     console on fds 0-2, proc on /proc, sysfs on /sys;
 //   - the SD card's FAT32 partition on /mnt/sd, once mmc has found the card (in the
 //     background, possibly after init has started: up to CARD_WAIT_MS);
 //   - the login shell (-/bin/sh, which reads /etc/profile) on the console, in its own session
@@ -168,6 +168,10 @@ int main(void) {
     console_on_stdio();
     if (mount("proc", "/proc", "proc", 0, 0) < 0) {
         say("/proc not mounted: ", strerror(errno));
+    }
+    // The LED class and the GPIO chips' names (the shell's echo > .../brightness)
+    if (mount("sysfs", "/sys", "sysfs", 0, 0) < 0) {
+        say("/sys not mounted: ", strerror(errno));
     }
     mount_card();
 
