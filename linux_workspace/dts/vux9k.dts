@@ -114,9 +114,10 @@
 
 	/*
 	 * /sys/class/leds/led0-5 (the flags cell 0: active high, the GPIO block inverts the
-	 * pins): led0 the kernel's heartbeat (faster under load), led1 the SD card's accesses
-	 * (mmc0), led2-5 sysmon's bar (linux_workspace/userland/sysmon/). The shell can give any
-	 * of them another trigger (echo timer > /sys/class/leds/led0/trigger) or none.
+	 * pins): led0 the kernel's heartbeat (faster under load), led1-4 sysmon's bar
+	 * (linux_workspace/userland/sysmon/, led1 its first), led5 the SD card's accesses (mmc0):
+	 * the card's LED at the end of the row, where it shows. The shell can give any of them
+	 * another trigger (echo timer > /sys/class/leds/led0/trigger) or none.
 	 */
 	leds {
 		compatible = "gpio-leds";
@@ -129,7 +130,7 @@
 		led-1 {
 			label = "led1";
 			gpios = <&gpio_leds 1 0>;
-			linux,default-trigger = "mmc0";
+			default-state = "off";
 		};
 		led-2 {
 			label = "led2";
@@ -149,7 +150,7 @@
 		led-5 {
 			label = "led5";
 			gpios = <&gpio_leds 5 0>;
-			default-state = "off";
+			linux,default-trigger = "mmc0";
 		};
 	};
 };

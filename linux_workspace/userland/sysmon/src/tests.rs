@@ -116,9 +116,9 @@ fn bars() {
         .collect();
     assert_eq!(load, [0, 0, 1, 1, 2, 2, 3, 3, 4, 4]);
     assert_eq!(bar_leds(0), 0);
-    assert_eq!(bar_leds(1), 0b000100);
-    assert_eq!(bar_leds(4), 0b111100);
-    assert_eq!(bar_leds(9), 0b111100);
+    assert_eq!(bar_leds(1), 0b000010);
+    assert_eq!(bar_leds(4), 0b011110);
+    assert_eq!(bar_leds(9), 0b011110);
 }
 
 fn args(s: &str) -> Option<Options> {
@@ -187,7 +187,7 @@ struct Fake {
     now_ms: u32,
     term_at: Option<u32>,
     out: Vec<String>,
-    /// When something else turns led2 off
+    /// When something else turns led1 off
     meddle_at_ms: Option<u32>,
     /// The LEDs at each read of /proc/uptime
     leds_at_sample: Vec<u32>,
@@ -274,8 +274,8 @@ fn cpu_bar_follows_the_load_and_count_stops_it() {
         ]
     );
     assert_eq!(f.now_ms, 3000);
-    // Its own LEDs off at the end; led0 and led1 are the triggers', never touched
-    assert_eq!(f.leds, 0b000011);
+    // Its own LEDs off at the end; led0 and led5 are the triggers', never touched
+    assert_eq!(f.leds, 0b100001);
 }
 
 #[test]
@@ -393,7 +393,7 @@ fn leds_it_cannot_write_end_it_with_status_1() {
     };
     f.leds = 0b001000;
     assert_eq!(run(&mut f, Options::default()), 1);
-    assert_eq!(f.out, ["sysmon: cannot write /sys/class/leds/led2-5"]);
+    assert_eq!(f.out, ["sysmon: cannot write /sys/class/leds/led1-4"]);
     let mut f = Fake {
         stat: [stat(0, 0), stat(100, 0)].into(),
         broken_led: Some(3),
@@ -402,13 +402,13 @@ fn leds_it_cannot_write_end_it_with_status_1() {
     assert_eq!(run(&mut f, Options::default()), 1);
     assert_eq!(
         f.out.last().unwrap(),
-        "sysmon: cannot write /sys/class/leds/led2-5"
+        "sysmon: cannot write /sys/class/leds/led1-4"
     );
 }
 
 #[test]
 fn leds_another_process_changed_are_written_again_at_the_refresh() {
-    // Full load all along; at 1500 ms something else turns led2 off (a second sysmon ending,
+    // Full load all along; at 1500 ms something else turns led1 off (a second sysmon ending,
     // the shell's echo)
     let stat_seq = (0..=REFRESH_INTERVALS + 1)
         .map(|k| stat(100 * u64::from(k), 0))
@@ -425,12 +425,12 @@ fn leds_another_process_changed_are_written_again_at_the_refresh() {
             ..Options::default()
         },
     );
-    // At each sample (before that interval's write): dark, dark, then the bar without led2 up
+    // At each sample (before that interval's write): dark, dark, then the bar without led1 up
     // to the refresh, which writes all four at the end of interval REFRESH_INTERVALS, then the
     // bar whole
     let mut want = vec![0, 0];
-    want.extend([0b111000].repeat(REFRESH_INTERVALS as usize - 1));
-    want.push(0b111100);
+    want.extend([0b011100].repeat(REFRESH_INTERVALS as usize - 1));
+    want.push(0b011110);
     assert_eq!(f.leds_at_sample, want);
 }
 

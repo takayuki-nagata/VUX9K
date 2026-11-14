@@ -69,8 +69,8 @@ MEMORY: dict[str, dict[str, str]] = {}
 # The CPU init's sysmon took over IDLE_S seconds of an idle shell, per boot path (%)
 SYSMON_CPU: dict[str, float] = {}
 IDLE_S = 10
-# The LEDs sysmon's bar has (led2-led5)
-BAR = 0b111100
+# The LEDs sysmon's bar has (led1-led4)
+BAR = 0b011110
 
 
 @dataclass
@@ -206,15 +206,15 @@ def test_leds(linux):
     through brightness once the LED's trigger is gone, the timer trigger blinking it, the
     default triggers given back."""
     soc = linux.soc
-    command(linux, "echo none > /sys/class/leds/led1/trigger")
-    command(linux, "echo 1 > /sys/class/leds/led1/brightness")
-    assert soc.leds & 0b10, hex(soc.leds)
-    command(linux, "echo 0 > /sys/class/leds/led1/brightness")
-    assert soc.leds & 0b10 == 0, hex(soc.leds)
+    command(linux, "echo none > /sys/class/leds/led5/trigger")
+    command(linux, "echo 1 > /sys/class/leds/led5/brightness")
+    assert soc.leds & 0b100000, hex(soc.leds)
+    command(linux, "echo 0 > /sys/class/leds/led5/brightness")
+    assert soc.leds & 0b100000 == 0, hex(soc.leds)
     command(linux, "echo none > /sys/class/leds/led0/trigger")
     command(linux, "echo 0 > /sys/class/leds/led0/brightness")
     soc.run(ms(2000))
-    assert soc.leds & 0b11 == 0, "led0 or led1 changed without a trigger"
+    assert soc.leds & 0b100001 == 0, "led0 or led5 changed without a trigger"
     # The timer trigger: 500 ms on, 500 ms off
     command(linux, "echo timer > /sys/class/leds/led0/trigger")
     seen = set()
@@ -223,8 +223,8 @@ def test_leds(linux):
         seen.add(soc.leds & 1)
     assert seen == {0, 1}, seen
     command(linux, "echo heartbeat > /sys/class/leds/led0/trigger")
-    command(linux, "echo mmc0 > /sys/class/leds/led1/trigger")
-    assert "[mmc0]" in command(linux, "cat /sys/class/leds/led1/trigger")
+    command(linux, "echo mmc0 > /sys/class/leds/led5/trigger")
+    assert "[mmc0]" in command(linux, "cat /sys/class/leds/led5/trigger")
 
 
 def wait_console(linux: Booted, token: str, start: int) -> str:
@@ -249,7 +249,7 @@ def sysmon_pid(linux: Booted) -> int:
 
 
 def test_sysmon(linux):
-    """init's system monitor on the GPIO register's led2-led5 (soc.leds): its CPU over an idle
+    """init's system monitor on the GPIO register's led1-led4 (soc.leds): its CPU over an idle
     shell, its bar under a busy loop of the shell's own (no exec), the button stepping its
     mode, started again after it is killed, then stopped (its LEDs dark) by SIGTERM and left
     so. Its lines are on the console."""

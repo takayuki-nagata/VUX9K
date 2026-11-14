@@ -5,7 +5,7 @@
 //! (docs/agents/linux.md, "LEDs and the system monitor").
 //! Every interval it reads one of /proc/uptime (the CPU's use), /proc/meminfo (the
 //! memory in use) or /proc/loadavg (the 1-minute load), and shows it as a bar of up to 4 lit
-//! LEDs on led2-led5; the button S2 moves to the next of the three. Its options:
+//! LEDs on led1-led4; the button S2 moves to the next of the three. Its options:
 //!
 //! ```text
 //! sysmon [-m cpu|mem|load] [-i MS] [-b MS] [-n COUNT] [-v]
@@ -21,8 +21,8 @@
 //! No `core::fmt` (it would add tens of KB to a program that is copied whole at each exec).
 #![cfg_attr(not(test), no_std)]
 
-/// The LEDs sysmon drives: led2 (the bar's first) to led5.
-pub const FIRST_LED: u32 = 2;
+/// The LEDs sysmon drives: led1 (the bar's first) to led4.
+pub const FIRST_LED: u32 = 1;
 pub const BAR_LEDS: u32 = 4;
 
 /// What the bar shows.
@@ -208,7 +208,7 @@ pub fn parse_args<'a>(args: impl IntoIterator<Item = &'a [u8]>) -> Option<Option
     Some(o)
 }
 
-/// The LED register's bits sysmon owns for a bar of n LEDs (led2 first).
+/// The LED register's bits sysmon owns for a bar of n LEDs (led1 first).
 pub fn bar_leds(n: u32) -> u32 {
     ((1u32 << n.min(BAR_LEDS)) - 1) << FIRST_LED
 }
@@ -339,7 +339,7 @@ pub fn run(sys: &mut impl Sys, mut o: Options) -> i32 {
     // Whatever the LEDs show, the bar starts dark
     let mut lit = None;
     if !show(sys, &mut lit, 0) {
-        sys.say(b"sysmon: cannot write /sys/class/leds/led2-5");
+        sys.say(b"sysmon: cannot write /sys/class/leds/led1-4");
         return 1;
     }
     let mut pressed = match sys.button() {
@@ -385,7 +385,7 @@ pub fn run(sys: &mut impl Sys, mut o: Options) -> i32 {
             lit = None;
         }
         if !show(sys, &mut lit, bar_leds(n)) {
-            sys.say(b"sysmon: cannot write /sys/class/leds/led2-5");
+            sys.say(b"sysmon: cannot write /sys/class/leds/led1-4");
             break 'run 1;
         }
         if o.verbose {

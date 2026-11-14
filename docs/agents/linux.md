@@ -226,9 +226,10 @@ shell (a daemon) is started, and restarted, by init; what it does stays out of p
   `button`). Never a `reg` over `0x8`/`0xC`: the soft reset's registers. The block ignores byte
   strobes, which gpio-mmio's 32-bit accesses of a 4-byte register never need.
 - **The LEDs are `gpio-leds`**: `/sys/class/leds/led0`-`led5` (the DT's `label`), active high
-  (the RTL inverts the pins). `led0` has the `heartbeat` trigger (faster under load), `led1`
-  `mmc0` (the card's accesses; mmc's host registers that trigger itself once `LEDS_TRIGGERS`
-  is set), `led2`-`led5` none (sysmon's). `timer`, `default-on` and `panic` are built in too:
+  (the RTL inverts the pins). `led0` has the `heartbeat` trigger (faster under load), `led1`-`led4`
+  none (sysmon's bar, `led1` its first), `led5` `mmc0` (the card's accesses; mmc's host
+  registers that trigger itself once `LEDS_TRIGGERS` is set): the card's LED at the end of the
+  row, apart from the bar, where its blinks show. `timer`, `default-on` and `panic` are built in too:
   `echo timer > /sys/class/leds/led0/trigger`. A trigger's LED changes behind `brightness`'s
   back: `brightness` reads the LED class's value, not the register; only the emulator
   (`soc.leds`) sees the register.
@@ -247,7 +248,7 @@ shell (a daemon) is started, and restarted, by init; what it does stays out of p
 - **sysmon** (`linux_workspace/userland/sysmon/`, package `vux9k-sysmon`, in the initramfs:
   init starts it at boot): every interval (`-i`, 1000 ms) one of `/proc/uptime` (the CPU's use
   since the last sample), `/proc/meminfo` (MemTotal - MemFree over MemTotal) or
-  `/proc/loadavg` (1 minute) as a bar of 0-4 LEDs on led2-led5 (a percentage in quarters,
+  `/proc/loadavg` (1 minute) as a bar of 0-4 LEDs on led1-led4 (a percentage in quarters,
   any use lighting the first; a load at 0.25, 0.5, 1, 2); the button, read every `-b` (200 ms),
   steps cpu -> mem -> load; `-m` the first mode, `-n` a number of intervals, `-v` a line per
   interval (`sysmon: cpu 37% bar 2`). It writes an LED's `brightness` when it changes, and all

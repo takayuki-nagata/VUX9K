@@ -49,10 +49,10 @@ BASE_COMMANDS = {
 }
 LED_COMMANDS = {
     # The board's LEDs in the LED class (the device tree's gpio-leds on upstream's gpio-mmio),
-    # led0 and led1 with the kernel's triggers, the others sysmon's
+    # led0 and led5 with the kernel's triggers, led1-led4 sysmon's
     "ls /sys/class/leds": tuple(f"led{n}" for n in range(6)),
     "cat /sys/class/leds/led0/trigger": ("[heartbeat]",),
-    "cat /sys/class/leds/led1/trigger": ("[mmc0]",),
+    "cat /sys/class/leds/led5/trigger": ("[mmc0]",),
     # The system monitor (linux_workspace/userland/sysmon/), which init started at boot, and a
     # second one for two intervals: the first holds the button's line, so this one has none
     "ps": (SYSMON,),

@@ -87,8 +87,8 @@ card's partition on `/mnt/sd` (read and write; sync or umount before power goes)
 programs from `/mnt/sd/VUX9K/LINUX/BIN/`, which is on the shell's `PATH`. On the board the second stage reads the 3.7 MB Image in ~15 s and
 the kernel reaches busybox's shell ~13 s later.
 The board's six LEDs are the kernel's LED class: `/sys/class/leds/led0` (the kernel's
-`heartbeat` trigger, faster under load), `led1` (`mmc0`: the card's accesses) and
-`led2`-`led5`, the bar of `sysmon`, a system monitor (Rust) that init starts at boot: the CPU's
+`heartbeat` trigger, faster under load), `led1`-`led4`, the bar of `sysmon`, a system monitor
+(Rust) that init starts at boot, and `led5` (`mmc0`: the card's accesses). The bar shows the CPU's
 use in quarters, and with the button S2 the memory in use and then the 1-minute load
 (`sysmon -m cpu|mem|load -i MS -v`; `kill` it to free its LEDs). Any LED takes another trigger
 (`echo timer > /sys/class/leds/led0/trigger`, `none`) or a value (`echo 1 > .../brightness`).
