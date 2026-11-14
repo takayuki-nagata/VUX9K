@@ -39,10 +39,10 @@ index a18814f..f3b2de0 100644
  obj-$(CONFIG_SPI_LM70_LLP)		+= spi-lm70llp.o
 diff --git b/drivers/spi/spi-vux9k-sd.c b/drivers/spi/spi-vux9k-sd.c
 new file mode 100644
-index 0000000..f9f4292
+index 0000000..f8efef3
 --- /dev/null
 +++ b/drivers/spi/spi-vux9k-sd.c
-@@ -0,0 +1,134 @@
+@@ -0,0 +1,144 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * VUX9K SD card SPI controller, polled.
@@ -111,6 +111,10 @@ index 0000000..f9f4292
 +	u8 *rx = t->rx_buf;
 +	unsigned int i;
 +
++	void __iomem *data = hw->base + VUX9K_SD_DATA;
++	void __iomem *status = hw->base + VUX9K_SD_STATUS;
++	unsigned int n;
++
 +	if (vux9k_sd_spi_wait(hw))
 +		return -ETIMEDOUT;
 +	if (t->speed_hz != hw->speed_hz) {
@@ -120,12 +124,18 @@ index 0000000..f9f4292
 +		writel_relaxed(div, hw->base + VUX9K_SD_DIV);
 +		hw->speed_hz = t->speed_hz;
 +	}
++	/*
++	 * The byte loop is most of the time a block takes (16 * DIV clocks on
++	 * the wire, the rest is this loop): a store, the busy poll, a load
++	 */
 +	for (i = 0; i < t->len; i++) {
-+		writel_relaxed(tx ? tx[i] : 0xff, hw->base + VUX9K_SD_DATA);
-+		if (vux9k_sd_spi_wait(hw))
-+			return -ETIMEDOUT;
++		writel_relaxed(tx ? tx[i] : 0xff, data);
++		n = VUX9K_SD_POLLS;
++		while (readl_relaxed(status) & VUX9K_SD_BUSY)
++			if (!--n)
++				return -ETIMEDOUT;
 +		if (rx)
-+			rx[i] = readl_relaxed(hw->base + VUX9K_SD_DATA);
++			rx[i] = readl_relaxed(data);
 +	}
 +	return 0;
 +}
