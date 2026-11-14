@@ -10,6 +10,9 @@ second stage, booted by the first from the card, loads and starts with `linux`, 
 board. Each boots to busybox's shell on the console, then commands are typed at it
 (sim/integration/linux_checks.py, which the board's scripts/hw_linux.py checks too).
 
+A third boot (load_linux) has a card that waits before every block it reads, as a real card
+does (test_card_with_read_waits).
+
 The cycles, retired instructions and the caches' hit rates to the prompt (for the card: the
 second stage's load, `linux` typed to its [LINUX] line, and the kernel's boot from there) and
 for each command are printed by test_record_measurements. The board's test is scripts/hw_linux.py
@@ -18,6 +21,7 @@ for each command are printed by test_record_measurements. The board's test is sc
 
 import json
 import os
+import random
 import re
 import shutil
 import socket
@@ -91,6 +95,17 @@ DROP_CACHES_QUIET = "): drop_caches: 4"
 RECLAIM_WAIT_S = 10
 # The LEDs sysmon's bar has (led1-led4)
 BAR = 0b011110
+# The card of test_card_with_read_waits: FF bytes before each data block's token beyond the one
+# the card always sends (sdcard::Faults::read_waits, one per block in turn), as a real card's
+# N(AC). mmc_spi reads 16 bytes per SPI message while it looks for the token
+# (linux_workspace/kernel/patches/0004-mmc-spi-token-search.patch); its first read starts at
+# that one FF, so the token is that read's byte wait + 1: before its last (13), its last (14),
+# the next read's first (15), the same at the second read's end (29-31) and the third's (46),
+# and early in the first (0, 1, 7).
+READ_WAITS = (13, 14, 15, 0, 1, 29, 30, 31, 46, 7)
+# On that card, past the partition: REF_SECTORS of random data a dd copies through Linux to
+# as many sectors after them, which the test compares with the original
+REF_SECTORS = 512
 
 
 @dataclass
@@ -123,14 +138,15 @@ def card(image: bytes, dtb: bytes) -> bytes:
     return vux_tool.build_fat32_image(files | card_programs(), part_sectors=CARD_SECTORS)
 
 
-def boot_direct(image: bytes, dtb: bytes) -> Booted:
+def boot_direct(image: bytes, dtb: bytes, sd: bytes | None = None, how: str = "load_linux", **faults) -> Booted:
+    """sd: the card (card()'s by default); faults: Soc.sd_insert's."""
     soc = new_soc()
-    soc.sd_insert(card(image, dtb))
+    soc.sd_insert(card(image, dtb) if sd is None else sd, **faults)
     soc.load_linux(image, dtb)
     meter = Meter(soc, MEASURED)
     boot = wait_for(soc, PROMPT, timeout_cycles=BOOT_CYCLES)
-    meter.done("load_linux: start to the first prompt")
-    return Booted(soc, boot, "load_linux")
+    meter.done(f"{how}: start to the first prompt")
+    return Booted(soc, boot, how)
 
 
 def boot_from_card(image: bytes, dtb: bytes) -> Booted:
@@ -149,8 +165,8 @@ def boot_from_card(image: bytes, dtb: bytes) -> Booted:
     return Booted(soc, boot, "stage2")
 
 
-@pytest.fixture(scope="module", params=[boot_direct, boot_from_card], ids=["load_linux", "stage2"])
-def linux(request) -> Booted:
+def linux_files() -> tuple[bytes, bytes]:
+    """make linux's Image and device tree; skips without them or VUX9K_LINUX_TEST."""
     # Minutes of emulation: only make test-linux-emu runs it, not test-emu (pytest sim/emu)
     if not os.environ.get("VUX9K_LINUX_TEST"):
         pytest.skip("make test-linux-emu runs it (VUX9K_LINUX_TEST=1)")
@@ -158,7 +174,12 @@ def linux(request) -> Booted:
         if not os.path.exists(path):
             pytest.skip(f"{path} missing (make linux)")
     with open(IMAGE, "rb") as image, open(DTB, "rb") as dtb:
-        return request.param(image.read(), dtb.read())
+        return image.read(), dtb.read()
+
+
+@pytest.fixture(scope="module", params=[boot_direct, boot_from_card], ids=["load_linux", "stage2"])
+def linux(request) -> Booted:
+    return request.param(*linux_files())
 
 
 def command(linux: Booted, line: str) -> str:
@@ -428,6 +449,54 @@ def test_card_after_linux(linux, tmp_path):
     name = os.path.basename(linux_checks.SD_TEST_FILE)
     assert name in s1_env.s2_cmd(soc, "ls VUX9K")
     assert s1_env.s2_cmd(soc, f"cat VUX9K/{name}").strip() == "sd-write-ok"
+
+
+def test_card_with_read_waits():
+    """A boot (load_linux) with a card that waits READ_WAITS before its blocks' tokens, and
+    on it the first `ls` of a directory and exec of a program from the card (memprobe, then
+    the card's bbawk), BASE_COMMANDS' 256 KB dd (their times are printed with the others), a
+    write and sync, and a dd from REF_SECTORS of random data past the partition to the sectors
+    after them, which then hold the same bytes: mmc_spi's token search finds every block's
+    start, whatever the wait (its data CRC would refuse a block read from the wrong byte)."""
+    image, dtb = linux_files()
+    sd = card(image, dtb)
+    src = len(sd) // 512
+    assert src % 8 == 0, src  # dd's blocks of 4096 bytes
+    ref = random.Random(0x5D).randbytes(REF_SECTORS * 512)
+    # The destination's sectors too: the card's size (its CSD) holds them
+    sd += ref + bytes(len(ref))
+    linux = boot_direct(image, dtb, sd=sd, how="read waits", read_waits=list(READ_WAITS))
+    assert not linux_checks.missing(linux.boot, linux_checks.BOOT_LINES), linux.boot[-2000:]
+    for line in (
+        "ls /mnt/sd/VUX9K",
+        "/mnt/sd/VUX9K/LINUX/BIN/memprobe",
+        "dd if=/dev/mmcblk0 of=/dev/null bs=4096 count=64",
+    ):
+        out = command(linux, line)
+        assert not linux_checks.missing(out, linux_checks.BASE_COMMANDS[line]), out
+
+    def run(line: str) -> str:
+        # An exec of busybox after the reads: it waits for its block first (sysmon's reclaim)
+        assert wait_large(linux), f"no free block of order {RECLAIM_ORDER} before {line!r}"
+        out = command(linux, line)
+        assert not any(e in out for e in EXEC_FAILED), out[:600]
+        return out
+
+    awk = "awk 'BEGIN{print 6*7, sqrt(2)}'"
+    out = run(awk)
+    assert not linux_checks.missing(out, linux_checks.TOOL_COMMANDS[awk]), out
+    assert b"sd-write-ok\n" not in sd
+    out = run(f"echo sd-write-ok > {linux_checks.SD_TEST_FILE}; sync")
+    assert b"sd-write-ok\n" in linux.soc.sd_image(), out
+    # A line shorter than the console's 80 columns with the prompt (linux_checks, TOOL_COMMANDS)
+    blocks = REF_SECTORS // 8
+    copy = f"dd if=/dev/mmcblk0 of=/dev/mmcblk0 bs=4096 count={blocks} skip={src // 8} seek={src // 8 + blocks}"
+    assert len(copy) + len(linux_checks.PROMPT) < 80, copy
+    out = run(copy)
+    assert f"{blocks}+0 records out" in out, out
+    run("sync")
+    dst = (src + REF_SECTORS) * 512
+    assert linux.soc.sd_image()[dst : dst + len(ref)] == ref, "the copy differs"
 
 
 def test_board_script_on_the_emulator(tmp_path):

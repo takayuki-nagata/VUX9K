@@ -137,6 +137,8 @@ small, and prefer an upstream driver and binding where one fits (the UART is ups
   ones (`a/` and `b/` paths, `-p1`); `scripts/checkpatch.pl --no-tree` on it finds the kernel's
   style problems (its "Missing Signed-off-by" doesn't apply here).
 - `patch` is a host tool buildroot already requires, so any machine that builds the userland has it.
+- 0002 and 0004 both change `drivers/mmc/host/mmc_spi.c` (0002 the request size near the top,
+  0004 the read path): 0004 is made against the file with 0002 applied.
 
 ## The SD card
 
@@ -162,12 +164,30 @@ small, and prefer an upstream driver and binding where one fits (the UART is ups
   request with its scatterlist when the card is found, unmovable slab spread over the RAM:
   with upstream's values Slab was 920 kB after the boot and the largest free block fell to
   order 6-7, so busybox's exec (order 7) failed.
+- **mmc_spi looks for a block's data token 16 bytes per SPI message**
+  (patches/0004-mmc-spi-token-search.patch; upstream reads one byte per message). A real card
+  sends FF for a while before the token (N(AC)), and here a message costs as much as tens of
+  bytes. The bytes read after the token go to the start of the block's buffer (or of its
+  CRC), and the data message reads only the rest. A read never goes past the block's CRC: the
+  chunk is cut to the block's length + 3. So a short block (CSD 16, SCR 8 bytes) ends where it
+  did, and the next block of a CMD18 and CMD12 see the same bytes as before. 16 because the
+  search's cost is per message, and 16 still fits the CSD's and CID's block; mmc_spi's
+  scratch buffer would allow up to 29. Upstream's handling of the leading 00 (N(CX)), the
+  timeout, a bit-shifted token and the error tokens is unchanged.
+- **The emulator's card answers a read at once** unless it is told to wait:
+  `sdcard::Faults::read_waits` (Python `sd_insert(read_waits=[...])`) sends that many more FF
+  before each data block's token or error token, one entry per block in turn (the registers'
+  blocks too). It exists in the Rust card only, like `fail_after`; the default (none) keeps
+  `sim/sd_transcripts/` as they are. `test_linux.py`'s `test_card_with_read_waits` boots with
+  waits that put the token before, on and after the end of mmc_spi's 16-byte reads. It checks
+  an exec from the card, a write, and a dd of random sectors through Linux to the sectors after
+  them, byte for byte.
 - **Reading the card from Linux is ~500 cycles a byte** (~36 KB/s at 18 MHz, the emulator,
   2026-11; the second stage reads at ~100): a profile of a `dd` from the card put ~27% in the
   driver's byte loop (48 cycles a byte are the wire at 3 MHz), ~16% in the SPI core (mmc_spi
-  sends several one-byte messages per block, e.g. its token search), ~6% in the CRC16 and ~32%
-  in the timer tick and the scheduler, which take ~23% of the CPU even when it is idle (one HZ
-  100 tick is ~40k cycles here). The block device's readahead (128 KB) also reads past what a
+  sent several one-byte messages per block, e.g. its token search, before patch 0004), ~6% in
+  the CRC16 and ~32% in the timer tick and the scheduler, which take ~23% of the CPU even when
+  it is idle (one HZ 100 tick is ~40k cycles here). The block device's readahead (128 KB) also reads past what a
   short sequential read asks for: a 256 KB `dd` read 496 KB.
 - **What the block layer costs in RAM** (2026-11, the emulator; SLUB_TINY has no slabinfo, so
   the slab pages were counted per cache by reading `mem_map` and `slab_caches` from the
@@ -489,9 +509,12 @@ With the SD card (2026-11-14, the board, 1bc6b3b's kernel, a 128 GB SDXC card): 
 waits for the real card's partition longer), the bitstream's load to the prompt 28.6 s. On the
 card: a 256 KB `dd` 15.1 s (the emulator 14.0 s), a write and `sync` 1.4 s, but the first exec
 of memprobe from it 9.6 s and the first `ls /mnt/sd/VUX9K` 3.2 s (the emulator 3.3 s and 0.9 s):
-a real card answers a read only after a wait (N(AC) bytes of FF), and mmc_spi searches for the
-data token one byte per SPI message, so small reads (FAT, directories, a cold exec) pay for
+a real card answers a read only after a wait (N(AC) bytes of FF), and mmc_spi searched for the
+data token one byte per SPI message, so small reads (FAT, directories, a cold exec) paid for
 the SPI core's per-message cost far more than on the emulator's card, which answers at once.
+These times are from before patches/0004-mmc-spi-token-search.patch, which reads 16 bytes per
+message ("The SD card"). On the emulator, a card with read waits (`test_card_with_read_waits`)
+shows the difference; its times are in `test_linux.py`'s output under `read waits:`.
 
 On the board (`make test-hw-linux-dist`, 1c8d685, three runs): the second stage's `linux` to
 its `[LINUX]` line (reading the 3.2 MB Image) 13.1 s, `[LINUX]` to busybox's prompt

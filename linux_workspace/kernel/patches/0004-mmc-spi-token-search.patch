@@ -1,0 +1,138 @@
+From: VUX9K
+Subject: [PATCH] mmc: mmc_spi: look for the read token 16 bytes at a time
+
+mmc_spi_readblock() looked for a data block's token one byte per SPI
+message: one message for the first byte, then one for each all-ones byte
+of N(AC) before the token. A card that takes a while to answer a read
+sends many of them, and on a host where a message costs far more than a
+byte (a polled controller on a slow CPU) the search took most of a small
+read.
+
+Read MMC_SPI_TOKEN_CHUNK (16) bytes per message instead, the first read
+too. The bytes that follow the token in the same read are the start of
+the data block, as the data message would have read them: they are
+copied to the front of the buffer (and of the crc, for a short block)
+and that message reads only the rest. A bit-shifted token's realignment
+walks the same bytes as before, so it is unchanged. A read never takes
+more than the token, the data and the crc: the chunk is cut to the
+block's length + 3, so a short block (CSD, CID, SCR) ends where it did,
+and nothing of the next block of a multiple block read, or of what
+follows, is consumed.
+The leading all-zeroes byte of N(CX), the timeout and the tokens other
+than 0xfe go through as before.
+
+This tree's own patch, not sent upstream (docs/agents/linux.md, "Kernel
+patches").
+
+---
+diff --git a/drivers/mmc/host/mmc_spi.c b/drivers/mmc/host/mmc_spi.c
+index e1a7168..714e84d 100644
+--- a/drivers/mmc/host/mmc_spi.c
++++ b/drivers/mmc/host/mmc_spi.c
+@@ -76,6 +76,13 @@
+ 
+ #define MMC_SPI_BLOCKSIZE	512
+ 
++/* Bytes read per SPI message while looking for a data block's token: the
++ * all-ones bytes before it (N(AC), many on some cards) then cost one message
++ * per this many bytes instead of one per byte. What is read after the token
++ * is the start of the block, not lost. At most sizeof(scratch.status).
++ */
++#define MMC_SPI_TOKEN_CHUNK	16
++
+ #define MMC_SPI_R1B_TIMEOUT_MS	3000
+ #define MMC_SPI_INIT_TIMEOUT_MS	3000
+ 
+@@ -186,9 +193,10 @@ mmc_spi_wait_unbusy(struct mmc_spi_host *host, unsigned long timeout)
+ 	return mmc_spi_skip(host, timeout, sizeof(host->data->status), 0);
+ }
+ 
+-static int mmc_spi_readtoken(struct mmc_spi_host *host, unsigned long timeout)
++static int mmc_spi_readtoken(struct mmc_spi_host *host, unsigned long timeout,
++			     unsigned int n)
+ {
+-	return mmc_spi_skip(host, timeout, 1, 0xff);
++	return mmc_spi_skip(host, timeout, n, 0xff);
+ }
+ 
+ 
+@@ -676,6 +684,10 @@ mmc_spi_writeblock(struct mmc_spi_host *host, struct spi_transfer *t,
+  *	+ data bytes
+  *	+ crc16
+  *
++ * The leading bytes are read MMC_SPI_TOKEN_CHUNK at a time, never more than
++ * the token, the data and the crc can take: the bytes read after the token
++ * start the data (or the crc), and the data message reads only the rest.
++ *
+  * After single block reads, we're done; N(EC) [0+] all-ones bytes follow
+  * before dropping chipselect.
+  *
+@@ -689,23 +701,42 @@ mmc_spi_readblock(struct mmc_spi_host *host, struct spi_transfer *t,
+ 	struct spi_device	*spi = host->spi;
+ 	int			status;
+ 	struct scratch		*scratch = host->data;
++	u8			*buf = scratch->status;
+ 	unsigned int 		bitshift;
+ 	u8			leftover;
++	unsigned int		n, i, ahead, in_data, in_crc;
+ 
+-	/* At least one SD card sends an all-zeroes byte when N(CX)
+-	 * applies, before the all-ones bytes ... just cope with that.
+-	 */
+-	status = mmc_spi_readbytes(host, 1);
++	n = min_t(unsigned int, MMC_SPI_TOKEN_CHUNK, t->len + 3);
++	status = mmc_spi_readbytes(host, n);
+ 	if (status < 0)
+ 		return status;
+-	status = scratch->status[0];
+-	if (status == 0xff || status == 0)
+-		status = mmc_spi_readtoken(host, timeout);
+ 
+-	if (status < 0) {
+-		dev_dbg(&spi->dev, "read error %02x (%d)\n", status, status);
+-		return status;
++	/* At least one SD card sends an all-zeroes byte when N(CX)
++	 * applies, before the all-ones bytes ... just cope with that.
++	 */
++	i = buf[0] == 0 ? 1 : 0;
++	while (i < n && buf[i] == 0xff)
++		i++;
++	if (i == n) {
++		status = mmc_spi_readtoken(host, timeout, n);
++		if (status < 0) {
++			dev_dbg(&spi->dev, "read error %02x (%d)\n", status, status);
++			return status;
++		}
++		i = 0;
++		while (buf[i] == 0xff)
++			i++;
+ 	}
++	status = buf[i];
++
++	/* The bytes after the token in that read, as the data message would
++	 * have read them (bit-shifted or not): they go first.
++	 */
++	ahead = n - 1 - i;
++	in_data = min(ahead, t->len);
++	in_crc = ahead - in_data;
++	memcpy(t->rx_buf, buf + i + 1, in_data);
++	memcpy(&scratch->crc_val, buf + i + 1 + in_data, in_crc);
+ 
+ 	/* The token may be bit-shifted...
+ 	 * the first 0-bit precedes the data stream.
+@@ -717,7 +748,15 @@ mmc_spi_readblock(struct mmc_spi_host *host, struct spi_transfer *t,
+ 	}
+ 	leftover = status << 1;
+ 
++	t->rx_buf += in_data;
++	t->len -= in_data;
++	host->crc.rx_buf += in_crc;
++	host->crc.len -= in_crc;
+ 	status = spi_sync_locked(spi, &host->m);
++	t->rx_buf -= in_data;
++	t->len += in_data;
++	host->crc.rx_buf -= in_crc;
++	host->crc.len += in_crc;
+ 	if (status < 0) {
+ 		dev_dbg(&spi->dev, "read error %d\n", status);
+ 		return status;
