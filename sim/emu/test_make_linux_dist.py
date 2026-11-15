@@ -4,8 +4,8 @@
 """scripts/make_linux_dist.py (make linux-dist) on fake make linux and buildroot outputs: the
 card's files (Image, the device tree and the programs buildroot's packages put in images/sd/)
 with their sizes and sha256 in MANIFEST.json and in SHA256SUMS, the build's sizes; refused
-when images/sd/ holds a file outside VUX9K/LINUX/BIN/ or an input is missing. Needs no Linux
-build."""
+when images/sd/ holds a file outside VUX9K/LINUX/BIN/ or a script with CR LF lines, or an input
+is missing. Needs no Linux build."""
 
 import hashlib
 import json
@@ -16,6 +16,8 @@ import sys
 from vux9k import REPO_ROOT
 
 SCRIPT = os.path.join(REPO_ROOT, "scripts", "make_linux_dist.py")
+# A sample script for the card (package vux9k-scripts)
+SCRIPT_FILE = b"#!/bin/sh\nexec awk 'END { print 1 }' /proc/meminfo\n"
 
 
 def write(path, data: bytes):
@@ -32,6 +34,7 @@ def fake_build(tmp_path):
     write(buildroot / "target" / "bin" / "busybox", b"B" * 5)
     write(buildroot / "images" / "sd" / "VUX9K" / "LINUX" / "BIN" / "memprobe", b"M" * 4)
     write(buildroot / "images" / "sd" / "VUX9K" / "LINUX" / "BIN" / "bbsed", b"S" * 6)
+    write(buildroot / "images" / "sd" / "VUX9K" / "LINUX" / "BIN" / "meminfo", SCRIPT_FILE)
     return linux, buildroot
 
 
@@ -47,17 +50,21 @@ def test_tree_with_the_cards_programs(tmp_path):
     r = run(linux, buildroot, out)
     assert r.returncode == 0, r.stderr
     manifest = json.loads((out / "MANIFEST.json").read_text())
-    # The card's busyboxes' sizes too (the memory table), not memprobe's
+    # The card's busyboxes' sizes too (the memory table), not memprobe's or the script's
     assert manifest["sizes"] == {"image": 10, "rootfs_cpio": 7, "busybox": 5, "bbsed": 6}
     card = manifest["card_files"]
     assert sorted(card) == [
         "VUX9K/LINUX/BIN/bbsed",
+        "VUX9K/LINUX/BIN/meminfo",
         "VUX9K/LINUX/BIN/memprobe",
         "VUX9K/LINUX/Image",
         "VUX9K/LINUX/vux9k.dtb",
     ]
     assert card["VUX9K/LINUX/BIN/memprobe"] == {"size": 4, "sha256": hashlib.sha256(b"M" * 4).hexdigest()}
     assert (out / "VUX9K" / "LINUX" / "BIN" / "memprobe").read_bytes() == b"M" * 4
+    # The script as it is, executable
+    meminfo = out / "VUX9K" / "LINUX" / "BIN" / "meminfo"
+    assert meminfo.read_bytes() == SCRIPT_FILE and os.stat(meminfo).st_mode & 0o111 == 0o111
     sums = dict(reversed(line.split("  ")) for line in (out / "SHA256SUMS").read_text().splitlines())
     assert sorted(sums) == sorted([*card, "MANIFEST.json", "linux.config"])
     for rel, digest in sums.items():
@@ -69,6 +76,13 @@ def test_refuses_a_card_file_outside_bin(tmp_path):
     write(buildroot / "images" / "sd" / "VUX9K" / "STAGE2.BIN", b"S")
     r = run(linux, buildroot, tmp_path / "out")
     assert r.returncode != 0 and "is not under VUX9K/LINUX/BIN/" in r.stderr, r.stderr
+
+
+def test_refuses_a_script_with_crlf_lines(tmp_path):
+    linux, buildroot = fake_build(tmp_path)
+    write(buildroot / "images" / "sd" / "VUX9K" / "LINUX" / "BIN" / "meminfo", SCRIPT_FILE.replace(b"\n", b"\r\n"))
+    r = run(linux, buildroot, tmp_path / "out")
+    assert r.returncode != 0 and "meminfo is a script with CR LF lines" in r.stderr, r.stderr
 
 
 def test_refuses_a_missing_input(tmp_path):

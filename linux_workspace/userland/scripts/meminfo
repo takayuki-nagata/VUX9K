@@ -1,0 +1,40 @@
+#!/bin/sh
+# Copyright (c) 2026 Takayuki Nagata
+# SPDX-License-Identifier: MIT
+#
+# meminfo: the RAM the userland has (docs/agents/linux.md, "Memory budget"): /proc/meminfo's
+# main lines, then /proc/buddyinfo's free blocks of each order (4 kB << order) and the largest,
+# which bounds the next exec (noMMU: a program is copied into one block of contiguous pages).
+# exec: awk takes this shell's place, so one busybox at a time is in RAM, not this shell's and
+# awk's (each an order-6 block)
+exec awk '
+FILENAME == "/proc/meminfo" { kb[$1] = $2 }
+# Node 0, zone Normal n0 n1 ...: the counts from the fifth field, summed over the zones
+FILENAME == "/proc/buddyinfo" {
+	for (i = 5; i <= NF; i++)
+		free[i - 5] += $i
+	if (NF - 4 > orders)
+		orders = NF - 4
+}
+END {
+	n = split("MemTotal MemFree Cached Slab", names, " ")
+	for (i = 1; i <= n; i++)
+		if ((names[i] ":") in kb)
+			printf "%-9s %6d kB\n", names[i], kb[names[i] ":"]
+	big = -1
+	line = "free blocks (order:count)"
+	for (o = 0; o < orders; o++) {
+		line = line " " o ":" free[o]
+		if (free[o])
+			big = o
+	}
+	print line
+	if (big < 0) {
+		print "largest free block: none"
+		exit
+	}
+	size = 4
+	for (o = 0; o < big; o++)
+		size *= 2
+	printf "largest free block: %d kB (order %d)\n", size, big
+}' /proc/meminfo /proc/buddyinfo

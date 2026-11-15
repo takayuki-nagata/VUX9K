@@ -1,0 +1,55 @@
+#!/bin/sh
+# Copyright (c) 2026 Takayuki Nagata
+# SPDX-License-Identifier: MIT
+#
+# ledctl: the board's LEDs (docs/agents/linux.md, "LEDs and the system monitor")
+#   ledctl                each LED's trigger, and sysmon's processes
+#   ledctl LED TRIGGER    led0-led5 (or 0-5) to a trigger: none, heartbeat, timer, mmc0,
+#                         default-on (/sys/class/leds/LED/trigger lists them)
+#   ledctl cpu|mem|load   sysmon (the bar on led1-led4) stopped and started again in that mode
+#   ledctl off            sysmon stopped, its LEDs dark (init leaves it so)
+# With the shell's builtins only, but sysmon: this hush has no $( ), no sleep, no arithmetic,
+# and each exec of busybox (ps, sleep) would be a second copy of it in RAM beside this script's
+LEDS=/sys/class/leds
+
+# sysmon's processes, by /proc/PID/comm
+pids=
+for d in /proc/[0-9]*; do
+	c=
+	read c 2>/dev/null <$d/comm
+	[ "$c" = sysmon ] && pids="$pids ${d#/proc/}"
+done
+
+case $1 in
+'')
+	for l in $LEDS/led*; do
+		# none [heartbeat] timer ...: the one in brackets
+		read t <$l/trigger
+		t=${t#*\[}
+		echo "${l#$LEDS/}: ${t%%\]*}"
+	done
+	echo "sysmon:${pids:- none}"
+	;;
+cpu | mem | load | off)
+	for p in $pids; do
+		kill $p
+		# Until it has exited (gone, or a zombie its parent has yet to reap), which frees the
+		# button's line for the next one; a bounded spin, as there is no sleep
+		n=
+		while [ ${#n} -lt 400 ] && read s 2>/dev/null </proc/$p/stat; do
+			case $s in *") Z "*) break ;; esac
+			n=x$n
+		done
+	done
+	[ $1 = off ] || sysmon -m $1 </dev/null &
+	;;
+*)
+	l=$1
+	case $l in [0-5]) l=led$l ;; esac
+	if [ -z "$2" ] || [ ! -d $LEDS/$l ]; then
+		echo "usage: ledctl [cpu|mem|load|off] [LED TRIGGER]" >&2
+		exit 1
+	fi
+	echo $2 >$LEDS/$l/trigger
+	;;
+esac

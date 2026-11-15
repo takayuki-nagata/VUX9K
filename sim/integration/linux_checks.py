@@ -7,6 +7,8 @@ busybox's shell, and commands typed at the shell with what each must answer (one
 builtin, the others busybox or this tree's programs executed: FLAT, copied into RAM at each
 exec)."""
 
+from dataclasses import dataclass
+
 PROMPT = "/ # "
 # The system monitor init starts (linux_workspace/userland/init/), its name in ps
 SYSMON = "sysmon"
@@ -32,12 +34,17 @@ BASE_COMMANDS = {
     # The SD card (mmc_spi on spi-vux9k-sd) and its MBR's FAT32 partition, which init mounts
     # (linux_workspace/userland/init/)
     "cat /proc/partitions": ("mmcblk0", "mmcblk0p1"),
-    "cat /proc/mounts": ("/dev/mmcblk0p1 /mnt/sd vfat ",),
+    # Without mount options, vfat's fmask is init's umask: every file executable (the card's
+    # scripts, docs/agents/linux.md, "Text tools and vi")
+    "cat /proc/mounts": ("/dev/mmcblk0p1 /mnt/sd vfat ", ",fmask=0022,"),
     # The card's programs (make linux-dist's VUX9K/LINUX/BIN/) are on the login shell's PATH,
     # after the initramfs': this tree's own program memprobe (linux_workspace/userland/memprobe/:
     # the largest free block allocated, with a copy of itself in RAM), on the card only, by its
     # name and its path
     "echo $PATH": ("/mnt/sd/VUX9K/LINUX/BIN",),
+    # The rest of /etc/profile (linux_workspace/buildroot/board/post-build.sh); no cd, so the
+    # prompt stays PROMPT
+    "echo $HOME $EDITOR $TERM": ("/mnt/sd vi vt100",),
     "memprobe": ("memprobe: MemFree ", "), allocated"),
     "ls /mnt/sd/VUX9K": ("LINUX", "STAGE2.BIN"),
     "/mnt/sd/VUX9K/LINUX/BIN/memprobe": ("memprobe: MemFree ", "), allocated"),
@@ -111,6 +118,74 @@ PIPE_COMMANDS = {
     f"grep . {TOOLS_A} | sort | uniq -c": ("1 apple", "1 fig", "2 pear"),
 }
 COMMANDS = BASE_COMMANDS | LED_COMMANDS | TOOL_COMMANDS | PIPE_COMMANDS
+# The card's sample scripts (linux_workspace/userland/scripts/, package vux9k-scripts: #!/bin/sh
+# in VUX9K/LINUX/BIN/, on the PATH), by their names. Each is the initramfs' busybox executed
+# (order 6), meminfo then awk in its place. ledctl's modes (sysmon stopped and started again)
+# print sysmon's lines after the prompt: sim/emu/test_linux.py's test_ledctl_modes.
+SCRIPT_COMMANDS = {
+    "ls -l /mnt/sd/VUX9K/LINUX/BIN/meminfo": ("-rwxr-xr-x ",),
+    "meminfo": ("MemTotal ", "MemFree ", "free blocks (order:count) 0:", "largest free block: ", " kB (order "),
+    "ledctl": ("led0: heartbeat", "led1: none", "led5: mmc0", "sysmon: "),
+    "ledctl led0 timer; ledctl": ("led0: timer",),
+    "ledctl 0 heartbeat; ledctl": ("led0: heartbeat",),
+    "ledctl led9 timer": ("usage: ledctl ",),
+}
+
+# vi (the card's bbedit: docs/agents/linux.md, "Text tools and vi") driven by its keys, for the
+# emulator's test (sim/emu/test_linux.py) and the board's: VI_CLEAR first, then for each session
+# `vi VI_FILE` at the shell, its status line awaited (ViSession.ready: vi has asked the
+# terminal for its size, which a serial console can't give, waited VI_ASK_S for an answer and
+# read the file; a key before that is lost), then its steps one at a time, then the prompt
+# after its :wq, then `cat VI_FILE`, which shows the session's text. A step's bytes go back to
+# back; before each step the console has been quiet for VI_QUIET_S, longer than busybox's wait
+# for an escape sequence's next byte (VI_ESC_WAIT_S, libbb/read_key.c's poll of 50 ms): so an
+# ESC that ends a step is the key ESC, and ESC [ A in a step the arrow up. A step that is a
+# tuple sends its parts VI_SPLIT_S apart, as the monitor's pacing may split a key's sequence
+# (tools/vux_tool.py, PASTE_GAP_MS): still one key. Each step is shorter than the UART's RX
+# FIFO (32 bytes), which vi, idle, has emptied. vi writes LF only: Enter is CR in its raw
+# mode, and it stores CR as LF.
+VI_FILE = "/mnt/sd/VUX9K/VITEST.TXT"
+VI_CLEAR = f"rm -f {VI_FILE}"
+VI_ESC_WAIT_S = 0.05
+VI_ASK_S = 0.1
+VI_QUIET_S = 0.3
+VI_SPLIT_S = 0.02
+ESC = "\x1b"
+UP = ESC + "[A"
+
+
+@dataclass(frozen=True)
+class ViSession:
+    name: str
+    steps: tuple[str | tuple[str, ...], ...]
+    text: str  # VI_FILE afterwards
+
+    # vi's status line in command mode: "- FILE LINE/LINES PERCENT%"
+    ready = f"- {VI_FILE} "
+
+
+VI_SESSIONS = (
+    # A new file: insert, ESC, write and quit. No CR after the last line: vi's buffer of a new
+    # file is one empty line already
+    ViSession("new", ("ione\rtwo\rthree\rfour" + ESC, ":wq\r"), "one\ntwo\nthree\nfour\n"),
+    # The file again: two lines deleted, each found by a search, the second deletion undone
+    ViSession("edit", ("/two\r", "dd", "/four\r", "dd", "u", ":wq\r"), "one\nthree\nfour\n"),
+    # The keys: G to the last line, the arrow up back to back and split VI_SPLIT_S apart (two
+    # lines up), dd; then ESC alone and `[AX` ESC: `[` is no command, A appends X to the line.
+    # Had the ESC and `[A` been one key (the arrow up, at the top already), X would be the
+    # command X (delete backwards) instead; had the split arrow been ESC alone, `[A` would have
+    # appended the keys after it to "one"
+    ViSession("keys", ("G", UP, (ESC, "[", "A"), "dd", ESC, "[AX" + ESC, ":wq\r"), "threeX\nfour\n"),
+)
+
+# A paste at the shell (sim/emu/test_linux.py's test_paste): PASTE_LINES each with its LF, 208
+# bytes, then PASTE_DONE, whose output PASTE_DONE_OUT ends it. A line's output is PASTE_WORDS'
+# word, which its echo doesn't hold (the backslash): the words in the output are the lines that
+# came through whole. A byte lost leaves no quote open, at most a line joined to the next.
+PASTE_WORDS = tuple(f"paste-{n:02d}-abcdefghij" for n in range(8))
+PASTE_LINES = tuple("echo " + w.replace("-", "\\-", 1) for w in PASTE_WORDS)
+PASTE_DONE = "echo paste\\done"
+PASTE_DONE_OUT = "pastedone"
 # What the board's test does to its card after COMMANDS: the files removed and the card
 # unmounted, so the FAT's dirty bit is clear when the bitstream is loaded again (the emulator's
 # card is thrown away: sim/emu/test_linux.py checks it with the first and second stage after an

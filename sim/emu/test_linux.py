@@ -10,6 +10,10 @@ second stage, booted by the first from the card, loads and starts with `linux`, 
 board. Each boots to busybox's shell on the console, then commands are typed at it
 (sim/integration/linux_checks.py, which the board's scripts/hw_linux.py checks too).
 
+On each boot, after the commands: the card's sample scripts, vi driven by its keys
+(linux_checks.VI_SESSIONS; the file then read from the card image) and, last, a paste at the
+shell, back to back (its dropped bytes recorded) and as vux_tool's monitor paces it (none).
+
 A third boot (load_linux) has a card that waits before every block it reads, as a real card
 does (test_card_with_read_waits).
 
@@ -20,6 +24,7 @@ for each command are printed by test_record_measurements. The board's test is sc
 """
 
 import json
+import math
 import os
 import random
 import re
@@ -78,6 +83,8 @@ SYSMON_CPU: dict[str, float] = {}
 IDLE_S = 10
 # What test_page_cache_reclaim saw, per boot path
 RECLAIM: dict[str, str] = {}
+# What test_paste saw, per boot path and way of sending
+PASTE: dict[str, str] = {}
 # sysmon's reclaim (linux_workspace/userland/sysmon/src/lib.rs, RECLAIM_ORDER, RECLAIM_EVERY):
 # the order of the initramfs' busybox's exec, and every how many intervals it looks
 RECLAIM_ORDER = 6
@@ -428,8 +435,106 @@ def test_page_cache_reclaim(linux):
     assert "sysmon: cannot write /proc/sys/vm/drop_caches" not in console
 
 
+@pytest.mark.parametrize("line", list(linux_checks.SCRIPT_COMMANDS))
+def test_script_command(linux, line):
+    """The card's sample scripts (linux_checks.SCRIPT_COMMANDS): #!/bin/sh files on vfat,
+    executable by the mode its mount gives every file, run by their names from the PATH."""
+    assert wait_large(linux), f"no free block of order {RECLAIM_ORDER} before {line!r}"
+    out = command(linux, line)
+    assert not any(e in out for e in EXEC_FAILED), out[:600]
+    assert not linux_checks.missing(out, linux_checks.SCRIPT_COMMANDS[line]), out
+
+
+def test_ledctl_modes(linux):
+    """ledctl's sysmon modes: the running sysmon stopped (its line) before one starts in the
+    mode, which then has the button (no `no button`; the button steps it on); `off` leaves
+    none, its LEDs dark; `cpu` one again, for the tests after this one."""
+    soc = linux.soc
+    old = sysmon_pid(linux)
+    assert wait_large(linux), f"no free block of order {RECLAIM_ORDER} for ledctl"
+    mark = len(soc.uart_received())
+    command(linux, "ledctl mem")
+    console = wait_console(linux, "sysmon: mode mem", mark)
+    assert "sysmon: stopped" in console and "sysmon: no button" not in console, console[-600:]
+    assert sysmon_pid(linux) != old
+    mark = len(soc.uart_received())
+    press_button(soc, hold_ms=500, after_ms=500)
+    wait_console(linux, "sysmon: mode load", mark)
+    # Off: no sysmon to give back a large block, but each ledctl frees the one it took
+    assert wait_large(linux), f"no free block of order {RECLAIM_ORDER} for ledctl"
+    mark = len(soc.uart_received())
+    command(linux, "ledctl off")
+    wait_console(linux, "sysmon: stopped", mark)
+    assert soc.leds & BAR == 0, hex(soc.leds)
+    assert "sysmon: none" in command(linux, "ledctl")
+    soc.run(ms(2000))
+    assert soc.leds & BAR == 0, hex(soc.leds)
+    mark = len(soc.uart_received())
+    command(linux, "ledctl cpu")
+    wait_console(linux, "sysmon: mode cpu", mark)
+    sysmon_pid(linux)
+
+
+def quiet(soc, seconds: float) -> None:
+    """Runs until the console has printed nothing for `seconds` (vi idle, waiting for a key)."""
+    need = int(seconds * CLK_HZ)
+    end = soc.cycle + COMMAND_CYCLES
+    n, since = len(soc.uart_received()), soc.cycle
+    while soc.cycle - since < need:
+        assert soc.cycle < end, "the console never went quiet"
+        soc.run(ms(10))
+        m = len(soc.uart_received())
+        if m != n:
+            n, since = m, soc.cycle
+
+
+def vi_step(soc, step: str | tuple[str, ...]) -> None:
+    """One of a ViSession's steps: its bytes back to back, a tuple's parts VI_SPLIT_S apart."""
+    parts = (step,) if isinstance(step, str) else step
+    t0 = soc.cycle
+    for k, part in enumerate(parts):
+        assert len(part) < 32, part  # the RX FIFO, which vi has emptied
+        soc.uart_send(part.encode(), at=t0 + k * int(linux_checks.VI_SPLIT_S * CLK_HZ))
+    soc.run(max(0, soc.uart_send_done - soc.cycle))
+
+
+@pytest.mark.parametrize("session", linux_checks.VI_SESSIONS, ids=lambda s: s.name)
+def test_vi(linux, session):
+    """vi (the card's bbedit) on linux_checks.VI_FILE driven by a ViSession's keys (VI_CLEAR
+    before the first): a new file typed and written, the file edited (search, dd, u), then
+    the arrow key back to back and split VI_SPLIT_S apart against ESC alone before `[A`; cat
+    shows the text each one leaves. test_card_after_linux reads the file from the card."""
+    soc = linux.soc
+    vi_file = linux_checks.VI_FILE
+    if session is linux_checks.VI_SESSIONS[0]:
+        assert wait_large(linux), f"no free block of order {RECLAIM_ORDER} for rm"
+        command(linux, linux_checks.VI_CLEAR)
+    assert wait_large(linux), f"no free block of order {RECLAIM_ORDER} for vi"
+    dropped = soc.uart_rx_dropped
+    start = len(soc.uart_received())
+    meter = Meter(soc, MEASURED)
+    send_paced(soc, f"vi {vi_file}\n".encode())
+    wait_for(soc, session.ready.encode(), COMMAND_CYCLES, start)
+    # The first one's exec reads bbedit from the card, the others' from the page cache
+    meter.done(f"{linux.how}: vi {session.name}: to its screen")
+    for step in session.steps:
+        quiet(soc, linux_checks.VI_QUIET_S)
+        mark = len(soc.uart_received())
+        vi_step(soc, step)
+    screen = wait_for(soc, PROMPT, COMMAND_CYCLES, mark)
+    assert soc.uart_rx_dropped == dropped
+    assert not any(e in screen for e in EXEC_FAILED), screen[:600]
+    assert wait_large(linux), f"no free block of order {RECLAIM_ORDER} for cat"
+    out = command(linux, f"cat {vi_file}")
+    got = [ln.rstrip("\r") for ln in out.split("\n")]
+    at = next((k for k, ln in enumerate(got) if ln.endswith(f"cat {vi_file}")), None)
+    want = session.text.splitlines()
+    assert at is not None and got[at + 1 : at + 1 + len(want)] == want, out
+
+
 def test_card_after_linux(linux, tmp_path):
-    """The card as Linux leaves it after the commands' write (linux_checks.SD_TEST_FILE) and an
+    """The card as Linux leaves it after the commands' write (linux_checks.SD_TEST_FILE), vi's
+    (linux_checks.VI_FILE, its LF lines, read with mtools when the host has them) and an
     umount: fsck.fat finds nothing wrong (dosfstools, which CI's job has), and the first stage
     boots the second stage from it, which reads the file Linux wrote: the stages' FAT32 and
     Linux's vfat share the card. umount is an exec of busybox: it waits for its block (sysmon's
@@ -441,14 +546,64 @@ def test_card_after_linux(linux, tmp_path):
     mounts = command(linux, linux_checks.MOUNTS_PROBE)
     assert "/proc proc" in mounts and linux_checks.CARD_MOUNTED not in mounts, mounts
     image = linux.soc.sd_image()
+    path = tmp_path / "card.img"
+    path.write_bytes(image)
     if shutil.which("fsck.fat"):
-        path = tmp_path / "card.img"
-        path.write_bytes(image)
         test_fat_images.fsck(str(path), str(tmp_path))
+    # vi's file (test_vi) as its last session left it: LF lines, no CR
+    vi_text = linux_checks.VI_SESSIONS[-1].text.encode()
+    assert vi_text in image and vi_text.replace(b"\n", b"\r\n") not in image
+    if shutil.which("mtype"):
+        assert test_fat_images.mtype(str(path), linux_checks.VI_FILE.removeprefix("/mnt/sd/")) == vi_text
     soc, _ = s1_env.boot_s2(image=image)
     name = os.path.basename(linux_checks.SD_TEST_FILE)
     assert name in s1_env.s2_cmd(soc, "ls VUX9K")
     assert s1_env.s2_cmd(soc, f"cat VUX9K/{name}").strip() == "sd-write-ok"
+
+
+def paste(linux: Booted, pacer: vux_tool.Pacer | None) -> tuple[int, int]:
+    """linux_checks.PASTE_LINES at the shell, back to back at 115200 baud (pacer None) or as
+    the monitor sends them (tools/vux_tool.py's Pacer, on the emulator's clock), then
+    PASTE_DONE once they have reached the UART; the bytes the RX FIFO dropped meanwhile, and
+    how many lines' output came through whole."""
+    soc = linux.soc
+    data = "".join(f"{line}\n" for line in linux_checks.PASTE_LINES).encode()
+    dropped = soc.uart_rx_dropped
+    start = len(soc.uart_received())
+    if pacer is None:
+        soc.uart_send(data)
+    else:
+        pacer.push(data)
+        for _ in range(4 * len(data)):  # a step cap: two turns a chunk
+            wait = pacer.wait(soc.cycle / CLK_HZ)
+            if wait is None:
+                break
+            if wait > 0:
+                soc.run(max(1, math.ceil(wait * CLK_HZ)))
+            else:
+                soc.uart_send(pacer.pop(soc.cycle / CLK_HZ))
+        assert pacer.wait(soc.cycle / CLK_HZ) is None, "the pacer kept bytes"
+    soc.run(max(0, soc.uart_send_done - soc.cycle))
+    soc.run(ms(20))  # the driver's next poll
+    soc.uart_send(f"{linux_checks.PASTE_DONE}\n".encode())
+    out = wait_for(soc, linux_checks.PASTE_DONE_OUT.encode(), COMMAND_CYCLES, start)
+    wait_for(soc, PROMPT, COMMAND_CYCLES, start + len(out))
+    return soc.uart_rx_dropped - dropped, sum(w in out for w in linux_checks.PASTE_WORDS)
+
+
+def test_paste(linux):
+    """A paste of 208 bytes at the shell (linux_checks.PASTE_LINES): back to back, the UART's
+    32-byte RX FIFO, which the polled liteuart driver empties every 10 ms (HZ 100), drops
+    bytes, which is how the SoC is and only recorded here (test_record_measurements prints
+    it); as the monitor sends them (16 bytes, 20 ms apart), none, and every line's output.
+    The last test on a boot: send_paced refuses a SoC that has dropped a byte."""
+    n = len(linux_checks.PASTE_LINES)
+    size = sum(len(line) + 1 for line in linux_checks.PASTE_LINES)
+    dropped, whole = paste(linux, None)
+    PASTE[f"{linux.how}: back to back"] = f"{dropped} of {size} B dropped, {whole} of {n} lines whole"
+    dropped, whole = paste(linux, vux_tool.Pacer())
+    PASTE[f"{linux.how}: monitor's pacing"] = f"{dropped} of {size} B dropped, {whole} of {n} lines whole"
+    assert dropped == 0 and whole == n, PASTE
 
 
 def test_card_with_read_waits():
@@ -555,7 +710,7 @@ def test_board_script_on_the_emulator(tmp_path):
 
 def test_record_measurements(record_property, capsys):
     """Asserts nothing about speed: prints what the tests above measured (run last)."""
-    if not MEASURED and not MEMORY and not SYSMON_CPU and not RECLAIM:
+    if not MEASURED and not MEMORY and not SYSMON_CPU and not RECLAIM and not PASTE:
         pytest.skip("nothing measured")
     with capsys.disabled():
         print(f"\nnoMMU Linux on the emulator (18 MHz: {CLK_HZ:,} cycles a second)")
@@ -573,6 +728,9 @@ def test_record_measurements(record_property, capsys):
         for how, text in RECLAIM.items():
             print(f"  {how}: sysmon's reclaim (free blocks of order >= {RECLAIM_ORDER}): {text}")
             record_property(f"{how}: reclaim", text)
+        for how, text in PASTE.items():
+            print(f"  {how} paste: {text}")
+            record_property(f"{how} paste", text)
         for how, rows in MEMORY.items():
             print(f"\nnoMMU Linux memory after the boot ({how})")
             for name, value in rows.items():

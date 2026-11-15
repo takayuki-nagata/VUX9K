@@ -39,12 +39,21 @@ SIZES_BUILDROOT = {"rootfs_cpio": "images/rootfs.cpio", "busybox": "target/bin/b
 SD_TREE = os.path.join("images", "sd")
 SD_PREFIX = "VUX9K/LINUX/BIN/"
 # The card's busyboxes (package vux9k-bbtools: the text tools), whose sizes the memory table
-# also shows: SD_PREFIX + this prefix, the size under the file's name
+# also shows: SD_PREFIX + this prefix, the size under the file's name. The other files there
+# (memprobe, the scripts of vux9k-scripts) are only in card_files
 BBTOOLS_PREFIX = SD_PREFIX + "bb"
 
 
+def is_script(path: str) -> bool:
+    """A #! script (package vux9k-scripts), not a FLAT executable."""
+    with open(path, "rb") as f:
+        return f.read(2) == b"#!"
+
+
 def sd_files(buildroot_out: str) -> dict[str, str]:
-    """images/sd/'s files: their path in the tree -> the file; exits on one outside SD_PREFIX."""
+    """images/sd/'s files: their path in the tree -> the file; exits on one outside SD_PREFIX,
+    and on a script with a CR (CR LF lines: its #! line would name an interpreter that ends in CR,
+    which the kernel doesn't find)."""
     root = os.path.join(buildroot_out, SD_TREE)
     files = {}
     for top, _, names in os.walk(root):
@@ -53,6 +62,10 @@ def sd_files(buildroot_out: str) -> dict[str, str]:
             rel = os.path.relpath(path, root).replace(os.sep, "/")
             if not rel.startswith(SD_PREFIX):
                 sys.exit(f"make_linux_dist: {path} is not under {SD_PREFIX}")
+            if is_script(path):
+                with open(path, "rb") as f:
+                    if b"\r" in f.read():
+                        sys.exit(f"make_linux_dist: {path} is a script with CR LF lines")
             files[rel] = path
     return dict(sorted(files.items()))
 

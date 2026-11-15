@@ -501,6 +501,46 @@ each use** (package `vux9k-bbtools`, `linux_workspace/userland/bbtools/`), in
   back within 3 intervals of a read: a person typing leaves it that time.
 - The memory table has a row for them (`sizes` in make linux-dist's `MANIFEST.json`, each by
   its name): they are RAM only while one runs.
+- **The terminal**: `/etc/profile` (`board/post-build.sh`) exports `HOME=/mnt/sd` (the card:
+  the initramfs is RAM, lost at a reset), `EDITOR=vi` and `TERM=vt100`, and doesn't cd: the
+  prompt stays `/ # `, which `linux_checks.PROMPT` and `hw_linux.py` wait for
+  (`linux_checks.BASE_COMMANDS` checks the values). The console has no size (TIOCGWINSZ is 0x0
+  on a serial port), so vi asks the terminal (`ESC [ 6 n`, `FEATURE_VI_ASK_TERMINAL`) and waits
+  100 ms for its answer; a key typed before its screen is drawn is lost, and with no answer
+  (the emulator) it is 80x24. vi turns ONLCR off and addresses its cursor (`ESC [ row ; col
+  H`), never a bare LF, so `vux_tool.py monitor`'s LF to CR LF leaves its screen alone; Enter
+  is CR in its raw mode, which it stores as LF: its files have LF lines.
+- **ESC and the arrow keys**: busybox's `read_key` (libbb/read_key.c) takes an ESC alone when
+  the next byte doesn't come within 50 ms (one poll per byte). The driver delivers bytes every
+  10 ms (polled liteuart, HZ 100), so `ESC [ A` sent back to back, or split 20 ms apart (the
+  monitor's pacing at a chunk's end), is the arrow, and an ESC with nothing after it for longer
+  is ESC. `linux_checks.VI_SESSIONS` (keys and what the file holds after them; `test_linux.py`'s
+  `test_vi`, then `test_card_after_linux` reads the file from the card image: LF, fsck) sends
+  each step back to back after the console has been quiet for 300 ms: a new file, an edit
+  (`/` search, `dd`, `u`), and the arrow back to back, split, and ESC alone before `[A`. They
+  are in the shared form for the board's `hw_linux.py`, which doesn't run them yet.
+- **Sample scripts** (`linux_workspace/userland/scripts/`, package `vux9k-scripts`, in
+  `VUX9K/LINUX/BIN/`): `meminfo` (`/proc/meminfo`'s main lines, `/proc/buddyinfo`'s free blocks
+  and the largest, with awk) and `ledctl` (each LED's trigger, `ledctl LED TRIGGER`, `ledctl
+  cpu|mem|load` stops the running sysmon, waits for it to exit, which frees the button's line,
+  and starts one in that mode; `ledctl off`). `#!/bin/sh`: the kernel's `BINFMT_SCRIPT`
+  executes the initramfs' busybox (order 6) for them. meminfo `exec`s awk, which frees the
+  shell's block before bbawk's (binfmt_flat's `begin_new_exec` comes before its allocation): a
+  shell and awk at once would need two order-6 blocks. This hush has no functions, no `$( )`,
+  no `$(( ))` and no sleep, so ledctl is builtins and `${var#pattern}`; a `ps` or `sleep` would
+  be a second busybox beside the script's. vfat keeps no modes: init mounts the card without
+  options, so fmask is init's umask (0022) and every file is 0755, executable (`cat
+  /proc/mounts` shows `fmask=0022`). The names are 8.3 without an extension (the `.mk` stops at
+  another); `make_linux_dist.py` refuses a script with CR LF lines (its `#!` line would name
+  `/bin/sh` and a CR). `linux_checks.SCRIPT_COMMANDS` runs them (`test_script_command`;
+  `test_ledctl_modes` the modes, whose sysmon lines come after the prompt).
+- **Pasting**: the UART's RX FIFO holds 32 bytes and the polled driver empties it every 10 ms,
+  in which 115 bytes can arrive at 115200 bps: a paste sent back to back loses bytes. That is
+  the SoC, not a bug: `test_paste` records how many of 208 bytes (`linux_checks.PASTE_LINES`)
+  were dropped (`Soc.uart_rx_dropped`) and how many lines ran, printed by
+  `test_record_measurements`, and asserts none lost as `vux_tool.py monitor` sends them (its
+  `Pacer`: 16 bytes, 20 ms apart, `--paste-chunk`, `--paste-gap-ms`). It is the last test on a
+  boot: `send_paced` refuses a SoC that has dropped a byte.
 
 ## Speed (2026-11-01, emulator; 2026-11-11 and 2026-11-14, the board)
 

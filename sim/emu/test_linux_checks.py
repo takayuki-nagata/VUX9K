@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: MIT
 
 """linux_checks' memory table (sim/integration/linux_checks.py) on the probes' output as the
-console gives it: the command's echo first, then the lines hush's `echo` printed. Needs no
-Linux build; make test-linux-emu and scripts/hw_linux.py read the real output with it."""
+console gives it: the command's echo first, then the lines hush's `echo` printed; the shape of
+its vi sessions and paste. Needs no Linux build; make test-linux-emu and scripts/hw_linux.py
+read the real output with it."""
 
 import os
 import sys
@@ -86,3 +87,30 @@ def test_cpu_ticks_counts_user_and_system_time():
     assert linux_checks.cpu_ticks("47 (sysmon) S 1 47 47 0 -1 4194560 10 0 0 0 7 3 0 0 20 0 1 0 100") == 10
     # A command with spaces and parentheses in it
     assert linux_checks.cpu_ticks("9 (a (b) c) R 1 9 9 0 -1 0 0 0 0 0 1 2 0 0 20 0 1 0 5") == 3
+
+
+def test_vi_sessions_fit_the_fifo_and_start_new():
+    """Each vi step's part fits the UART's RX FIFO (32 bytes) and is a whole key sequence or
+    text; the first session makes the file (VI_CLEAR before it) and the others edit it."""
+    for session in linux_checks.VI_SESSIONS:
+        for step in session.steps:
+            for part in (step,) if isinstance(step, str) else step:
+                assert 0 < len(part) < 32, (session.name, part)
+        assert session.text.endswith("\n") and "\r" not in session.text
+    first = linux_checks.VI_SESSIONS[0].steps[0]
+    assert isinstance(first, str) and first.startswith("i")
+    assert linux_checks.VI_SPLIT_S < linux_checks.VI_ESC_WAIT_S < linux_checks.VI_QUIET_S
+
+
+def test_paste_lines_hide_their_output():
+    """A paste line's echo doesn't hold its output (the word), so the words in the console are
+    the lines that ran; ~200 bytes, each line shorter than the console's 80 columns with the
+    prompt."""
+    assert len(linux_checks.PASTE_LINES) == len(linux_checks.PASTE_WORDS)
+    for line, word in zip(linux_checks.PASTE_LINES, linux_checks.PASTE_WORDS, strict=True):
+        assert word not in line and "\\" in line
+        assert len(line) + len(linux_checks.PROMPT) < 80
+    assert linux_checks.PASTE_DONE_OUT not in linux_checks.PASTE_DONE
+    assert 180 <= sum(len(line) + 1 for line in linux_checks.PASTE_LINES) <= 256
+    for line in linux_checks.SCRIPT_COMMANDS:
+        assert len(line) + len(linux_checks.PROMPT) < 80, line

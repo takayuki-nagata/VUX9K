@@ -1,0 +1,7 @@
+config BR2_PACKAGE_VUX9K_SCRIPTS
+	bool "vux9k-scripts"
+	help
+	  Sample shell scripts for the card
+	  (linux_workspace/userland/scripts/): meminfo, the free
+	  memory and its largest block; ledctl, the LEDs' triggers
+	  and sysmon's mode.

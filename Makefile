@@ -428,7 +428,7 @@ LINUX_ROOTFS = $(BUILDROOT_OUT)/images/rootfs.cpio
 # This tree's own packages (linux_workspace/buildroot/package/), rebuilt from their sources in
 # linux_workspace/userland/ on every run: buildroot keeps a package it has built, and those
 # sources are outside CI's cache key for build/buildroot (docs/agents/linux.md, "Userland packages")
-VUX9K_BR_PACKAGES = vux9k-bbtools vux9k-init vux9k-memprobe vux9k-sysmon
+VUX9K_BR_PACKAGES = vux9k-bbtools vux9k-init vux9k-memprobe vux9k-scripts vux9k-sysmon
 linux-rootfs: $(BUILDROOT_STAMP)
 	$(BUILDROOT_MAKE) vux9k_nommu_defconfig
 	$(BUILDROOT_MAKE) $(addsuffix -rebuild,$(VUX9K_BR_PACKAGES))

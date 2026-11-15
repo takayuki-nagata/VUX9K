@@ -12,7 +12,10 @@ rm -f "$1/etc/inittab" "$1/etc/init.d/sdcard" "$1/usr/bin/memprobe"
 mkdir -p "$1/mnt/sd"
 
 # The login shell's (-/bin/sh) profile: the card's programs (make linux-dist's VUX9K/LINUX/BIN/)
-# after the initramfs' own
+# after the initramfs' own; HOME on the card (vfat, where files stay; the initramfs is RAM and
+# lost at a reset), but no cd: the prompt stays "/ # ", which the tests wait for; vi as the
+# editor; TERM what busybox's vi and less send (VT100's escape sequences, no terminfo here)
 cat > "$1/etc/profile" <<'SH'
 export PATH=/sbin:/usr/sbin:/bin:/usr/bin:/mnt/sd/VUX9K/LINUX/BIN
+export HOME=/mnt/sd EDITOR=vi TERM=vt100
 SH

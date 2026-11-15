@@ -6,4 +6,5 @@
 source "$BR2_EXTERNAL_VUX9K_PATH/package/vux9k-bbtools/Config.in"
 source "$BR2_EXTERNAL_VUX9K_PATH/package/vux9k-init/Config.in"
 source "$BR2_EXTERNAL_VUX9K_PATH/package/vux9k-memprobe/Config.in"
+source "$BR2_EXTERNAL_VUX9K_PATH/package/vux9k-scripts/Config.in"
 source "$BR2_EXTERNAL_VUX9K_PATH/package/vux9k-sysmon/Config.in"
