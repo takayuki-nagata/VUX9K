@@ -147,10 +147,14 @@ clock-and-board.md, "Board UART output that is noise: ModemManager and the bridg
   `BIN\` (~6 min for the 3.2 MB Image; `HW_LINUX_FLAGS=--keep-card` boots the files already
   there), then `pack.fs` loaded into SRAM, the first stage booting the second, whose `linux`
   starts the kernel; the boot lines and commands of `sim/integration/linux_checks.py` (the
-  emulator's `test_linux.py` checks the same; the kernel mounts the card, runs a program from
-  it, writes `\VUX9K\SDTEST.TXT` and reads it back, and `CARD_CLEANUP` removes it and unmounts the card),
-  `[TIME]` lines from the load to the shell's prompt, `[MEM]` lines with the memory table read
-  right after the boot (`linux_checks.MEM_PROBES`; linux.md, "Memory budget"), and `pack.fs`
+  emulator's `test_linux.py` checks the same; the kernel mounts the card, runs programs, the
+  text tools and the sample scripts from it, writes `\VUX9K\SDTEST.TXT` and reads it back),
+  vi driven by `VI_SESSIONS`' keys (`\VUX9K\VITEST.TXT`), then `CARD_CLEANUP` removes the
+  files and unmounts the card, and last a paste at the shell, back to back and paced as the
+  monitor sends it (linux.md, "Text tools and vi"). `[TIME]` lines from the load to the
+  shell's prompt, each command, each of the card's busyboxes' first exec and vi's sessions,
+  `[MEM]` lines with the memory table read right after the boot (`linux_checks.MEM_PROBES`;
+  linux.md, "Memory budget"), `[PASTE]` lines with the lines that came through, and `pack.fs`
   loaded again at the end.
   `make test-linux-emu` runs the script against the emulator's CLI at full speed
   (`test_board_script_on_the_emulator`).

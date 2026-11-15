@@ -86,8 +86,9 @@ RECLAIM: dict[str, str] = {}
 # What test_paste saw, per boot path and way of sending
 PASTE: dict[str, str] = {}
 # sysmon's reclaim (linux_workspace/userland/sysmon/src/lib.rs, RECLAIM_ORDER, RECLAIM_EVERY):
-# the order of the initramfs' busybox's exec, and every how many intervals it looks
-RECLAIM_ORDER = 6
+# the order of the initramfs' busybox's exec (the board's test waits for it too), and every how
+# many intervals it looks
+RECLAIM_ORDER = linux_checks.RECLAIM_ORDER
 RECLAIM_EVERY = 3
 # 2 x 1 MB from the card, other blocks than the commands' reads before (the spike, 2026-11-15:
 # the largest free block order 5 after them, Cached ~1,100 kB)
@@ -99,7 +100,7 @@ RECLAIM_HOLDERS = 12
 DROP_CACHES_QUIET = "): drop_caches: 4"
 # How long a test waits for sysmon to give back a free block of RECLAIM_ORDER (its interval is
 # 1 s), in seconds
-RECLAIM_WAIT_S = 10
+RECLAIM_WAIT_S = linux_checks.RECLAIM_WAIT_S
 # The LEDs sysmon's bar has (led1-led4)
 BAR = 0b011110
 # The card of test_card_with_read_waits: FF bytes before each data block's token beyond the one

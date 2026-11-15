@@ -193,14 +193,16 @@ class ShellPort:
         return data
 
 
-def test_linux_script_reports_what_the_board_got_wrong():
+def test_linux_script_reports_what_the_board_got_wrong(monkeypatch):
     """hw_linux.boot on a scripted console: the good one passes and fills the memory table; a
     boot line missing, the console's `Linux version` line not the Image's (another build of
     the same size on the card), the files' sizes not the tree's, a command's reply missing,
-    the memory probes' output missing each fail."""
+    the memory probes' output missing (then also the free blocks the text tools' commands wait
+    for) each fail; the cleanup leaves the card unmounted."""
     import hw_linux
     import linux_checks
 
+    monkeypatch.setattr(hw_linux, "SEND_GAP_S", 0.0)
     version = "Linux version 7.3.0 (x@y) (gcc) #28 PREEMPT Tue Nov 10 14:49:15 UTC 2026"
     image = b"\0" * 64 + version.encode() + b"\n" + b"\0" * 64
     dtb = b"D" * 8
@@ -208,17 +210,30 @@ def test_linux_script_reports_what_the_board_got_wrong():
     console = f"[    0.000000] {version}\r\n" + "".join(f"{ln}\r\n" for ln in linux_checks.BOOT_LINES)
     replies = {cmd: " ".join(want) + "\r\n" for cmd, want in linux_checks.COMMANDS.items()}
     meminfo, buddyinfo = linux_checks.MEM_PROBES
-    replies |= {meminfo: "MemTotal: 7960 kB\r\nMemFree: 3912 kB\r\n", buddyinfo: "Node 0, zone Normal 1 0 1\r\n"}
+    # A free block of order 6, which the text tools' commands wait for
+    replies |= {
+        meminfo: "MemTotal: 7960 kB\r\nMemFree: 3912 kB\r\n",
+        buddyinfo: "Node 0, zone Normal 1 0 1 0 0 0 1\r\n",
+    }
     mem: dict[str, str] = {}
+    times: dict[str, float] = {}
 
     def failures(linux_line=good_line, console=console, replies=replies):
         mem.clear()
-        return hw_linux.boot(ShellPort(linux_line, console, replies), 0.0, image, dtb, {}, {"image": 64}, mem)
+        times.clear()
+        port = ShellPort(linux_line, console, replies)
+        got = hw_linux.boot(port, 0.0, image, dtb, times, {"image": 64, "bbawk": 9}, mem)
+        return got + hw_linux.cleanup(port)
 
     assert failures() == []
-    assert mem["Image"] == "64 B" and mem["MemFree"] == "3,912 kB" and mem["largest free block"] == "16 kB (order 2)"
+    assert mem["Image"] == "64 B" and mem["MemFree"] == "3,912 kB" and mem["largest free block"] == "256 kB (order 6)"
+    # Each of the card's busyboxes' first exec, by its first command
+    first = [label for label in times if label.startswith("first exec of ")]
+    assert len(first) == len(linux_checks.TOOL_BUSYBOXES), first
+    assert "first exec of bbawk (9 B): awk 'BEGIN{print 6*7, sqrt(2)}'" in first, first
     got = failures(replies=replies | {buddyinfo: ""})
-    assert len(got) == 1 and got[0].startswith("memory: the probes' output lacks buddyinfo"), got
+    assert got[0].startswith("memory: the probes' output lacks buddyinfo"), got
+    assert len(got) == 1 + len(hw_linux.WAIT_LARGE) and all("no /proc/buddyinfo" in g for g in got[1:]), got
     got = failures(console=console.replace("hush - the humble shell", "hush"))
     assert len(got) == 1 and "boot lines missing" in got[0], got
     got = failures(console=console.replace("#28 ", "#27 "))
@@ -228,6 +243,125 @@ def test_linux_script_reports_what_the_board_got_wrong():
     got = failures(replies=replies | {"uname -a": "Linux (none) 6.0\r\n"})
     assert len(got) == 1 and got[0].startswith("uname -a: missing"), got
     assert hw_linux.banner(b"no banner here") is None
+
+
+class ViPort:
+    """A port that answers hw_linux.vi as the shell and a vi that only records its keys would:
+    `vi FILE` with vi's status line, its keys up to `:wq` CR, then the prompt; `cat FILE` with
+    the text the session given by texts left (the next of texts each time), other lines with
+    their echo and the prompt. A free block of order 6 in /proc/buddyinfo."""
+
+    def __init__(self, texts: list[str]):
+        import linux_checks
+
+        self.lc = linux_checks
+        self.texts = texts
+        self.out = b""
+        self.typed = b""
+        self.keys: list[bytes] = []  # each vi's keys
+        self.in_vi = False
+
+    def write(self, data: bytes):
+        lc = self.lc
+        if self.in_vi:
+            self.keys[-1] += data
+            if self.keys[-1].endswith(b":wq\r") or self.keys[-1].endswith(b":q!\r"):
+                self.in_vi = False
+                self.out += f"\r\n{lc.PROMPT}".encode()
+            return
+        self.typed += data
+        if not self.typed.endswith(b"\n"):
+            return
+        line, self.typed = self.typed.strip().decode(), b""
+        self.out += f"{line}\r\n".encode()
+        if line == f"vi {lc.VI_FILE}":
+            self.in_vi = True
+            self.keys.append(b"")
+            self.out += f"\x1b[24;1H{lc.ViSession.ready}1/1 100%".encode()
+            return
+        if line == f"cat {lc.VI_FILE}":
+            self.out += self.texts.pop(0).replace("\n", "\r\n").encode()
+        elif line == lc.MEM_PROBES[1]:
+            self.out += b"Node 0, zone Normal 1 0 1 0 0 0 1\r\n"
+        self.out += lc.PROMPT.encode()
+
+    def flush(self):
+        pass
+
+    def read(self, n: int) -> bytes:
+        data, self.out = self.out[:n], self.out[n:]
+        return data
+
+
+def test_linux_script_drives_vi(monkeypatch):
+    """hw_linux.vi: each ViSession's keys reach vi as they are (a split step's parts in one
+    write without split), and cat's text must be the session's; a wrong text fails, with the
+    USB bridge's timing named for the session that splits a step, and the sessions after it
+    are skipped."""
+    import hw_linux
+    import linux_checks
+
+    monkeypatch.setattr(linux_checks, "VI_QUIET_S", 0.01)
+    monkeypatch.setattr(hw_linux, "SEND_GAP_S", 0.0)
+    sessions = linux_checks.VI_SESSIONS
+    keys = ["".join("".join(s) if isinstance(s, tuple) else s for s in v.steps).encode() for v in sessions]
+    for split in (True, False):
+        port = ViPort([v.text for v in sessions])
+        times: dict[str, float] = {}
+        assert hw_linux.vi(port, times, split=split) == []
+        assert port.keys == keys
+        assert f"vi {sessions[-1].name}: its keys to the prompt" in times
+    port = ViPort([sessions[0].text, "one\n", "x\n"])
+    got = hw_linux.vi(port, {})
+    assert len(got) == 1 and got[0].startswith(f"vi {sessions[1].name}: ") and "bridge" not in got[0], got
+    assert len(port.keys) == 2
+    port = ViPort([v.text for v in sessions[:-1]] + ["one\n"])
+    got = hw_linux.vi(port, {})
+    assert len(got) == 1 and got[0].startswith(f"vi {sessions[-1].name}: ") and "USB bridge" in got[0], got
+
+
+class PastePort:
+    """A shell that runs `echo WORD` lines (the backslashes gone) and loses the bytes of every
+    write longer than keep (the RX FIFO overrun of a paste sent at once)."""
+
+    def __init__(self, keep: int):
+        self.keep = keep
+        self.out = b""
+        self.typed = b""
+
+    def write(self, data: bytes):
+        self.typed += data[: self.keep]
+        while b"\n" in self.typed:
+            line, self.typed = self.typed.split(b"\n", 1)
+            text = line.decode()
+            self.out += f"{text}\r\n".encode()
+            if text.startswith("echo "):
+                self.out += f"{text[5:].replace(chr(92), '')}\r\n".encode()
+            self.out += b"/ # "
+
+    def flush(self):
+        pass
+
+    def read(self, n: int) -> bytes:
+        data, self.out = self.out[:n], self.out[n:]
+        return data
+
+
+def test_linux_script_pastes(monkeypatch):
+    """hw_linux.pastes: the paste in one write is only recorded, however many of its lines a
+    lost tail cuts off; the monitor's pacing must pass every line."""
+    import hw_linux
+    import linux_checks
+
+    monkeypatch.setattr(hw_linux, "PASTE_SETTLE_S", 0.0)
+    monkeypatch.setattr(test_hardware.vux_tool, "PASTE_GAP_MS", 1)
+    n = len(linux_checks.PASTE_LINES)
+    pasted: dict[str, str] = {}
+    assert hw_linux.pastes(PastePort(keep=64), pasted) == []
+    assert list(pasted.values()) == [f"2 of {n} lines whole", f"{n} of {n} lines whole"], pasted
+    pasted.clear()
+    got = hw_linux.pastes(PastePort(keep=8), pasted)
+    assert got == [f"the paced paste: 0 of {n} lines whole"], got
 
 
 def test_bitstream_load_errors(tmp_path):

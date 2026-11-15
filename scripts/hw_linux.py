@@ -10,17 +10,21 @@ through the second stage (`put`, the files left there; --keep-card uses those al
 then pack.fs loaded into the FPGA's SRAM, the first stage booting the card's second stage by
 itself, whose `linux` loads both files and starts the kernel. The console must show
 sim/integration/linux_checks.py's boot lines and answer its commands, as on the emulator
-(sim/emu/test_linux.py; the kernel mounts the card, runs a program from it and writes a file,
-which linux_checks.CARD_CLEANUP removes again); right after the boot the shell's builtins
-read /proc/meminfo and /proc/buddyinfo, and [MEM] lines give linux_checks' memory table.
-Linux never returns to the first stage, so pack.fs is loaded once more at the end (not
-openFPGALoader --reset, which loads the flash's bitstream). [TIME] lines give the wall-clock
-seconds: the put, the load to the second stage's prompt, `linux` to its [LINUX] line (reading the card), [LINUX] to the
-shell's prompt (the kernel's boot), the bitstream's load to that prompt, and each command.
-With --dist the bitstream comes from a `make dist` tree. Against the emulator
-(--port socket://...) there is no bitstream to load: the times start when the port opens.
-Needs a card with the second stage on it (as make test-hw leaves it); the card stays in the
-board.
+(sim/emu/test_linux.py; the kernel mounts the card, runs programs and the sample scripts from
+it and writes files, which linux_checks.CARD_CLEANUP removes again); right after the boot the
+shell's builtins read /proc/meminfo and /proc/buddyinfo, and [MEM] lines give linux_checks'
+memory table. Then vi is driven by linux_checks.VI_SESSIONS' keys and cat shows what each
+session left, the card is cleaned up and unmounted, and last a paste at the shell is sent in
+one write and as vux_tool.py's monitor paces it: [PASTE] lines give how many of its lines came
+through (the paced one must pass them all). Linux never returns to the first stage, so pack.fs
+is loaded once more at the end (not openFPGALoader --reset, which loads the flash's
+bitstream). [TIME] lines give the wall-clock seconds: the put, the load to the second stage's
+prompt, `linux` to its [LINUX] line (reading the card), [LINUX] to the shell's prompt (the
+kernel's boot), the bitstream's load to that prompt, each command, each of the card's
+busyboxes' first exec (its first command), and vi's sessions. With --dist the bitstream comes
+from a `make dist` tree. Against the emulator (--port socket://...) there is no bitstream to
+load: the times start when the port opens. Needs a card with the second stage on it (as make
+test-hw leaves it); the card stays in the board.
 """
 
 import argparse
@@ -64,6 +68,13 @@ LOAD_TIMEOUT = 120.0
 BOOT_TIMEOUT = 180.0
 COMMAND_TIMEOUT = 60.0
 PUT_LINE_TIMEOUT = 30.0
+# The commands before which the test waits for a free block of linux_checks.RECLAIM_ORDER (an
+# exec of busybox after the card's reads: sysmon's reclaim), as test_linux.py's tests of them do
+WAIT_LARGE = frozenset((*linux_checks.TOOL_COMMANDS, *linux_checks.PIPE_COMMANDS, *linux_checks.SCRIPT_COMMANDS))
+# send_line's gap from one 8-byte chunk to the next
+SEND_GAP_S = 0.02
+# The driver's next polls of a paste's last bytes (HZ 100) before PASTE_DONE is typed
+PASTE_SETTLE_S = 0.1
 
 
 def read_until(ser, token: str, timeout: float, text: str = "") -> str:
@@ -81,7 +92,7 @@ def send_line(ser, line: str) -> None:
     for i in range(0, len(data), 8):
         ser.write(data[i : i + 8])
         ser.flush()
-        time.sleep(0.02)
+        time.sleep(SEND_GAP_S)
 
 
 def put_files(ser, files: dict[str, bytes], times: dict[str, float]) -> None:
@@ -114,11 +125,32 @@ def run_command(ser, cmd: str) -> str | None:
     return None if at < 0 else out[at + len(cmd) :]
 
 
+def wait_large(ser, before: str) -> str | None:
+    """Waits up to RECLAIM_WAIT_S for a free block of RECLAIM_ORDER, which the next exec of
+    busybox needs (sysmon gives one back after the card's reads; test_linux.py's wait_large),
+    reading /proc/buddyinfo with the shell's builtins: the failure, None once one is free."""
+    end = time.monotonic() + linux_checks.RECLAIM_WAIT_S
+    while True:
+        out = run_command(ser, linux_checks.MEM_PROBES[1])
+        orders = linux_checks.parse_buddyinfo(out or "")
+        if not orders:
+            return f"{before}: no /proc/buddyinfo before it: {out!r}"[:600]
+        if sum(orders[linux_checks.RECLAIM_ORDER :]):
+            return None
+        if time.monotonic() >= end:
+            return (
+                f"{before}: no free block of order {linux_checks.RECLAIM_ORDER} within "
+                f"{linux_checks.RECLAIM_WAIT_S} s before it (free blocks per order {orders})"
+            )
+        time.sleep(1.0)
+
+
 def boot(
     ser, t0: float, image: bytes, dtb: bytes, times: dict[str, float], sizes: dict[str, int], mem: dict[str, str]
 ) -> list[str]:
     """From the first stage's own boot of the second stage (started at t0) to the shell's
-    prompt, then the memory table (into mem) and the commands; returns the failures."""
+    prompt, then the memory table (into mem) and the commands, each of the card's busyboxes'
+    first exec timed by its first command; returns the failures."""
     failures = []
     got, text = vux_tool.read_until(ser, (vux_tool.S2_PROMPT,), S2_PROMPT_WAIT)
     if not got:
@@ -154,6 +186,10 @@ def boot(
     except ValueError as e:
         failures.append(f"memory: {e}: {probes!r}"[:600])
     for cmd, wanted in linux_checks.COMMANDS.items():
+        if cmd in WAIT_LARGE:
+            err = wait_large(ser, cmd)
+            if err:
+                failures.append(err)
         t = time.monotonic()
         reply = run_command(ser, cmd)
         times[f"command: {cmd}"] = time.monotonic() - t
@@ -164,6 +200,124 @@ def boot(
         lost = linux_checks.missing(reply, wanted)
         if lost:
             failures.append(f"{cmd}: missing {lost}")
+    # The first exec reads the busybox from the card, the later ones from the page cache
+    for bb, cmd in linux_checks.first_execs(linux_checks.COMMANDS).items():
+        size = f" ({sizes[bb]:,} B)" if bb in sizes else ""
+        times[f"first exec of {bb}{size}: {cmd}"] = times[f"command: {cmd}"]
+    return failures
+
+
+def quiet(ser, seconds: float) -> str:
+    """Reads until the console has printed nothing for `seconds` (vi idle, waiting for a key);
+    what it read. Raises TimeoutError when it never goes quiet."""
+    text = ""
+    end = time.monotonic() + COMMAND_TIMEOUT
+    last = time.monotonic()
+    while time.monotonic() - last < seconds:
+        if time.monotonic() > end:
+            raise TimeoutError(f"the console never went quiet for {seconds} s; got {text[-600:]!r}")
+        c = ser.read(256)
+        if c:
+            text += c.decode("utf-8", errors="replace")
+            last = time.monotonic()
+        else:
+            time.sleep(0.01)
+    return text
+
+
+def vi_step(ser, step: str | tuple[str, ...], split: bool) -> float:
+    """One of a ViSession's steps: its bytes in one write, a tuple's parts VI_SPLIT_S apart (all
+    in one write without split); the longest time between two parts' writes as the host saw
+    it (0 for one part).
+
+    The board's console is its USB bridge (clock-and-board.md, "Board UART output that stops"):
+    a write of fewer bytes than the UART's 32-byte RX FIFO goes out back to back, but when the
+    bridge passes on each of a split step's parts is its own, so the gap between them on the
+    wire is not the host's VI_SPLIT_S. vi takes `ESC [ A` as the arrow up while no gap passes its
+    50 ms escape wait (linux_checks.VI_ESC_WAIT_S); a bridge that held a part longer would make
+    it ESC alone, and the "keys" session's text would show it."""
+    parts = step if isinstance(step, tuple) else (step,)
+    if not split:
+        parts = ("".join(parts),)
+    longest = 0.0
+    last = None
+    for part in parts:
+        if not 0 < len(part) < 32:
+            raise ValueError(f"a vi step's part must fit the RX FIFO: {part!r}")
+        if last is not None:
+            time.sleep(max(0.0, last + linux_checks.VI_SPLIT_S - time.monotonic()))
+            longest = max(longest, time.monotonic() - last)
+        ser.write(part.encode())
+        ser.flush()
+        last = time.monotonic()
+    return longest
+
+
+def vi(ser, times: dict[str, float], split: bool = True) -> list[str]:
+    """vi on linux_checks.VI_FILE driven by VI_SESSIONS' keys (VI_CLEAR before the first), as
+    test_linux.py's test_vi does: `vi FILE`, its status line, then each step once the console
+    has been quiet for VI_QUIET_S, the prompt after its :wq, and cat, which must show the
+    session's text. After a session that fails, vi is left with :q! and the rest are skipped
+    (each edits the file the one before left). split False sends a split step's parts in one
+    write; returns the failures."""
+    failures = []
+    path = linux_checks.VI_FILE
+    for k, session in enumerate(linux_checks.VI_SESSIONS):
+        for cmd in ((linux_checks.VI_CLEAR,) if k == 0 else ()) + (f"vi {session.name}",):
+            err = wait_large(ser, cmd)
+            if err:
+                failures.append(err)
+        if k == 0 and run_command(ser, linux_checks.VI_CLEAR) is None:
+            failures.append(f"{linux_checks.VI_CLEAR}: no echo")
+        gap = 0.0
+        try:
+            t = time.monotonic()
+            send_line(ser, f"vi {path}")
+            read_until(ser, session.ready, COMMAND_TIMEOUT)
+            times[f"vi {session.name}: to its screen"] = time.monotonic() - t
+            t = time.monotonic()
+            for step in session.steps:
+                quiet(ser, linux_checks.VI_QUIET_S)
+                gap = max(gap, vi_step(ser, step, split))
+            read_until(ser, linux_checks.PROMPT, COMMAND_TIMEOUT)
+            times[f"vi {session.name}: its keys to the prompt"] = time.monotonic() - t
+        except TimeoutError as e:
+            failures.append(f"vi {session.name}: {e}")
+            # Out of vi whatever mode it is in, back to the shell for the cleanup
+            for keys in (linux_checks.ESC, ":q!\r"):
+                quiet(ser, linux_checks.VI_QUIET_S)
+                ser.write(keys.encode())
+                ser.flush()
+            vux_tool.read_until(ser, (linux_checks.PROMPT,), COMMAND_TIMEOUT)
+            break
+        err = wait_large(ser, f"cat {path}")
+        if err:
+            failures.append(err)
+        reply = run_command(ser, f"cat {path}")
+        # The file's lines after the echo's line end, then the prompt
+        got = [ln.rstrip("\r") for ln in (reply or "").split("\n")]
+        while got and not got[0]:
+            got.pop(0)
+        want = session.text.splitlines()
+        print(f"vi {session.name}: {got[: len(want)]!r}")
+        if got[: len(want)] != want or len(got) != len(want) + 1:
+            msg = f"vi {session.name}: {path} holds {got!r}, expected {want!r}"
+            if gap:
+                msg += (
+                    f" (its split step's parts went {gap * 1000:.0f} ms apart at most from the host; "
+                    f"the USB bridge passing one on more than {linux_checks.VI_ESC_WAIT_S * 1000:.0f} ms "
+                    "after the other makes vi read ESC alone: the bridge's timing, not vi's, when the "
+                    "back-to-back sessions passed)"
+                )
+            failures.append(msg[:900])
+            break
+    return failures
+
+
+def cleanup(ser) -> list[str]:
+    """linux_checks.CARD_CLEANUP, then the mount table read with the shell's builtins: the card
+    must be unmounted. Returns the failures."""
+    failures = []
     for cmd in linux_checks.CARD_CLEANUP:
         if run_command(ser, cmd) is None:
             failures.append(f"{cmd}: no echo")
@@ -171,6 +325,49 @@ def boot(
     if mounts is None or linux_checks.CARD_MOUNTED in mounts:
         failures.append(f"the card is still mounted after {linux_checks.CARD_CLEANUP[-1]!r}: {mounts!r}"[:600])
     return failures
+
+
+def paste(ser, pacer: vux_tool.Pacer | None) -> int:
+    """linux_checks.PASTE_LINES at the shell in one write (pacer None: back to back at 115200
+    baud from the bridge) or as vux_tool.py's monitor sends them (its Pacer on the host's
+    clock), then PASTE_DONE once the driver has polled their last bytes: how many lines'
+    output came through whole (the board counts no dropped bytes, as the emulator does)."""
+    data = "".join(f"{line}\n" for line in linux_checks.PASTE_LINES).encode()
+    if pacer is None:
+        ser.write(data)
+        ser.flush()
+    else:
+        pacer.push(data)
+        for _ in range(4 * len(data)):  # a step cap: two turns a chunk
+            wait = pacer.wait(time.monotonic())
+            if wait is None:
+                break
+            if wait > 0:
+                time.sleep(wait)
+            else:
+                ser.write(pacer.pop(time.monotonic()))
+                ser.flush()
+    time.sleep(PASTE_SETTLE_S)
+    # A line a lost LF left open runs first (an echo, or a command not found), so PASTE_DONE
+    # is a line of its own
+    send_line(ser, "")
+    send_line(ser, linux_checks.PASTE_DONE)
+    out = read_until(ser, linux_checks.PASTE_DONE_OUT, COMMAND_TIMEOUT)
+    read_until(ser, linux_checks.PROMPT, COMMAND_TIMEOUT, out[out.index(linux_checks.PASTE_DONE_OUT) :])
+    return sum(w in out for w in linux_checks.PASTE_WORDS)
+
+
+def pastes(ser, pasted: dict[str, str]) -> list[str]:
+    """The paste back to back, recorded only (the UART's RX FIFO drops bytes then: that is the
+    SoC; docs/agents/linux.md, "Text tools and vi"), then paced, which must pass every line."""
+    n = len(linux_checks.PASTE_LINES)
+    size = sum(len(line) + 1 for line in linux_checks.PASTE_LINES)
+    whole = paste(ser, None)
+    pasted[f"{size} B back to back"] = f"{whole} of {n} lines whole"
+    pacer = vux_tool.Pacer()
+    whole = paste(ser, pacer)
+    pasted[f"{size} B, {pacer.chunk} B {pacer.gap * 1000:.0f} ms apart (the monitor's)"] = f"{whole} of {n} lines whole"
+    return [] if whole == n else [f"the paced paste: {whole} of {n} lines whole"]
 
 
 def card_files(linux_dir: str) -> tuple[dict[str, bytes], dict[str, int]]:
@@ -241,6 +438,7 @@ def main(argv=None):
             return 1
     times: dict[str, float] = {}
     mem: dict[str, str] = {}
+    pasted: dict[str, str] = {}
     failures = []
     t0 = time.monotonic()
     try:
@@ -258,6 +456,13 @@ def main(argv=None):
         if not emulator:
             ser, t0 = load(ser)
         failures = boot(ser, t0, image, dtb, times, sizes, mem)
+        if emulator:
+            # The CLI's time is not the host's (--speed 0 runs faster): VI_SPLIT_S there is a
+            # longer gap than vi's escape wait
+            print("[INFO] the emulator: vi's split steps sent in one write")
+        failures += vi(ser, times, split=not emulator)
+        failures += cleanup(ser)
+        failures += pastes(ser, pasted)
     except Exception as e:  # the port gone too: the bitstream is still loaded and the times printed
         hint = vux_tool.garbled_hint(str(e))
         failures.append(f"{type(e).__name__}: {e}" + (f"\n       -> {hint}" if hint else ""))
@@ -276,6 +481,8 @@ def main(argv=None):
         print(f"[TIME] {label}: {secs:.1f} s")
     for name, value in mem.items():
         print(f"[MEM] {name}: {value}")
+    for label, value in pasted.items():
+        print(f"[PASTE] {label}: {value}")
     for f in failures:
         print(f"[FAIL] {f}")
     print("Linux on the board: " + ("FAILED" if failures else "PASSED"))

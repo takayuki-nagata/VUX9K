@@ -181,7 +181,9 @@ small, and prefer an upstream driver and binding where one fits (the UART is ups
   `sim/sd_transcripts/` as they are. `test_linux.py`'s `test_card_with_read_waits` boots with
   waits that put the token before, on and after the end of mmc_spi's 16-byte reads. It checks
   an exec from the card, a write, and a dd of random sectors through Linux to the sectors after
-  them, byte for byte.
+  them, byte for byte. On that card (the emulator, 2026-11-15), with patch 0004 and without it:
+  the 256 KB `dd` 15.1 s and 34.8 s, bbawk's first exec (`awk`) 5.2 s and 12.0 s, a write's
+  `sync` 2.8 s and 6.6 s, the boot to the prompt 12.7 s and 15.3 s.
 - **Reading the card from Linux is ~500 cycles a byte** (~36 KB/s at 18 MHz, the emulator,
   2026-11; the second stage reads at ~100): a profile of a `dd` from the card put ~27% in the
   driver's byte loop (48 cycles a byte are the wire at 3 MHz), ~16% in the SPI core (mmc_spi
@@ -498,7 +500,12 @@ each use** (package `vux9k-bbtools`, `linux_workspace/userland/bbtools/`), in
   `{ }`, which need sysmon's reclaim of the page cache after the card's reads ("Memory
   budget"; `test_linux.py`'s `test_pipe_command`). Each test
   there waits first (`wait_large`, up to 10 s) for a free block of order 6, which sysmon gives
-  back within 3 intervals of a read: a person typing leaves it that time.
+  back within 3 intervals of a read: a person typing leaves it that time. `hw_linux.py` waits
+  the same way (`linux_checks.RECLAIM_ORDER`, `RECLAIM_WAIT_S`) before these, the scripts'
+  commands, and vi's and cat's execs. It times each busybox's first exec (from the card) by
+  the first of `TOOL_COMMANDS` that runs one of its applets (`linux_checks.TOOL_BUSYBOXES`, the
+  table above, which `test_linux_checks.py` holds to the fragments and the `.mk`): `[TIME]
+  first exec of ...` lines.
 - The memory table has a row for them (`sizes` in make linux-dist's `MANIFEST.json`, each by
   its name): they are RAM only while one runs.
 - **The terminal**: `/etc/profile` (`board/post-build.sh`) exports `HOME=/mnt/sd` (the card:
@@ -517,8 +524,14 @@ each use** (package `vux9k-bbtools`, `linux_workspace/userland/bbtools/`), in
   is ESC. `linux_checks.VI_SESSIONS` (keys and what the file holds after them; `test_linux.py`'s
   `test_vi`, then `test_card_after_linux` reads the file from the card image: LF, fsck) sends
   each step back to back after the console has been quiet for 300 ms: a new file, an edit
-  (`/` search, `dd`, `u`), and the arrow back to back, split, and ESC alone before `[A`. They
-  are in the shared form for the board's `hw_linux.py`, which doesn't run them yet.
+  (`/` search, `dd`, `u`), and the arrow back to back, split, and ESC alone before `[A`.
+  `hw_linux.py` runs the same sessions on the board (its `vi`, before `CARD_CLEANUP`, which
+  removes the file), each step one write. Through the board's USB bridge only the host's gap
+  between a split step's parts is known, not the gap on the wire: a part the bridge held past
+  50 ms makes vi read ESC alone, and the `keys` session's text shows it (the failure says so
+  when the back-to-back sessions passed). Against the emulator's CLI (`--speed 0`, faster than
+  the board) the host's 20 ms is longer than the escape wait, so there it sends a split step
+  in one write.
 - **Sample scripts** (`linux_workspace/userland/scripts/`, package `vux9k-scripts`, in
   `VUX9K/LINUX/BIN/`): `meminfo` (`/proc/meminfo`'s main lines, `/proc/buddyinfo`'s free blocks
   and the largest, with awk) and `ledctl` (each LED's trigger, `ledctl LED TRIGGER`, `ledctl
@@ -533,14 +546,18 @@ each use** (package `vux9k-bbtools`, `linux_workspace/userland/bbtools/`), in
   /proc/mounts` shows `fmask=0022`). The names are 8.3 without an extension (the `.mk` stops at
   another); `make_linux_dist.py` refuses a script with CR LF lines (its `#!` line would name
   `/bin/sh` and a CR). `linux_checks.SCRIPT_COMMANDS` runs them (`test_script_command`;
-  `test_ledctl_modes` the modes, whose sysmon lines come after the prompt).
+  in `COMMANDS`, so `hw_linux.py` too; `test_ledctl_modes` the modes, whose sysmon lines come
+  after the prompt: the emulator's only).
 - **Pasting**: the UART's RX FIFO holds 32 bytes and the polled driver empties it every 10 ms,
   in which 115 bytes can arrive at 115200 bps: a paste sent back to back loses bytes. That is
   the SoC, not a bug: `test_paste` records how many of 208 bytes (`linux_checks.PASTE_LINES`)
   were dropped (`Soc.uart_rx_dropped`) and how many lines ran, printed by
   `test_record_measurements`, and asserts none lost as `vux_tool.py monitor` sends them (its
   `Pacer`: 16 bytes, 20 ms apart, `--paste-chunk`, `--paste-gap-ms`). It is the last test on a
-  boot: `send_paced` refuses a SoC that has dropped a byte.
+  boot: `send_paced` refuses a SoC that has dropped a byte. `hw_linux.py` does the same last,
+  after the card is unmounted (`[PASTE]` lines: the lines that came through, as the board has
+  no counter of dropped bytes; the paced paste must pass all of them). A lost LF can leave a
+  line open, so it types an empty line before `PASTE_DONE`.
 
 ## Speed (2026-11-01, emulator; 2026-11-11 and 2026-11-14, the board)
 
@@ -554,7 +571,9 @@ data token one byte per SPI message, so small reads (FAT, directories, a cold ex
 the SPI core's per-message cost far more than on the emulator's card, which answers at once.
 These times are from before patches/0004-mmc-spi-token-search.patch, which reads 16 bytes per
 message ("The SD card"). On the emulator, a card with read waits (`test_card_with_read_waits`)
-shows the difference; its times are in `test_linux.py`'s output under `read waits:`.
+shows the difference (its numbers with and without the patch are in "The SD card"); its times
+are in `test_linux.py`'s output under `read waits:`. `hw_linux.py`'s `[TIME]` lines give the
+board's: each command, each of the card's busyboxes' first exec, vi's sessions.
 
 On the board (`make test-hw-linux-dist`, 1c8d685, three runs): the second stage's `linux` to
 its `[LINUX]` line (reading the 3.2 MB Image) 13.1 s, `[LINUX]` to busybox's prompt

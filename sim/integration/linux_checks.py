@@ -117,7 +117,6 @@ PIPE_COMMANDS = {
     "{ echo b; echo a; echo b; } | grep . | sort | uniq -c": ("1 a", "2 b"),
     f"grep . {TOOLS_A} | sort | uniq -c": ("1 apple", "1 fig", "2 pear"),
 }
-COMMANDS = BASE_COMMANDS | LED_COMMANDS | TOOL_COMMANDS | PIPE_COMMANDS
 # The card's sample scripts (linux_workspace/userland/scripts/, package vux9k-scripts: #!/bin/sh
 # in VUX9K/LINUX/BIN/, on the PATH), by their names. Each is the initramfs' busybox executed
 # (order 6), meminfo then awk in its place. ledctl's modes (sysmon stopped and started again)
@@ -130,6 +129,38 @@ SCRIPT_COMMANDS = {
     "ledctl 0 heartbeat; ledctl": ("led0: heartbeat",),
     "ledctl led9 timer": ("usage: ledctl ",),
 }
+# What the board's scripts/hw_linux.py types, in this order; sim/emu/test_linux.py runs each
+# part with its own tests between
+COMMANDS = BASE_COMMANDS | LED_COMMANDS | TOOL_COMMANDS | PIPE_COMMANDS | SCRIPT_COMMANDS
+# The card's busyboxes and their applets (linux_workspace/userland/bbtools/<name>.config; the
+# table in docs/agents/linux.md, "Text tools and vi"): the board's test times each one's first
+# exec, the first of TOOL_COMMANDS that runs one of its applets (first_execs)
+TOOL_BUSYBOXES = {
+    "bbgrep": ("grep", "egrep"),
+    "bbsed": ("sed",),
+    "bbsort": ("sort", "uniq", "cut", "tr", "tail"),
+    "bbawk": ("awk",),
+    "bbcalc": ("expr", "dc"),
+    "bbfiles": ("find", "xargs", "diff", "cmp", "stty"),
+    "bbedit": ("vi", "less"),
+}
+# The order of the initramfs' busybox's exec (docs/agents/linux.md, "Memory budget"), which
+# sysmon's reclaim of the page cache gives back within 3 of its 1 s intervals after the card's
+# reads, and how long a test waits for a free block of it before an exec of busybox (seconds)
+RECLAIM_ORDER = 6
+RECLAIM_WAIT_S = 10
+
+
+def first_execs(commands) -> dict[str, str]:
+    """{busybox on the card: the first of commands whose program is one of its applets}."""
+    found: dict[str, str] = {}
+    for cmd in commands:
+        prog = cmd.split()[0]
+        for bb, applets in TOOL_BUSYBOXES.items():
+            if prog in applets and bb not in found:
+                found[bb] = cmd
+    return found
+
 
 # vi (the card's bbedit: docs/agents/linux.md, "Text tools and vi") driven by its keys, for the
 # emulator's test (sim/emu/test_linux.py) and the board's: VI_CLEAR first, then for each session
@@ -186,11 +217,11 @@ PASTE_WORDS = tuple(f"paste-{n:02d}-abcdefghij" for n in range(8))
 PASTE_LINES = tuple("echo " + w.replace("-", "\\-", 1) for w in PASTE_WORDS)
 PASTE_DONE = "echo paste\\done"
 PASTE_DONE_OUT = "pastedone"
-# What the board's test does to its card after COMMANDS: the files removed and the card
-# unmounted, so the FAT's dirty bit is clear when the bitstream is loaded again (the emulator's
-# card is thrown away: sim/emu/test_linux.py checks it with the first and second stage after an
-# umount)
-CARD_CLEANUP = (f"rm -r {SD_TEST_FILE} {TOOLS_DIR}; sync", "umount /mnt/sd")
+# What the board's test does to its card after COMMANDS and VI_SESSIONS: the files removed and
+# the card unmounted, so the FAT's dirty bit is clear when the bitstream is loaded again (the
+# emulator's card is thrown away: sim/emu/test_linux.py checks it with the first and second
+# stage after an umount). Two rm lines: one would reach the console's 80 columns with the prompt
+CARD_CLEANUP = (f"rm -r {SD_TEST_FILE} {TOOLS_DIR}", f"rm {VI_FILE}; sync", "umount /mnt/sd")
 # The mount table, read with the shell's builtins (umount's own exec can fail with only the
 # kernel's report on the console); the card is unmounted when its output lacks CARD_MOUNTED
 MOUNTS_PROBE = "exec 3</proc/mounts; while read l <&3; do echo $l; done; exec 3<&-"

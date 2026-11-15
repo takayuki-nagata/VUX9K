@@ -11,7 +11,8 @@ import sys
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "integration"))
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(REPO_ROOT, "sim", "integration"))
 import linux_checks  # noqa: E402
 
 MEMINFO = (
@@ -58,8 +59,37 @@ def test_commands_are_each_ones():
         linux_checks.LED_COMMANDS,
         linux_checks.TOOL_COMMANDS,
         linux_checks.PIPE_COMMANDS,
+        linux_checks.SCRIPT_COMMANDS,
     )
     assert len(linux_checks.COMMANDS) == sum(len(p) for p in parts)
+
+
+def test_board_lines_fit_the_console():
+    """What the board's test types at the shell is shorter than the console's 80 columns with
+    the prompt (a longer line wraps in hush's line editor, which then echoes more than was
+    typed)."""
+    for line in (*linux_checks.COMMANDS, *linux_checks.CARD_CLEANUP, linux_checks.VI_CLEAR):
+        assert len(line) + len(linux_checks.PROMPT) < 80, line
+
+
+def test_tool_busyboxes_are_the_builds():
+    """TOOL_BUSYBOXES is the card's busyboxes (the package's VUX9K_BBTOOLS_ORDERS), each applet
+    in its fragment (CONFIG_<APPLET>=y), and TOOL_COMMANDS runs each of them, so the board's
+    test times every one's first exec."""
+    bbtools = os.path.join(REPO_ROOT, "linux_workspace", "userland", "bbtools")
+    mk = os.path.join(REPO_ROOT, "linux_workspace", "buildroot", "package", "vux9k-bbtools", "vux9k-bbtools.mk")
+    with open(mk) as f:
+        orders = next(ln for ln in f if ln.startswith("VUX9K_BBTOOLS_ORDERS = "))
+    names = {t.split(":")[0] for t in orders.split("=", 1)[1].split()}
+    assert set(linux_checks.TOOL_BUSYBOXES) == names
+    for bb, applets in linux_checks.TOOL_BUSYBOXES.items():
+        with open(os.path.join(bbtools, f"{bb}.config")) as f:
+            config = {ln.strip() for ln in f}
+        for applet in applets:
+            assert f"CONFIG_{applet.upper()}=y" in config, (bb, applet)
+    assert set(linux_checks.first_execs(linux_checks.TOOL_COMMANDS)) == names
+    # The first of a busybox's commands, not a later one
+    assert linux_checks.first_execs(["ls x", "uniq b", "sort a", "grep c"]) == {"bbsort": "uniq b", "bbgrep": "grep c"}
 
 
 def test_missing_output_raises():
