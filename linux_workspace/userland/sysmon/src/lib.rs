@@ -20,10 +20,10 @@
 //! is left ([`Reclaim`]; docs/agents/linux.md, "Memory budget"): /proc/buddyinfo has no free
 //! block of [`RECLAIM_ORDER`] or above (an exec of the initramfs' busybox needs one, and noMMU
 //! has no compaction to make one), and /proc/meminfo's Cached is `-r` kB (default
-//! [`RECLAIM_CACHED_KB`]; `-r 0` turns it off) above the lowest Cached it has seen (the
-//! initramfs' pages, which stay; before it has seen one after a drop, any Cached), so it drops
-//! the clean page cache (/proc/sys/vm/drop_caches, `1`). A drop that brings no such block back is followed by
-//! [`RECLAIM_HOLDOFF`] intervals without one. At its start it writes `4` there, which drops
+//! [`RECLAIM_CACHED_KB`]; `-r 0` turns it off) above the Cached its last drop left (the
+//! initramfs' pages and whatever else stays; before the first drop, any Cached), so it drops
+//! the clean page cache (/proc/sys/vm/drop_caches, `1`). A drop that brings no such block back
+//! is followed by [`RECLAIM_HOLDOFF`] intervals without one. At its start it writes `4` there, which drops
 //! nothing but keeps the kernel's `drop_caches: N` line on the console to that one write.
 //! `-v` says each drop; without it a drop says nothing. If the file can't be written it says
 //! so once and reclaims no more.
@@ -380,9 +380,9 @@ pub const REFRESH_INTERVALS: u32 = 10;
 /// "Memory budget"): 64 pages, 256 KB.
 pub const RECLAIM_ORDER: usize = 6;
 /// The Cached (kB) above its floor that a drop needs by default. The initramfs' ramfs pages
-/// count in Cached and can't be dropped (~520 kB), so the floor is the lowest Cached the
-/// reclaim has seen (Cached after its drops among them): what lies above it is roughly what a
-/// drop frees. 64 kB: the spike's pieces came with 100 to 600 kB of the card's cache above
+/// count in Cached and can't be dropped (~520 kB), so the floor is the Cached its last drop
+/// left (what can't be dropped, files written to the ramfs since among it): what lies above it
+/// is roughly what a drop frees. 64 kB: the spike's pieces came with 100 to 600 kB of the card's cache above
 /// that floor, and RECLAIM_HOLDOFF stops drops that don't help.
 pub const RECLAIM_CACHED_KB: u32 = 64;
 /// Every how many intervals the reclaim looks at /proc/buddyinfo: each read costs the CPU
@@ -407,7 +407,7 @@ pub struct Reclaim {
     dropped: bool,
     /// Intervals so far
     ticks: u32,
-    /// The lowest Cached seen (kB); None before any
+    /// The Cached (kB) the last drop left; None before the first
     floor: Option<u64>,
 }
 
@@ -425,12 +425,10 @@ impl Reclaim {
         sys.say(b"sysmon: cannot write /proc/sys/vm/drop_caches");
     }
 
-    /// /proc/meminfo's Cached, which also lowers the floor.
-    fn cached(&mut self, sys: &mut impl Sys, buf: &mut [u8]) -> Option<u64> {
+    /// /proc/meminfo's Cached.
+    fn cached(sys: &mut impl Sys, buf: &mut [u8]) -> Option<u64> {
         let n = sys.read_file(b"/proc/meminfo\0", buf)?;
-        let cached = parse_cached_kb(&buf[..n])?;
-        self.floor = Some(self.floor.map_or(cached, |f| f.min(cached)));
-        Some(cached)
+        parse_cached_kb(&buf[..n])
     }
 
     /// Drops the page cache if no free block of RECLAIM_ORDER is left and Cached is
@@ -452,8 +450,11 @@ impl Reclaim {
         let n = sys.read_file(b"/proc/buddyinfo\0", &mut buf)?;
         let large = free_blocks_from(&buf[..n], RECLAIM_ORDER)?;
         if core::mem::take(&mut self.dropped) {
-            // What the drop left: the floor
-            self.cached(sys, &mut buf);
+            // What the drop left: the floor, also when it is above the one before (a file
+            // written to the ramfs, or a process holding the blocks it took)
+            if let Some(left) = Self::cached(sys, &mut buf) {
+                self.floor = Some(left);
+            }
             if large == 0 {
                 self.holdoff = RECLAIM_HOLDOFF;
                 return None;
@@ -462,9 +463,11 @@ impl Reclaim {
         if large > 0 {
             return None;
         }
-        let floor = self.floor;
-        let cached = self.cached(sys, &mut buf)?;
-        if floor.is_some_and(|f| cached < f.saturating_add(u64::from(cached_kb))) {
+        let cached = Self::cached(sys, &mut buf)?;
+        if self
+            .floor
+            .is_some_and(|f| cached < f.saturating_add(u64::from(cached_kb)))
+        {
             return None;
         }
         if !sys.drop_caches(b'1') {

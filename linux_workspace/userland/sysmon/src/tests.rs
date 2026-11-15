@@ -668,6 +668,21 @@ fn a_drop_that_brought_nothing_back_holds_the_next_ones_off() {
 }
 
 #[test]
+fn the_floor_rises_to_what_a_drop_could_not_free() {
+    // A drop to 520 kB, then 300 kB more that a drop can't free (a file written to the ramfs,
+    // or a process holding the blocks): one drop for it, none while Cached stays at 820, a
+    // drop again once more is cached
+    let seq = vec![buddy(FRAGMENTED), buddy(WHOLE), buddy(FRAGMENTED)];
+    // The look after the check at look 3 and its holdoff
+    let next = (3 * RECLAIM_EVERY + 1 + RECLAIM_HOLDOFF).div_ceil(RECLAIM_EVERY);
+    let cached = vec![1112, 520, 820, 820, 820, 820, 1000];
+    let intervals = (next + 3) * RECLAIM_EVERY;
+    let mut f = reclaim_fake_cached(seq, cached, intervals);
+    run_for(&mut f, intervals, RECLAIM_CACHED_KB, false);
+    assert_eq!(f.drops, [at_look(0), at_look(2), at_look(next + 2)]);
+}
+
+#[test]
 fn no_drop_when_off_or_without_buddyinfo() {
     let mut f = reclaim_fake(vec![buddy(FRAGMENTED)], 1112, 3);
     run_for(&mut f, 3, 0, false);

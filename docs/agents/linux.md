@@ -332,7 +332,7 @@ paths (`test_linux.py`'s `test_record_measurements`), the board's `hw_linux.py` 
   exec failed; `echo 1 > /proc/sys/vm/drop_caches` (~20M cycles, ~1.1 s) brought back `6:2
   8:1` (Cached 520 kB, MemFree 3,352 kB). So every 3 intervals (`RECLAIM_EVERY`) sysmon reads
   `/proc/buddyinfo` and, with no block of order 6 or above, `/proc/meminfo`'s Cached; at `-r`
-  kB (64) above the lowest Cached it has seen, or at any Cached before it has seen one, it
+  kB (64) above the Cached its last drop left, or at any Cached before its first drop, it
   writes `1` to `/proc/sys/vm/drop_caches`. The file takes 1 to 4 only (`extra1`/`extra2`
   of its sysctl; a `5` is refused with EINVAL): at its start sysmon writes `4`, which drops
   nothing and leaves the kernel's `sysmon (N): drop_caches: 4` the only such line on the
@@ -340,12 +340,15 @@ paths (`test_linux.py`'s `test_record_measurements`), the board's `hw_linux.py` 
   - **The threshold is above a floor**: Cached is not what a drop frees, since the initramfs
     is ramfs, whose ~520 kB of pages count in it and stay. An absolute threshold under that
     is always met; one above it would also need the droppable part to pass it. So the floor
-    is the lowest Cached sysmon has read (it reads Cached at every look that finds no large
-    block, and after each drop: what a drop leaves is the floor), and a drop needs `-r` kB of
-    cache above it. Before any drop the floor may still hold the card's cache, so the first
-    drop needs no margin. 64 kB, not more: the spike's pieces came with 100 to 600 kB above
-    the floor. A drop that brought back no block of order 6 (the pieces are someone else's) is
-    followed by 30 intervals (`RECLAIM_HOLDOFF`) without one.
+    is the Cached sysmon reads at the look after a drop (what that drop could not free), and a
+    drop needs `-r` kB of cache above it. Before any drop there is no floor, so the first drop
+    needs no margin. The floor is set anew after each drop, not kept at the lowest Cached seen:
+    files written to the initramfs (ramfs) since, or a process that still holds what it took,
+    raise what can't be dropped, and a floor that only went down would then be passed all the
+    time, with a drop that frees nothing every 33 s (each one costing the card's busybox its
+    cache). 64 kB, not more: the spike's pieces came with 100 to 600 kB above the floor. A
+    drop that brought back no block of order 6 (the pieces are someone else's) is followed by
+    30 intervals (`RECLAIM_HOLDOFF`) without one.
   - **Every 3 intervals, the files kept open**: a read of `/proc/buddyinfo` every interval
     took sysmon's CPU over an idle shell from 3.5-3.7% to 5.0-5.1% (2026-11-15, the
     emulator: ~0.15% a read). It looks every 3 s instead, and main.c keeps each `/proc` file
