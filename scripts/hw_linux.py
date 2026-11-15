@@ -263,12 +263,16 @@ def vi(ser, times: dict[str, float], split: bool = True) -> list[str]:
     failures = []
     path = linux_checks.VI_FILE
     for k, session in enumerate(linux_checks.VI_SESSIONS):
-        for cmd in ((linux_checks.VI_CLEAR,) if k == 0 else ()) + (f"vi {session.name}",):
-            err = wait_large(ser, cmd)
+        # Each exec after its own wait for a large block: rm's, then vi's
+        if k == 0:
+            err = wait_large(ser, linux_checks.VI_CLEAR)
             if err:
                 failures.append(err)
-        if k == 0 and run_command(ser, linux_checks.VI_CLEAR) is None:
-            failures.append(f"{linux_checks.VI_CLEAR}: no echo")
+            if run_command(ser, linux_checks.VI_CLEAR) is None:
+                failures.append(f"{linux_checks.VI_CLEAR}: no echo")
+        err = wait_large(ser, f"vi {session.name}")
+        if err:
+            failures.append(err)
         gap = 0.0
         try:
             t = time.monotonic()

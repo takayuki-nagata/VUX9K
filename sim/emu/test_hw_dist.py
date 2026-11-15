@@ -259,6 +259,7 @@ class ViPort:
         self.out = b""
         self.typed = b""
         self.keys: list[bytes] = []  # each vi's keys
+        self.lines: list[str] = []  # the shell's command lines, in order
         self.in_vi = False
 
     def write(self, data: bytes):
@@ -273,6 +274,7 @@ class ViPort:
         if not self.typed.endswith(b"\n"):
             return
         line, self.typed = self.typed.strip().decode(), b""
+        self.lines.append(line)
         self.out += f"{line}\r\n".encode()
         if line == f"vi {lc.VI_FILE}":
             self.in_vi = True
@@ -297,7 +299,7 @@ def test_linux_script_drives_vi(monkeypatch):
     """hw_linux.vi: each ViSession's keys reach vi as they are (a split step's parts in one
     write without split), and cat's text must be the session's; a wrong text fails, with the
     USB bridge's timing named for the session that splits a step, and the sessions after it
-    are skipped."""
+    are skipped. Each exec waits for a large block first: rm (VI_CLEAR) once, then each vi."""
     import hw_linux
     import linux_checks
 
@@ -305,11 +307,15 @@ def test_linux_script_drives_vi(monkeypatch):
     monkeypatch.setattr(hw_linux, "SEND_GAP_S", 0.0)
     sessions = linux_checks.VI_SESSIONS
     keys = ["".join("".join(s) if isinstance(s, tuple) else s for s in v.steps).encode() for v in sessions]
+    probe = linux_checks.MEM_PROBES[1]
+    vi_file = linux_checks.VI_FILE
     for split in (True, False):
         port = ViPort([v.text for v in sessions])
         times: dict[str, float] = {}
         assert hw_linux.vi(port, times, split=split) == []
         assert port.keys == keys
+        each = [probe, f"vi {vi_file}", probe, f"cat {vi_file}"]
+        assert port.lines == [probe, linux_checks.VI_CLEAR] + each * len(sessions), port.lines
         assert f"vi {sessions[-1].name}: its keys to the prompt" in times
     port = ViPort([sessions[0].text, "one\n", "x\n"])
     got = hw_linux.vi(port, {})
