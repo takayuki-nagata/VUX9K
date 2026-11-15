@@ -525,11 +525,13 @@ def test_vi(linux, session):
     assert soc.uart_rx_dropped == dropped
     assert not any(e in screen for e in EXEC_FAILED), screen[:600]
     assert wait_large(linux), f"no free block of order {RECLAIM_ORDER} for cat"
+    # command() starts past the echo, so the file's lines come first, then the prompt
     out = command(linux, f"cat {vi_file}")
     got = [ln.rstrip("\r") for ln in out.split("\n")]
-    at = next((k for k, ln in enumerate(got) if ln.endswith(f"cat {vi_file}")), None)
+    while got and not got[0]:
+        got.pop(0)
     want = session.text.splitlines()
-    assert at is not None and got[at + 1 : at + 1 + len(want)] == want, out
+    assert got[: len(want)] == want and len(got) > len(want) and PROMPT.decode() in got[len(want)], out
 
 
 def test_card_after_linux(linux, tmp_path):
@@ -553,7 +555,8 @@ def test_card_after_linux(linux, tmp_path):
     # vi's file (test_vi) as its last session left it: LF lines, no CR
     vi_text = linux_checks.VI_SESSIONS[-1].text.encode()
     assert vi_text in image and vi_text.replace(b"\n", b"\r\n") not in image
-    if shutil.which("mtype"):
+    # mtools before FIXTURE_MTOOLS reads a FAT32 volume this small as FAT16
+    if test_fat_images.MTOOLS_SMALL_FAT32:
         assert test_fat_images.mtype(str(path), linux_checks.VI_FILE.removeprefix("/mnt/sd/")) == vi_text
     soc, _ = s1_env.boot_s2(image=image)
     name = os.path.basename(linux_checks.SD_TEST_FILE)
