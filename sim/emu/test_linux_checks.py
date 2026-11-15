@@ -67,8 +67,15 @@ def test_commands_are_each_ones():
 def test_board_lines_fit_the_console():
     """What the board's test types at the shell is shorter than the console's 80 columns with
     the prompt (a longer line wraps in hush's line editor, which then echoes more than was
-    typed)."""
-    for line in (*linux_checks.COMMANDS, *linux_checks.CARD_CLEANUP, linux_checks.VI_CLEAR):
+    typed, and send_line waits for each chunk's echo)."""
+    lines = (
+        *linux_checks.COMMANDS,
+        *linux_checks.CARD_CLEANUP,
+        *linux_checks.MEM_PROBES,
+        linux_checks.MOUNTS_PROBE,
+        linux_checks.VI_CLEAR,
+    )
+    for line in lines:
         assert len(line) + len(linux_checks.PROMPT) < 80, line
 
 
@@ -144,3 +151,13 @@ def test_paste_lines_hide_their_output():
     assert 180 <= sum(len(line) + 1 for line in linux_checks.PASTE_LINES) <= 256
     for line in linux_checks.SCRIPT_COMMANDS:
         assert len(line) + len(linux_checks.PROMPT) < 80, line
+
+
+def test_kernel_lines():
+    """Only a line with printk's timestamp goes, wherever it splits the text; a command's own
+    brackets and numbers stay."""
+    kernel = "[  255.548990] random: crng init done\r\n"
+    assert linux_checks.without_kernel_lines(f"exec 3</proc/b{kernel}uddyinfo") == "exec 3</proc/buddyinfo"
+    assert linux_checks.without_kernel_lines(f"[    0.000000] Linux version 7.3\n{kernel}") == ""
+    kept = "[1] 83\r\n[ 1.5] x\r\n[2.123456]x\r\n1.000000] y\r\n"
+    assert linux_checks.without_kernel_lines(kept) == kept

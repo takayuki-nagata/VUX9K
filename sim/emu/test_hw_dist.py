@@ -169,21 +169,26 @@ def test_linux_script_files(tmp_path):
 class ShellPort:
     """A port that answers hw_linux.boot as the second stage and the kernel would: the second
     stage's prompt, `linux` with linux_line and the console up to the shell's prompt, and
-    each command line with its echo, its reply from replies and the prompt."""
+    each command line with its echo (each write's as it comes, as busybox's line editing
+    echoes keys), its reply from replies and the prompt."""
 
     def __init__(self, linux_line: str, console: str, replies: dict[str, str]):
         self.linux_line, self.console, self.replies = linux_line, console, replies
         self.out = b"s2> "
         self.typed = b""
+        self.shell = False
 
     def write(self, data: bytes):
         self.typed += data
+        if self.shell:
+            self.out += data.rstrip(b"\r\n")
         if self.typed.endswith((b"\r", b"\n")):
             line, self.typed = self.typed.strip().decode(), b""
-            if line == "linux":
+            if line == "linux" and not self.shell:
                 self.out += f"linux\n{self.linux_line}\n\n{self.console}/ # ".encode()
+                self.shell = True
             else:
-                self.out += f"{line}\r\n{self.replies.get(line, '')}/ # ".encode()
+                self.out += f"\r\n{self.replies.get(line, '')}/ # ".encode()
 
     def flush(self):
         pass
@@ -202,7 +207,6 @@ def test_linux_script_reports_what_the_board_got_wrong(monkeypatch):
     import hw_linux
     import linux_checks
 
-    monkeypatch.setattr(hw_linux, "SEND_GAP_S", 0.0)
     version = "Linux version 7.3.0 (x@y) (gcc) #28 PREEMPT Tue Nov 10 14:49:15 UTC 2026"
     image = b"\0" * 64 + version.encode() + b"\n" + b"\0" * 64
     dtb = b"D" * 8
@@ -249,7 +253,8 @@ class ViPort:
     """A port that answers hw_linux.vi as the shell and a vi that only records its keys would:
     `vi FILE` with vi's status line, its keys up to `:wq` CR, then the prompt; `cat FILE` with
     the text the session given by texts left (the next of texts each time), other lines with
-    their echo and the prompt. A free block of order 6 in /proc/buddyinfo."""
+    their echo (each write's as it comes) and the prompt. A free block of order 6 in
+    /proc/buddyinfo."""
 
     def __init__(self, texts: list[str]):
         import linux_checks
@@ -271,11 +276,12 @@ class ViPort:
                 self.out += f"\r\n{lc.PROMPT}".encode()
             return
         self.typed += data
+        self.out += data.rstrip(b"\n")
         if not self.typed.endswith(b"\n"):
             return
         line, self.typed = self.typed.strip().decode(), b""
         self.lines.append(line)
-        self.out += f"{line}\r\n".encode()
+        self.out += b"\r\n"
         if line == f"vi {lc.VI_FILE}":
             self.in_vi = True
             self.keys.append(b"")
@@ -304,7 +310,6 @@ def test_linux_script_drives_vi(monkeypatch):
     import linux_checks
 
     monkeypatch.setattr(linux_checks, "VI_QUIET_S", 0.01)
-    monkeypatch.setattr(hw_linux, "SEND_GAP_S", 0.0)
     sessions = linux_checks.VI_SESSIONS
     keys = ["".join("".join(s) if isinstance(s, tuple) else s for s in v.steps).encode() for v in sessions]
     probe = linux_checks.MEM_PROBES[1]
@@ -324,6 +329,141 @@ def test_linux_script_drives_vi(monkeypatch):
     port = ViPort([v.text for v in sessions[:-1]] + ["one\n"])
     got = hw_linux.vi(port, {})
     assert len(got) == 1 and got[0].startswith(f"vi {sessions[-1].name}: ") and "USB bridge" in got[0], got
+
+
+class EchoPort:
+    """A shell's line editing that echoes what it has read, from the host's view: each read
+    returns the echo of what was written before it (none with mute). in_flight is the most
+    bytes the host had written and not yet read back as echo when it wrote; lines the lines."""
+
+    def __init__(self, mute: bool = False):
+        self.mute = mute
+        self.out = b""
+        self.typed = b""
+        self.unechoed = 0
+        self.in_flight = 0
+        self.lines: list[str] = []
+
+    def write(self, data: bytes):
+        self.unechoed += len(data)
+        self.in_flight = max(self.in_flight, self.unechoed)
+        self.typed += data
+        if not self.mute:
+            self.out += data.replace(b"\n", b"\r\n")
+        while b"\n" in self.typed:
+            line, self.typed = self.typed.split(b"\n", 1)
+            self.lines.append(line.decode())
+
+    def flush(self):
+        pass
+
+    def read(self, n: int) -> bytes:
+        data, self.out = self.out[:n], self.out[n:]
+        self.unechoed = len(self.out) if not self.mute else self.unechoed
+        return data
+
+
+def test_linux_script_paces_a_line_by_its_echo(monkeypatch):
+    """hw_linux.send_line: a command line's next chunk goes once the console has echoed the
+    one before, so no more than a chunk is ever on its way (the UART's 32-byte RX FIFO,
+    whatever the host's or the emulator's timing), and what it read comes back for the
+    caller; no echo is a TimeoutError. type_line (after the paste) doesn't wait for one."""
+    import hw_linux
+    import linux_checks
+
+    monkeypatch.setattr(hw_linux, "SEND_GAP_S", 0.0)
+    for line in (linux_checks.MEM_PROBES[1], "x" * 7, "x" * 8, "x" * 15, ""):
+        port = EchoPort()
+        text = hw_linux.send_line(port, line)
+        assert port.lines == [line] and port.in_flight <= hw_linux.SEND_CHUNK, (line, port.in_flight)
+        assert text + port.out.decode() == line + "\r\n"  # nothing read is lost to the caller
+    monkeypatch.setattr(hw_linux, "ECHO_TIMEOUT", 0.05)
+    port = EchoPort(mute=True)
+    with pytest.raises(TimeoutError, match="no echo of 'exec 3</'"):
+        hw_linux.send_line(port, linux_checks.MEM_PROBES[1])
+    assert port.in_flight == hw_linux.SEND_CHUNK
+    port = EchoPort(mute=True)
+    hw_linux.type_line(port, linux_checks.PASTE_DONE)
+    assert port.lines == [linux_checks.PASTE_DONE]
+
+
+class LostEchoPort(EchoPort):
+    """A shell whose echo of the first chunk written is lost (a FIFO overrun's dropped bytes):
+    the rest is echoed, and ^C drops the line and prints the prompt."""
+
+    def __init__(self):
+        super().__init__()
+        self.cancelled = 0
+
+    def write(self, data: bytes):
+        import hw_linux
+
+        if data == hw_linux.CANCEL_LINE:
+            self.cancelled += 1
+            self.typed, self.out = b"", self.out + b"^C\r\n/ # "
+            return
+        if not self.typed and not self.lines:
+            self.typed += data  # no echo
+            return
+        super().write(data)
+
+
+def test_linux_script_goes_on_without_an_echo(monkeypatch, capsys):
+    """hw_linux.run_command: a chunk's echo missing fails that command alone (None), the line
+    dropped with ^C at the shell's prompt, so the run goes on to its next command."""
+    import hw_linux
+    import linux_checks
+
+    monkeypatch.setattr(hw_linux, "ECHO_TIMEOUT", 0.05)
+    monkeypatch.setattr(hw_linux, "COMMAND_TIMEOUT", 0.2)
+    port = LostEchoPort()
+    assert hw_linux.run_command(port, linux_checks.MEM_PROBES[1]) is None
+    assert port.cancelled == 1 and port.out == b""  # read up to the prompt after ^C
+    assert "[WARN] no echo of" in capsys.readouterr().out
+
+
+class SplicePort:
+    """A port whose console gets a kernel line (KERNEL_MSG) spliced in at byte `at` of what it
+    sends, as a printk lands in the middle of a line's echo or a reply."""
+
+    KERNEL_MSG = b"[  255.548990] random: crng init done\r\n"
+
+    def __init__(self, inner, at: int):
+        self.inner, self.at, self.sent = inner, at, 0
+
+    def write(self, data: bytes):
+        self.inner.write(data)
+
+    def flush(self):
+        pass
+
+    def read(self, n: int) -> bytes:
+        data = self.inner.read(n)
+        k = self.at - self.sent
+        if 0 <= k <= len(data) and data:
+            data = data[:k] + self.KERNEL_MSG + data[k:]
+        self.sent += len(data)
+        return data
+
+
+def test_linux_script_skips_kernel_lines(monkeypatch, capsys):
+    """A kernel line on the console (random's `crng init done`, CI run 43701558484) anywhere in
+    a command line's echo or its reply: send_line still finds each chunk's echo, run_command
+    returns the reply without it and prints it."""
+    import hw_linux
+    import linux_checks
+
+    monkeypatch.setattr(hw_linux, "ECHO_TIMEOUT", 0.2)
+    monkeypatch.setattr(hw_linux, "COMMAND_TIMEOUT", 0.2)
+    probe = linux_checks.MEM_PROBES[1]
+    replies = {probe: "Node 0, zone Normal 1 0 1 0 0 0 1\r\n"}
+    want = "\r\n" + replies[probe] + linux_checks.PROMPT
+    ats = range(len(probe) + len(want))
+    for at in ats:
+        shell = ShellPort("", "", replies)
+        shell.out, shell.shell = b"", True
+        assert hw_linux.run_command(SplicePort(shell, at), probe) == want, at
+    assert capsys.readouterr().out.count("random: crng init done") == len(ats)
 
 
 class PastePort:

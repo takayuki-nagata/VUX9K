@@ -156,8 +156,10 @@ clock-and-board.md, "Board UART output that is noise: ModemManager and the bridg
   `[MEM]` lines with the memory table read right after the boot (`linux_checks.MEM_PROBES`;
   linux.md, "Memory budget"), `[PASTE]` lines with the lines that came through, and `pack.fs`
   loaded again at the end.
-  `make test-linux-emu` runs the script against the emulator's CLI at full speed
-  (`test_board_script_on_the_emulator`).
+  `make test-linux-emu` runs the script against the emulator's CLI at full speed twice:
+  as it is (`test_board_script_on_the_emulator`) and with the emulator stopped for a moment
+  while each command line is typed (`test_board_script_with_emulator_stalls`, as a busy CI
+  host deschedules it).
 - `make test-hw-upgrade DIST=<dir>` (`scripts/test_hw_upgrade.py`; `make prev-release` fetches
   `V03_RELEASE`, v0.3.0, and `PREV_RELEASE`, v0.4.0, into `build/previous/`), with the tree's
   second stage on the card (as `test-hw-dist` leaves it) and no card writes: v0.3.0's `pack.fs`

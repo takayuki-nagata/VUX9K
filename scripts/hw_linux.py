@@ -71,26 +71,62 @@ PUT_LINE_TIMEOUT = 30.0
 # The commands before which the test waits for a free block of linux_checks.RECLAIM_ORDER (an
 # exec of busybox after the card's reads: sysmon's reclaim), as test_linux.py's tests of them do
 WAIT_LARGE = frozenset((*linux_checks.TOOL_COMMANDS, *linux_checks.PIPE_COMMANDS, *linux_checks.SCRIPT_COMMANDS))
-# send_line's gap from one 8-byte chunk to the next
+# send_line's chunk of a command line, sent once the one before has come back as echo, at most
+# ECHO_TIMEOUT after it (the shell echoes each key as it reads it)
+SEND_CHUNK = 8
+ECHO_TIMEOUT = 10.0
+# What run_command types when a chunk's echo is missing: ^C, on which busybox's line editing
+# drops the line and the shell prints its prompt again
+CANCEL_LINE = b"\x03"
+# type_line's gap from one chunk to the next, for the line after a paste
 SEND_GAP_S = 0.02
 # The driver's next polls of a paste's last bytes (HZ 100) before PASTE_DONE is typed
 PASTE_SETTLE_S = 0.1
 
 
 def read_until(ser, token: str, timeout: float, text: str = "") -> str:
-    """The console's text up to and including token; raises TimeoutError with what came."""
-    got, text = vux_tool.read_until(ser, (token,), timeout, text)
-    if not got:
-        raise TimeoutError(f"{token!r} not received within {timeout} s; got {text[-600:]!r}")
+    """The console's text up to and including token, which is looked for without the kernel's
+    lines (linux_checks.KERNEL_LINE: a printk can split it); the text as it came, those lines
+    kept. Raises TimeoutError with what came."""
+    end = time.monotonic() + timeout
+    while token not in linux_checks.without_kernel_lines(text):
+        if time.monotonic() >= end:
+            raise TimeoutError(f"{token!r} not received within {timeout} s; got {text[-600:]!r}")
+        c = ser.read(256)
+        if c:
+            text += c.decode("utf-8", errors="replace")
     return text
 
 
-def send_line(ser, line: str) -> None:
-    """A command line in chunks with gaps: Linux's liteuart driver polls the 32-byte RX FIFO
-    on the timer tick (HZ 100), so a long line sent back to back could overrun it."""
+def send_line(ser, line: str) -> str:
+    """A command line at the shell's prompt in SEND_CHUNK-byte chunks, each sent once the
+    console has echoed the line up to it: Linux's liteuart driver polls the 32-byte RX FIFO on
+    the timer tick (HZ 100), so a long line sent back to back could overrun it, and the host's
+    clock doesn't say when its bytes reach the UART (the emulator's CLI hands what came while
+    the host had it descheduled to the UART at once). The LF's echo isn't waited for, and a
+    kernel line in the echo is skipped (read_until). Returns
+    what the console sent meanwhile, for the caller's reads; raises TimeoutError without the
+    echo."""
+    data = line + "\n"
+    text = ""
+    for i in range(0, len(data), SEND_CHUNK):
+        ser.write(data[i : i + SEND_CHUNK].encode())
+        ser.flush()
+        if i + SEND_CHUNK < len(data):
+            echo = data[: i + SEND_CHUNK]
+            try:
+                text = read_until(ser, echo, ECHO_TIMEOUT, text)
+            except TimeoutError as e:
+                raise TimeoutError(f"no echo of {echo!r} within {ECHO_TIMEOUT} s; got {text[-600:]!r}") from e
+    return text
+
+
+def type_line(ser, line: str) -> None:
+    """A line in SEND_CHUNK-byte chunks SEND_GAP_S apart, no echo awaited: after a paste,
+    whose lost bytes may have left a line open or its output still coming."""
     data = (line + "\n").encode()
-    for i in range(0, len(data), 8):
-        ser.write(data[i : i + 8])
+    for i in range(0, len(data), SEND_CHUNK):
+        ser.write(data[i : i + SEND_CHUNK])
         ser.flush()
         time.sleep(SEND_GAP_S)
 
@@ -117,10 +153,21 @@ def banner(image: bytes) -> str | None:
 
 def run_command(ser, cmd: str) -> str | None:
     """One command typed at the shell: what follows its echo up to the next prompt, None
-    without the echo."""
-    send_line(ser, cmd)
+    without the echo (a chunk's echo missing: the line is dropped with ^C, so the run goes on
+    to its next command). The kernel's lines in it are printed and left out of both."""
+    try:
+        text = send_line(ser, cmd)
+    except TimeoutError as e:
+        print(f"[WARN] {e}")
+        ser.write(CANCEL_LINE)
+        ser.flush()
+        read_until(ser, linux_checks.PROMPT, COMMAND_TIMEOUT)
+        return None
     # The echo, the reply and the next prompt can come in one read: read to the prompt
-    out = read_until(ser, linux_checks.PROMPT, COMMAND_TIMEOUT)
+    out = read_until(ser, linux_checks.PROMPT, COMMAND_TIMEOUT, text)
+    for line in linux_checks.KERNEL_LINE.findall(out):
+        print(line.rstrip())
+    out = linux_checks.without_kernel_lines(out)
     at = out.find(cmd)
     return None if at < 0 else out[at + len(cmd) :]
 
@@ -276,8 +323,7 @@ def vi(ser, times: dict[str, float], split: bool = True) -> list[str]:
         gap = 0.0
         try:
             t = time.monotonic()
-            send_line(ser, f"vi {path}")
-            read_until(ser, session.ready, COMMAND_TIMEOUT)
+            read_until(ser, session.ready, COMMAND_TIMEOUT, send_line(ser, f"vi {path}"))
             times[f"vi {session.name}: to its screen"] = time.monotonic() - t
             t = time.monotonic()
             for step in session.steps:
@@ -354,9 +400,9 @@ def paste(ser, pacer: vux_tool.Pacer | None) -> int:
     time.sleep(PASTE_SETTLE_S)
     # A line a lost LF left open runs first (an echo, or a command not found), so PASTE_DONE
     # is a line of its own
-    send_line(ser, "")
-    send_line(ser, linux_checks.PASTE_DONE)
-    out = read_until(ser, linux_checks.PASTE_DONE_OUT, COMMAND_TIMEOUT)
+    type_line(ser, "")
+    type_line(ser, linux_checks.PASTE_DONE)
+    out = linux_checks.without_kernel_lines(read_until(ser, linux_checks.PASTE_DONE_OUT, COMMAND_TIMEOUT))
     read_until(ser, linux_checks.PROMPT, COMMAND_TIMEOUT, out[out.index(linux_checks.PASTE_DONE_OUT) :])
     return sum(w in out for w in linux_checks.PASTE_WORDS)
 

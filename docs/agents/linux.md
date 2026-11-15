@@ -551,6 +551,17 @@ each use** (package `vux9k-bbtools`, `linux_workspace/userland/bbtools/`), in
   `/bin/sh` and a CR). `linux_checks.SCRIPT_COMMANDS` runs them (`test_script_command`;
   in `COMMANDS`, so `hw_linux.py` too; `test_ledctl_modes` the modes, whose sysmon lines come
   after the prompt: the emulator's only).
+- **Typing at the shell**: `hw_linux.py`'s command lines go 8 bytes at a time, each chunk once
+  the shell has echoed the line up to it (`send_line`): the host's clock doesn't say when its
+  bytes reach the UART. The emulator's CLI, descheduled on a busy CI host, once handed a
+  probe's queued chunks to the UART at once and lost its echo (`test_linux.py`'s
+  `test_board_script_with_emulator_stalls` stops the emulator while a line is typed). vi's
+  keys, the paste and the lines after it go by the host's clock. A kernel message can land in
+  the middle of an echo or a reply (random's `crng init done` at ~255 s of guest time, where the
+  emulator's run of the script is at its commands), so the script looks for echoes, prompts and
+  replies without lines of printk's `[ seconds.micro] ` form (`linux_checks.KERNEL_LINE`) and
+  prints those lines apart. A chunk whose echo doesn't come within `ECHO_TIMEOUT` fails that
+  command alone: `run_command` drops the line with ^C and the run goes on to the next.
 - **Pasting**: the UART's RX FIFO holds 32 bytes and the polled driver empties it every 10 ms,
   in which 115 bytes can arrive at 115200 bps: a paste sent back to back loses bytes. That is
   the SoC, not a bug, so nothing to pin as xfail: `test_paste` sends 208 bytes

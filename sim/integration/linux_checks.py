@@ -7,9 +7,16 @@ busybox's shell, and commands typed at the shell with what each must answer (one
 builtin, the others busybox or this tree's programs executed: FLAT, copied into RAM at each
 exec)."""
 
+import re
 from dataclasses import dataclass
 
 PROMPT = "/ # "
+# A kernel message on the console: printk's timestamp (`[%5lu.%06lu] `) to the end of its line,
+# which can start anywhere in what the shell prints, in the middle of a command line's echo too
+# (random's `crng init done` at ~255 s of guest time, where the board's test on the emulator
+# types its commands), so the pattern isn't anchored to a line's start. Only that form, so a
+# command's own output (none of COMMANDS' prints a timestamp) is left alone
+KERNEL_LINE = re.compile(r"\[ *\d+\.\d{6}\] [^\r\n]*\r?\n")
 # The system monitor init starts (linux_workspace/userland/init/), its name in ps
 SYSMON = "sysmon"
 SYSMON_PATH = "/usr/sbin/sysmon"
@@ -226,6 +233,11 @@ CARD_CLEANUP = (f"rm -r {SD_TEST_FILE} {TOOLS_DIR}", f"rm {VI_FILE}; sync", "umo
 # kernel's report on the console); the card is unmounted when its output lacks CARD_MOUNTED
 MOUNTS_PROBE = "exec 3</proc/mounts; while read l <&3; do echo $l; done; exec 3<&-"
 CARD_MOUNTED = " /mnt/sd "
+
+
+def without_kernel_lines(text: str) -> str:
+    """text without the kernel's lines (KERNEL_LINE) spliced into it."""
+    return KERNEL_LINE.sub("", text)
 
 
 def missing(out: str, wanted) -> list[str]:
