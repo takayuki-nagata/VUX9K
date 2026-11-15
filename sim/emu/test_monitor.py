@@ -3,8 +3,9 @@
 
 """tools/vux_tool.py's monitor (no board, no emulator): what the host types or pastes goes to
 the board PASTE_CHUNK bytes at a time, PASTE_GAP_MS apart (the board's 32-byte RX FIFO, which
-Linux's liteuart driver empties every 10 ms; sim/emu/test_linux.py's test_paste shows a paste
-sent back to back losing bytes and this pacing none), a key at once; the board's bare LFs reach
+Linux's liteuart driver empties every 10 ms: a paste sent back to back loses bytes, which is
+how the SoC is; sim/emu/test_linux.py's test_paste wants that as its control, and none lost with
+this pacing), a key at once; the board's bare LFs reach
 the terminal as CR LF, and vi's screen (cursor addressing, no bare LF) as it was sent. The
 monitor itself runs on a pseudo-terminal for stdin and a socket for the port."""
 
@@ -127,10 +128,23 @@ class FakePort:
 def test_monitor_paces_a_paste(monkeypatch, tmp_path):
     """The monitor on a pseudo-terminal: a 200-byte paste reaches the port in chunks of at
     most PASTE_CHUNK, PASTE_GAP_MS apart, in order; the board's output reaches the terminal
-    with its bare LFs as CR LF; Ctrl+] ends it."""
+    with its bare LFs as CR LF; Ctrl+] ends it. The gaps are checked on the times the monitor
+    gave its pacer, not on when the writes arrived: a loaded machine can't shorten them."""
     board, host = socket.socketpair()
     port = FakePort(host)
     monkeypatch.setattr(vux_tool, "open_port", lambda *a, **kw: port)
+    popped: list[tuple[float, bytes]] = []
+
+    class Recorded(vux_tool.Pacer):
+        """The monitor's pacer, with the time and bytes of each chunk it gave"""
+
+        def pop(self, now):
+            out = super().pop(now)
+            if out:
+                popped.append((now, out))
+            return out
+
+    monkeypatch.setattr(vux_tool, "Pacer", Recorded)
     master, slave = pty.openpty()
     monkeypatch.setattr(sys, "stdin", os.fdopen(slave, "rb", buffering=0))
     out_path = tmp_path / "terminal"
@@ -167,7 +181,8 @@ def test_monitor_paces_a_paste(monkeypatch, tmp_path):
     sent = port.writes[1:]
     assert b"".join(d for _, d in sent) == paste
     assert all(len(d) <= vux_tool.PASTE_CHUNK for _, d in sent), [len(d) for _, d in sent]
-    times = [t for t, _ in sent]
-    # The pacer's clock is taken just before each write: a little less than GAP between them
-    assert all(b - a >= GAP * 0.9 for a, b in zip(times, times[1:], strict=False)), times
+    # Each chunk as the pacer gave it, GAP apart on the monitor's clock (less a rounding)
+    assert [d for _, d in popped] == [d for _, d in sent]
+    times = [t for t, _ in popped]
+    assert all(b - a >= GAP - 1e-9 for a, b in zip(times, times[1:], strict=False)), times
     assert b"s2> ls\r\nVUX9K\r\n" in out_path.read_bytes()

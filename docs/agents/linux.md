@@ -553,14 +553,16 @@ each use** (package `vux9k-bbtools`, `linux_workspace/userland/bbtools/`), in
   after the prompt: the emulator's only).
 - **Pasting**: the UART's RX FIFO holds 32 bytes and the polled driver empties it every 10 ms,
   in which 115 bytes can arrive at 115200 bps: a paste sent back to back loses bytes. That is
-  the SoC, not a bug: `test_paste` records how many of 208 bytes (`linux_checks.PASTE_LINES`)
-  were dropped (`Soc.uart_rx_dropped`) and how many lines ran, printed by
-  `test_record_measurements`, and asserts none lost as `vux_tool.py monitor` sends them (its
-  `Pacer`: 16 bytes, 20 ms apart, `--paste-chunk`, `--paste-gap-ms`). It is the last test on a
-  boot: `send_paced` refuses a SoC that has dropped a byte. `hw_linux.py` does the same last,
-  after the card is unmounted (`[PASTE]` lines: the lines that came through, as the board has
-  no counter of dropped bytes; the paced paste must pass all of them). A lost LF can leave a
-  line open, so it types an empty line before `PASTE_DONE`.
+  the SoC, not a bug, so nothing to pin as xfail: `test_paste` sends 208 bytes
+  (`linux_checks.PASTE_LINES`) back to back and wants some dropped (`Soc.uart_rx_dropped` >
+  0, the control that shows the paste can lose bytes at all; the emulator is deterministic),
+  records how many and how many lines ran, printed by `test_record_measurements`, and asserts
+  none lost as `vux_tool.py monitor` sends them (its `Pacer`: 16 bytes, 20 ms apart,
+  `--paste-chunk`, `--paste-gap-ms`). It is the last test on a boot: `send_paced` refuses a
+  SoC that has dropped a byte. `hw_linux.py` does the same last, after the card is unmounted
+  (`[PASTE]` lines: the lines that came through, as the board has no counter of dropped bytes;
+  the paced paste must pass all of them, the one back to back is only recorded). A lost LF can
+  leave a line open, so it types an empty line before `PASTE_DONE`.
   Measured (2026-11-15, 63cd76b): back to back, the emulator dropped 171-176 of the 208 bytes
   and 1 of 8 lines came through, the board 2 of 8; paced, 8 of 8 on both, and on the board the
   `keys` session's arrow split 20 ms apart still read as one key through the USB bridge.

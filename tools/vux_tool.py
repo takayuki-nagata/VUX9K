@@ -293,7 +293,8 @@ def send_cmd_and_wait(ser, cmd_char, timeout=5.0, prompt=S1_PROMPT):
 # 115200 bps a byte takes 87 us, and the board's UART holds 32 in its RX FIFO, which Linux's
 # liteuart driver empties from a timer every jiffy (polled, HZ 100: every 10 ms, while 115 bytes
 # can arrive). A paste sent back to back loses what comes after the FIFO's first 32 bytes until
-# the next poll (sim/emu/test_linux.py's test_paste measures it). 16 bytes take 1.4 ms on the
+# the next poll: the SoC's, not a bug (sim/emu/test_linux.py's test_paste wants it lost there,
+# as its control, and records how much). 16 bytes take 1.4 ms on the
 # wire, and 20 ms from one chunk's start to the next leaves two polls per chunk: one poll late
 # by a tick still finds at most 32 bytes. 800 B/s, a 200-byte paste in 0.25 s. The gap stays
 # below busybox's 50 ms wait for an escape sequence's next byte (libbb/read_key.c), so an

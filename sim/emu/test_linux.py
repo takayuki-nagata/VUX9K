@@ -106,10 +106,12 @@ BAR = 0b011110
 # The card of test_card_with_read_waits: FF bytes before each data block's token beyond the one
 # the card always sends (sdcard::Faults::read_waits, one per block in turn), as a real card's
 # N(AC). mmc_spi reads 16 bytes per SPI message while it looks for the token
-# (linux_workspace/kernel/patches/0004-mmc-spi-token-search.patch); its first read starts at
-# that one FF, so the token is that read's byte wait + 1: before its last (13), its last (14),
-# the next read's first (15), the same at the second read's end (29-31) and the third's (46),
-# and early in the first (0, 1, 7).
+# (linux_workspace/kernel/patches/0004-mmc-spi-token-search.patch). For a single block
+# (CMD17) its first read starts at that one FF, so the token is that read's byte wait + 1;
+# for a multiple block read (CMD18) mmc_spi's early_status byte has taken the FF, so it is
+# byte wait, one byte earlier. As counted for CMD17: before its last (13), its last (14), the
+# next read's first (15), the same at the second read's end (29-31) and the third's (46), and
+# early in the first (0, 1, 7).
 READ_WAITS = (13, 14, 15, 0, 1, 29, 30, 31, 46, 7)
 # On that card, past the partition: REF_SECTORS of random data a dd copies through Linux to
 # as many sectors after them, which the test compares with the original
@@ -396,20 +398,22 @@ def test_page_cache_reclaim(linux):
     mark = len(soc.uart_received())
     command(linux, f"kill {sysmon_pid(linux)}")
     wait_console(linux, "sysmon: stopped", mark)
-    reads = 0
-    for line in RECLAIM_READS:
-        if not free_large(linux):
-            break
-        assert "256+0 records in" in command(linux, line)
-        reads += 1
     holders: list[int] = []
-    while free_large(linux) and len(holders) < RECLAIM_HOLDERS:
-        holders.append(background(linux, "sleep 600"))
-    buddyinfo = command(linux, linux_checks.MEM_PROBES[1])
-    seen = f"{reads} reads, {len(holders)} sleepers"
-    RECLAIM[linux.how] = seen
-    assert sum(linux_checks.parse_buddyinfo(buddyinfo)[RECLAIM_ORDER:]) == 0, f"{seen}: {buddyinfo}"
+    # From here on a failure still leaves the sleepers killed and a sysmon running, for the
+    # tests after this one
     try:
+        reads = 0
+        for line in RECLAIM_READS:
+            if not free_large(linux):
+                break
+            assert "256+0 records in" in command(linux, line)
+            reads += 1
+        while free_large(linux) and len(holders) < RECLAIM_HOLDERS:
+            holders.append(background(linux, "sleep 600"))
+        buddyinfo = command(linux, linux_checks.MEM_PROBES[1])
+        seen = f"{reads} reads, {len(holders)} sleepers"
+        RECLAIM[linux.how] = seen
+        assert sum(linux_checks.parse_buddyinfo(buddyinfo)[RECLAIM_ORDER:]) == 0, f"{seen}: {buddyinfo}"
         # No reclaim: nothing comes back
         mark = len(soc.uart_received())
         background(linux, f"sysmon -r 0 -v -n {2 * RECLAIM_EVERY}")
@@ -428,8 +432,8 @@ def test_page_cache_reclaim(linux):
     finally:
         if holders:
             command(linux, "kill " + " ".join(str(p) for p in holders))
-    # In place of init's, for the tests after this one
-    background(linux, linux_checks.SYSMON)
+        # In place of init's
+        background(linux, linux_checks.SYSMON)
     console = soc.uart_received().decode(errors="replace")
     lines = [ln for ln in console.splitlines() if "): drop_caches: " in ln]
     assert len(lines) == 1 and DROP_CACHES_QUIET in lines[0] and f"{linux_checks.SYSMON} (" in lines[0], lines
@@ -598,13 +602,16 @@ def paste(linux: Booted, pacer: vux_tool.Pacer | None) -> tuple[int, int]:
 def test_paste(linux):
     """A paste of 208 bytes at the shell (linux_checks.PASTE_LINES): back to back, the UART's
     32-byte RX FIFO, which the polled liteuart driver empties every 10 ms (HZ 100), drops
-    bytes, which is how the SoC is and only recorded here (test_record_measurements prints
-    it); as the monitor sends them (16 bytes, 20 ms apart), none, and every line's output.
-    The last test on a boot: send_paced refuses a SoC that has dropped a byte."""
+    bytes. That is how the SoC is, not a bug: the test wants some dropped there, the control
+    that shows the paste can lose bytes at all, and records how many (test_record_measurements
+    prints it). As the monitor sends them (16 bytes, 20 ms apart), none, and every line's
+    output. The last test on a boot: send_paced refuses a SoC that has dropped a byte."""
     n = len(linux_checks.PASTE_LINES)
     size = sum(len(line) + 1 for line in linux_checks.PASTE_LINES)
     dropped, whole = paste(linux, None)
     PASTE[f"{linux.how}: back to back"] = f"{dropped} of {size} B dropped, {whole} of {n} lines whole"
+    # The control: the emulator is deterministic, and drops 171-176 of the 208 B
+    assert dropped > 0, PASTE
     dropped, whole = paste(linux, vux_tool.Pacer())
     PASTE[f"{linux.how}: monitor's pacing"] = f"{dropped} of {size} B dropped, {whole} of {n} lines whole"
     assert dropped == 0 and whole == n, PASTE

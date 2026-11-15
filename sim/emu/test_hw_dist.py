@@ -354,7 +354,10 @@ def test_linux_script_pastes(monkeypatch):
     import linux_checks
 
     monkeypatch.setattr(hw_linux, "PASTE_SETTLE_S", 0.0)
-    monkeypatch.setattr(test_hardware.vux_tool, "PASTE_GAP_MS", 1)
+    # The monitor's chunks 1 ms apart (Pacer's default gap is bound when vux_tool loads, so
+    # the class itself is replaced)
+    pacer = test_hardware.vux_tool.Pacer
+    monkeypatch.setattr(test_hardware.vux_tool, "Pacer", lambda: pacer(gap=0.001))
     n = len(linux_checks.PASTE_LINES)
     pasted: dict[str, str] = {}
     assert hw_linux.pastes(PastePort(keep=64), pasted) == []
