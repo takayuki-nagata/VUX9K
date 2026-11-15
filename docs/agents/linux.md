@@ -558,22 +558,27 @@ each use** (package `vux9k-bbtools`, `linux_workspace/userland/bbtools/`), in
   after the card is unmounted (`[PASTE]` lines: the lines that came through, as the board has
   no counter of dropped bytes; the paced paste must pass all of them). A lost LF can leave a
   line open, so it types an empty line before `PASTE_DONE`.
+  Measured (2026-11-15, 63cd76b): back to back, the emulator dropped 171-176 of the 208 bytes
+  and 1 of 8 lines came through, the board 2 of 8; paced, 8 of 8 on both, and on the board the
+  `keys` session's arrow split 20 ms apart still read as one key through the USB bridge.
 
-## Speed (2026-11-01, emulator; 2026-11-11 and 2026-11-14, the board)
+## Speed (2026-11-01, emulator; 2026-11-11, 2026-11-14 and 2026-11-15, the board)
 
 With the SD card (2026-11-14, the board, 1bc6b3b's kernel, a 128 GB SDXC card): `linux` to
 `[LINUX]` (the 3.7 MB Image) 14.9 s, `[LINUX]` to the prompt 12.7 s (the emulator: 10.6 s; init
 waits for the real card's partition longer), the bitstream's load to the prompt 28.6 s. On the
 card: a 256 KB `dd` 15.1 s (the emulator 14.0 s), a write and `sync` 1.4 s, but the first exec
-of memprobe from it 9.6 s and the first `ls /mnt/sd/VUX9K` 3.2 s (the emulator 3.3 s and 0.9 s):
-a real card answers a read only after a wait (N(AC) bytes of FF), and mmc_spi searched for the
-data token one byte per SPI message, so small reads (FAT, directories, a cold exec) paid for
-the SPI core's per-message cost far more than on the emulator's card, which answers at once.
-These times are from before patches/0004-mmc-spi-token-search.patch, which reads 16 bytes per
-message ("The SD card"). On the emulator, a card with read waits (`test_card_with_read_waits`)
-shows the difference (its numbers with and without the patch are in "The SD card"); its times
-are in `test_linux.py`'s output under `read waits:`. `hw_linux.py`'s `[TIME]` lines give the
-board's: each command, each of the card's busyboxes' first exec, vi's sessions.
+of memprobe from it 9.6 s and the first `ls /mnt/sd/VUX9K` 3.2 s (the emulator 3.3 s and 0.9 s).
+patches/0004-mmc-spi-token-search.patch (16 bytes per message while it searches for the data
+token, "The SD card") halves a read-heavy command on the emulator's card with read waits, but
+on the board it changed little (2026-11-15, 63cd76b, the same card): memprobe's first exec
+8.4 s, the first `ls /mnt/sd/VUX9K` 3.4 s, the 256 KB `dd` 14.1 s. So this card doesn't make
+mmc_spi wait long for its tokens, and why its small reads are slower than the emulator's is
+still open. With 0004, the bitstream's load to the prompt 30.3 s (`linux` to `[LINUX]` 14.6 s,
+`[LINUX]` to the prompt 14.8 s); each card busybox's first exec 3.1-5.0 s (bbcalc 3.1, bbsort
+3.4, bbsed 3.6, bbedit 3.8, bbfiles 4.4, bbawk 4.7, bbgrep 5.0); the two pipes 2.6 s (with `{ }`)
+and 1.8 s; vi's screen 1.0 s. `hw_linux.py`'s `[TIME]` lines give these: each command, each of
+the card's busyboxes' first exec, vi's sessions.
 
 On the board (`make test-hw-linux-dist`, 1c8d685, three runs): the second stage's `linux` to
 its `[LINUX]` line (reading the 3.2 MB Image) 13.1 s, `[LINUX]` to busybox's prompt
