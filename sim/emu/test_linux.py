@@ -28,11 +28,14 @@ import math
 import os
 import random
 import re
+import select
 import shutil
+import signal
 import socket
 import subprocess
 import sys
 import threading
+import time
 from dataclasses import dataclass
 
 import pytest
@@ -74,6 +77,16 @@ LOAD_CYCLES = 3_000_000_000
 CARD_SECTORS = 16384
 # Wall-clock seconds for scripts/hw_linux.py on the emulator's CLI
 BOARD_SCRIPT_TIMEOUT_S = 1500
+# test_board_script_with_emulator_stalls: how long the emulator stays stopped at most on a
+# write while hw_linux.py types a line (8 bytes every 20 ms: a line of up to ~80 bytes reaches
+# the UART in one go), at most how many times, its own bound (the commands' and probes' ~3,300
+# bytes, a stop on every chunk the line's end isn't in: ~350 x 0.2 s more), and the line of
+# hw_linux.py's output at which the stops end (before vi: its keys and the paste go out by the
+# host's clock, not by echo)
+STALL_HOLD_S = 0.2
+STALL_MAX = 5000
+BOARD_SCRIPT_STALLED_TIMEOUT_S = BOARD_SCRIPT_TIMEOUT_S + 300
+STALL_UNTIL = "[INFO] the emulator: vi's split steps"
 
 MEASURED: dict[str, tuple[int, int, dict[str, int]]] = {}
 # The memory table of each boot path (linux_checks.memory), read right after the boot
@@ -665,20 +678,19 @@ def test_card_with_read_waits():
     assert linux.soc.sd_image()[dst : dst + len(ref)] == ref, "the copy differs"
 
 
-def test_board_script_on_the_emulator(tmp_path):
+def run_board_script(tmp_path, stall: bool = False) -> None:
     """scripts/hw_linux.py, the board's test, against the emulator's CLI at full speed
     (--speed 0; its times mean nothing then): a card with only the second stage, the
     kernel's files put on it in \\VUX9K\\LINUX\\, `reset` back to the first stage booting the
-    second, `linux`, the boot lines and the commands."""
+    second, `linux`, the boot lines and the commands. With stall, hw_linux.py talks to the CLI
+    through stall_proxy, which stops the emulator while it types the commands."""
     if not os.environ.get("VUX9K_LINUX_TEST"):
         pytest.skip("make test-linux-emu runs it (VUX9K_LINUX_TEST=1)")
     if not os.path.exists(os.path.join(LINUX_DIST, "MANIFEST.json")):
         pytest.skip(f"{LINUX_DIST} missing (make linux-dist)")
     img = tmp_path / "sd.img"
     img.write_bytes(vux_tool.build_fat32_image({"VUX9K/STAGE2.BIN": s1_env.stage2()}, part_sectors=CARD_SECTORS))
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
+    port = free_port()
     emu = subprocess.Popen(
         [EMU, "--tcp", str(port), "--sd", str(img), "--speed", "0"], cwd=REPO_ROOT, stderr=subprocess.PIPE, text=True
     )
@@ -694,29 +706,147 @@ def test_board_script_on_the_emulator(tmp_path):
                 listening.set()
 
     threading.Thread(target=drain, daemon=True).start()
+    stalling = threading.Event()
+    stalls = [0]
+    timeout = BOARD_SCRIPT_STALLED_TIMEOUT_S if stall else BOARD_SCRIPT_TIMEOUT_S
     try:
         assert listening.wait(30), f"the emulator did not listen: {''.join(log)[-2000:]}"
-        r = subprocess.run(
+        if stall:
+            port = stall_proxy(port, emu.pid, stalling, stalls)
+        script = subprocess.Popen(
             [
                 sys.executable,
+                "-u",  # its lines as it prints them: the stall's window follows them
                 os.path.join(REPO_ROOT, "scripts", "hw_linux.py"),
                 "--linux",
                 LINUX_DIST,
                 "--port",
                 f"socket://127.0.0.1:{port}",
             ],
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
+        )
+        out: list[str] = []
+        err: list[str] = []
+
+        def read_out():
+            assert script.stdout
+            for line in script.stdout:
+                out.append(line)
+                # From the boot's [LINUX] line to vi: the boot's commands and wait_large's probes
+                if line.startswith("[LINUX] "):
+                    stalling.set()
+                elif line.startswith(STALL_UNTIL):
+                    stalling.clear()
+
+        def read_err():
+            assert script.stderr
+            err.extend(script.stderr)
+
+        readers = [threading.Thread(target=f, daemon=True) for f in (read_out, read_err)]
+        for t in readers:
+            t.start()
+        try:
             # The Image's put and boot, then the card's busyboxes (~0.7 MB more to put, and
             # each one's first exec from the card)
-            timeout=BOARD_SCRIPT_TIMEOUT_S,
-        )
+            script.wait(timeout=timeout)
+        finally:
+            script.kill()
+            script.wait()
+        for t in readers:
+            t.join(10)
     finally:
+        stalling.clear()
+        try:
+            os.kill(emu.pid, signal.SIGCONT)
+        except ProcessLookupError:
+            pass
         emu.kill()
         emu.wait()
-    print(r.stdout[-3000:])
-    assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-2000:]
-    assert "[PUT] OK" in r.stdout and "Linux on the board: PASSED" in r.stdout
+    stdout = "".join(out)
+    print(stdout[-3000:])
+    if stall:
+        print(f"[INFO] the emulator stopped {stalls[0]} times")
+        assert stalls[0], f"the emulator was never stopped: {stdout[-3000:]}"
+    assert script.returncode == 0, stdout[-3000:] + "".join(err)[-2000:]
+    assert "[PUT] OK" in stdout and "Linux on the board: PASSED" in stdout
+
+
+def free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def stall_proxy(emu_port: int, pid: int, stalling: threading.Event, stalls: list[int]) -> int:
+    """A TCP port between hw_linux.py and the CLI on emu_port, whose pid it stops: while
+    stalling is set, the first write the host sends stops the emulator (SIGSTOP) until a line's
+    end (LF) has passed on or STALL_HOLD_S have gone by (SIGCONT), as a busy host that
+    deschedules the emulator would. What the host sent meanwhile waits in the socket, and the
+    CLI then hands it to the UART back to back. stalls[0] counts the stops (at most
+    STALL_MAX). Returns the port to connect to."""
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+
+    def serve():
+        host, _ = listener.accept()
+        listener.close()
+        emu = socket.create_connection(("127.0.0.1", emu_port))
+
+        def to_host():
+            try:
+                while data := emu.recv(4096):
+                    host.sendall(data)
+                host.shutdown(socket.SHUT_WR)
+            except OSError:  # either side gone: the test's end
+                pass
+
+        threading.Thread(target=to_host, daemon=True).start()
+        stopped = None  # when the emulator was stopped
+        try:
+            while True:
+                wait = None if stopped is None else max(0.0, stopped + STALL_HOLD_S - time.monotonic())
+                if not select.select([host], [], [], wait)[0]:
+                    os.kill(pid, signal.SIGCONT)
+                    stopped = None
+                    continue
+                data = host.recv(4096)
+                if not data:
+                    break
+                if stopped is None and stalling.is_set() and stalls[0] < STALL_MAX:
+                    os.kill(pid, signal.SIGSTOP)
+                    stopped = time.monotonic()
+                    stalls[0] += 1
+                emu.sendall(data)
+                if stopped is not None and b"\n" in data:
+                    os.kill(pid, signal.SIGCONT)
+                    stopped = None
+            emu.shutdown(socket.SHUT_WR)
+        except OSError:  # either side gone: the test's end, which sends SIGCONT itself
+            pass
+        finally:
+            if stopped is not None:
+                try:
+                    os.kill(pid, signal.SIGCONT)
+                except OSError:
+                    pass
+
+    threading.Thread(target=serve, daemon=True).start()
+    return listener.getsockname()[1]
+
+
+def test_board_script_on_the_emulator(tmp_path):
+    run_board_script(tmp_path)
+
+
+def test_board_script_with_emulator_stalls(tmp_path):
+    """The board's script as above, the emulator stopped while each command line is typed (up
+    to its LF or STALL_HOLD_S), from the boot's commands to vi: what the host typed meanwhile
+    then reaches the UART back to back, as on a busy CI host (a lost echo of a probe, CI run
+    43701558484). The script must not depend on the emulator keeping up with its host's clock."""
+    run_board_script(tmp_path, stall=True)
 
 
 def test_record_measurements(record_property, capsys):
