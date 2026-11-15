@@ -289,6 +289,66 @@ def send_cmd_and_wait(ser, cmd_char, timeout=5.0, prompt=S1_PROMPT):
     return buf
 
 
+# The monitor's pacing of what it sends to the board (--paste-chunk, --paste-gap-ms): at
+# 115200 bps a byte takes 87 us, and the board's UART holds 32 in its RX FIFO, which Linux's
+# liteuart driver empties from a timer every jiffy (polled, HZ 100: every 10 ms, while 115 bytes
+# can arrive). A paste sent back to back loses what comes after the FIFO's first 32 bytes until
+# the next poll (sim/emu/test_linux.py's test_paste measures it). 16 bytes take 1.4 ms on the
+# wire, and 20 ms from one chunk's start to the next leaves two polls per chunk: one poll late
+# by a tick still finds at most 32 bytes. 800 B/s, a 200-byte paste in 0.25 s. The gap stays
+# below busybox's 50 ms wait for an escape sequence's next byte (libbb/read_key.c), so an
+# arrow key's ESC [ A that a chunk's end splits is still one key to vi. The stages read
+# their UART as they wait for a key, as fast as it comes.
+PASTE_CHUNK = 16
+PASTE_GAP_MS = 20
+
+
+class Pacer:
+    """What the host types or pastes, sent at most `chunk` bytes at a time and `gap` seconds
+    from one chunk to the next; what fits in one chunk goes at once when the last one went
+    long enough ago (a key, an arrow key's escape sequence). chunk 0 or gap 0: everything at
+    once. The caller gives the time (time.monotonic(), the emulator's clock in the tests)."""
+
+    def __init__(self, chunk=PASTE_CHUNK, gap=PASTE_GAP_MS / 1000):
+        self.chunk = chunk
+        self.gap = gap
+        self.pending = bytearray()
+        self.last = None  # when the last chunk went
+
+    @property
+    def paced(self):
+        return self.chunk > 0 and self.gap > 0
+
+    def push(self, data):
+        self.pending += data
+
+    def wait(self, now):
+        """Seconds until the next chunk may go (0: now), None with nothing pending."""
+        if not self.pending:
+            return None
+        if self.last is None or not self.paced:
+            return 0.0
+        return max(0.0, self.last + self.gap - now)
+
+    def pop(self, now):
+        """The next chunk if it may go now, else b""."""
+        if self.wait(now) != 0.0:
+            return b""
+        n = self.chunk if self.paced else len(self.pending)
+        out = bytes(self.pending[:n])
+        del self.pending[:n]
+        self.last = now
+        return out
+
+
+def monitor_output(data):
+    """The board's output for the host's terminal: every bare LF as CR LF (the stages print
+    LF alone; Linux's tty turns LF into CR LF itself, ONLCR). Only a bare LF changes: busybox's
+    vi turns ONLCR off and moves its cursor with ESC [ row ; col H, never a bare LF, so its
+    screen reaches the terminal as it was sent."""
+    return data.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+
+
 def cmd_monitor(args):
     """Interactive Full-Duplex Serial Terminal Monitor"""
     ser = open_port(args.port, baudrate=args.baud, timeout=0.05)
@@ -306,12 +366,16 @@ def cmd_monitor(args):
     import termios
     import tty
 
+    pacer = Pacer(args.paste_chunk, args.paste_gap_ms / 1000)
     is_tty = sys.stdin.isatty()
     old_settings = None
     if is_tty:
         old_settings = termios.tcgetattr(sys.stdin)
+        # Raw: every key as it is typed (Enter as CR, which Linux's tty turns into LF, ICRNL,
+        # and vi takes as it is), Ctrl+C below
         tty.setraw(sys.stdin.fileno())
-        # Re-enable output post-processing on the terminal so bare \n triggers CR+LF
+        # Output post-processing on again, for this tool's own lines (monitor_output gives the
+        # board's bytes CR LF already)
         try:
             mode = termios.tcgetattr(sys.stdin)
             mode[1] |= termios.OPOST | termios.ONLCR
@@ -327,7 +391,9 @@ def cmd_monitor(args):
             if is_tty:
                 rlist.append(sys.stdin.fileno())
 
-            readable, _, _ = select.select(rlist, [], [], 0.05)
+            # Wake for the next chunk of a paste too
+            due = pacer.wait(time.monotonic())
+            readable, _, _ = select.select(rlist, [], [], 0.05 if due is None else min(0.05, due))
 
             if is_tty and sys.stdin.fileno() in readable:
                 key = os.read(sys.stdin.fileno(), 1024)
@@ -336,14 +402,17 @@ def cmd_monitor(args):
                 # Check for exit hotkeys (Ctrl+C: 0x03, Ctrl+]: 0x1D)
                 if b"\x03" in key or b"\x1d" in key:
                     break
-                ser.write(key)
+                pacer.push(key)
+
+            chunk = pacer.pop(time.monotonic())
+            if chunk:
+                ser.write(chunk)
                 ser.flush()
 
             if (ser.fileno() in readable) or (getattr(ser, "in_waiting", 0) > 0):
                 data = ser.read(getattr(ser, "in_waiting", 0) or 256)
                 if data:
-                    # Normalize all bare LFs to CRLF to avoid terminal staircase effect
-                    formatted = data.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+                    formatted = monitor_output(data)
                     if is_tty:
                         os.write(sys.stdout.fileno(), formatted)
                     else:
@@ -981,7 +1050,20 @@ def main():
     subparsers.add_parser("reset", help="Trigger FPGA hardware reset via openFPGALoader")
 
     # monitor
-    subparsers.add_parser("monitor", help="Open serial terminal monitor")
+    sub_mon = subparsers.add_parser("monitor", help="Open serial terminal monitor")
+    sub_mon.add_argument(
+        "--paste-chunk",
+        type=int,
+        default=PASTE_CHUNK,
+        help=f"bytes sent to the board at a time (default: {PASTE_CHUNK}; 0: all at once)",
+    )
+    sub_mon.add_argument(
+        "--paste-gap-ms",
+        type=float,
+        default=PASTE_GAP_MS,
+        help=f"ms from one chunk to the next, so a paste doesn't overrun the board's 32-byte RX FIFO "
+        f"(default: {PASTE_GAP_MS}; 0: no pacing)",
+    )
 
     # mkfat
     sub_fat = subparsers.add_parser("mkfat", help="Build a FAT32 SD card image file (one partition, 8.3 names)")

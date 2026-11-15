@@ -261,7 +261,10 @@ python3 tools/vux_tool.py run-app VUX9K/APPS/HACK.BIN
 # 5. Build a FAT32 card image, for the emulator (--sd), without a board
 python3 tools/vux_tool.py mkfat sd.img --file VUX9K/STAGE2.BIN=build/firmware/stage2/STAGE2.BIN
 
-# 6. Interactive Serial Monitor (115200 bps)
+# 6. Interactive Serial Monitor (115200 bps; Ctrl+] or Ctrl+C leaves it). What you type or
+#    paste goes to the board 16 bytes at a time, 20 ms apart (--paste-chunk, --paste-gap-ms;
+#    0: no pacing): Linux polls the UART's 32-byte RX FIFO every 10 ms, and a paste sent back
+#    to back loses bytes
 python3 tools/vux_tool.py monitor
 
 # 7. Trigger a hardware FPGA reset (openFPGALoader --reset: the FPGA reloads the bitstream

@@ -71,7 +71,9 @@ python3 tools/vux_tool.py run sd/VUX9K/STAGE2.BIN                 # start it wit
 it write itself to the card as `STAGE2.BIN`, keeping the previous one as `STAGE2.OLD`: when
 `STAGE2.BIN` is missing, broken or older than the first stage starts (v10, below), the first
 stage starts `STAGE2.OLD`. `run` is the RAM boot
-alone, for trying a second stage or recovering a card. `monitor` opens a plain terminal.
+alone, for trying a second stage or recovering a card. `monitor` opens a plain terminal
+(Ctrl+] leaves it); it sends what you type or paste 16 bytes at a time, 20 ms apart, as
+Linux reads the UART's 32-byte RX FIFO every 10 ms (`--paste-chunk`, `--paste-gap-ms`).
 
 The second stage is a file manager and launcher (`help` lists its commands; the README's
 "The second stage's prompt" describes them): `ls`, `cd`, `cat`, `hexdump`, `rm`, `mkdir`,
