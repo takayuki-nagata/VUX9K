@@ -5,27 +5,34 @@
 # pylib: the Python modules MPY imports (docs/agents/linux.md, "MicroPython"). They come to the
 # card as one archive with an 8.3 name, VUX9K/LINUX/PYLIB.TAR (the stages and mkfat write no
 # other names), which this extracts with their long names into VUX9K/LINUX/PYLIB/, MPY's path,
-# when the archive's PYLIB/VERSION (its last member) is not the one there: never by the files'
-# times, which a put leaves meaningless. /etc/profile sources it at the login shell's first
-# start in a boot; `pylib` by hand looks again. Nothing to do without the card or the archive.
-# A failure is reported and leaves no PYLIB/VERSION, so the next boot extracts again; it never
-# stops the boot. No exit and no other names than PYLIB_*, unset at the end: sourced, an exit
-# would end the login shell. Builtins but tar (the card's bbtar), rm and sync: this hush has
-# no $( ), so the archive's version goes through a file in the initramfs.
+# when the archive's version, written beside it as VUX9K/LINUX/PYLIB.VER, is not the
+# PYLIB/VERSION there (the archive's last member): never by the files' times, which a put
+# leaves meaningless. /etc/profile sources it at the login shell's first start in a boot (the
+# version in /run/pylib.ver marks it); `pylib` by hand looks again. Nothing to do without the
+# card, the archive or its PYLIB.VER. A failure is reported and leaves no PYLIB/VERSION, so the
+# next boot extracts again; it never stops the boot. No exit and no other names than PYLIB_*,
+# unset at the end: sourced, an exit would end the login shell. Builtins only while the
+# versions agree (every boot but the first after a change); then tar (the card's bbtar), rm
+# and sync.
 PYLIB_CARD=/mnt/sd/VUX9K/LINUX
-PYLIB_VER=/run/pylib.ver
-if [ -f $PYLIB_CARD/PYLIB.TAR ]; then
+if [ -f $PYLIB_CARD/PYLIB.TAR ] && [ -f $PYLIB_CARD/PYLIB.VER ]; then
 	PYLIB_NEW=
 	PYLIB_OLD=
-	tar -xOf $PYLIB_CARD/PYLIB.TAR PYLIB/VERSION >$PYLIB_VER
-	read PYLIB_NEW <$PYLIB_VER
+	read PYLIB_NEW <$PYLIB_CARD/PYLIB.VER
 	read PYLIB_OLD 2>/dev/null <$PYLIB_CARD/PYLIB/VERSION
+	echo "$PYLIB_NEW" >/run/pylib.ver
 	if [ -z "$PYLIB_NEW" ]; then
-		echo "pylib: no PYLIB/VERSION in PYLIB.TAR"
+		echo "pylib: no version in PYLIB.VER"
 	elif [ "$PYLIB_NEW" != "$PYLIB_OLD" ]; then
 		echo "pylib: extracting PYLIB.TAR"
 		rm -rf $PYLIB_CARD/PYLIB
-		if tar -xf $PYLIB_CARD/PYLIB.TAR -C $PYLIB_CARD && sync; then
+		PYLIB_OLD=
+		if tar -xf $PYLIB_CARD/PYLIB.TAR -C $PYLIB_CARD; then
+			read PYLIB_OLD 2>/dev/null <$PYLIB_CARD/PYLIB/VERSION
+			# An archive without that version (an empty one, or another than PYLIB.VER's)
+			[ "$PYLIB_OLD" = "$PYLIB_NEW" ] || echo "pylib: PYLIB.TAR is not version $PYLIB_NEW"
+		fi
+		if [ "$PYLIB_OLD" = "$PYLIB_NEW" ] && sync; then
 			echo "pylib: PYLIB.TAR extracted, version $PYLIB_NEW"
 		else
 			rm -f $PYLIB_CARD/PYLIB/VERSION
@@ -35,4 +42,4 @@ if [ -f $PYLIB_CARD/PYLIB.TAR ]; then
 	fi
 	unset PYLIB_NEW PYLIB_OLD
 fi
-unset PYLIB_CARD PYLIB_VER
+unset PYLIB_CARD

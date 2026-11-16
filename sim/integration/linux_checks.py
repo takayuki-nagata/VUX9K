@@ -62,7 +62,8 @@ BASE_COMMANDS = {
     "dd if=/dev/mmcblk0 of=/dev/null bs=4096 count=64": ("64+0 records in",),
 }
 # MicroPython on the card (docs/agents/linux.md, "MicroPython"): MPY, its modules extracted from
-# the card's PYLIB_TAR into MPY_LIB by the login shell's profile (pylib), which also sets
+# the card's PYLIB_TAR into MPY_LIB by the login shell's profile (pylib, when PYLIB_VER, the
+# archive's version, is not the one there), which also sets
 # MICROPYPATH; MPY's own path without it (a subshell that executes MPY in its place); bc_clone_py's
 # self-test from the card's .mpy; Python scripts on the card that the shell's echo writes (one
 # line each: hush's here-documents would show their own prompt), the first with arguments, one
@@ -73,6 +74,7 @@ BASE_COMMANDS = {
 # the board
 MPY_LIB = "/mnt/sd/VUX9K/LINUX/PYLIB"
 PYLIB_TAR = "VUX9K/LINUX/PYLIB.TAR"
+PYLIB_VER = "VUX9K/LINUX/PYLIB.VER"
 PYLIB_MODULES = tuple(f"{m}.mpy" for m in ("bc_clone", "bc_eval", "bc_math", "bc_parser", "bc_selftest"))
 # What the profile's pylib prints when it extracts PYLIB_TAR (nothing when it skips it)
 PYLIB_EXTRACTING = "pylib: extracting PYLIB.TAR"

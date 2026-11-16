@@ -148,7 +148,8 @@ class Booted:
 
 def card_programs() -> dict[str, bytes]:
     """make linux-dist's programs for the card (VUX9K/LINUX/BIN/) and MicroPython's modules'
-    archive (linux_checks.PYLIB_TAR), as its MANIFEST.json lists them."""
+    archive (linux_checks.PYLIB_TAR) with its version (PYLIB_VER), as its MANIFEST.json lists
+    them."""
     try:
         with open(os.path.join(LINUX_DIST, "MANIFEST.json")) as f:
             listed = json.load(f)["card_files"]
@@ -156,7 +157,7 @@ def card_programs() -> dict[str, bytes]:
         return {}
     progs = {}
     for rel in listed:
-        if rel.startswith("VUX9K/LINUX/BIN/") or rel == linux_checks.PYLIB_TAR:
+        if rel.startswith("VUX9K/LINUX/BIN/") or rel in (linux_checks.PYLIB_TAR, linux_checks.PYLIB_VER):
             with open(os.path.join(LINUX_DIST, rel), "rb") as f:
                 progs[rel] = f.read()
     return progs
@@ -745,11 +746,12 @@ def pylib_version() -> str:
 def test_pylib_extraction():
     """The login shell's profile and the card's pylib (docs/agents/linux.md, "MicroPython"),
     three boots (load_linux) to the prompt, each one's cycles recorded: a card without
-    PYLIB.TAR (pylib says nothing, the reference), a card with it (the first boot: extracted,
-    the modules there with their long names) and that card again after an umount (the
-    second: the archive's version read and found the same, nothing extracted). Then, at the
-    second's shell, a PYLIB.TAR that is no archive: pylib, sourced as the profile does, says
-    so, leaves the modules there, and the shell goes on."""
+    PYLIB.TAR and PYLIB.VER (pylib says nothing, the reference), a card with them (the first
+    boot: extracted, the modules there with their long names) and that card again after an
+    umount (the second: PYLIB.VER read and found the same as PYLIB/VERSION, nothing extracted,
+    no exec). Then, at the second's shell, pylib sourced as the profile does: with PYLIB.TAR no
+    archive and another version in PYLIB.VER it says so and leaves no PYLIB/VERSION; without
+    PYLIB.VER it does nothing; the shell goes on."""
     image, dtb = linux_files()
     if linux_checks.PYLIB_TAR not in card_programs():
         pytest.skip(f"{linux_checks.PYLIB_TAR} not in make linux-dist's tree")
@@ -763,7 +765,7 @@ def test_pylib_extraction():
         assert not linux_checks.missing(linux.boot, linux_checks.BOOT_LINES), linux.boot[-2000:]
         return linux
 
-    linux = booted(card(image, dtb, without=(linux_checks.PYLIB_TAR,)), labels[0])
+    linux = booted(card(image, dtb, without=(linux_checks.PYLIB_TAR, linux_checks.PYLIB_VER)), labels[0])
     assert "pylib:" not in linux.boot, linux.boot[-1500:]
     assert "no-ver" in command(linux, "[ -e /run/pylib.ver ] || echo no-ver")
 
@@ -778,7 +780,7 @@ def test_pylib_extraction():
 
     linux = booted(linux.soc.sd_image(), labels[2])
     assert "pylib:" not in linux.boot, linux.boot[-1500:]
-    # The profile's pylib ran: it read the archive's version, the extracted one's
+    # The profile's pylib ran: it read PYLIB.VER's version, the extracted one's
     out = command(linux, "read v </run/pylib.ver; echo v=$v")
     assert f"v={version}" in out, out
     out = command(linux, f"read v <{linux_checks.MPY_LIB}/VERSION; echo v=$v")
@@ -786,12 +788,20 @@ def test_pylib_extraction():
     out = command(linux, f"ls {linux_checks.MPY_LIB}")
     assert not linux_checks.missing(out, modules), out
 
+    pylib = ". /mnt/sd/VUX9K/LINUX/BIN/pylib; echo pylib-done"
     command(linux, f"echo junk > /mnt/sd/{linux_checks.PYLIB_TAR}")
+    command(linux, f"echo 0123456789abcdef > /mnt/sd/{linux_checks.PYLIB_VER}")
     assert wait_large(linux), f"no free block of order {RECLAIM_ORDER} for tar's exec"
-    out = command(linux, ". /mnt/sd/VUX9K/LINUX/BIN/pylib; echo pylib-done")
-    assert "pylib: no PYLIB/VERSION in PYLIB.TAR" in out and "pylib-done" in out, out
-    out = command(linux, f"ls {linux_checks.MPY_LIB}")
-    assert not linux_checks.missing(out, modules), out
+    out = command(linux, pylib)
+    assert linux_checks.PYLIB_EXTRACTING in out and "pylib: PYLIB.TAR not extracted" in out, out
+    assert "pylib-done" in out, out
+    out = command(linux, f"[ -e {linux_checks.MPY_LIB}/VERSION ] || echo no-version")
+    assert "no-version" in out, out
+    # Without PYLIB.VER: nothing, not even an exec
+    assert wait_large(linux), f"no free block of order {RECLAIM_ORDER} for rm's exec"
+    command(linux, f"rm /mnt/sd/{linux_checks.PYLIB_VER}")
+    out = command(linux, pylib)
+    assert "pylib:" not in out and "pylib-done" in out, out
 
 
 def run_board_script(tmp_path, stall: bool = False) -> None:
@@ -988,8 +998,8 @@ def test_record_measurements(record_property, capsys):
         for how, text in PASTE.items():
             print(f"  {how} paste: {text}")
             record_property(f"{how} paste", text)
-        # What pylib adds to the boot: its extraction at a card's first boot, its look at the
-        # archive at the next ones, each against the boot without the archive
+        # What pylib adds to the boot: its extraction at a card's first boot, its look at
+        # PYLIB.VER at the next ones, each against the boot without the archive
         ref = PYLIB_BOOTS.get("pylib: without PYLIB.TAR")
         for label, cycles in PYLIB_BOOTS.items():
             if ref is not None and cycles != ref:

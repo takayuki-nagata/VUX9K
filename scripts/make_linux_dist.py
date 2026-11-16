@@ -10,7 +10,8 @@ vux9k.dtb), laid out as they go on the card (VUX9K/LINUX/, where the second stag
 `linux` finds them by default), this tree's programs for the card (VUX9K/LINUX/BIN/, from
 buildroot's images/sd/, where its own packages install them: docs/agents/linux.md, "Userland
 packages"), MicroPython's modules as one archive for the card (VUX9K/LINUX/PYLIB.TAR, made here
-from images/pylib/: docs/agents/linux.md, "MicroPython"), and the kernel's .config. MANIFEST.json records the
+from images/pylib/, with its version beside it in VUX9K/LINUX/PYLIB.VER: docs/agents/linux.md,
+"MicroPython"), and the kernel's .config. MANIFEST.json records the
 commit, the kernel's and buildroot's versions and each card file's size and sha256 (a
 release's tag message carries the Image's, docs/RELEASING.md); SHA256SUMS covers every
 other file. CI uploads the tree as vux9k-linux-<sha> (docs/agents/linux.md).
@@ -55,7 +56,9 @@ BBTOOLS_PREFIX = SD_PREFIX + "bb"
 # files, which go to the card as one archive, PYLIB_TAR: the stages and mkfat write 8.3 names
 # only, and the modules' are longer. The login shell's profile extracts it into PYLIB_MEMBER/
 # beside it (linux_workspace/userland/scripts/pylib) when its PYLIB_VERSION, the last member,
-# is not the one there. An uncompressed ustar archive (the card's bbtar has no gzip), made
+# is not the one there. The same version is also a card file of its own, PYLIB_VER, which pylib
+# reads with the shell's builtins at every boot: reading it out of the archive would execute the
+# card's tar each time. An uncompressed ustar archive (the card's bbtar has no gzip), made
 # here with deterministic metadata: the names sorted, owner 0, no user or group names, the
 # same time on every member (TAR_MTIME, a day after FAT's epoch of 1980, which no time zone
 # puts before it), so the same modules give the same bytes.
@@ -63,6 +66,7 @@ PYLIB_SRC = os.path.join("images", "pylib")
 PYLIB_TAR = "VUX9K/LINUX/PYLIB.TAR"
 PYLIB_MEMBER = "PYLIB"
 PYLIB_VERSION = PYLIB_MEMBER + "/VERSION"
+PYLIB_VER = "VUX9K/LINUX/PYLIB.VER"
 TAR_MTIME = 315619200
 
 
@@ -178,7 +182,10 @@ def main():
     pylib = os.path.join(args.out, PYLIB_TAR)
     version = write_pylib_tar(pylib_files(args.buildroot_out), pylib)
     os.chmod(pylib, 0o644)
-    card = [*CARD_FILES, *bins, PYLIB_TAR]
+    with open(os.path.join(args.out, PYLIB_VER), "w") as f:
+        f.write(f"{version}\n")
+    os.chmod(os.path.join(args.out, PYLIB_VER), 0o644)
+    card = [*CARD_FILES, *bins, PYLIB_TAR, PYLIB_VER]
 
     manifest = {
         "git_sha": git("rev-parse", "HEAD"),
@@ -200,7 +207,8 @@ def main():
         f.write("\n")
 
     sums = [
-        f"{sha256(os.path.join(args.out, rel))}  {rel}" for rel in sorted([*FILES, *bins, PYLIB_TAR, "MANIFEST.json"])
+        f"{sha256(os.path.join(args.out, rel))}  {rel}"
+        for rel in sorted([*FILES, *bins, PYLIB_TAR, PYLIB_VER, "MANIFEST.json"])
     ]
     with open(os.path.join(args.out, "SHA256SUMS"), "w") as f:
         f.write("\n".join(sums) + "\n")

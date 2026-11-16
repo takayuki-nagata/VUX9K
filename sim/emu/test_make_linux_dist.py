@@ -3,9 +3,9 @@
 
 """scripts/make_linux_dist.py (make linux-dist) on fake make linux and buildroot outputs: the
 card's files (Image, the device tree, the programs buildroot's packages put in images/sd/ and
-the archive of MicroPython's modules made from images/pylib/) with their sizes and sha256 in
-MANIFEST.json and in SHA256SUMS, the build's sizes; the archive's members, metadata and
-version; refused when images/sd/ holds a file outside VUX9K/LINUX/BIN/ or a script with CR LF
+the archive of MicroPython's modules made from images/pylib/, its version beside it) with
+their sizes and sha256 in MANIFEST.json and in SHA256SUMS, the build's sizes; the archive's
+members, metadata and version; refused when images/sd/ holds a file outside VUX9K/LINUX/BIN/ or a script with CR LF
 lines, images/pylib/ anything but .mpy modules, or an input is missing. Needs no Linux build."""
 
 import hashlib
@@ -23,6 +23,7 @@ SCRIPT_FILE = b"#!/bin/sh\nexec awk 'END { print 1 }' /proc/meminfo\n"
 # Two compiled modules (package vux9k-micropython's images/pylib/), long names
 MODULES = {"bc_parser.mpy": b"M\x06\x00\x1fparser", "bc_selftest.mpy": b"M\x06\x00\x1fselftest"}
 PYLIB_TAR = "VUX9K/LINUX/PYLIB.TAR"
+PYLIB_VER = "VUX9K/LINUX/PYLIB.VER"
 
 
 def write(path, data: bytes):
@@ -77,6 +78,7 @@ def test_tree_with_the_cards_programs(tmp_path):
         "VUX9K/LINUX/BIN/memprobe",
         "VUX9K/LINUX/Image",
         PYLIB_TAR,
+        PYLIB_VER,
         "VUX9K/LINUX/vux9k.dtb",
     ]
     assert card["VUX9K/LINUX/BIN/memprobe"] == {"size": 4, "sha256": hashlib.sha256(b"M" * 4).hexdigest()}
@@ -118,8 +120,9 @@ def pylib_members(path) -> list[tarfile.TarInfo]:
 
 def test_pylib_archive(tmp_path):
     """VUX9K/LINUX/PYLIB.TAR: an uncompressed ustar archive of PYLIB/ with the modules under
-    their long names, PYLIB/VERSION last (MANIFEST.json's pylib_version), owner 0, no user or
-    group names, one fixed time; the same bytes from a second run."""
+    their long names, PYLIB/VERSION last (MANIFEST.json's pylib_version, and VUX9K/LINUX/PYLIB.VER
+    the same bytes), owner 0, no user or group names, one fixed time; the same bytes from a
+    second run."""
     linux, buildroot = fake_build(tmp_path)
     out = tmp_path / "out"
     assert run(linux, buildroot, out).returncode == 0
@@ -139,6 +142,8 @@ def test_pylib_archive(tmp_path):
         version = f.read()
     manifest = json.loads((out / "MANIFEST.json").read_text())
     assert version == manifest["pylib_version"].encode() + b"\n" and len(manifest["pylib_version"]) == 16
+    # What pylib reads at every boot without the card's tar
+    assert (out / PYLIB_VER).read_bytes() == version
     again = tmp_path / "again"
     assert run(linux, buildroot, again).returncode == 0
     assert (again / PYLIB_TAR).read_bytes() == data

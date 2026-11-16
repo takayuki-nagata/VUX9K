@@ -634,7 +634,8 @@ each use** (package `vux9k-bbtools`, `linux_workspace/userland/bbtools/`), in
   `VUX9K/LINUX/PYLIB.TAR`: uncompressed ustar, the members `PYLIB/`, the modules, then
   `PYLIB/VERSION` last (16 hex digits of a sha256 over the modules' names and contents,
   `MANIFEST.json`'s `pylib_version`), deterministic (names sorted, owner 0, no user or group
-  names, one time, 1980-01-02, on every member; `test_make_linux_dist.py`). An archive because
+  names, one time, 1980-01-02, on every member; `test_make_linux_dist.py`), and the same
+  version beside it as `VUX9K/LINUX/PYLIB.VER` (`linux_checks.PYLIB_VER`). An archive because
   **the card's files are written with 8.3 names only**: by `vux_tool.py mkfat` and by the second
   stage's `put`, which `hw_linux.py` uses, and both refuse other names, while an import needs the
   module's own (`bc_selftest.mpy`). Linux's vfat writes long names, so Linux extracts it. In
@@ -646,21 +647,30 @@ each use** (package `vux9k-bbtools`, `linux_workspace/userland/bbtools/`), in
   again whenever it exits). Not init: process 1 stays without helpers to run and wait for, as
   it was kept small on purpose ("Init"), and the profile runs after init has mounted the card,
   with its output on the console. Sourced, not executed, which saves an exec of busybox (order
-  6). pylib reads the archive's `PYLIB/VERSION` (`tar -xOf` into `/run/pylib.ver`, then hush's
-  `read`: this hush has no `$( )`) and compares it with `PYLIB/VERSION` on the card, **never the
-  files' times**, which a put leaves meaningless; when they differ it removes `PYLIB/`, extracts
-  the archive with the card's `tar` and syncs: `pylib: extracting PYLIB.TAR`, `pylib: PYLIB.TAR
-  extracted, version V` (`linux_checks.PYLIB_EXTRACTED`). A failure says `pylib: PYLIB.TAR not
-  extracted` or `pylib: no PYLIB/VERSION in PYLIB.TAR` and leaves no `PYLIB/VERSION` (an
-  extraction cut short too: it is the last member), so the next boot extracts again; the boot
-  goes on. No card, no archive or no pylib: nothing happens. `pylib` by hand looks again.
-  Every boot of a card runs the card's `tar` once (bbtar from the card) to read the version:
-  `test_linux.py`'s `test_pylib_extraction` boots a card without the archive, with it (the
-  first boot extracts) and the same card again (the second leaves it), and
+  6). pylib reads `PYLIB.VER` with hush's `read` (into `/run/pylib.ver` too, the profile's
+  mark) and compares it with `PYLIB/VERSION` on the card, **never the files' times**, which a
+  put leaves meaningless; when they differ it removes `PYLIB/`, extracts the archive with the
+  card's `tar`, checks that the extracted `PYLIB/VERSION` is `PYLIB.VER`'s and syncs: `pylib:
+  extracting PYLIB.TAR`, `pylib: PYLIB.TAR extracted, version V`
+  (`linux_checks.PYLIB_EXTRACTED`). A failure (tar's, or an archive of another version: `pylib:
+  PYLIB.TAR is not version V`) says `pylib: PYLIB.TAR not extracted` and leaves no
+  `PYLIB/VERSION` (an extraction cut short neither: it is the last member), so the next boot
+  extracts again; the boot goes on. No card, no archive, no `PYLIB.VER` or no pylib: nothing
+  happens. `pylib` by hand looks again. **The version is a card file of its own so that a boot
+  executes nothing**: reading it out of the archive (`tar -xOf`, as the first version did) ran
+  bbtar from the card at every boot, +3.4 s to the prompt (2026-11-16, the emulator: 13.3 s
+  without the archive, 16.7 s with it extracted already, 20.0 s at the first boot, which
+  extracts). `test_linux.py`'s `test_pylib_extraction` boots a card without the archive, with it
+  (the first boot extracts) and the same card again (the second leaves it), and
   `test_record_measurements` prints what each adds to the boot (`pylib: ... to the prompt`). The
   emulator's other boots and `hw_linux.py`'s are first boots of their card: their time to the
   prompt includes the extraction, and the memory table ("Memory budget") is read after it,
-  with its page cache.
+  with its page cache: bbtar's (~76 kB), the archive's (~32 kB) and the modules' written (~32
+  kB) by their sizes, with the FAT's blocks those reads and writes touched (`Buffers`) and the
+  slab of the new files (inodes, dentries, the vfat pages' buffer heads), not measured apart.
+  That accounts for much of MemFree's fall from 3,400 kB to 3,144 kB when MicroPython came (an
+  estimate); all of it but `/run/pylib.ver`'s page and the slab is clean cache that sysmon's
+  drop frees.
 - **tar is `bbtar`, a busybox of its own on the card** ("Text tools and vi"), not in the
   initramfs (RAM for good) and not in `bbfiles`: busybox counts tar at ~39 KB with every
   feature (the host's build of `bbtar.config`: ~17 KB of text over an empty busybox), and
