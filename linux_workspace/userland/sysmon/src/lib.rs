@@ -18,8 +18,8 @@
 //!
 //! Every [`RECLAIM_EVERY`] intervals it also reclaims the page cache when no large free block
 //! is left ([`Reclaim`]; docs/agents/linux.md, "Memory budget"): /proc/buddyinfo has no free
-//! block of `-o` (default [`RECLAIM_ORDER`], MPY's exec) or above (an exec copies the program
-//! into one such block, and noMMU has no compaction to make one), and /proc/meminfo's Cached
+//! block of `-o` (default [`RECLAIM_ORDER`], busybox's exec) or above (an exec copies the
+//! program into one such block, and noMMU has no compaction to make one), and /proc/meminfo's Cached
 //! is `-r` kB (default [`RECLAIM_CACHED_KB`]; `-r 0` turns it off) above the Cached its last
 //! drop left (the initramfs' pages and whatever else stays; before the first drop, any
 //! Cached), so it drops the clean page cache (/proc/sys/vm/drop_caches, `1`). A drop that
@@ -389,12 +389,15 @@ pub const REFRESH_INTERVALS: u32 = 10;
 /// "Memory budget"): 64 pages, 256 KB. A drop that brings back none of it (or of `-o`, if lower)
 /// is followed by RECLAIM_HOLDOFF.
 pub const BUSYBOX_ORDER: usize = 6;
-/// The order of the free block the reclaim keeps by default (`-o`): MPY's exec, 128 pages,
-/// 512 KB (docs/agents/linux.md, "MicroPython"). A drop may never bring one back (the pieces
-/// that split it can be another process's, not the page cache): the floor bounds what that
-/// costs, not a holdoff, since the exec that waited for the block a drop brought back holds it
-/// by the next look.
-pub const RECLAIM_ORDER: usize = 7;
+/// The order of the free block the reclaim keeps by default (`-o`): BUSYBOX_ORDER. Not MPY's
+/// exec, order 7 (docs/agents/linux.md, "MicroPython"): what splits the last order-7 block is
+/// mostly not the page cache (slab and kernel stacks pin its pageblock), so drops for it would
+/// cost the card's programs their cache and bring none back; the card's `python` drops the
+/// caches itself before MPY's exec when it needs to. `-o 7` keeps order 7 all the same. A drop
+/// may never bring back a block of an `-o` above BUSYBOX_ORDER (the pieces can be another
+/// process's): the floor bounds what that costs, not a holdoff, since the exec that waited for
+/// the block a drop brought back holds it by the next look.
+pub const RECLAIM_ORDER: usize = 6;
 /// The largest order /proc/buddyinfo shows (MAX_PAGE_ORDER, its 11 columns from 0)
 pub const MAX_ORDER: usize = 10;
 /// The Cached (kB) above its floor that a drop needs by default. The initramfs' ramfs pages

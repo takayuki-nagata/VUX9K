@@ -180,9 +180,10 @@ def test_kernel_lines():
 
 
 def test_reclaim_constants_are_sysmons():
-    """The orders the tests wait for and sysmon's look are sysmon's own (its src/lib.rs): the
-    least it keeps (BUSYBOX_ORDER), what it keeps by default (RECLAIM_ORDER, MPY's exec), every
-    how many intervals it looks and its default interval."""
+    """The order the tests wait for and sysmon's look are sysmon's own (its src/lib.rs): what it
+    keeps by default (RECLAIM_ORDER) is the least it keeps (BUSYBOX_ORDER), busybox's exec, not
+    MPY's (the launcher's: test_launcher_is_linux_checks); every how many intervals it looks and
+    its default interval."""
     lib = os.path.join(REPO_ROOT, "linux_workspace", "userland", "sysmon", "src", "lib.rs")
     with open(lib) as f:
         text = f.read()
@@ -193,7 +194,7 @@ def test_reclaim_constants_are_sysmons():
         return int(m.group(1))
 
     assert const("BUSYBOX_ORDER") == linux_checks.BUSYBOX_ORDER
-    assert const("RECLAIM_ORDER") == linux_checks.MPY_ORDER
+    assert const("RECLAIM_ORDER") == linux_checks.BUSYBOX_ORDER < linux_checks.MPY_ORDER
     assert const("RECLAIM_EVERY") == linux_checks.SYSMON_RECLAIM_EVERY
     m = re.search(r"interval_ms: (\d+),", text)
     assert m and int(m.group(1)) == linux_checks.SYSMON_INTERVAL_S * 1000

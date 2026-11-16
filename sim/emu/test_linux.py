@@ -121,11 +121,8 @@ RECLAIM_READS = tuple(f"dd if=/dev/mmcblk0 of=/dev/null bs=4096 count=256 skip={
 # The processes that hold the free blocks of BUSYBOX_ORDER and up that the reads left (each a
 # copy of busybox, one such block), at most
 RECLAIM_HOLDERS = 12
-# test_reclaim_for_mpy's MPY, and the MPYs that hold the free blocks of MPY_ORDER, at most
-# (test_python_without_a_block's too; MPY_HELD is what a holder prints once it runs, which its
-# command line doesn't hold)
-MPY_PROBE = 'MPY -c "print(6 * 7)"'
-MPY_HOLDER = 'MPY -c "import time; time.sleep(600)"'
+# test_python_without_a_block's MPYs that hold the free blocks of MPY_ORDER, at most; MPY_HELD
+# is what a holder prints once it runs, which its command line doesn't hold
 MPY_HELD = "held"
 MPY_HELD_HOLDER = "MPY -c \"import time; print('he' + 'ld'); time.sleep(600)\""
 MPY_HOLDERS = 4
@@ -139,10 +136,6 @@ DROP_CACHES = "echo 3 >/proc/sys/vm/drop_caches"
 # What MPY's exec without a block shows on the console (docs/agents/linux.md, "MicroPython"):
 # the kernel's dumps, nommu's and binfmt_flat's lines, the shell's name of the signal
 NO_BLOCK_SHOWN = ("page allocation failure", "Allocation of length", "Unable to allocate RAM", "SEGV")
-# test_reclaim_for_mpy's reads, 1 MB each, of blocks no test read before (RECLAIM_READS' cache
-# may still be there), until no free block of MPY_ORDER is left (the boot leaves an order-7 and
-# an order-8 one)
-MPY_RECLAIM_READS = tuple(f"dd if=/dev/mmcblk0 of=/dev/null bs=4096 count=256 skip={s}" for s in (1024, 1280, 1536))
 # The kernel's line for sysmon's write of 4 at its start, the one drop_caches line it prints
 DROP_CACHES_QUIET = "): drop_caches: 4"
 # How long a test waits for sysmon to give back a free block of BUSYBOX_ORDER (its interval is
@@ -570,9 +563,9 @@ def test_sysmon(linux):
 
 
 def test_page_cache_reclaim(linux):
-    """sysmon drops the page cache when the card's reads have left no free block of order 7
-    (MPY's exec; noMMU has no compaction: docs/agents/linux.md, "Memory budget"), and gives
-    back one of order 6 (busybox's) whatever it brings back of order 7. With no
+    """sysmon drops the page cache when the card's reads have left no free block of order 6
+    (busybox's exec; noMMU has no compaction: docs/agents/linux.md, "Memory budget"), and gives
+    one back. With no
     sysmon running (test_sysmon's last one stopped), 2 MB read from the card, and the free
     blocks of order 6 and up that are left taken by sleeping busyboxes (each dd and each sleep
     is an exec of busybox, which needs such a block itself: the reads can't leave none), none
@@ -624,66 +617,6 @@ def test_page_cache_reclaim(linux):
     lines = [ln for ln in console.splitlines() if "): drop_caches: " in ln]
     assert len(lines) == 1 and DROP_CACHES_QUIET in lines[0] and f"{linux_checks.SYSMON} (" in lines[0], lines
     assert "sysmon: cannot write /proc/sys/vm/drop_caches" not in console
-
-
-def test_reclaim_for_mpy(linux):
-    """sysmon keeps a free block of order 7 for MPY's exec (linux_checks.MPY_ORDER; docs/agents/
-    linux.md, "Memory budget") after the card's reads. With no sysmon running, reads from the
-    card (MPY_RECLAIM_READS) until none of order 7 is free; a sysmon with -r 0 leaves it so for
-    two of its looks; one with the reclaim says it dropped the page cache for order 7, a block
-    of order 7 is free again, and MPY runs in it. Then, with MPYs holding every free block of
-    order 7, what one more MPY shows is recorded (test_record_measurements)."""
-    soc = linux.soc
-    order = linux_checks.MPY_ORDER
-    mark = len(soc.uart_received())
-    command(linux, f"kill {sysmon_pid(linux)}")
-    wait_console(linux, "sysmon: stopped", mark)
-    holders: list[int] = []
-    try:
-        reads = 0
-        # Each dd is an exec of busybox: an order-7 block left is one of order 6 too
-        for line in MPY_RECLAIM_READS:
-            if not free_large(linux, order):
-                break
-            assert "256+0 records in" in command(linux, line)
-            reads += 1
-        buddyinfo = command(linux, linux_checks.MEM_PROBES[1])
-        key = f"{linux.how}, MPY"
-        RECLAIM[key] = seen = f"free blocks of order >= {order}: {reads} reads"
-        assert sum(linux_checks.parse_buddyinfo(buddyinfo)[order:]) == 0, f"{seen}: {buddyinfo}"
-        mark = len(soc.uart_received())
-        background(linux, f"sysmon -r 0 -v -n {2 * RECLAIM_EVERY}")
-        wait_console(linux, "sysmon: stopped", mark)
-        without = free_large(linux, order)
-        RECLAIM[key] = seen = f"{seen}; after sysmon -r 0 {without}"
-        assert without == 0, seen
-        mark = len(soc.uart_received())
-        background(linux, f"sysmon -v -n {2 * RECLAIM_EVERY}")
-        dropped = wait_console(linux, f"sysmon: dropped the page cache (no free block of order {order},", mark)
-        wait_console(linux, "sysmon: stopped", mark)
-        after = free_large(linux, order)
-        RECLAIM[key] = seen = f"{seen}, after sysmon's drop {after}"
-        assert after > 0, f"{seen}: {dropped[-300:]}"
-        out = command(linux, MPY_PROBE)
-        assert "42" in out and not any(e in out for e in EXEC_FAILED), out[-1500:]
-        # What MPY shows without a block for it (docs/agents/linux.md, "MicroPython"): MPYs
-        # sleeping in the background hold the free blocks of order 7 and up, each its own, then
-        # one more. Recorded, not held to a text: the allocator may still find a block (pages
-        # on its per-CPU lists, which buddyinfo doesn't count), and then it runs
-        while free_large(linux, order) and len(holders) < MPY_HOLDERS:
-            holders.append(background(linux, MPY_HOLDER))
-            # Its exec copies MPY into its block after the shell has gone on
-            soc.run(ms(2000))
-        out = command(linux, MPY_PROBE)
-        failed = any(e in out for e in EXEC_FAILED)
-        assert failed or "42" in out, out[-1500:]
-        shown = [ln.strip() for ln in out.splitlines()[1:] if ln.strip() and ln.strip() != PROMPT.strip()]
-        what = f"{len(shown)} lines, the last {shown[-2:]}" if failed else "ran"
-        RECLAIM[key] = f"{seen}; MPY with {len(holders)} MPYs holding the blocks: {what}"
-    finally:
-        if holders:
-            command(linux, "kill " + " ".join(str(p) for p in holders))
-        background(linux, linux_checks.SYSMON)
 
 
 @pytest.mark.parametrize("line", list(linux_checks.SCRIPT_COMMANDS))

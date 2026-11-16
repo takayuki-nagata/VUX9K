@@ -289,9 +289,9 @@ TOOL_BUSYBOXES = {
     "bbtar": ("tar",),
     "bbedit": ("vi", "less"),
 }
-# The order of the initramfs' busybox's exec (docs/agents/linux.md, "Memory budget"), the least
-# sysmon's reclaim of the page cache keeps (its BUSYBOX_ORDER; by default it keeps MPY_ORDER,
-# its RECLAIM_ORDER)
+# The order of the initramfs' busybox's exec (docs/agents/linux.md, "Memory budget"), which
+# sysmon's reclaim of the page cache keeps (its BUSYBOX_ORDER and RECLAIM_ORDER, -o's default;
+# not MPY_ORDER, which the launcher looks for itself)
 BUSYBOX_ORDER = 6
 # sysmon's interval (its -i default, seconds) and every how many intervals its reclaim looks
 # (linux_workspace/userland/sysmon/src/lib.rs: RECLAIM_EVERY; sim/emu/test_linux_checks.py
