@@ -227,9 +227,9 @@ def test_linux_script_reports_what_the_board_got_wrong(monkeypatch):
     console = f"[    0.000000] {version}\r\n" + "".join(f"{ln}\r\n" for ln in linux_checks.BOOT_LINES)
     replies = {cmd: " ".join(want) + "\r\n" for cmd, want in linux_checks.COMMANDS.items()}
     meminfo, buddyinfo = linux_checks.MEM_PROBES
-    heap = f"MPY {linux_checks.MPY_HEAP_PY}"
-    # Free blocks of order 6 and 7, which the text tools' and MicroPython's commands wait for;
-    # the heap's growth in mem_info's lines; the REPL's value
+    heap = f"{linux_checks.PYTHON} {linux_checks.MPY_HEAP_PY}"
+    # Free blocks of order 6, which the text tools' and MicroPython's launcher's commands wait
+    # for, and 7; the heap's growth in mem_info's lines; the REPL's value
     replies |= {
         meminfo: "MemTotal: 7960 kB\r\nMemFree: 3912 kB\r\n",
         buddyinfo: "Node 0, zone Normal 1 0 1 0 0 0 1 1\r\n",
@@ -265,11 +265,13 @@ def test_linux_script_reports_what_the_board_got_wrong(monkeypatch):
     assert len(got) == 1 and "not the tree's" in got[0], got
     got = failures(replies=replies | {"uname -a": "Linux (none) 6.0\r\n"})
     assert len(got) == 1 and got[0].startswith("uname -a: missing"), got
-    # MicroPython: a traceback, the heap grown by more than an order-5 block, no block of
-    # order 7 for its execs, the REPL's value missing
+    # MicroPython: a traceback, the launcher's refusal (no block for MPY), the heap grown by more
+    # than an order-5 block, the REPL's value missing
     selftest = next(c for c in linux_checks.MPY_COMMANDS if "bc_selftest" in c)
     got = failures(replies=replies | {selftest: replies[selftest] + "Traceback (most recent call last):\r\n"})
     assert len(got) == 1 and "'Traceback' in its output" in got[0], got
+    got = failures(replies=replies | {selftest: replies[selftest] + linux_checks.PYTHON_NO_BLOCK + "\r\n"})
+    assert len(got) == 1 and "no free 512 kB block" in got[0], got
     got = failures(replies=replies | {heap: "GC: total: 63936,\r\nGC: total: 260000,\r\n" + replies[heap]})
     assert len(got) == 1 and "more than 131,072 B at a time" in got[0], got
     got = failures(replies=replies | {">>> " + linux_checks.MPY_REPL_LINE: "3\r\n"})

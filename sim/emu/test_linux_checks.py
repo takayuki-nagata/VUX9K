@@ -8,6 +8,8 @@ read the real output with it."""
 
 import os
 import re
+import shutil
+import subprocess
 import sys
 
 import pytest
@@ -208,16 +210,22 @@ def test_uptime_probe():
 
 
 def test_mpy_commands():
-    """Which commands execute MPY (each waits for a block of MPY_ORDER first): its name as a
-    word, also after a subshell's parenthesis, not in a path or a script's text; every one of
-    them is checked for MPY_UNWANTED; the scripts are written before they run."""
+    """Which commands execute MPY, itself or by its launcher python (each waits for a block of
+    BUSYBOX_ORDER first, the launcher's shell's): its name as a word, also after a subshell's
+    parenthesis, not in a path or a script's text; every one of them is checked for
+    MPY_UNWANTED; the scripts are written before they run. All of MPY_COMMANDS' run it by the
+    launcher, the documented way."""
     assert linux_checks.runs_mpy('MPY -c "print(1)"')
-    assert linux_checks.runs_mpy('(unset MICROPYPATH; exec MPY -c "x")')
-    assert linux_checks.runs_mpy(f"MPY {linux_checks.MPY_HEAP_PY}")
+    assert linux_checks.runs_mpy('python -c "print(1)"')
+    assert linux_checks.runs_mpy('(unset MICROPYPATH; exec python -c "x")')
+    assert linux_checks.runs_mpy(f"python {linux_checks.MPY_HEAP_PY}")
     assert not linux_checks.runs_mpy(f'echo "import sys" > {linux_checks.MPY_ARGS_PY}')
     assert not linux_checks.runs_mpy("echo $MICROPYPATH")
     runs = [c for c in linux_checks.MPY_COMMANDS if linux_checks.runs_mpy(c)]
-    assert len(runs) == 6 and runs[0].startswith("MPY -c ")
+    assert len(runs) == 6 and runs[0].startswith("python -c ")
+    assert all("MPY" not in c.replace("(", " ").split() for c in runs), runs
+    assert linux_checks.MPY_REPL == linux_checks.PYTHON
+    assert linux_checks.problems(runs[0], linux_checks.PYTHON_NO_BLOCK) != []
     assert linux_checks.problems(runs[0], "Traceback (most recent call last):") != []
     assert linux_checks.problems("ls /", "Traceback") == []
     seen: set[str] = set()
@@ -247,3 +255,77 @@ def test_heap_problems():
     assert heap(info(63_936, 128_000)) != []
     # A step of more than an order-5 block (the cap's absence: the heap doubles)
     assert heap(info(63_936, 128_000, 260_000)) != []
+
+
+LAUNCHER = os.path.join(REPO_ROOT, "linux_workspace", "userland", "scripts", "python")
+SCRIPTS_MK = os.path.join(REPO_ROOT, "linux_workspace", "buildroot", "package", "vux9k-scripts", "vux9k-scripts.mk")
+
+
+def test_launcher_is_linux_checks():
+    """The card's python (package vux9k-scripts) has linux_checks' order, block size, message
+    and exit status; its message fits the console's 80 columns; it uses no command
+    substitution (this hush has none) and passes its arguments to MPY as they are."""
+    with open(LAUNCHER) as f:
+        text = f.read()
+    with open(SCRIPTS_MK) as f:
+        names = next(ln for ln in f if ln.startswith("VUX9K_SCRIPTS_NAMES = ")).split("=", 1)[1].split()
+    assert linux_checks.PYTHON in names
+    order = re.search(r"^ORDER=(\d+)$", text, re.M)
+    kb = re.search(r"^KB=(\d+)$", text, re.M)
+    assert order and int(order.group(1)) == linux_checks.MPY_ORDER
+    assert kb and int(kb.group(1)) == linux_checks.PAGE_KB << linux_checks.MPY_ORDER
+    said = re.search(r'^echo "(python: [^"]*)" >&2$', text, re.M)
+    assert said and said.group(1).replace("$KB", kb.group(1)) == linux_checks.PYTHON_NO_BLOCK
+    assert re.search(rf"^exit {linux_checks.PYTHON_NO_BLOCK_STATUS}$", text, re.M)
+    assert len(linux_checks.PYTHON_NO_BLOCK) < 80
+    code = [ln for ln in text.splitlines() if not ln.lstrip().startswith("#")]
+    assert not any("$(" in ln or "`" in ln for ln in code), code
+    assert 'exec $MPY "$@"' in text
+
+
+def launcher_on_the_host(tmp_path, buddyinfo: str, *args: str) -> tuple[subprocess.CompletedProcess, bool]:
+    """The launcher's logic run by the host's sh (not this hush) on a buddyinfo file, with a
+    fake MPY that prints its arguments and a file in drop_caches' place: the run, and whether
+    it wrote 3 there."""
+    with open(LAUNCHER) as f:
+        text = f.read()
+    paths = {
+        "/proc/buddyinfo": tmp_path / "buddyinfo",
+        "/proc/sys/vm/drop_caches": tmp_path / "drop_caches",
+        "/mnt/sd/VUX9K/LINUX/BIN/MPY": tmp_path / "MPY",
+    }
+    for real, fake in paths.items():
+        assert real in text, real
+        text = text.replace(real, str(fake))
+    (tmp_path / "buddyinfo").write_text(buddyinfo)
+    (tmp_path / "MPY").write_text('#!/bin/sh\necho "MPY $#"\nfor a in "$@"; do echo "[$a]"; done\n')
+    os.chmod(tmp_path / "MPY", 0o755)
+    (tmp_path / "python").write_text(text)
+    r = subprocess.run(["sh", str(tmp_path / "python"), *args], capture_output=True, text=True, timeout=10)
+    drop = tmp_path / "drop_caches"
+    dropped = drop.exists() and drop.read_text() == "3\n"
+    if drop.exists():
+        drop.unlink()
+    return r, dropped
+
+
+@pytest.mark.skipif(shutil.which("sh") is None, reason="no sh")
+def test_launcher_logic(tmp_path):
+    """The launcher's look at buddyinfo and its exec, on the host's sh: a free block of order 7
+    or above in any zone runs MPY with the arguments as they are (spaces, quotes; none for the
+    REPL) and drops nothing; none drops the caches, says PYTHON_NO_BLOCK on stderr and exits
+    with PYTHON_NO_BLOCK_STATUS, MPY not run."""
+    whole = "Node 0, zone   Normal      3     10      2      5      2      3      2      1      1      0      0 \n"
+    order_6 = "Node 0, zone   Normal      3     10      2      5      2      3      4      0      0      0      0 \n"
+    zones = "Node 0, zone      DMA 1 0 0 0 0 0 1 0 0 0 0\nNode 0, zone   Normal 0 0 0 0 0 0 0 0 0 0 1\n"
+    r, dropped = launcher_on_the_host(tmp_path, whole, "-c", "print('a b', \"c\")", "x y")
+    assert r.returncode == 0 and r.stdout == "MPY 3\n[-c]\n[print('a b', \"c\")]\n[x y]\n", r
+    assert not dropped
+    r, _ = launcher_on_the_host(tmp_path, whole)
+    assert r.returncode == 0 and r.stdout == "MPY 0\n", r
+    r, _ = launcher_on_the_host(tmp_path, zones, "s.py")
+    assert r.returncode == 0 and r.stdout == "MPY 1\n[s.py]\n", r
+    r, dropped = launcher_on_the_host(tmp_path, order_6, "-c", "x")
+    assert r.returncode == linux_checks.PYTHON_NO_BLOCK_STATUS, r
+    assert r.stdout == "" and r.stderr == linux_checks.PYTHON_NO_BLOCK + "\n", r
+    assert dropped

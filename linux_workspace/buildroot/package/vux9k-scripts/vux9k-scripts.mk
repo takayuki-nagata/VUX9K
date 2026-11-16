@@ -14,7 +14,7 @@ VUX9K_SCRIPTS_VERSION = 1.0
 VUX9K_SCRIPTS_SITE = $(BR2_EXTERNAL_VUX9K_PATH)/../userland/scripts
 VUX9K_SCRIPTS_SITE_METHOD = local
 VUX9K_SCRIPTS_LICENSE = MIT
-VUX9K_SCRIPTS_NAMES = ledctl meminfo pylib
+VUX9K_SCRIPTS_NAMES = ledctl meminfo pylib python
 
 # On the card only: the initramfs is RAM for good
 VUX9K_SCRIPTS_INSTALL_TARGET = NO

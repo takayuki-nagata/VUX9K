@@ -61,17 +61,21 @@ BASE_COMMANDS = {
     # The card's read speed (the command's time): 256 KB from the start of the card
     "dd if=/dev/mmcblk0 of=/dev/null bs=4096 count=64": ("64+0 records in",),
 }
-# MicroPython on the card (docs/agents/linux.md, "MicroPython"): MPY, its modules extracted from
-# the card's PYLIB_TAR into MPY_LIB by the login shell's profile (pylib, when PYLIB_VER, the
+# MicroPython on the card (docs/agents/linux.md, "MicroPython"), run by its launcher PYTHON (the
+# card's script python, which executes MPY with its arguments): its modules extracted from the
+# card's PYLIB_TAR into MPY_LIB by the login shell's profile (pylib, when PYLIB_VER, the
 # archive's version, is not the one there), which also sets MICROPYPATH; MPY's own path without
-# it (a subshell that executes MPY in its place); bc_clone_py's self-test from the card's .mpy;
-# Python scripts on the card that the shell's echo writes (one line each: hush's here-documents
-# would show their own prompt), the first with arguments, one writing an LED through the LED
-# class (MPY_LED, its trigger given back after), one growing the heap (MPY_HEAP_BYTES of
-# bytearrays, micropython.mem_info's `GC: total` every 8: heap_problems). Each exec of MPY
-# copies it into a block of order MPY_ORDER (its exec's ~512 KB), which the tests wait for first
-# (runs_mpy, RECLAIM_WAIT_S: sysmon's reclaim gives one back). Its first exec reads ~0.5 MB from
-# the card: MPY_TIMEOUT_S on the board
+# it (a subshell that executes the launcher in its place); bc_clone_py's self-test from the
+# card's .mpy; Python scripts on the card that the shell's echo writes (one line each: hush's
+# here-documents would show their own prompt), the first with arguments (one with a space and
+# quotes, through the launcher's "$@"), one writing an LED through the LED class (MPY_LED, its
+# trigger given back after), one growing the heap (MPY_HEAP_BYTES of bytearrays,
+# micropython.mem_info's `GC: total` every 8: heap_problems). Each exec of MPY copies it into a
+# free block of order MPY_ORDER (~512 KB); the launcher drops the caches when none is free, and
+# without one after that prints PYTHON_NO_BLOCK and exits with PYTHON_NO_BLOCK_STATUS, MPY not
+# run. The launcher is a #!/bin/sh script, an exec of busybox (BUSYBOX_ORDER) first, which the
+# tests wait for (runs_mpy). MPY's first exec reads ~0.5 MB from the card: MPY_TIMEOUT_S on the
+# board
 MPY_LIB = "/mnt/sd/VUX9K/LINUX/PYLIB"
 PYLIB_TAR = "VUX9K/LINUX/PYLIB.TAR"
 PYLIB_VER = "VUX9K/LINUX/PYLIB.VER"
@@ -80,7 +84,13 @@ PYLIB_MODULES = tuple(f"{m}.mpy" for m in ("bc_clone", "bc_eval", "bc_math", "bc
 PYLIB_EXTRACTING = "pylib: extracting PYLIB.TAR"
 PYLIB_EXTRACTED = "pylib: PYLIB.TAR extracted, version "
 MPY_VERSION = "MicroPython v1.29.0"
+PYTHON = "python"
+# The launcher's ORDER and KB, its message and exit status (sim/emu/test_linux_checks.py holds
+# them to the script)
 MPY_ORDER = 7
+PAGE_KB = 4
+PYTHON_NO_BLOCK = f"python: no free {PAGE_KB << MPY_ORDER} kB block for MicroPython; memory is fragmented, reboot"
+PYTHON_NO_BLOCK_STATUS = 75
 MPY_TIMEOUT_S = 180
 MPY_ARGS_PY, MPY_LED_PY, MPY_HEAP_PY = (f"/mnt/sd/{n}.PY" for n in ("ARGS", "LED", "HEAP"))
 MPY_LED = "led5"
@@ -88,8 +98,8 @@ MPY_HEAP_BYTES = 200 * 1024
 # The most the heap may grow by at a time: an order-5 block (vux9k_heap.c's VUX9K_SPLIT_MAX is
 # that less malloc's page), so that it leaves the larger blocks to the execs
 HEAP_STEP_MAX = 128 * 1024
-# What no MPY command may print
-MPY_UNWANTED = ("Traceback", "[FAIL]", "MemoryError")
+# What no MPY command may print (the launcher's refusal too)
+MPY_UNWANTED = ("Traceback", "[FAIL]", "MemoryError", PYTHON_NO_BLOCK)
 
 
 def echo_lines(path: str, lines: tuple[str, ...]) -> dict[str, tuple[str, ...]]:
@@ -98,14 +108,14 @@ def echo_lines(path: str, lines: tuple[str, ...]) -> dict[str, tuple[str, ...]]:
 
 
 MPY_COMMANDS = {
-    'MPY -c "import sys; print(sys.version)"': (MPY_VERSION,),
+    'python -c "import sys; print(sys.version)"': (MPY_VERSION,),
     "echo $MICROPYPATH": (MPY_LIB,),
     # The modules' long names, which mkfat and the stages can't write
     f"ls {MPY_LIB}": (*PYLIB_MODULES, "VERSION"),
-    '(unset MICROPYPATH; exec MPY -c "import sys; print(sys.path)")': (f"'{MPY_LIB}'",),
-    'MPY -c "import bc_selftest; bc_selftest.run()"': ("ALL BC SELF-TESTS PASSED",),
+    '(unset MICROPYPATH; exec python -c "import sys; print(sys.path)")': (f"'{MPY_LIB}'",),
+    'python -c "import bc_selftest; bc_selftest.run()"': ("ALL BC SELF-TESTS PASSED",),
     **echo_lines(MPY_ARGS_PY, ("import sys", "print('args', sys.argv[1:], 6 * 7)")),
-    f"MPY {MPY_ARGS_PY} x y": ("args ['x', 'y'] 42",),
+    f"python {MPY_ARGS_PY} x 'y \"z\"'": ("args ['x', 'y \"z\"'] 42",),
     **echo_lines(
         MPY_LED_PY,
         (
@@ -117,7 +127,7 @@ MPY_COMMANDS = {
             f"print('{MPY_LED}', b.strip())",
         ),
     ),
-    f"MPY {MPY_LED_PY}": (f"{MPY_LED} 1",),
+    f"python {MPY_LED_PY}": (f"{MPY_LED} 1",),
     f"echo mmc0 > /sys/class/leds/{MPY_LED}/trigger": (),
     **echo_lines(
         MPY_HEAP_PY,
@@ -131,11 +141,11 @@ MPY_COMMANDS = {
             "print('heap', len(l))",
         ),
     ),
-    f"MPY {MPY_HEAP_PY}": (f"heap {MPY_HEAP_BYTES // 1024}",),
+    f"python {MPY_HEAP_PY}": (f"heap {MPY_HEAP_BYTES // 1024}",),
 }
 # The REPL after MPY_COMMANDS (sim/emu/test_linux.py's test_mpy_repl, hw_linux.py's mpy_repl):
-# MPY alone, its banner and prompt, a line and its value, Ctrl-D back to the shell
-MPY_REPL = "MPY"
+# the launcher alone, MPY's banner and prompt, a line and its value, Ctrl-D back to the shell
+MPY_REPL = PYTHON
 MPY_REPL_PROMPT = ">>> "
 MPY_REPL_LINE = "1+1"
 MPY_REPL_OUT = "2"
@@ -143,8 +153,8 @@ MPY_REPL_EXIT = "\x04"
 
 
 def runs_mpy(cmd: str) -> bool:
-    """Whether the command executes MPY (and so needs a free block of MPY_ORDER)."""
-    return "MPY" in cmd.replace("(", " ").split()
+    """Whether the command executes MPY, itself or by its launcher PYTHON."""
+    return not {"MPY", PYTHON}.isdisjoint(cmd.replace("(", " ").split())
 
 
 def heap_totals(out: str) -> list[int]:
@@ -174,7 +184,7 @@ def problems(cmd: str, out: str) -> list[str]:
     found = []
     if runs_mpy(cmd):
         found += [f"{cmd}: {u!r} in its output" for u in MPY_UNWANTED if u in out]
-    if cmd == f"MPY {MPY_HEAP_PY}":
+    if cmd == f"{PYTHON} {MPY_HEAP_PY}":
         found += [f"{cmd}: {p}" for p in heap_problems(out)]
     return found
 
@@ -263,8 +273,8 @@ SCRIPT_COMMANDS = {
 }
 # What the board's scripts/hw_linux.py types, in this order; sim/emu/test_linux.py runs each
 # part with its own tests between. MicroPython's right after the boot's, where the boot's free
-# blocks of MPY_ORDER are; after the card's reads sysmon's reclaim gives one back (its
-# RECLAIM_ORDER is MPY_ORDER), which each exec of MPY waits for (runs_mpy)
+# blocks of MPY_ORDER are (the launcher's drop gives one back only if the page cache is what
+# split it)
 COMMANDS = BASE_COMMANDS | MPY_COMMANDS | LED_COMMANDS | TOOL_COMMANDS | PIPE_COMMANDS | SCRIPT_COMMANDS
 # The card's busyboxes and their applets (linux_workspace/userland/bbtools/<name>.config; the
 # table in docs/agents/linux.md, "Text tools and vi"): the board's test times each one's first
@@ -427,7 +437,6 @@ def cpu_ticks(stat: str) -> int:
 MEM_PROBES = tuple(
     f"exec 3<{path}; while read l <&3; do echo $l; done; exec 3<&-" for path in ("/proc/meminfo", "/proc/buddyinfo")
 )
-PAGE_KB = 4
 # The sizes' keys of the card's busyboxes (scripts/make_linux_dist.py's BBTOOLS_PREFIX: their
 # names on the card)
 BBTOOLS_PREFIX = "bb"

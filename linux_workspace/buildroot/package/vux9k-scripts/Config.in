@@ -4,4 +4,5 @@ config BR2_PACKAGE_VUX9K_SCRIPTS
 	  Sample shell scripts for the card
 	  (linux_workspace/userland/scripts/): meminfo, the free
 	  memory and its largest block; ledctl, the LEDs' triggers
-	  and sysmon's mode.
+	  and sysmon's mode; pylib, MicroPython's modules extracted
+	  from the card's archive; python, MicroPython's launcher.

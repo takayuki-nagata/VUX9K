@@ -195,6 +195,7 @@ one formatted without a partition table is refused). What VUX9K uses is in the d
 | `\VUX9K\APPS\` | Applications as VUX9 v4 files, started by the second stage's `run` (a release ships the demos as `sd/VUX9K/APPS/`) |
 | `\VUX9K\LINUX\Image`, `\VUX9K\LINUX\vux9k.dtb` | A noMMU Linux kernel and its device tree as `make linux` builds them (`build/linux/arch/riscv/boot/Image`, `build/linux/vux9k.dtb`), copied unchanged; the second stage's `linux` boots them (a release ships neither) |
 | `\VUX9K\LINUX\BIN\` | Programs for that Linux (`make linux-dist`'s `VUX9K/LINUX/BIN/`, e.g. `memprobe`, the text tools, MicroPython's `MPY`): the kernel mounts the card's partition on `/mnt/sd` and has this directory on the shell's `PATH` |
+| `\VUX9K\LINUX\BIN\python` | MicroPython's launcher for that Linux (a shell script): `python` (the REPL), `python FILE ARGS` or `python -c CODE` runs `MPY` with those arguments once a free 512 kB block of RAM is there for it, dropping the kernel's caches first when none is; with none even then it prints `python: no free 512 kB block for MicroPython; memory is fragmented, reboot` and exits with status 75 |
 | `\VUX9K\LINUX\PYLIB.TAR`, `\VUX9K\LINUX\PYLIB.VER` | MicroPython's modules for that Linux as one tar archive and its version (`make linux-dist`'s; the modules' names are longer than 8.3); Linux extracts it into `\VUX9K\LINUX\PYLIB\` at the first boot after `PYLIB.VER` changed, where `MPY` imports them from |
 
 The second stage reads FAT32 only, with 8.3 and long names (long names are read only, and
@@ -364,7 +365,9 @@ names: `vi` and `less`, `grep`/`egrep`, `sed`, `sort`/`uniq`/`cut`/`tr`/`tail`, 
 `find`/`xargs`/`diff`/`cmp`/`stty`. A tool's first run reads it from the card (seconds), later
 ones come from the page cache. Beside them are two sample shell scripts: `meminfo` (the free
 memory and its largest blocks) and `ledctl` (the LEDs' triggers, `ledctl led0 timer`, and
-sysmon's mode, `ledctl cpu|mem|load|off`). The login shell has `HOME=/mnt/sd`, `EDITOR=vi` and
+sysmon's mode, `ledctl cpu|mem|load|off`), and `python`, which runs MicroPython (`MPY`) when
+there is a free 512 kB block of RAM for it and says to reboot when the memory is too
+fragmented for one. The login shell has `HOME=/mnt/sd`, `EDITOR=vi` and
 `TERM=vt100`; vi writes LF lines. Type at the shell with `vux_tool.py monitor` (above): its
 pacing keeps a paste from overrunning the UART's RX FIFO and leaves vi's arrow keys whole;
 without it (`--paste-gap-ms 0`, or a terminal program sending at full speed) a paste of more

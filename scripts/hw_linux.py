@@ -70,11 +70,11 @@ BOOT_TIMEOUT = 180.0
 COMMAND_TIMEOUT = 60.0
 PUT_LINE_TIMEOUT = 30.0
 # The commands before which the test waits for a free block of linux_checks.BUSYBOX_ORDER (an
-# exec of busybox after the card's reads: sysmon's reclaim), as test_linux.py's tests of them do
+# exec of busybox after the card's reads: sysmon's reclaim), as test_linux.py's tests of them do;
+# so do the commands that run MicroPython's launcher (runs_mpy: a #!/bin/sh script, which finds
+# MPY's block itself or says it found none)
 WAIT_LARGE = frozenset((*linux_checks.TOOL_COMMANDS, *linux_checks.PIPE_COMMANDS, *linux_checks.SCRIPT_COMMANDS))
-# The command after which mpy_repl runs MicroPython's REPL (the last of MPY_COMMANDS); every
-# command that executes MPY waits for a free block of linux_checks.MPY_ORDER first (sysmon's
-# reclaim gives one back)
+# The command after which mpy_repl runs MicroPython's REPL (the last of MPY_COMMANDS)
 MPY_REPL_AFTER = list(linux_checks.MPY_COMMANDS)[-1]
 # send_line's chunk of a command line, sent once the one before has come back as echo, at most
 # ECHO_TIMEOUT after it (the shell echoes each key as it reads it)
@@ -179,8 +179,8 @@ def run_command(ser, cmd: str, timeout: float = COMMAND_TIMEOUT) -> str | None:
 
 
 def wait_large(ser, before: str, order: int = linux_checks.BUSYBOX_ORDER) -> str | None:
-    """Waits for a free block of order (BUSYBOX_ORDER: the next exec of busybox's; MPY_ORDER,
-    MPY's; sysmon gives one back after the card's reads; test_linux.py's wait_large), reading
+    """Waits for a free block of order (BUSYBOX_ORDER: the next exec of busybox's; sysmon gives
+    one back after the card's reads; test_linux.py's wait_large), reading
     /proc/buddyinfo with the shell's builtins, up to RECLAIM_WAIT_S of the guest's time by its
     /proc/uptime (on the emulator the host's clock runs ahead of it while the emulator is
     stopped) and RECLAIM_WAIT_WALL_S of the host's: the failure, None once one is free."""
@@ -249,7 +249,7 @@ def boot(
     for cmd, wanted in linux_checks.COMMANDS.items():
         mpy = linux_checks.runs_mpy(cmd)
         if cmd in WAIT_LARGE or mpy:
-            err = wait_large(ser, cmd, linux_checks.MPY_ORDER if mpy else linux_checks.BUSYBOX_ORDER)
+            err = wait_large(ser, cmd)
             if err:
                 failures.append(err)
         t = time.monotonic()
@@ -273,9 +273,10 @@ def boot(
 
 
 def mpy_repl(ser, times: dict[str, float]) -> list[str]:
-    """MicroPython's REPL (linux_checks.MPY_REPL): MPY alone, its banner up to the REPL's
-    prompt, a line and its value, Ctrl-D back to the shell's prompt; returns the failures."""
-    err = wait_large(ser, linux_checks.MPY_REPL, linux_checks.MPY_ORDER)
+    """MicroPython's REPL (linux_checks.MPY_REPL): its launcher alone, MPY's banner up to the
+    REPL's prompt, a line and its value, Ctrl-D back to the shell's prompt; returns the
+    failures."""
+    err = wait_large(ser, linux_checks.MPY_REPL)
     failures = [err] if err else []
     in_repl = False
     try:
@@ -283,7 +284,7 @@ def mpy_repl(ser, times: dict[str, float]) -> list[str]:
         text = send_line(ser, linux_checks.MPY_REPL)
         banner = read_until(ser, linux_checks.MPY_REPL_PROMPT, linux_checks.MPY_TIMEOUT_S, text)
         in_repl = True
-        times["MPY to the REPL's prompt"] = time.monotonic() - t
+        times["python to the REPL's prompt"] = time.monotonic() - t
         if linux_checks.MPY_VERSION not in banner:
             failures.append(f"the REPL's banner lacks {linux_checks.MPY_VERSION!r}: {banner[-300:]!r}")
         ser.write((linux_checks.MPY_REPL_LINE + "\r").encode())

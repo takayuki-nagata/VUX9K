@@ -10,9 +10,11 @@ second stage, booted by the first from the card, loads and starts with `linux`, 
 board. Each boots to busybox's shell on the console, then commands are typed at it
 (sim/integration/linux_checks.py, which the board's scripts/hw_linux.py checks too).
 
-On each boot, after the boot's commands: MicroPython from the card (linux_checks.MPY_COMMANDS:
-its modules, which the login shell's profile extracted from the card's PYLIB.TAR, bc_clone_py's
-self-test, scripts on the card, an LED, the heap's growth; then its REPL); after the other
+On each boot, after the boot's commands: MicroPython from the card through its launcher
+`python` (what it adds to MPY's run; linux_checks.MPY_COMMANDS: its modules, which the login
+shell's profile extracted from the card's PYLIB.TAR, bc_clone_py's self-test, scripts on the
+card, an LED, the heap's growth; then its REPL; then the launcher's refusal with MPYs holding
+the free blocks MPY's exec needs); after the other
 commands: the card's sample scripts, vi driven by its keys
 (linux_checks.VI_SESSIONS; the file then read from the card image) and, last, a paste at the
 shell, back to back (its dropped bytes recorded) and as vux_tool's monitor paces it (none).
@@ -106,6 +108,8 @@ RECLAIM: dict[str, str] = {}
 PASTE: dict[str, str] = {}
 # What test_pylib_extraction saw: each boot's cycles to the prompt, by its label
 PYLIB_BOOTS: dict[str, int] = {}
+# What the launcher python costs (test_python, test_python_without_a_block), per boot path
+LAUNCHER: dict[str, str] = {}
 # sysmon's reclaim (linux_workspace/userland/sysmon/src/lib.rs, BUSYBOX_ORDER, RECLAIM_EVERY):
 # the order of the initramfs' busybox's exec (the board's test waits for it too), and every how
 # many intervals it looks
@@ -118,9 +122,23 @@ RECLAIM_READS = tuple(f"dd if=/dev/mmcblk0 of=/dev/null bs=4096 count=256 skip={
 # copy of busybox, one such block), at most
 RECLAIM_HOLDERS = 12
 # test_reclaim_for_mpy's MPY, and the MPYs that hold the free blocks of MPY_ORDER, at most
+# (test_python_without_a_block's too; MPY_HELD is what a holder prints once it runs, which its
+# command line doesn't hold)
 MPY_PROBE = 'MPY -c "print(6 * 7)"'
 MPY_HOLDER = 'MPY -c "import time; time.sleep(600)"'
+MPY_HELD = "held"
+MPY_HELD_HOLDER = "MPY -c \"import time; print('he' + 'ld'); time.sleep(600)\""
 MPY_HOLDERS = 4
+# test_python's command, through the launcher and MPY itself
+PYTHON_PROBE = 'python -c "print(1 + 1)"'
+MPY_DIRECT_PROBE = 'MPY -c "print(1 + 1)"'
+# test_python_without_a_block's: what the launcher printed, and its exit status
+PYTHON_REFUSED = 'python -c "print(6 * 7)"; echo status=$?'
+# A shell's write to drop_caches, the launcher's own
+DROP_CACHES = "echo 3 >/proc/sys/vm/drop_caches"
+# What MPY's exec without a block shows on the console (docs/agents/linux.md, "MicroPython"):
+# the kernel's dumps, nommu's and binfmt_flat's lines, the shell's name of the signal
+NO_BLOCK_SHOWN = ("page allocation failure", "Allocation of length", "Unable to allocate RAM", "SEGV")
 # test_reclaim_for_mpy's reads, 1 MB each, of blocks no test read before (RECLAIM_READS' cache
 # may still be there), until no free block of MPY_ORDER is left (the boot leaves an order-7 and
 # an order-8 one)
@@ -267,29 +285,60 @@ EXEC_FAILED = ("page allocation failure", "Unable to allocate RAM")
 READS = 6
 
 
+def run_metered(linux: Booted, line: str) -> tuple[str, int]:
+    """command(), and the cycles it took."""
+    start = linux.soc.cycle
+    out = command(linux, line)
+    return out, linux.soc.cycle - start
+
+
+def test_python(linux):
+    """MicroPython's launcher python (linux_workspace/userland/scripts/python; docs/agents/
+    linux.md, "MicroPython") right after the boot's commands: `python -c` prints MPY's answer,
+    and what it adds to MPY's run, recorded for test_record_measurements: the launcher's run
+    with MPY read from the card, then the next one, against MPY itself (when a
+    free block of MPY_ORDER is left for it: MPY's exec trims its block, which may then not join
+    again; without one the launcher's drop is what gives one back)."""
+    order = linux_checks.MPY_ORDER
+    assert wait_large(linux), f"no free block of order {BUSYBOX_ORDER} for the launcher's shell"
+    runs = {}
+    for k in range(2):
+        out, runs[k] = run_metered(linux, PYTHON_PROBE)
+        assert not any(e in out for e in NO_BLOCK_SHOWN), out[-1500:]
+        assert "2" in [o.strip() for o in out.splitlines()], out[-1500:]
+    # The second from the page cache, unless the launcher found no block and dropped it
+    seen = f"python {runs[0]:,} cycles (MPY's first exec, from the card), {runs[1]:,} (the next)"
+    if free_large(linux, order):
+        out, direct = run_metered(linux, MPY_DIRECT_PROBE)
+        assert "2" in [o.strip() for o in out.splitlines()], out[-1500:]
+        seen += f"; MPY itself {direct:,}: the launcher adds {runs[1] - direct:,} ({(runs[1] - direct) / CLK_HZ:.2f} s)"
+    else:
+        seen += f"; no free block of order {order} left for MPY itself"
+    LAUNCHER[linux.how] = seen
+
+
 @pytest.mark.parametrize("line", list(linux_checks.MPY_COMMANDS))
 def test_mpy_command(linux, line):
     """MicroPython on the card (linux_checks.MPY_COMMANDS; docs/agents/linux.md,
-    "MicroPython"), right after the boot's commands: each exec of MPY waits for a free block of
-    MPY_ORDER first (wait_large), which sysmon's reclaim gives back once the card's reads and
-    MPY's own execs have broken the boot's ones. The LED script lights MPY_LED on the GPIO
-    register."""
+    "MicroPython") through its launcher, right after the boot's commands: each command that runs
+    it waits for a free block of BUSYBOX_ORDER first (wait_large), the launcher's shell's; the
+    launcher finds MPY's. The LED script lights MPY_LED on the GPIO register."""
     if linux_checks.runs_mpy(line):
-        assert wait_large(linux, linux_checks.MPY_ORDER), f"no free block of order {linux_checks.MPY_ORDER} for MPY"
+        assert wait_large(linux), f"no free block of order {BUSYBOX_ORDER} for the launcher"
     out = command(linux, line)
     assert not any(e in out for e in EXEC_FAILED), out[:600]
     assert not linux_checks.missing(out, linux_checks.MPY_COMMANDS[line]), out[-1500:]
     assert not linux_checks.problems(line, out), out[-1500:]
-    if line == f"MPY {linux_checks.MPY_LED_PY}":
+    if line == f"{linux_checks.PYTHON} {linux_checks.MPY_LED_PY}":
         n = int(linux_checks.MPY_LED.removeprefix("led"))
         assert linux.soc.leds & (1 << n), hex(linux.soc.leds)
 
 
 def test_mpy_repl(linux):
-    """MicroPython's REPL: MPY alone, its banner and prompt, 1+1, and Ctrl-D back to the shell;
-    on a failure Ctrl-C (and Ctrl-D once in the REPL) for the tests after this one."""
+    """MicroPython's REPL: the launcher alone, MPY's banner and prompt, 1+1, and Ctrl-D back to
+    the shell; on a failure Ctrl-C (and Ctrl-D once in the REPL) for the tests after this one."""
     soc = linux.soc
-    assert wait_large(linux, linux_checks.MPY_ORDER), f"no free block of order {linux_checks.MPY_ORDER} for MPY"
+    assert wait_large(linux), f"no free block of order {BUSYBOX_ORDER} for the launcher"
     repl_prompt = linux_checks.MPY_REPL_PROMPT.encode()
     in_repl = False
     try:
@@ -297,7 +346,7 @@ def test_mpy_repl(linux):
         meter = Meter(soc, MEASURED)
         send_paced(soc, f"{linux_checks.MPY_REPL}\n".encode())
         banner = wait_for(soc, repl_prompt, timeout_cycles=COMMAND_CYCLES, start=start)
-        meter.done(f"{linux.how}: MPY to the REPL's prompt")
+        meter.done(f"{linux.how}: python to the REPL's prompt")
         in_repl = True
         assert linux_checks.MPY_VERSION in banner, banner[-1500:]
         start = len(soc.uart_received())
@@ -312,6 +361,62 @@ def test_mpy_repl(linux):
         send_paced(soc, b"\x03" + (linux_checks.MPY_REPL_EXIT.encode() if in_repl else b""))
         wait_for(soc, PROMPT, timeout_cycles=COMMAND_CYCLES, start=start)
         raise
+
+
+def test_python_without_a_block(linux):
+    """The launcher's refusal (docs/agents/linux.md, "MicroPython"): with no free block of
+    MPY_ORDER, even after a drop of the caches, `python -c` prints PYTHON_NO_BLOCK, exits with
+    PYTHON_NO_BLOCK_STATUS and doesn't run MPY, so none of NO_BLOCK_SHOWN is on the console.
+    MPYs sleeping in the background (MPY_HELD_HOLDER, at most MPY_HOLDERS) hold the free blocks
+    of MPY_ORDER and up, each its own; once none is left, the shell drops the caches as the
+    launcher would (DROP_CACHES) and looks again, a holder more for a block that brings back.
+    So the launcher's own drop finds only what was allocated after that, which can't make a
+    block: every aligned block of MPY_ORDER pages held an allocated page at the last look (one
+    with all of its pages free is a free block of its order), and those pages are the
+    holders', the kernel's and the initramfs', none of them dropped. The holders are killed
+    whatever happens, for the tests after this one; the launcher's run and the drop are
+    recorded (test_record_measurements)."""
+    soc = linux.soc
+    order = linux_checks.MPY_ORDER
+    holders: list[int] = []
+    try:
+        drop = 0
+        # A holder per free block, a drop when none is left: at most a drop after each holder
+        for _ in range(2 * MPY_HOLDERS + 2):
+            if free_large(linux, order):
+                assert len(holders) < MPY_HOLDERS, f"{len(holders)} MPYs and still a free block of order {order}"
+                mark = len(soc.uart_received())
+                holders.append(background(linux, MPY_HELD_HOLDER))
+                # Its exec reads MPY from the card when a drop has gone before it
+                wait_console(linux, MPY_HELD, mark)
+                continue
+            _, cycles = run_metered(linux, DROP_CACHES)
+            drop = drop or cycles
+            # The dentries' and inodes' memory is freed after an RCU grace period
+            soc.run(ms(100))
+            if not free_large(linux, order):
+                break
+        buddyinfo = command(linux, linux_checks.MEM_PROBES[1])
+        free = linux_checks.parse_buddyinfo(buddyinfo)
+        assert sum(free[order:]) == 0, f"{len(holders)} MPYs: {buddyinfo}"
+        assert sum(free[BUSYBOX_ORDER:]) > 0, f"no free block of order {BUSYBOX_ORDER} for the launcher: {buddyinfo}"
+        mark = len(soc.uart_received())
+        out, cycles = run_metered(linux, PYTHON_REFUSED)
+        console = soc.uart_received()[mark:].decode(errors="replace")
+        assert linux_checks.PYTHON_NO_BLOCK in out, out[-1500:]
+        assert f"status={linux_checks.PYTHON_NO_BLOCK_STATUS}" in out, out[-1500:]
+        assert "42" not in out, out[-1500:]
+        assert not any(e in console for e in NO_BLOCK_SHOWN), console[-3000:]
+        LAUNCHER[f"{linux.how}, refused"] = (
+            f"{len(holders)} MPYs holding the blocks; the shell's drop of the caches {drop:,} cycles"
+            f" ({drop / CLK_HZ:.2f} s), the launcher's refusal (an exec of busybox, a look, its drop, two"
+            f" more looks) {cycles:,} cycles ({cycles / CLK_HZ:.2f} s)"
+        )
+    finally:
+        if holders:
+            command(linux, "kill " + " ".join(str(p) for p in holders))
+            # Their exits free their blocks
+            soc.run(ms(1000))
 
 
 def test_exec_after_card_reads(linux):
@@ -1046,7 +1151,7 @@ def test_board_script_with_emulator_stalls(tmp_path):
 
 def test_record_measurements(record_property, capsys):
     """Asserts nothing about speed: prints what the tests above measured (run last)."""
-    if not MEASURED and not MEMORY and not SYSMON_CPU and not RECLAIM and not PASTE and not PYLIB_BOOTS:
+    if not (MEASURED or MEMORY or SYSMON_CPU or RECLAIM or PASTE or PYLIB_BOOTS or LAUNCHER):
         pytest.skip("nothing measured")
     with capsys.disabled():
         print(f"\nnoMMU Linux on the emulator (18 MHz: {CLK_HZ:,} cycles a second)")
@@ -1064,6 +1169,9 @@ def test_record_measurements(record_property, capsys):
         for how, text in RECLAIM.items():
             print(f"  {how}: sysmon's reclaim: {text}")
             record_property(f"{how}: reclaim", text)
+        for how, text in LAUNCHER.items():
+            print(f"  {how}: the launcher python: {text}")
+            record_property(f"{how}: python", text)
         for how, text in PASTE.items():
             print(f"  {how} paste: {text}")
             record_property(f"{how} paste", text)
