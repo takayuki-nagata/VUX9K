@@ -367,7 +367,8 @@ ones come from the page cache. Beside them are two sample shell scripts: `meminf
 memory and its largest blocks) and `ledctl` (the LEDs' triggers, `ledctl led0 timer`, and
 sysmon's mode, `ledctl cpu|mem|load|off`), and `python`, which runs MicroPython (`MPY`) when
 there is a free 512 kB block of RAM for it and says to reboot when the memory is too
-fragmented for one. The login shell has `HOME=/mnt/sd`, `EDITOR=vi` and
+fragmented for one (run it as a command of its own: in a subshell `( ... )` or a pipeline
+`... | python` the extra shells take that memory). The login shell has `HOME=/mnt/sd`, `EDITOR=vi` and
 `TERM=vt100`; vi writes LF lines. Type at the shell with `vux_tool.py monitor` (above): its
 pacing keeps a paste from overrunning the UART's RX FIFO and leaves vi's arrow keys whole;
 without it (`--paste-gap-ms 0`, or a terminal program sending at full speed) a paste of more

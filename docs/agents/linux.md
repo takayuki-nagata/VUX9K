@@ -771,8 +771,22 @@ each use** (package `vux9k-bbtools`, `linux_workspace/userland/bbtools/`), in
   busybox reads from the card sooner. Uncompressed (no gzip or bzip2), with `-c`.
 - **`MICROPYPATH`**: the profile exports `/mnt/sd/VUX9K/LINUX/PYLIB` (`linux_checks.MPY_LIB`),
   and MPY's own default path (`MICROPY_PY_SYS_PATH_DEFAULT` in the variant) is the same, for a
-  program not started from the login shell: `MPY_COMMANDS` runs the launcher in a subshell that
-  unsets it. Change them together.
+  program not started from the login shell: `MPY_COMMANDS` unsets it in the login shell, runs
+  the launcher and exports the profile's value again. Change them together.
+- **Run `python` from the prompt, not from a subshell or a pipeline**: the launcher's look at
+  `/proc/buddyinfo` is conservative, it sees the memory as it is while the shells that started
+  it hold their busyboxes. The login hush holds one (order 6) and the launcher's `/bin/sh`
+  another; noMMU's hush executes busybox again for a subshell or a pipe's builtins ("Text tools
+  and vi"), so `( unset X; exec python ... )`, `{ ...; python ...; }`, `echo ... | python` and
+  `python ... | grep ...` (the pipe's other stage needs its block beside the launcher's) all
+  take blocks the launcher's MPY could have had, and are refused (`PYTHON_NO_BLOCK`) where the
+  same `python` typed alone runs. In a script, run it as a command of its own; to change its
+  environment, `unset`/`export` around it (or `VAR=value python ...`), not a subshell. The
+  first form was `MPY_COMMANDS`' default-path check until it was refused on the emulator
+  (2026-11-16, `test_mpy_command` after the second stage and the plain board-script run, the
+  same command passing after `load_linux`): the launcher looked three times, its drop of the
+  caches between, and found no order-7 block, while every other `python` command of the run
+  found one.
 - **The tests**: `linux_checks.MPY_COMMANDS` (the emulator's `test_mpy_command`, the board's
   `hw_linux.py`), each through the launcher: the version, `MICROPYPATH` and the default path,
   the modules' long names, bc_clone_py's self-test (`ALL BC SELF-TESTS PASSED`, no `[FAIL]` and

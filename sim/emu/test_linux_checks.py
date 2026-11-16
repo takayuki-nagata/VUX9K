@@ -215,16 +215,19 @@ def test_mpy_commands():
     BUSYBOX_ORDER first, the launcher's shell's): its name as a word, also after a subshell's
     parenthesis, not in a path or a script's text; every one of them is checked for
     MPY_UNWANTED; the scripts are written before they run. All of MPY_COMMANDS' run it by the
-    launcher, the documented way."""
+    launcher, the documented way, from the login shell: not in a subshell or a pipeline, whose
+    busyboxes the launcher's look counts against it."""
     assert linux_checks.runs_mpy('MPY -c "print(1)"')
     assert linux_checks.runs_mpy('python -c "print(1)"')
     assert linux_checks.runs_mpy('(unset MICROPYPATH; exec python -c "x")')
+    assert linux_checks.runs_mpy('unset MICROPYPATH; python -c "x"')
     assert linux_checks.runs_mpy(f"python {linux_checks.MPY_HEAP_PY}")
     assert not linux_checks.runs_mpy(f'echo "import sys" > {linux_checks.MPY_ARGS_PY}')
     assert not linux_checks.runs_mpy("echo $MICROPYPATH")
     runs = [c for c in linux_checks.MPY_COMMANDS if linux_checks.runs_mpy(c)]
     assert len(runs) == 6 and runs[0].startswith("python -c ")
     assert all("MPY" not in c.replace("(", " ").split() for c in runs), runs
+    assert not [c for c in runs if "(" in c.split(linux_checks.PYTHON, 1)[0] or "|" in c], runs
     assert linux_checks.MPY_REPL == linux_checks.PYTHON
     assert linux_checks.problems(runs[0], linux_checks.PYTHON_NO_BLOCK) != []
     assert linux_checks.problems(runs[0], "Traceback (most recent call last):") != []

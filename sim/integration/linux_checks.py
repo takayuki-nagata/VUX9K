@@ -65,17 +65,18 @@ BASE_COMMANDS = {
 # card's script python, which executes MPY with its arguments): its modules extracted from the
 # card's PYLIB_TAR into MPY_LIB by the login shell's profile (pylib, when PYLIB_VER, the
 # archive's version, is not the one there), which also sets MICROPYPATH; MPY's own path without
-# it (a subshell that executes the launcher in its place); bc_clone_py's self-test from the
-# card's .mpy; Python scripts on the card that the shell's echo writes (one line each: hush's
-# here-documents would show their own prompt), the first with arguments (one with a space and
-# quotes, through the launcher's "$@"), one writing an LED through the LED class (MPY_LED, its
-# trigger given back after), one growing the heap (MPY_HEAP_BYTES of bytearrays,
-# micropython.mem_info's `GC: total` every 8: heap_problems). Each exec of MPY copies it into a
-# free block of order MPY_ORDER (~512 KB); the launcher drops the caches when none is free, and
-# without one after that prints PYTHON_NO_BLOCK and exits with PYTHON_NO_BLOCK_STATUS, MPY not
-# run. The launcher is a #!/bin/sh script, an exec of busybox (BUSYBOX_ORDER) first, which the
-# tests wait for (runs_mpy). MPY's first exec reads ~0.5 MB from the card: MPY_TIMEOUT_S on the
-# board
+# it (the login shell's unset, the profile's value exported again after); bc_clone_py's
+# self-test from the card's .mpy; Python scripts on the card that the shell's echo writes (one
+# line each: hush's here-documents would show their own prompt), the first with arguments (one
+# with a space and quotes, through the launcher's "$@"), one writing an LED through the LED
+# class (MPY_LED, its trigger given back after), one growing the heap (MPY_HEAP_BYTES of
+# bytearrays, micropython.mem_info's `GC: total` every 8: heap_problems). Each exec of MPY
+# copies it into a free block of order MPY_ORDER (~512 KB); the launcher drops the caches when
+# none is free, and without one after that prints PYTHON_NO_BLOCK and exits with
+# PYTHON_NO_BLOCK_STATUS, MPY not run. The launcher is a #!/bin/sh script, an exec of busybox
+# (BUSYBOX_ORDER) first, which the tests wait for (runs_mpy); never in a subshell or a pipeline,
+# whose busyboxes the launcher's look would count against it. MPY's first exec reads ~0.5 MB
+# from the card: MPY_TIMEOUT_S on the board
 MPY_LIB = "/mnt/sd/VUX9K/LINUX/PYLIB"
 PYLIB_TAR = "VUX9K/LINUX/PYLIB.TAR"
 PYLIB_VER = "VUX9K/LINUX/PYLIB.VER"
@@ -112,7 +113,10 @@ MPY_COMMANDS = {
     "echo $MICROPYPATH": (MPY_LIB,),
     # The modules' long names, which mkfat and the stages can't write
     f"ls {MPY_LIB}": (*PYLIB_MODULES, "VERSION"),
-    '(unset MICROPYPATH; exec python -c "import sys; print(sys.path)")': (f"'{MPY_LIB}'",),
+    # The login shell's, not a subshell's: a subshell holds a second busybox while the launcher
+    # looks (docs/agents/linux.md, "MicroPython"); the profile's value back after
+    'unset MICROPYPATH; python -c "import sys; print(sys.path)"': (f"'{MPY_LIB}'",),
+    f"export MICROPYPATH={MPY_LIB}": (),
     'python -c "import bc_selftest; bc_selftest.run()"': ("ALL BC SELF-TESTS PASSED",),
     **echo_lines(MPY_ARGS_PY, ("import sys", "print('args', sys.argv[1:], 6 * 7)")),
     f"python {MPY_ARGS_PY} x 'y \"z\"'": ("args ['x', 'y \"z\"'] 42",),
