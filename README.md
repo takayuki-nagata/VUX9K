@@ -363,12 +363,13 @@ use in quarters, and with the button S2 the memory in use and then the 1-minute 
 The text tools are small busyboxes in `\VUX9K\LINUX\BIN\` on the card, run by their applets'
 names: `vi` and `less`, `grep`/`egrep`, `sed`, `sort`/`uniq`/`cut`/`tr`/`tail`, `awk`, `expr`/`dc`,
 `find`/`xargs`/`diff`/`cmp`/`stty`. A tool's first run reads it from the card (seconds), later
-ones come from the page cache. Beside them are two sample shell scripts: `meminfo` (the free
-memory and its largest blocks) and `ledctl` (the LEDs' triggers, `ledctl led0 timer`, and
-sysmon's mode, `ledctl cpu|mem|load|off`), and `python`, which runs MicroPython (`MPY`) when
-there is a free 512 kB block of RAM for it and says to reboot when the memory is too
-fragmented for one (run it as a command of its own: in a subshell `( ... )` or a pipeline
-`... | python` the extra shells take that memory). The login shell has `HOME=/mnt/sd`, `EDITOR=vi` and
+ones come from the page cache. Beside them are sample shell scripts, among them `meminfo` (the
+free memory and its largest blocks) and `ledctl` (the LEDs' triggers, `ledctl led0 timer`, and
+sysmon's mode, `ledctl cpu|mem|load|off`), and `python`, which runs MicroPython (`MPY`),
+dropping the kernel's caches first when it sees no free 512 kB block of RAM for it; if the
+kernel still finds none, the console shows its allocation failure and `MPY` dies with SIGSEGV:
+reboot (run it as a command of its own: in a subshell `( ... )` or a pipeline `... | python`
+the extra shells take that memory). The login shell has `HOME=/mnt/sd`, `EDITOR=vi` and
 `TERM=vt100`; vi writes LF lines. Type at the shell with `vux_tool.py monitor` (above): its
 pacing keeps a paste from overrunning the UART's RX FIFO and leaves vi's arrow keys whole;
 without it (`--paste-gap-ms 0`, or a terminal program sending at full speed) a paste of more

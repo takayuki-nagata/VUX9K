@@ -71,8 +71,8 @@ COMMAND_TIMEOUT = 60.0
 PUT_LINE_TIMEOUT = 30.0
 # The commands before which the test waits for a free block of linux_checks.BUSYBOX_ORDER (an
 # exec of busybox after the card's reads: sysmon's reclaim), as test_linux.py's tests of them do;
-# so do the commands that run MicroPython's launcher (runs_mpy: a #!/bin/sh script, which finds
-# MPY's block itself or says it found none)
+# so do the commands that run MicroPython's launcher (runs_mpy: a #!/bin/sh script, which drops
+# the caches when its look finds no block, then execs MPY)
 WAIT_LARGE = frozenset((*linux_checks.TOOL_COMMANDS, *linux_checks.PIPE_COMMANDS, *linux_checks.SCRIPT_COMMANDS))
 # The command after which mpy_repl runs MicroPython's REPL (the last of MPY_COMMANDS)
 MPY_REPL_AFTER = list(linux_checks.MPY_COMMANDS)[-1]

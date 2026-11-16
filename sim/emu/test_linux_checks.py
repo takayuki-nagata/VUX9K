@@ -304,6 +304,26 @@ def test_launcher_is_linux_checks():
     assert code[-1] == 'exec $MPY "$@"', code[-1]
 
 
+MPY_MK = os.path.join(REPO_ROOT, "linux_workspace", "buildroot", "package", "vux9k-micropython", "vux9k-micropython.mk")
+MPY_VARIANT_H = os.path.join(REPO_ROOT, "linux_workspace", "userland", "micropython", "variant", "mpconfigvariant.h")
+POST_BUILD = os.path.join(REPO_ROOT, "linux_workspace", "buildroot", "board", "post-build.sh")
+
+
+def test_pylib_is_linux_checks():
+    """The modules package vux9k-micropython compiles (its .mk's VUX9K_MICROPYTHON_BC_MODULES)
+    are linux_checks.PYLIB_MODULES, and MPY's path, the variant's MICROPY_PY_SYS_PATH_DEFAULT
+    and the profile's MICROPYPATH (post-build.sh), is linux_checks.MPY_LIB."""
+    with open(MPY_MK) as f:
+        line = next(ln for ln in f if ln.startswith("VUX9K_MICROPYTHON_BC_MODULES = "))
+    assert tuple(f"{m}.mpy" for m in line.split("=", 1)[1].split()) == linux_checks.PYLIB_MODULES
+    with open(MPY_VARIANT_H) as f:
+        default = re.findall(r'^#define MICROPY_PY_SYS_PATH_DEFAULT "([^"]*)"$', f.read(), re.M)
+    assert default == [linux_checks.MPY_LIB], default
+    with open(POST_BUILD) as f:
+        exported = re.findall(r"^\s*export MICROPYPATH=(\S+)$", f.read(), re.M)
+    assert exported == [linux_checks.MPY_LIB], exported
+
+
 def launcher_on_the_host(
     tmp_path, buddyinfo: str, *args: str, debug: bool = False
 ) -> tuple[subprocess.CompletedProcess, bool]:
