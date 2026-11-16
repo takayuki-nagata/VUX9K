@@ -25,7 +25,7 @@ VUX9K_BBTOOLS_TOOLS_DIR = $(BR2_EXTERNAL_VUX9K_PATH)/../userland/bbtools
 # have (flthdr.sh stops the build above it): order 5, 128 KB, so that a pipe's processes find
 # their blocks in free memory the card's page cache has left in pieces; awk alone needs
 # ~155 KB and gets order 6, as the initramfs' busybox has
-VUX9K_BBTOOLS_ORDERS = bbedit:5 bbgrep:5 bbsed:5 bbsort:5 bbawk:6 bbcalc:5 bbfiles:5
+VUX9K_BBTOOLS_ORDERS = bbedit:5 bbgrep:5 bbsed:5 bbsort:5 bbawk:6 bbcalc:5 bbfiles:5 bbtar:5
 VUX9K_BBTOOLS_TOOLS = $(foreach t,$(VUX9K_BBTOOLS_ORDERS),$(firstword $(subst :, ,$(t))))
 VUX9K_BBTOOLS_OUT = $(@D)/vux9k
 VUX9K_BBTOOLS_BIN = /mnt/sd/VUX9K/LINUX/BIN

@@ -448,6 +448,7 @@ each use** (package `vux9k-bbtools`, `linux_workspace/userland/bbtools/`), in
 | `bbawk` | awk |
 | `bbcalc` | expr, dc |
 | `bbfiles` | find, xargs, diff, cmp, stty |
+| `bbtar` | tar (no compression) |
 
 - **Each is built from `common.config` and its own fragment over allnoconfig**
   (`bbconfig.sh`): busybox's kconfig resets every bool in allnoconfig, `KCONFIG_ALLCONFIG`'s

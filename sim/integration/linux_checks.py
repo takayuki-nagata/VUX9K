@@ -86,6 +86,7 @@ LED_COMMANDS = {
 # which then echoes more than was typed.
 TOOLS_DIR = "/mnt/sd/TOOLS"
 TOOLS_A, TOOLS_B, TOOLS_SORTED, TOOLS_COPY = (f"{TOOLS_DIR}/{n}" for n in "ABSC")
+TOOLS_TAR = f"{TOOLS_DIR}/T.TAR"
 TOOL_COMMANDS = {
     f"rm -rf {TOOLS_DIR}; mkdir {TOOLS_DIR}": (),
     f"for w in pear apple pear fig; do echo $w >>{TOOLS_A}; done": (),
@@ -109,6 +110,9 @@ TOOL_COMMANDS = {
     f"diff {TOOLS_A} {TOOLS_B}": ("@@ -1,4 +1,4 @@", "-pear", "+plum"),
     f"cmp {TOOLS_A} {TOOLS_B}": ("differ:", "line 3"),
     "stty -a": ("speed ", " baud;"),
+    # bbtar: an archive of the two files made and one of them read back out of it
+    f"tar -cf {TOOLS_TAR} -C {TOOLS_DIR} A B": (),
+    f"tar -xOf {TOOLS_TAR} B": ("plum",),
     # bbedit: less is cat when its output is not a terminal (vi needs keys: not here)
     f"less {TOOLS_B} >{TOOLS_COPY}": (),
     f"cmp {TOOLS_B} {TOOLS_COPY}; echo cmp-$?": ("cmp-0",),
@@ -149,6 +153,7 @@ TOOL_BUSYBOXES = {
     "bbawk": ("awk",),
     "bbcalc": ("expr", "dc"),
     "bbfiles": ("find", "xargs", "diff", "cmp", "stty"),
+    "bbtar": ("tar",),
     "bbedit": ("vi", "less"),
 }
 # The order of the initramfs' busybox's exec (docs/agents/linux.md, "Memory budget"), which
