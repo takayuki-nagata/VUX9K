@@ -73,7 +73,8 @@ PUT_LINE_TIMEOUT = 30.0
 # exec of busybox after the card's reads: sysmon's reclaim), as test_linux.py's tests of them do
 WAIT_LARGE = frozenset((*linux_checks.TOOL_COMMANDS, *linux_checks.PIPE_COMMANDS, *linux_checks.SCRIPT_COMMANDS))
 # The command after which mpy_repl runs MicroPython's REPL (the last of MPY_COMMANDS); every
-# command that executes MPY waits for a free block of linux_checks.MPY_ORDER first
+# command that executes MPY waits for a free block of linux_checks.MPY_ORDER first (sysmon's
+# reclaim gives one back)
 MPY_REPL_AFTER = list(linux_checks.MPY_COMMANDS)[-1]
 # send_line's chunk of a command line, sent once the one before has come back as echo, at most
 # ECHO_TIMEOUT after it (the shell echoes each key as it reads it)
@@ -178,11 +179,14 @@ def run_command(ser, cmd: str, timeout: float = COMMAND_TIMEOUT) -> str | None:
 
 
 def wait_large(ser, before: str, order: int = linux_checks.BUSYBOX_ORDER) -> str | None:
-    """Waits up to RECLAIM_WAIT_S for a free block of order (BUSYBOX_ORDER: the next exec of
-    busybox's; sysmon gives one back after the card's reads; test_linux.py's wait_large; or
-    MPY_ORDER, MPY's), reading /proc/buddyinfo with the shell's builtins: the failure, None
-    once one is free."""
-    end = time.monotonic() + linux_checks.RECLAIM_WAIT_S
+    """Waits for a free block of order (BUSYBOX_ORDER: the next exec of busybox's; MPY_ORDER,
+    MPY's; sysmon gives one back after the card's reads; test_linux.py's wait_large), reading
+    /proc/buddyinfo with the shell's builtins, up to RECLAIM_WAIT_S of the guest's time by its
+    /proc/uptime (on the emulator the host's clock runs ahead of it while the emulator is
+    stopped) and RECLAIM_WAIT_WALL_S of the host's: the failure, None once one is free."""
+    wall_end = time.monotonic() + linux_checks.RECLAIM_WAIT_WALL_S
+    start = None
+    waited = 0.0
     while True:
         out = run_command(ser, linux_checks.MEM_PROBES[1])
         orders = linux_checks.parse_buddyinfo(out or "")
@@ -190,10 +194,14 @@ def wait_large(ser, before: str, order: int = linux_checks.BUSYBOX_ORDER) -> str
             return f"{before}: no /proc/buddyinfo before it: {out!r}"[:600]
         if sum(orders[order:]):
             return None
-        if time.monotonic() >= end:
+        up = linux_checks.parse_uptime(run_command(ser, linux_checks.UPTIME_PROBE) or "")
+        if up is not None:
+            start = up if start is None else start
+            waited = up - start
+        if waited >= linux_checks.RECLAIM_WAIT_S or time.monotonic() >= wall_end:
             return (
-                f"{before}: no free block of order {order} within "
-                f"{linux_checks.RECLAIM_WAIT_S} s before it (free blocks per order {orders})"
+                f"{before}: no free block of order {order} within {waited:.1f} s of the guest's "
+                f"time (of {linux_checks.RECLAIM_WAIT_S} s) before it (free blocks per order {orders})"
             )
         time.sleep(1.0)
 

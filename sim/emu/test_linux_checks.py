@@ -83,6 +83,7 @@ def test_board_lines_fit_the_console():
         *linux_checks.COMMANDS,
         *linux_checks.CARD_CLEANUP,
         *linux_checks.MEM_PROBES,
+        linux_checks.UPTIME_PROBE,
         linux_checks.MOUNTS_PROBE,
         linux_checks.VI_CLEAR,
         linux_checks.MPY_REPL,
@@ -194,6 +195,16 @@ def test_reclaim_constants_are_sysmons():
     assert const("RECLAIM_EVERY") == linux_checks.SYSMON_RECLAIM_EVERY
     m = re.search(r"interval_ms: (\d+),", text)
     assert m and int(m.group(1)) == linux_checks.SYSMON_INTERVAL_S * 1000
+
+
+def test_uptime_probe():
+    """UPTIME_PROBE's answer read, not its echo; RECLAIM_WAIT_S covers two of sysmon's looks."""
+    probe = linux_checks.UPTIME_PROBE
+    assert linux_checks.parse_uptime(f"{probe}\r\nup=1234.56\r\n/ # ") == 1234.56
+    assert linux_checks.parse_uptime(f"{probe}\r\n/ # ") is None
+    look = linux_checks.SYSMON_RECLAIM_EVERY * linux_checks.SYSMON_INTERVAL_S
+    assert linux_checks.RECLAIM_WAIT_S >= 2 * look + linux_checks.RECLAIM_DROP_S
+    assert linux_checks.RECLAIM_WAIT_WALL_S > linux_checks.RECLAIM_WAIT_S
 
 
 def test_mpy_commands():

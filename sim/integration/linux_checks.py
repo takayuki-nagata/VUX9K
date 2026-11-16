@@ -63,15 +63,15 @@ BASE_COMMANDS = {
 }
 # MicroPython on the card (docs/agents/linux.md, "MicroPython"): MPY, its modules extracted from
 # the card's PYLIB_TAR into MPY_LIB by the login shell's profile (pylib, when PYLIB_VER, the
-# archive's version, is not the one there), which also sets
-# MICROPYPATH; MPY's own path without it (a subshell that executes MPY in its place); bc_clone_py's
-# self-test from the card's .mpy; Python scripts on the card that the shell's echo writes (one
-# line each: hush's here-documents would show their own prompt), the first with arguments, one
-# writing an LED through the LED class (MPY_LED, its trigger given back after), one growing the
-# heap (MPY_HEAP_BYTES of bytearrays, micropython.mem_info's `GC: total` every 8: heap_problems).
-# Each exec of MPY copies it into a block of order MPY_ORDER (its exec's ~512 KB), which the
-# tests wait for first (runs_mpy). Its first exec reads ~0.5 MB from the card: MPY_TIMEOUT_S on
-# the board
+# archive's version, is not the one there), which also sets MICROPYPATH; MPY's own path without
+# it (a subshell that executes MPY in its place); bc_clone_py's self-test from the card's .mpy;
+# Python scripts on the card that the shell's echo writes (one line each: hush's here-documents
+# would show their own prompt), the first with arguments, one writing an LED through the LED
+# class (MPY_LED, its trigger given back after), one growing the heap (MPY_HEAP_BYTES of
+# bytearrays, micropython.mem_info's `GC: total` every 8: heap_problems). Each exec of MPY
+# copies it into a block of order MPY_ORDER (its exec's ~512 KB), which the tests wait for first
+# (runs_mpy, RECLAIM_WAIT_S: sysmon's reclaim gives one back). Its first exec reads ~0.5 MB from
+# the card: MPY_TIMEOUT_S on the board
 MPY_LIB = "/mnt/sd/VUX9K/LINUX/PYLIB"
 PYLIB_TAR = "VUX9K/LINUX/PYLIB.TAR"
 PYLIB_VER = "VUX9K/LINUX/PYLIB.VER"
@@ -262,9 +262,9 @@ SCRIPT_COMMANDS = {
     "pylib; echo pylib-$?": ("pylib-0",),
 }
 # What the board's scripts/hw_linux.py types, in this order; sim/emu/test_linux.py runs each
-# part with its own tests between. MicroPython's right after the boot's, while a block of
-# MPY_ORDER is still free: nothing reclaims one after the card's reads (sysmon looks for
-# RECLAIM_ORDER)
+# part with its own tests between. MicroPython's right after the boot's, where the boot's free
+# blocks of MPY_ORDER are; after the card's reads sysmon's reclaim gives one back (its
+# RECLAIM_ORDER is MPY_ORDER), which each exec of MPY waits for (runs_mpy)
 COMMANDS = BASE_COMMANDS | MPY_COMMANDS | LED_COMMANDS | TOOL_COMMANDS | PIPE_COMMANDS | SCRIPT_COMMANDS
 # The card's busyboxes and their applets (linux_workspace/userland/bbtools/<name>.config; the
 # table in docs/agents/linux.md, "Text tools and vi"): the board's test times each one's first
@@ -281,14 +281,30 @@ TOOL_BUSYBOXES = {
 }
 # The order of the initramfs' busybox's exec (docs/agents/linux.md, "Memory budget"), the least
 # sysmon's reclaim of the page cache keeps (its BUSYBOX_ORDER; by default it keeps MPY_ORDER,
-# its RECLAIM_ORDER), and how long a test waits for a free block before an exec (seconds)
+# its RECLAIM_ORDER)
 BUSYBOX_ORDER = 6
-RECLAIM_WAIT_S = 10
 # sysmon's interval (its -i default, seconds) and every how many intervals its reclaim looks
 # (linux_workspace/userland/sysmon/src/lib.rs: RECLAIM_EVERY; sim/emu/test_linux_checks.py
 # holds these and the orders to it)
 SYSMON_INTERVAL_S = 1
 SYSMON_RECLAIM_EVERY = 3
+# How long a test waits before an exec for sysmon's reclaim to give a free block back, in the
+# guest's seconds: two of its looks (the next one, and one more for intervals a busy CPU
+# stretches: sysmon sleeps its interval, then works) and RECLAIM_DROP_S for the drop (~1.1 s
+# for ~600 kB of cache at 18 MHz), the freed pages reaching the free lists and the wait's 1 s
+# between probes. scripts/hw_linux.py counts the guest's seconds by its /proc/uptime
+# (UPTIME_PROBE), as on the emulator with its stops the host's clock runs ahead of the guest's,
+# and gives up after RECLAIM_WAIT_WALL_S of the host's in any case
+RECLAIM_DROP_S = 4
+RECLAIM_WAIT_S = 2 * SYSMON_RECLAIM_EVERY * SYSMON_INTERVAL_S + RECLAIM_DROP_S
+RECLAIM_WAIT_WALL_S = 120
+UPTIME_PROBE = "read u i </proc/uptime; echo up=$u"
+
+
+def parse_uptime(out: str) -> float | None:
+    """UPTIME_PROBE's answer, the guest's uptime in seconds (not its echo's `$u`)."""
+    m = re.search(r"up=(\d+\.\d+)", out)
+    return float(m.group(1)) if m else None
 
 
 def first_execs(commands) -> dict[str, str]:

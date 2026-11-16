@@ -537,9 +537,9 @@ each use** (package `vux9k-bbtools`, `linux_workspace/userland/bbtools/`), in
   `hw_linux.py`) runs each one on two files the shell writes into `/mnt/sd/TOOLS` (which
   `CARD_CLEANUP` removes), one command at a time; `PIPE_COMMANDS` then two pipes, one with
   `{ }`, which need sysmon's reclaim of the page cache after the card's reads ("Memory
-  budget"; `test_linux.py`'s `test_pipe_command`). Each test
-  there waits first (`wait_large`, up to 10 s) for a free block of order 6, which sysmon gives
-  back within 3 intervals of a read: a person typing leaves it that time. `hw_linux.py` waits
+  budget"; `test_linux.py`'s `test_pipe_command`). Each test there waits first (`wait_large`,
+  up to `RECLAIM_WAIT_S`, 10 s of the guest's time: "MicroPython") for a free block of order
+  6, which sysmon gives back within 3 intervals of a read: a person typing leaves it that time. `hw_linux.py` waits
   the same way (`linux_checks.BUSYBOX_ORDER`, `RECLAIM_WAIT_S`) before these, the scripts'
   commands, and vi's and cat's execs. It times each busybox's first exec (from the card) by
   the first of `TOOL_COMMANDS` that runs one of its applets (`linux_checks.TOOL_BUSYBOXES`, the
@@ -639,15 +639,37 @@ each use** (package `vux9k-bbtools`, `linux_workspace/userland/bbtools/`), in
   empty. With bc_clone_py frozen in (the spike, 2026-11-15) MPY was 492,500 B, its exec's block
   512,448 B.
 - **Each exec of MPY takes an order-7 block** (~512 KB). After the boot one or two are free
-  ("Memory budget": `6:4 7:1 8:1`), the card's reads break them, and sysmon's reclaim gives one
-  back ("Memory budget": order 7 is its `-o` default), unless what split it is not the page
-  cache. So the tests run MicroPython right after the boot's commands
+  ("Memory budget": `6:4 7:1 8:1`), and the card's reads and MPY's own execs break them: an
+  exec's block is a private mmap, which noMMU allocates as a power of two and trims (mm/nommu.c,
+  `vm.nr_trim_pages`, 1 by default), so MPY's 119 pages free the block's other 9 at once, the
+  next allocations (MPY's own file into the page cache first) take them, and the block doesn't
+  join again when MPY ends. A run of the board's script with the emulator stopped while it
+  typed found none left by the sixth exec (`HEAP.PY`: `[4, 3, 2, 3, 3, 4, 5, 0, ...]`).
+  sysmon's reclaim gives one back ("Memory budget": order 7 is its `-o` default) unless what
+  split it is not the page cache. The tests run MicroPython right after the boot's commands
   (`linux_checks.COMMANDS` puts `MPY_COMMANDS` after `BASE_COMMANDS`; `test_linux.py`'s
   `test_mpy_command` and `test_mpy_repl` before `test_exec_after_card_reads`), and each exec
   first waits for a free block of order 7 (`linux_checks.MPY_ORDER`, `runs_mpy`; `wait_large`'s
-  `order` in `test_linux.py` and `hw_linux.py`), failing without one. The spike's numbers (the
-  emulator): its first exec 14.9 s (~0.5 MB from the card), the REPL's prompt 1.16 s,
-  bc_clone_py's self-test passed with the heap at 35.6 KB at most.
+  `order` in `test_linux.py` and `hw_linux.py`), failing without one. The wait,
+  `linux_checks.RECLAIM_WAIT_S`, is two of sysmon's looks (`SYSMON_RECLAIM_EVERY` x
+  `SYSMON_INTERVAL_S`: the next one, and one for intervals a busy CPU stretches) and 4 s for the
+  drop and the probes (`RECLAIM_DROP_S`): 10 s of the guest's time. `hw_linux.py` counts them
+  by the guest's `/proc/uptime` (`UPTIME_PROBE`, after a probe that found no block), with
+  `RECLAIM_WAIT_WALL_S` of the host's clock as the bound: with the emulator stopped while the
+  probes are typed (~1.6 s of stops for each ~70-byte probe), 10 s of the host's clock held
+  less than half of that of the guest's (an estimate from the stops), about a look and a drop. The spike's numbers (the emulator): its first exec 14.9 s (~0.5 MB from the card), the
+  REPL's prompt 1.16 s, bc_clone_py's self-test passed with the heap at 35.6 KB at most.
+- **`MPY` without a block for it** (from the kernel's code, the emulator's output recorded by
+  `test_reclaim_for_mpy` with MPYs holding the blocks): the allocation fails past exec's point
+  of no return (binfmt_flat allocates after `begin_new_exec`), so the console shows the
+  kernel's page allocation failure for order 7 (a stack trace and a dump of the memory,
+  "Memory budget"), nommu's `Allocation of length ... failed` with a second dump, binfmt_flat's
+  `Unable to allocate RAM for process text/data, errno 12`, and then the shell reports the
+  process killed by SIGSEGV, not an error of exec. Nothing smaller makes that clearer: this
+  hush has no functions or aliases for a check before the exec, a script in MPY's place would
+  add an exec of busybox to every run, and quieting the dump would take a console log level
+  that also hides the boot's lines the tests read. Typing `MPY` again a few seconds later
+  finds the block sysmon's reclaim gave back, if it is page cache that split it.
 - **The heap grows by at most an order-5 block.** It starts at 64 KB (`MICROPY_UNIX_HEAP_SIZE`,
   patch 0002; a malloc on noMMU is one block of a power of two pages, so the port's 1 MB would
   take the largest one there is) and is split (`MICROPY_GC_SPLIT_HEAP_AUTO`): when a collection

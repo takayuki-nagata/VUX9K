@@ -277,6 +277,51 @@ def test_linux_script_reports_what_the_board_got_wrong(monkeypatch):
     assert hw_linux.banner(b"no banner here") is None
 
 
+def test_linux_script_waits_the_guests_seconds(monkeypatch):
+    """hw_linux.wait_large waits RECLAIM_WAIT_S of the guest's uptime for a free block, not of
+    the host's clock, which runs ahead of it while the emulator is stopped (here the guest gets
+    0.4 s a second): it returns once one is free, says how long the guest waited when none
+    came, and without the guest's uptime gives up at RECLAIM_WAIT_WALL_S of the host's."""
+    import types
+
+    import hw_linux
+    import linux_checks
+
+    order = linux_checks.MPY_ORDER
+
+    def wait(free_after: float | None, uptime: bool = True) -> tuple[str | None, float]:
+        host = [0.0]
+
+        def guest() -> float:
+            return 100.0 + 0.4 * host[0]
+
+        def run_command(ser, cmd, timeout=0.0):
+            host[0] += 1.0
+            if cmd == linux_checks.MEM_PROBES[1]:
+                n = int(free_after is not None and guest() - 100.0 >= free_after)
+                return f"\r\nNode 0, zone Normal 1 0 1 0 0 0 1 {n}\r\n"
+            if cmd == linux_checks.UPTIME_PROBE and uptime:
+                return f"\r\nup={guest():.2f}\r\n"
+            return "\r\n"
+
+        def sleep(s: float) -> None:
+            host[0] += s
+
+        monkeypatch.setattr(hw_linux, "run_command", run_command)
+        monkeypatch.setattr(hw_linux, "time", types.SimpleNamespace(monotonic=lambda: host[0], sleep=sleep))
+        return hw_linux.wait_large(None, "MPY", order), host[0]
+
+    got, host = wait(free_after=linux_checks.RECLAIM_WAIT_S - 1)
+    assert got is None and host > linux_checks.RECLAIM_WAIT_S, (got, host)
+    got, host = wait(free_after=None)
+    want = f"no free block of order {order} within "
+    assert got and want in got and "s of the guest's time" in got, got
+    waited = float(got.split(want)[1].split()[0])
+    assert linux_checks.RECLAIM_WAIT_S <= waited < linux_checks.RECLAIM_WAIT_S + 2, got
+    got, host = wait(free_after=None, uptime=False)
+    assert got and "within 0.0 s" in got and host >= linux_checks.RECLAIM_WAIT_WALL_S, (got, host)
+
+
 class ViPort:
     """A port that answers hw_linux.vi as the shell and a vi that only records its keys would:
     `vi FILE` with vi's status line, its keys up to `:wq` CR, then the prompt; `cat FILE` with
