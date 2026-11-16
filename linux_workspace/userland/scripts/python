@@ -5,31 +5,33 @@
 # python: MicroPython, the card's MPY, with this script's arguments (none: the REPL), the way to
 # run it (docs/agents/linux.md, "MicroPython"). Each exec of MPY copies it into one free block
 # of contiguous pages: 119 pages (flthdr -p: its text, data, bss and 24 KB stack) round up to
-# ORDER 7, 128 pages, KB 512. noMMU has no compaction, so once no such block is free the exec
-# fails past its point of no return, with the kernel's allocation failure and a SIGSEGV. So
-# this looks first: with a block free it executes MPY at once; without one it drops the clean
-# caches (3: the page cache, dentries and inodes; the card's programs, MPY among them, and its
-# directories are then read from the card again) and looks again, twice (a dentry's or inode's
-# memory is freed after an RCU grace period); still none, it says so and exits with status 75
-# (EX_TEMPFAIL), MPY not run. exec: MPY takes this shell's place, which frees the shell's block
-# before MPY's is allocated. Builtins only: this hush has no $( ), no functions, no arithmetic
+# ORDER 7, 128 pages, 512 kB. noMMU has no compaction, so with no such block free the exec
+# fails past its point of no return, with the kernel's allocation failure and a SIGSEGV. This
+# looks first: with a block free it executes MPY at once; without one it drops the clean caches
+# (3: the page cache, dentries and inodes; the card's programs, MPY among them, and its
+# directories are then read from the card again) and executes MPY all the same, since the look
+# can't see what the exec will find: exec frees this shell's own block (order 6; binfmt_flat's
+# setup_new_exec puts the old mm) before MPY's is allocated, and it may join its free buddy
+# into one of ORDER. PYTHON_DEBUG=1 prints the look's buddyinfo and the choice on stderr.
+# Builtins only: this hush has no $( ), no functions, no arithmetic
 ORDER=7
-KB=512
 MPY=/mnt/sd/VUX9K/LINUX/BIN/MPY
-for look in first dropped settled; do
-	# Node 0, zone Normal n0 n1 ...: a count above 0 from the ORDER-th on, in any zone
-	free=
-	exec 3</proc/buddyinfo
-	while read node n zone name counts <&3; do
-		k=
-		for c in $counts; do
-			[ ${#k} -ge $ORDER ] && [ "$c" != 0 ] && free=$c
-			k=x$k
-		done
+# Node 0, zone Normal n0 n1 ...: a count above 0 from the ORDER-th on, in any zone
+free=
+exec 3</proc/buddyinfo
+while read node n zone name counts <&3; do
+	[ "$PYTHON_DEBUG" = 1 ] && echo "python: buddyinfo $name" $counts >&2
+	k=
+	for c in $counts; do
+		[ ${#k} -ge $ORDER ] && [ "$c" != 0 ] && free=$c
+		k=x$k
 	done
-	exec 3<&-
-	[ -n "$free" ] && exec $MPY "$@"
-	[ $look = first ] && echo 3 >/proc/sys/vm/drop_caches
 done
-echo "python: no free $KB kB block for MicroPython; memory is fragmented, reboot" >&2
-exit 75
+exec 3<&-
+if [ -n "$free" ]; then
+	[ "$PYTHON_DEBUG" = 1 ] && echo "python: a free order-$ORDER block, caches kept" >&2
+else
+	echo 3 >/proc/sys/vm/drop_caches
+	[ "$PYTHON_DEBUG" = 1 ] && echo "python: no free order-$ORDER block, caches dropped" >&2
+fi
+exec $MPY "$@"

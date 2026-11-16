@@ -214,9 +214,10 @@ def test_mpy_commands():
     """Which commands execute MPY, itself or by its launcher python (each waits for a block of
     BUSYBOX_ORDER first, the launcher's shell's): its name as a word, also after a subshell's
     parenthesis, not in a path or a script's text; every one of them is checked for
-    MPY_UNWANTED; the scripts are written before they run. All of MPY_COMMANDS' run it by the
-    launcher, the documented way, from the login shell: not in a subshell or a pipeline, whose
-    busyboxes the launcher's look counts against it."""
+    MPY_UNWANTED (the kernel's failure to allocate MPY's block too); the scripts are written
+    before they run. All of MPY_COMMANDS' run it by the launcher, the documented way, from the
+    login shell: not in a subshell or a pipeline, whose busyboxes make MPY's exec more likely
+    to fail."""
     assert linux_checks.runs_mpy('MPY -c "print(1)"')
     assert linux_checks.runs_mpy('python -c "print(1)"')
     assert linux_checks.runs_mpy('(unset MICROPYPATH; exec python -c "x")')
@@ -229,7 +230,7 @@ def test_mpy_commands():
     assert all("MPY" not in c.replace("(", " ").split() for c in runs), runs
     assert not [c for c in runs if "(" in c.split(linux_checks.PYTHON, 1)[0] or "|" in c], runs
     assert linux_checks.MPY_REPL == linux_checks.PYTHON
-    assert linux_checks.problems(runs[0], linux_checks.PYTHON_NO_BLOCK) != []
+    assert linux_checks.problems(runs[0], "MPY: page allocation failure: order:7") != []
     assert linux_checks.problems(runs[0], "Traceback (most recent call last):") != []
     assert linux_checks.problems("ls /", "Traceback") == []
     seen: set[str] = set()
@@ -266,31 +267,32 @@ SCRIPTS_MK = os.path.join(REPO_ROOT, "linux_workspace", "buildroot", "package", 
 
 
 def test_launcher_is_linux_checks():
-    """The card's python (package vux9k-scripts) has linux_checks' order, block size, message
-    and exit status; its message fits the console's 80 columns; it uses no command
-    substitution (this hush has none) and passes its arguments to MPY as they are."""
+    """The card's python (package vux9k-scripts) has linux_checks' order and debug lines; it
+    never exits on its own (every path ends in MPY's exec), uses no command substitution (this
+    hush has none) and passes its arguments to MPY as they are."""
     with open(LAUNCHER) as f:
         text = f.read()
     with open(SCRIPTS_MK) as f:
         names = next(ln for ln in f if ln.startswith("VUX9K_SCRIPTS_NAMES = ")).split("=", 1)[1].split()
     assert linux_checks.PYTHON in names
     order = re.search(r"^ORDER=(\d+)$", text, re.M)
-    kb = re.search(r"^KB=(\d+)$", text, re.M)
     assert order and int(order.group(1)) == linux_checks.MPY_ORDER
-    assert kb and int(kb.group(1)) == linux_checks.PAGE_KB << linux_checks.MPY_ORDER
-    said = re.search(r'^echo "(python: [^"]*)" >&2$', text, re.M)
-    assert said and said.group(1).replace("$KB", kb.group(1)) == linux_checks.PYTHON_NO_BLOCK
-    assert re.search(rf"^exit {linux_checks.PYTHON_NO_BLOCK_STATUS}$", text, re.M)
-    assert len(linux_checks.PYTHON_NO_BLOCK) < 80
+    said = re.findall(r'echo "(python: [^"]*)"', text)
+    said = [s.replace("$ORDER", order.group(1)) for s in said]
+    assert said == [f"{linux_checks.PYTHON_SAW}$name", linux_checks.PYTHON_KEPT, linux_checks.PYTHON_DROPPED], said
+    assert linux_checks.PYTHON_DEBUG.split("=")[0] in text
     code = [ln for ln in text.splitlines() if not ln.lstrip().startswith("#")]
     assert not any("$(" in ln or "`" in ln for ln in code), code
-    assert 'exec $MPY "$@"' in text
+    assert not any(re.match(r"\s*exit\b", ln) for ln in code), code
+    assert code[-1] == 'exec $MPY "$@"', code[-1]
 
 
-def launcher_on_the_host(tmp_path, buddyinfo: str, *args: str) -> tuple[subprocess.CompletedProcess, bool]:
+def launcher_on_the_host(
+    tmp_path, buddyinfo: str, *args: str, debug: bool = False
+) -> tuple[subprocess.CompletedProcess, bool]:
     """The launcher's logic run by the host's sh (not this hush) on a buddyinfo file, with a
-    fake MPY that prints its arguments and a file in drop_caches' place: the run, and whether
-    it wrote 3 there."""
+    fake MPY that prints its arguments and a file in drop_caches' place (PYTHON_DEBUG=1 in its
+    environment with debug): the run, and whether it wrote 3 there."""
     with open(LAUNCHER) as f:
         text = f.read()
     paths = {
@@ -305,7 +307,11 @@ def launcher_on_the_host(tmp_path, buddyinfo: str, *args: str) -> tuple[subproce
     (tmp_path / "MPY").write_text('#!/bin/sh\necho "MPY $#"\nfor a in "$@"; do echo "[$a]"; done\n')
     os.chmod(tmp_path / "MPY", 0o755)
     (tmp_path / "python").write_text(text)
-    r = subprocess.run(["sh", str(tmp_path / "python"), *args], capture_output=True, text=True, timeout=10)
+    env = {k: v for k, v in os.environ.items() if k != "PYTHON_DEBUG"}
+    if debug:
+        name, value = linux_checks.PYTHON_DEBUG.split("=")
+        env[name] = value
+    r = subprocess.run(["sh", str(tmp_path / "python"), *args], capture_output=True, text=True, timeout=10, env=env)
     drop = tmp_path / "drop_caches"
     dropped = drop.exists() and drop.read_text() == "3\n"
     if drop.exists():
@@ -317,8 +323,8 @@ def launcher_on_the_host(tmp_path, buddyinfo: str, *args: str) -> tuple[subproce
 def test_launcher_logic(tmp_path):
     """The launcher's look at buddyinfo and its exec, on the host's sh: a free block of order 7
     or above in any zone runs MPY with the arguments as they are (spaces, quotes; none for the
-    REPL) and drops nothing; none drops the caches, says PYTHON_NO_BLOCK on stderr and exits
-    with PYTHON_NO_BLOCK_STATUS, MPY not run."""
+    REPL) and drops nothing; none drops the caches and runs MPY all the same. Quiet on stderr
+    but with PYTHON_DEBUG=1: then the zones' lines it saw (launcher_saw) and its choice."""
     whole = "Node 0, zone   Normal      3     10      2      5      2      3      2      1      1      0      0 \n"
     order_6 = "Node 0, zone   Normal      3     10      2      5      2      3      4      0      0      0      0 \n"
     zones = "Node 0, zone      DMA 1 0 0 0 0 0 1 0 0 0 0\nNode 0, zone   Normal 0 0 0 0 0 0 0 0 0 0 1\n"
@@ -329,7 +335,17 @@ def test_launcher_logic(tmp_path):
     assert r.returncode == 0 and r.stdout == "MPY 0\n", r
     r, _ = launcher_on_the_host(tmp_path, zones, "s.py")
     assert r.returncode == 0 and r.stdout == "MPY 1\n[s.py]\n", r
+    assert r.stderr == "", r
     r, dropped = launcher_on_the_host(tmp_path, order_6, "-c", "x")
-    assert r.returncode == linux_checks.PYTHON_NO_BLOCK_STATUS, r
-    assert r.stdout == "" and r.stderr == linux_checks.PYTHON_NO_BLOCK + "\n", r
+    assert r.returncode == 0 and r.stdout == "MPY 2\n[-c]\n[x]\n" and r.stderr == "", r
     assert dropped
+    r, dropped = launcher_on_the_host(tmp_path, order_6, "-c", "x", debug=True)
+    assert r.returncode == 0 and r.stdout == "MPY 2\n[-c]\n[x]\n", r
+    assert r.stderr == f"{linux_checks.PYTHON_SAW}Normal 3 10 2 5 2 3 4 0 0 0 0\n{linux_checks.PYTHON_DROPPED}\n", r
+    assert linux_checks.launcher_saw(r.stderr) == [3, 10, 2, 5, 2, 3, 4, 0, 0, 0, 0]
+    assert dropped
+    r, dropped = launcher_on_the_host(tmp_path, zones, debug=True)
+    assert r.returncode == 0 and r.stdout == "MPY 0\n", r
+    assert r.stderr.splitlines()[-1] == linux_checks.PYTHON_KEPT, r
+    assert linux_checks.launcher_saw(r.stderr) == [1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1]
+    assert not dropped

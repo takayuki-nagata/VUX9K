@@ -265,13 +265,14 @@ def test_linux_script_reports_what_the_board_got_wrong(monkeypatch):
     assert len(got) == 1 and "not the tree's" in got[0], got
     got = failures(replies=replies | {"uname -a": "Linux (none) 6.0\r\n"})
     assert len(got) == 1 and got[0].startswith("uname -a: missing"), got
-    # MicroPython: a traceback, the launcher's refusal (no block for MPY), the heap grown by more
-    # than an order-5 block, the REPL's value missing
+    # MicroPython: a traceback, the kernel's failure to allocate MPY's block, the heap grown by
+    # more than an order-5 block, the REPL's value missing
     selftest = next(c for c in linux_checks.MPY_COMMANDS if "bc_selftest" in c)
     got = failures(replies=replies | {selftest: replies[selftest] + "Traceback (most recent call last):\r\n"})
     assert len(got) == 1 and "'Traceback' in its output" in got[0], got
-    got = failures(replies=replies | {selftest: replies[selftest] + linux_checks.PYTHON_NO_BLOCK + "\r\n"})
-    assert len(got) == 1 and "no free 512 kB block" in got[0], got
+    failed = "MPY: page allocation failure: order:7, mode:0xcc0(GFP_KERNEL)\r\n"
+    got = failures(replies=replies | {selftest: replies[selftest] + failed})
+    assert len(got) == 1 and "'page allocation failure' in its output" in got[0], got
     got = failures(replies=replies | {heap: "GC: total: 63936,\r\nGC: total: 260000,\r\n" + replies[heap]})
     assert len(got) == 1 and "more than 131,072 B at a time" in got[0], got
     got = failures(replies=replies | {">>> " + linux_checks.MPY_REPL_LINE: "3\r\n"})

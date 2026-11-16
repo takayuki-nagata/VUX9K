@@ -361,8 +361,8 @@ paths (`test_linux.py`'s `test_record_measurements`), the board's `hw_linux.py` 
     mostly not the page cache, but slab and kernel stacks in the pageblocks exec's blocks
     leave, so drops for it cost the card's programs their cache at every look the floor let
     through, MPY's own ~460 KB among it, and brought none back. MicroPython's launcher `python`
-    drops the caches itself, once, when MPY's exec finds no block. `-o 7` keeps order 7 all the
-    same: a drop that brings back order 6 but not order 7 (the pieces another process's: a
+    drops the caches itself, once, when its look finds no order-7 block. `-o 7` keeps order 7
+    all the same: a drop that brings back order 6 but not order 7 (the pieces another process's: a
     running MPY holds one itself) is then bounded by the floor alone, not the holdoff, as the
     exec that waited for the order-7 block a drop brought back holds it by the next look; so
     with order 7 gone for good and Cached flat there is one drop, and with Cached growing one
@@ -645,8 +645,8 @@ each use** (package `vux9k-bbtools`, `linux_workspace/userland/bbtools/`), in
   patch for it**: noMMU has no compaction (it moves pages a process maps, which needs an MMU),
   so the fix would be mm's placement of unmovable allocations (slab and kernel stacks kept out
   of the pageblocks exec's blocks leave), a patch to the page allocator carried against every
-  kernel. Not done: MicroPython gets its block when there is one, and its launcher says so
-  when there is none.
+  kernel. Not done: MicroPython gets its block when there is one; when there is none its exec
+  fails (below), and a reboot gives the blocks back.
 - **`python`, MicroPython's launcher, is how to run it** (`linux_workspace/userland/scripts/python`,
   package `vux9k-scripts`, `VUX9K/LINUX/BIN/python`; "Text tools and vi"): `python` (the REPL),
   `python FILE ARGS`, `python -c CODE`, the arguments passed to MPY as they are (`"$@"`, spaces
@@ -654,60 +654,85 @@ each use** (package `vux9k-bbtools`, `linux_workspace/userland/bbtools/`), in
   builtins only: it reads `/proc/buddyinfo` on a descriptor (`exec 3<`, `read ... <&3`: "Memory
   budget"), each line's counts after `Node 0, zone Normal` into one variable and then
   word by word, a string one `x` longer per order as the counter (no arithmetic), and finds
-  whether a block of `ORDER` (7; `KB` 512 beside it, both noted with MPY's `flthdr` numbers)
-  or above is free in any zone. With one it `exec`s MPY: MPY takes the shell's place, and
-  binfmt_flat's `begin_new_exec` frees the shell's block (order 6) before MPY's is allocated,
-  so one busybox is in RAM at a time and none stays. Without one it writes `3` to
+  whether a block of `ORDER` (7, 512 kB, noted with MPY's `flthdr` numbers) or above is free in
+  any zone. With one it `exec`s MPY at once. Without one it writes `3` to
   `/proc/sys/vm/drop_caches` (the page cache and the slab's dentries and inodes, the strongest
-  reclaim noMMU has) and looks again, then once more (a dentry's and an inode's memory is freed
-  after an RCU grace period); still none, it prints `python: no free 512 kB block for
-  MicroPython; memory is fragmented, reboot` on stderr (`linux_checks.PYTHON_NO_BLOCK`) and
-  exits with status 75 (`EX_TEMPFAIL`, `PYTHON_NO_BLOCK_STATUS`) without running MPY: none of
-  the allocation failure's lines below. **Then reboot** (or end what holds a block, another
-  MPY). The look can refuse where the exec would have found a block: the shell's own order-6
-  block, freed first, may join a free buddy into one of order 7, which buddyinfo doesn't show.
+  reclaim noMMU has) and `exec`s MPY all the same. **It never refuses**: if the kernel then
+  finds no block, MPY's exec fails as below (the allocation failure on the console, the
+  process killed by SIGSEGV, the shell's prompt back), and **a reboot is the remedy** (or end
+  what holds a block, another MPY). The look only decides whether to drop, so that MPY's
+  cached file is not thrown away when a block is free.
+  - **Why it can't refuse on its look** (the board, 2026-11-17: `python` refused right after
+    another `python`, and the next one ran): the look sees the memory while the launcher's own
+    busybox holds its block. Its exec takes a free order-6 block when there is one; when there
+    is none it splits a free order-7 block, and the look then sees none. MPY would have had it:
+    exec frees the launcher's copy before MPY's block is allocated. binfmt_flat's
+    `load_flat_file` calls `begin_new_exec` (fs/exec.c: `exec_mmap` installs the new mm and
+    keeps the old one in `bprm->old_mm`) and then `setup_new_exec`, which `mmput`s the old mm
+    (`exec_mm_put_old`; nommu's `__put_nommu_region` frees a `VM_MAPPED_COPY` region's pages,
+    `free_page_series`) before `load_flat_file`'s `vm_mmap` of the text and data; the freed
+    order-6 half joins its free buddy into the order-7 block again. That holds for the
+    launcher's own copy only: its `/bin/sh` was a vfork child of the login shell, whose exec
+    put the parent's mm and freed nothing, while the launcher's `exec $MPY` puts its own.
+    `test_linux.py`'s `test_python_from_its_shells_block` makes that state and shows it
+    (`PYTHON_DEBUG=1`, below). Per-cpu page lists holding the freed pages were ruled out:
+    noMMU's `zone_batchsize` is 1 and `zone_highsize` 0, and the board's `pcp` count stayed 0
+    over ~70 probes.
+  - **`PYTHON_DEBUG=1 python ...`** prints on stderr what the look saw, one line per zone,
+    `python: buddyinfo Normal n0 n1 ... n10` (`linux_checks.PYTHON_SAW`, `launcher_saw`), then
+    its choice, `python: a free order-7 block, caches kept` (`PYTHON_KEPT`) or `python: no free
+    order-7 block, caches dropped` (`PYTHON_DROPPED`). Quiet without it.
   - **What it costs**: an exec of the initramfs' busybox (order 6, from RAM) and the look, at
     every run; `test_linux.py`'s `test_python` measures it against MPY run by itself
-    (`test_record_measurements`' `the launcher python` lines). The drop only when no block is
-    free, as a drop at every run would read MPY (~460 KB) from the card again at every run. A
-    drop costs every program on the card its cache, so the next run of each reads it from the
+    (`test_record_measurements`' `the launcher python` lines). The drop only when the look finds
+    no block, as a drop at every run would read MPY (~460 KB) from the card again at every run.
+    A drop costs every program on the card its cache, so the next run of each reads it from the
     card again: MPY ~13 s on the board (~36 KB/s; the emulator's first exec took 14.9 s), each
     of the card's busyboxes 3-5 s ("Speed"), and with the dentries and inodes gone the next
-    path on the card reads its directories again. `test_python_without_a_block` records the
-    refusal's time (its drop, with little cached by then).
+    path on the card reads its directories again. No second look after the drop: the launcher
+    executes MPY whatever it would see.
   - **The tests**: `linux_checks.MPY_COMMANDS` and the REPL run MicroPython by the launcher,
     right after the boot's commands (`linux_checks.COMMANDS` puts `MPY_COMMANDS` after
-    `BASE_COMMANDS`; `test_linux.py`'s `test_python`, `test_mpy_command`, `test_mpy_repl` and
-    `test_python_without_a_block` before `test_exec_after_card_reads`), where the boot's free
-    blocks of order 7 are. Each command that runs it waits first for a free block of order 6
-    for the launcher's shell (`runs_mpy`; `wait_large` in `test_linux.py` and `hw_linux.py`).
-    That wait, `linux_checks.RECLAIM_WAIT_S`, is two of sysmon's looks (`SYSMON_RECLAIM_EVERY`
-    x `SYSMON_INTERVAL_S`: the next one, and one for intervals a busy CPU stretches) and 4 s
-    for the drop and the probes (`RECLAIM_DROP_S`): 10 s of the guest's time. `hw_linux.py`
-    counts them by the guest's `/proc/uptime` (`UPTIME_PROBE`, after a probe that found no
-    block), with `RECLAIM_WAIT_WALL_S` of the host's clock as the bound: with the emulator
-    stopped while the probes are typed (~1.6 s of stops for each ~70-byte probe), 10 s of the
-    host's clock held less than half of that of the guest's (an estimate from the stops), about
-    a look and a drop. `test_python_without_a_block` makes order 7 unavailable on purpose:
-    MPYs sleeping in the background hold the free blocks of order 7 and up, one each (at most
-    4), and once none is left the shell drops the caches itself and looks again (a holder more
-    for a block that comes back), so the launcher's own drop has nothing to free that could
-    make one; it wants the message, status 75 and none of the failure's lines on the console,
-    and kills the holders at its end. The launcher's logic also runs on the host's `sh` with a
-    buddyinfo file and a fake MPY (`test_linux_checks.py`'s `test_launcher_logic`, which can't
-    catch what differs in hush). The spike's numbers (the emulator): MPY's first exec 14.9 s
-    (~0.5 MB from the card), the REPL's prompt 1.16 s, bc_clone_py's self-test passed with the
-    heap at 35.6 KB at most.
+    `BASE_COMMANDS`; `test_linux.py`'s `test_python`, `test_mpy_command`, `test_mpy_repl`,
+    `test_python_from_its_shells_block` and `test_python_without_a_block` before
+    `test_exec_after_card_reads`), where the boot's free blocks of order 7 are. Each command
+    that runs it waits first for a free block of order 6 for the launcher's shell (`runs_mpy`;
+    `wait_large` in `test_linux.py` and `hw_linux.py`). That wait, `linux_checks.RECLAIM_WAIT_S`,
+    is two of sysmon's looks (`SYSMON_RECLAIM_EVERY` x `SYSMON_INTERVAL_S`: the next one, and
+    one for intervals a busy CPU stretches) and 4 s for the drop and the probes
+    (`RECLAIM_DROP_S`): 10 s of the guest's time. `hw_linux.py` counts them by the guest's
+    `/proc/uptime` (`UPTIME_PROBE`, after a probe that found no block), with
+    `RECLAIM_WAIT_WALL_S` of the host's clock as the bound: with the emulator stopped while the
+    probes are typed (~1.6 s of stops for each ~70-byte probe), 10 s of the host's clock held
+    less than half of that of the guest's (an estimate from the stops), about a look and a drop.
+    `test_python_from_its_shells_block` stops sysmon (its reclaim would drop the caches with
+    order 6 gone), then holds blocks in the background until no order-6 block is free and one
+    order-7 block and nothing above is: MPYs for the order-7 blocks but one (at most 4), `sleep
+    600`s for the order-6 ones (at most 8; each an exec of busybox, which takes a free order-6
+    block before it splits a larger one), and the shell's own drop of the caches with another
+    look, so the launcher's drop can't be what brings a block back. A sleeper that splits the
+    order-7 block instead (a free order-6 block of another migratetype can make the allocator
+    split one of its own type first) fails the setup with that recorded. Then `PYTHON_DEBUG=1
+    python -c "print(6 * 7)"` must show a look without an order-7 block, the drop, and 42, with
+    no allocation failure on the console. `test_python_without_a_block` holds every order-7
+    block with MPYs and drops the caches until none comes back, then wants the drop, the
+    kernel's `page allocation failure` on the console, the shell's `$?` 139 (SIGSEGV) and the
+    shell answering after; the dump (two of them, below) fits `COMMAND_CYCLES` easily. Both
+    kill their holders at the end, the first starts a sysmon again. The launcher's logic also
+    runs on the host's `sh` with a buddyinfo file and a fake MPY (`test_linux_checks.py`'s
+    `test_launcher_logic`, which can't catch what differs in hush). The spike's numbers (the
+    emulator): MPY's first exec 14.9 s (~0.5 MB from the card), the REPL's prompt 1.16 s,
+    bc_clone_py's self-test passed with the heap at 35.6 KB at most.
 - **`MPY` without a block for it** (from the kernel's code, and the emulator's output with MPYs
-  holding the blocks, 2026-11-16; the launcher keeps it from happening):
+  holding the blocks, 2026-11-16; `test_python_without_a_block`):
   the allocation fails past exec's point of no return (binfmt_flat allocates after
   `begin_new_exec`), so the console shows the kernel's page allocation failure for order 7 (a
   stack trace and a dump of the memory, "Memory budget"), nommu's `Allocation of length ...
   failed` with a second dump, binfmt_flat's `Unable to allocate RAM for process text/data,
   errno 12`, and then the shell reports the process killed by SIGSEGV, not an error of exec.
-  Hence the launcher: this hush has no functions or aliases for a check before the exec, and
-  quieting the dump would take a console log level that also hides the boot's lines the tests
-  read; the launcher's busybox exec per run is the price.
+  The shell lives on; reboot to get the blocks back. Quieting the dump would take a console
+  log level that also hides the boot's lines the tests read. The launcher's drop of the
+  caches before the exec makes it rarer, not impossible.
 - **The heap grows by at most an order-5 block.** It starts at 64 KB (`MICROPY_UNIX_HEAP_SIZE`,
   patch 0002; a malloc on noMMU is one block of a power of two pages, so the port's 1 MB would
   take the largest one there is) and is split (`MICROPY_GC_SPLIT_HEAP_AUTO`): when a collection
@@ -773,24 +798,21 @@ each use** (package `vux9k-bbtools`, `linux_workspace/userland/bbtools/`), in
   and MPY's own default path (`MICROPY_PY_SYS_PATH_DEFAULT` in the variant) is the same, for a
   program not started from the login shell: `MPY_COMMANDS` unsets it in the login shell, runs
   the launcher and exports the profile's value again. Change them together.
-- **Run `python` from the prompt, not from a subshell or a pipeline**: the launcher's look at
-  `/proc/buddyinfo` is conservative, it sees the memory as it is while the shells that started
-  it hold their busyboxes. The login hush holds one (order 6) and the launcher's `/bin/sh`
-  another; noMMU's hush executes busybox again for a subshell or a pipe's builtins ("Text tools
-  and vi"), so `( unset X; exec python ... )`, `{ ...; python ...; }`, `echo ... | python` and
-  `python ... | grep ...` (the pipe's other stage needs its block beside the launcher's) all
-  take blocks the launcher's MPY could have had, and are refused (`PYTHON_NO_BLOCK`) where the
-  same `python` typed alone runs. In a script, run it as a command of its own; to change its
-  environment, `unset`/`export` around it (or `VAR=value python ...`), not a subshell. The
-  first form was `MPY_COMMANDS`' default-path check until it was refused on the emulator
-  (2026-11-16, `test_mpy_command` after the second stage and the plain board-script run, the
-  same command passing after `load_linux`): the launcher looked three times, its drop of the
-  caches between, and found no order-7 block, while every other `python` command of the run
-  found one.
+- **Run `python` from the prompt, not from a subshell or a pipeline**: each shell that started
+  it holds its busybox while MPY's exec looks for its block. The login hush holds one (order 6)
+  and the launcher's `/bin/sh` another, which its exec frees before MPY's allocation; noMMU's
+  hush executes busybox again for a subshell or a pipe's builtins ("Text tools and vi"), so
+  `( unset X; exec python ... )`, `{ ...; python ...; }`, `echo ... | python` and `python ... |
+  grep ...` (the pipe's other stage needs its block beside MPY's) hold blocks MPY could have
+  had, and make its exec more likely to fail where the same `python` typed alone runs. In a
+  script, run it as a command of its own; to change its environment, `unset`/`export` around
+  it (or `VAR=value python ...`), not a subshell. The first form was `MPY_COMMANDS`'
+  default-path check until it failed on the emulator (2026-11-16, `test_mpy_command` after the
+  second stage and the plain board-script run, the same command passing after `load_linux`).
 - **The tests**: `linux_checks.MPY_COMMANDS` (the emulator's `test_mpy_command`, the board's
   `hw_linux.py`), each through the launcher: the version, `MICROPYPATH` and the default path,
   the modules' long names, bc_clone_py's self-test (`ALL BC SELF-TESTS PASSED`, no `[FAIL]` and
-  no refusal of the launcher: `problems`), scripts the shell's `echo` writes on the card (one
+  no allocation failure of MPY's exec: `problems`, `MPY_UNWANTED`), scripts the shell's `echo` writes on the card (one
   with arguments, one of them with a space and quotes, one that writes `led5` through the LED
   class, one that grows the heap), then the REPL (`MPY_REPL*`: `python` alone, `1+1`, Ctrl-D
   back to the shell).

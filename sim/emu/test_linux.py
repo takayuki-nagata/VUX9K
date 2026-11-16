@@ -13,8 +13,9 @@ board. Each boots to busybox's shell on the console, then commands are typed at 
 On each boot, after the boot's commands: MicroPython from the card through its launcher
 `python` (what it adds to MPY's run; linux_checks.MPY_COMMANDS: its modules, which the login
 shell's profile extracted from the card's PYLIB.TAR, bc_clone_py's self-test, scripts on the
-card, an LED, the heap's growth; then its REPL; then the launcher's refusal with MPYs holding
-the free blocks MPY's exec needs); after the other
+card, an LED, the heap's growth; then its REPL; then the launcher with no free block for MPY
+but the one its own shell splits (MPY runs), and with none at all (MPY's exec fails, the shell
+lives on)); after the other
 commands: the card's sample scripts, vi driven by its keys
 (linux_checks.VI_SESSIONS; the file then read from the card image) and, last, a paste at the
 shell, back to back (its dropped bytes recorded) and as vux_tool's monitor paces it (none).
@@ -108,7 +109,8 @@ RECLAIM: dict[str, str] = {}
 PASTE: dict[str, str] = {}
 # What test_pylib_extraction saw: each boot's cycles to the prompt, by its label
 PYLIB_BOOTS: dict[str, int] = {}
-# What the launcher python costs (test_python, test_python_without_a_block), per boot path
+# What the launcher python costs and what its tests saw (test_python,
+# test_python_from_its_shells_block, test_python_without_a_block), per boot path
 LAUNCHER: dict[str, str] = {}
 # sysmon's reclaim (linux_workspace/userland/sysmon/src/lib.rs, BUSYBOX_ORDER, RECLAIM_EVERY):
 # the order of the initramfs' busybox's exec (the board's test waits for it too), and every how
@@ -121,16 +123,23 @@ RECLAIM_READS = tuple(f"dd if=/dev/mmcblk0 of=/dev/null bs=4096 count=256 skip={
 # The processes that hold the free blocks of BUSYBOX_ORDER and up that the reads left (each a
 # copy of busybox, one such block), at most
 RECLAIM_HOLDERS = 12
-# test_python_without_a_block's MPYs that hold the free blocks of MPY_ORDER, at most; MPY_HELD
-# is what a holder prints once it runs, which its command line doesn't hold
+# The MPYs that hold free blocks of MPY_ORDER (test_python_from_its_shells_block: all but one;
+# test_python_without_a_block: all), at most; MPY_HELD is what a holder prints once it runs,
+# which its command line doesn't hold
 MPY_HELD = "held"
 MPY_HELD_HOLDER = "MPY -c \"import time; print('he' + 'ld'); time.sleep(600)\""
 MPY_HOLDERS = 4
+# test_python_from_its_shells_block's sleeping busyboxes that hold the free blocks of
+# BUSYBOX_ORDER, at most
+SLEEP_HOLDER = "sleep 600"
+SLEEP_HOLDERS = 8
 # test_python's command, through the launcher and MPY itself
 PYTHON_PROBE = 'python -c "print(1 + 1)"'
 MPY_DIRECT_PROBE = 'MPY -c "print(1 + 1)"'
-# test_python_without_a_block's: what the launcher printed, and its exit status
-PYTHON_REFUSED = 'python -c "print(6 * 7)"; echo status=$?'
+# The launcher's tests without a free block of MPY_ORDER: its look and choice on stderr, MPY's
+# answer, the exit status (128 + SIGSEGV's 11 when the exec failed)
+PYTHON_NO_LOOK = f'{linux_checks.PYTHON_DEBUG} python -c "print(6 * 7)"; echo status=$?'
+STATUS_SEGV = "status=139"
 # A shell's write to drop_caches, the launcher's own
 DROP_CACHES = "echo 3 >/proc/sys/vm/drop_caches"
 # What MPY's exec without a block shows on the console (docs/agents/linux.md, "MicroPython"):
@@ -356,35 +365,118 @@ def test_mpy_repl(linux):
         raise
 
 
+def kill_holders(linux: Booted, holders: list[int]) -> None:
+    """Kills the background processes holding blocks; their exits free them."""
+    if holders:
+        command(linux, "kill " + " ".join(str(p) for p in holders))
+        linux.soc.run(ms(1000))
+
+
+def hold_mpy_block(linux: Booted, holders: list[int]) -> None:
+    """One more MPY_HELD_HOLDER in the background, waited for until it runs (its exec reads MPY
+    from the card when a drop has gone before it)."""
+    mark = len(linux.soc.uart_received())
+    holders.append(background(linux, MPY_HELD_HOLDER))
+    wait_console(linux, MPY_HELD, mark)
+
+
+def test_python_from_its_shells_block(linux):
+    """The launcher executes MPY when its look finds no free block of MPY_ORDER, and MPY gets
+    the block the launcher's own shell split (docs/agents/linux.md, "MicroPython"): exec frees
+    the shell's copy of busybox (setup_new_exec puts the old mm) before binfmt_flat allocates
+    MPY's, and the copy joins its free buddy again. The state: no free block of BUSYBOX_ORDER,
+    one of MPY_ORDER and none above, with sysmon stopped (its reclaim would drop the caches
+    for order 6). MPYs (MPY_HELD_HOLDER, at most MPY_HOLDERS) hold the blocks of MPY_ORDER and
+    up but one, sleeping busyboxes (SLEEP_HOLDER, at most SLEEP_HOLDERS) the free blocks of
+    BUSYBOX_ORDER, each its own; once that holds, the shell drops the caches as the launcher
+    would and looks again, holders more for what that brings back, so the launcher's own drop
+    finds only what was allocated after (the argument of test_python_without_a_block). A
+    sleeper whose exec splits the order-7 block instead (a free order-6 block of another
+    migratetype) ends the setup, recorded. The launcher's busybox then has to split that
+    block: with PYTHON_DEBUG=1 it shows a look without a free block of MPY_ORDER and its drop,
+    and MPY still prints 42, with none of NO_BLOCK_SHOWN on the console. The holders are killed
+    and a sysmon started again whatever happens, for the tests after this one."""
+    soc = linux.soc
+    order = linux_checks.MPY_ORDER
+    assert wait_large(linux), f"no free block of order {BUSYBOX_ORDER} for ps"
+    mark = len(soc.uart_received())
+    command(linux, f"kill {sysmon_pid(linux)}")
+    wait_console(linux, "sysmon: stopped", mark)
+    mpys: list[int] = []
+    sleepers: list[int] = []
+    try:
+        if not free_large(linux, order):
+            command(linux, DROP_CACHES)
+            soc.run(ms(100))
+        dropped = False
+        last = "the start"
+        for _ in range(MPY_HOLDERS + SLEEP_HOLDERS + 2):
+            buddyinfo = command(linux, linux_checks.MEM_PROBES[1])
+            free = linux_checks.parse_buddyinfo(buddyinfo)
+            if sum(free[order:]) == 0:
+                LAUNCHER[f"{linux.how}, shell's block"] = f"no free block of order {order} left after {last}"
+                pytest.fail(f"no free block of order {order} left after {last}: {buddyinfo}")
+            if sum(free[order:]) > 1 or free[order] == 0:
+                assert len(mpys) < MPY_HOLDERS, f"{len(mpys)} MPYs: {buddyinfo}"
+                hold_mpy_block(linux, mpys)
+                last = f"MPY {len(mpys)}"
+            elif free[BUSYBOX_ORDER]:
+                assert len(sleepers) < SLEEP_HOLDERS, f"{len(sleepers)} sleepers: {buddyinfo}"
+                sleepers.append(background(linux, SLEEP_HOLDER))
+                last = f"sleeper {len(sleepers)}"
+            elif not dropped:
+                command(linux, DROP_CACHES)
+                # The dentries' and inodes' memory is freed after an RCU grace period
+                soc.run(ms(100))
+                dropped = True
+                last = "the shell's drop"
+            else:
+                break
+        free = linux_checks.parse_buddyinfo(buddyinfo)
+        assert free[BUSYBOX_ORDER] == 0 and free[order] == 1 and sum(free[order + 1 :]) == 0, buddyinfo
+        mark = len(soc.uart_received())
+        out = command(linux, PYTHON_NO_LOOK)
+        console = soc.uart_received()[mark:].decode(errors="replace")
+        saw = linux_checks.launcher_saw(out)
+        LAUNCHER[f"{linux.how}, shell's block"] = (
+            f"{len(mpys)} MPYs and {len(sleepers)} sleepers holding blocks, free before {free}, the launcher saw {saw}"
+        )
+        assert saw and sum(saw[order:]) == 0, out[-1500:]
+        assert linux_checks.PYTHON_DROPPED in out, out[-1500:]
+        assert "42" in [o.strip() for o in out.splitlines()], out[-1500:]
+        assert "status=0" in out, out[-1500:]
+        assert not any(e in console for e in NO_BLOCK_SHOWN), console[-3000:]
+    finally:
+        kill_holders(linux, mpys + sleepers)
+        # In place of init's
+        background(linux, linux_checks.SYSMON)
+
+
 def test_python_without_a_block(linux):
-    """The launcher's refusal (docs/agents/linux.md, "MicroPython"): with no free block of
-    MPY_ORDER, even after a drop of the caches, `python -c` prints PYTHON_NO_BLOCK, exits with
-    PYTHON_NO_BLOCK_STATUS and doesn't run MPY, so none of NO_BLOCK_SHOWN is on the console.
-    MPYs sleeping in the background (MPY_HELD_HOLDER, at most MPY_HOLDERS) hold the free blocks
-    of MPY_ORDER and up, each its own; once none is left, the shell drops the caches as the
-    launcher would (DROP_CACHES) and looks again, a holder more for a block that brings back.
-    So the launcher's own drop finds only what was allocated after that, which can't make a
-    block: every aligned block of MPY_ORDER pages held an allocated page at the last look (one
-    with all of its pages free is a free block of its order), and those pages are the
-    holders', the kernel's and the initramfs', none of them dropped. The holders are killed
-    whatever happens, for the tests after this one; the launcher's run and the drop are
-    recorded (test_record_measurements)."""
+    """The launcher without a block for MPY anywhere (docs/agents/linux.md, "MicroPython"): it
+    drops the caches and executes MPY all the same, and the exec fails past its point of no
+    return, so the console shows the kernel's page allocation failure and the shell MPY's
+    process killed by SIGSEGV (STATUS_SEGV); the shell lives on. MPYs sleeping in the background
+    (MPY_HELD_HOLDER, at most MPY_HOLDERS) hold the free blocks of MPY_ORDER and up, each its
+    own; once none is left, the shell drops the caches as the launcher would (DROP_CACHES) and
+    looks again, a holder more for a block that brings back. So the launcher's own drop finds
+    only what was allocated after that, which can't make a block: every aligned block of
+    MPY_ORDER pages held an allocated page at the last look (one with all of its pages free is
+    a free block of its order), and those pages are the holders', the kernel's and the
+    initramfs', none of them dropped; the launcher's own block of BUSYBOX_ORDER, freed by the
+    exec, joins one only with free pages, so not into a free block of MPY_ORDER either. The
+    holders are killed whatever happens, for the tests after this one."""
     soc = linux.soc
     order = linux_checks.MPY_ORDER
     holders: list[int] = []
     try:
-        drop = 0
         # A holder per free block, a drop when none is left: at most a drop after each holder
         for _ in range(2 * MPY_HOLDERS + 2):
             if free_large(linux, order):
                 assert len(holders) < MPY_HOLDERS, f"{len(holders)} MPYs and still a free block of order {order}"
-                mark = len(soc.uart_received())
-                holders.append(background(linux, MPY_HELD_HOLDER))
-                # Its exec reads MPY from the card when a drop has gone before it
-                wait_console(linux, MPY_HELD, mark)
+                hold_mpy_block(linux, holders)
                 continue
-            _, cycles = run_metered(linux, DROP_CACHES)
-            drop = drop or cycles
+            command(linux, DROP_CACHES)
             # The dentries' and inodes' memory is freed after an RCU grace period
             soc.run(ms(100))
             if not free_large(linux, order):
@@ -394,22 +486,20 @@ def test_python_without_a_block(linux):
         assert sum(free[order:]) == 0, f"{len(holders)} MPYs: {buddyinfo}"
         assert sum(free[BUSYBOX_ORDER:]) > 0, f"no free block of order {BUSYBOX_ORDER} for the launcher: {buddyinfo}"
         mark = len(soc.uart_received())
-        out, cycles = run_metered(linux, PYTHON_REFUSED)
+        out, cycles = run_metered(linux, PYTHON_NO_LOOK)
         console = soc.uart_received()[mark:].decode(errors="replace")
-        assert linux_checks.PYTHON_NO_BLOCK in out, out[-1500:]
-        assert f"status={linux_checks.PYTHON_NO_BLOCK_STATUS}" in out, out[-1500:]
-        assert "42" not in out, out[-1500:]
-        assert not any(e in console for e in NO_BLOCK_SHOWN), console[-3000:]
-        LAUNCHER[f"{linux.how}, refused"] = (
-            f"{len(holders)} MPYs holding the blocks; the shell's drop of the caches {drop:,} cycles"
-            f" ({drop / CLK_HZ:.2f} s), the launcher's refusal (an exec of busybox, a look, its drop, two"
-            f" more looks) {cycles:,} cycles ({cycles / CLK_HZ:.2f} s)"
+        assert linux_checks.PYTHON_DROPPED in out, out[-1500:]
+        assert "page allocation failure" in console, console[-3000:]
+        assert STATUS_SEGV in out, out[-1500:]
+        assert "42" not in [o.strip() for o in out.splitlines()], out[-1500:]
+        # The shell lives on
+        assert "alive" in [o.strip() for o in command(linux, "echo alive").splitlines()]
+        LAUNCHER[f"{linux.how}, no block"] = (
+            f"{len(holders)} MPYs holding the blocks; the launcher's run to MPY's SIGSEGV {cycles:,} cycles"
+            f" ({cycles / CLK_HZ:.2f} s), {len(console):,} bytes on the console"
         )
     finally:
-        if holders:
-            command(linux, "kill " + " ".join(str(p) for p in holders))
-            # Their exits free their blocks
-            soc.run(ms(1000))
+        kill_holders(linux, holders)
 
 
 def test_exec_after_card_reads(linux):
