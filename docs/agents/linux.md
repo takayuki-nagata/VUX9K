@@ -705,20 +705,29 @@ each use** (package `vux9k-bbtools`, `linux_workspace/userland/bbtools/`), in
     `RECLAIM_WAIT_WALL_S` of the host's clock as the bound: with the emulator stopped while the
     probes are typed (~1.6 s of stops for each ~70-byte probe), 10 s of the host's clock held
     less than half of that of the guest's (an estimate from the stops), about a look and a drop.
-    `test_python_from_its_shells_block` stops sysmon (its reclaim would drop the caches with
-    order 6 gone), then holds blocks in the background until no order-6 block is free and one
-    order-7 block and nothing above is: MPYs for the order-7 blocks but one (at most 4), `sleep
-    600`s for the order-6 ones (at most 8; each an exec of busybox, which takes a free order-6
-    block before it splits a larger one), and the shell's own drop of the caches with another
-    look, so the launcher's drop can't be what brings a block back. A sleeper that splits the
-    order-7 block instead (a free order-6 block of another migratetype can make the allocator
-    split one of its own type first) fails the setup with that recorded. Then `PYTHON_DEBUG=1
-    python -c "print(6 * 7)"` must show a look without an order-7 block, the drop, and 42, with
-    no allocation failure on the console. `test_python_without_a_block` holds every order-7
-    block with MPYs and drops the caches until none comes back, then wants the drop, the
-    kernel's `page allocation failure` on the console, the shell's `$?` 139 (SIGSEGV) and the
-    shell answering after; the dump (two of them, below) fits `COMMAND_CYCLES` easily. Both
-    kill their holders at the end, the first starts a sysmon again. The launcher's logic also
+    `test_python_from_its_shells_block` makes the launcher's own shell split the order-7
+    block. An exec's allocation is unmovable (GFP_KERNEL), and `__rmqueue` (mm/page_alloc.c)
+    tries `__rmqueue_smallest` on the allocation's own migratetype first, the smallest free
+    block of order 6 and up on the unmovable lists, before `__rmqueue_claim`/`__rmqueue_steal`
+    fall back to another type's (`fallbacks[MIGRATE_UNMOVABLE]`: reclaimable, then movable;
+    the claim takes the largest such block first). So a busybox splits a free order-7 block
+    whenever no *unmovable* order-6 block is free, whatever buddyinfo shows of order 6 (the
+    emulator, 2026-11-17: a `sleep 600` split it with four order-6 blocks free, on the movable
+    lists); the launcher's shell on the board very likely does the same. The test: MPYs hold
+    the order-7 blocks but one (at most 4); `sleep 600`s start one at a time, buddyinfo read
+    after each, until one's exec takes that block (at most 8); that one is killed and its
+    block joins its buddy again; `/proc/pagetypeinfo` (`linux_checks.PAGETYPEINFO_PROBE`,
+    `parse_pagetypeinfo`: free blocks per order and migratetype) must then show no unmovable
+    order-6 block and one order-7 block free. Then `PYTHON_DEBUG=1 python -c "print(6 * 7)"`
+    must show a look without an order-7 block, the drop, and 42, with no allocation failure on
+    the console; a look that still finds the block (`caches kept`) fails as the state not
+    reached, not retried. `test_python_without_a_block` holds every order-7 block with MPYs
+    and drops the caches until none comes back, then wants the drop, the kernel's `page
+    allocation failure` on the console, the shell's `$?` 139 (SIGSEGV) and the shell answering
+    after; the dump (two of them, below) fits `COMMAND_CYCLES` easily. Both kill their holders
+    at the end and leave init's sysmon alone, so the tests after them find it init's child
+    (its reclaim drops only when no free block of order 6 or above is left; the first keeps
+    one free throughout, the second wants one for the launcher). The launcher's logic also
     runs on the host's `sh` with a buddyinfo file and a fake MPY (`test_linux_checks.py`'s
     `test_launcher_logic`, which can't catch what differs in hush). The spike's numbers (the
     emulator): MPY's first exec 14.9 s (~0.5 MB from the card), the REPL's prompt 1.16 s,

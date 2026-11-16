@@ -37,6 +37,23 @@ def test_buddyinfo_sums_zones():
     assert linux_checks.parse_buddyinfo(BUDDYINFO) == [3, 1, 2, 0, 4, 1, 1, 0, 1, 0, 0]
 
 
+def test_pagetypeinfo_per_migratetype():
+    text = (
+        linux_checks.PAGETYPEINFO_PROBE
+        + "\r\nPage block order: 7\r\nPages per block: 128\r\n\r\n"
+        + "Free pages count per migrate type at order 0 1 2 3 4 5 6 7 8 9 10\r\n"
+        + "Node 0, zone Normal, type Unmovable 6 7 4 4 4 3 0 1 0 0 0\r\n"
+        + "Node 0, zone Normal, type Movable 0 0 0 0 0 0 4 0 0 0 >100000\r\n"
+        + "Node 0, zone DMA, type Movable 1 0 0 0 0 0 1 0 0 0 0\r\n"
+        + "\r\nNumber of blocks type Unmovable Movable Reclaimable HighAtomic Isolate\r\n"
+        + "Node 0, zone Normal 9 6 0 0 0\r\n/ # "
+    )
+    assert linux_checks.parse_pagetypeinfo(text) == {
+        "Unmovable": [6, 7, 4, 4, 4, 3, 0, 1, 0, 0, 0],
+        "Movable": [1, 0, 0, 0, 0, 0, 5, 0, 0, 0, 100000],
+    }
+
+
 def test_table():
     sizes = {
         "image": 3244488,

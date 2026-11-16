@@ -482,6 +482,35 @@ def parse_meminfo(text: str) -> dict[str, int]:
     return out
 
 
+# /proc/pagetypeinfo (mode 0400, and this shell is root) read the same way: the free blocks per
+# order on each migratetype's free list (parse_pagetypeinfo). The allocator takes a block of the
+# allocation's own migratetype first, the smallest that fits, and falls back to another type's
+# only when its own lists have none (mm/page_alloc.c, `__rmqueue`), so buddyinfo's sum over the
+# types doesn't say which block an exec of busybox will take
+PAGETYPEINFO_PROBE = "exec 3</proc/pagetypeinfo; while read l <&3; do echo $l; done; exec 3<&-"
+
+
+def parse_pagetypeinfo(text: str) -> dict[str, list[int]]:
+    """/proc/pagetypeinfo's free blocks per order (index = order) on each migratetype's free
+    list, {"Unmovable": [n0, n1, ...], ...}, summed over its zones. Its lines are `Node 0, zone
+    Normal, type Unmovable n0 n1 ...` (hush's echo collapses the kernel's padding), a count at
+    the kernel's cap `>100000`; the table of pageblocks per type and other lines are skipped."""
+    out: dict[str, list[int]] = {}
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) < 7 or parts[0] != "Node" or parts[2] != "zone" or parts[4] != "type":
+            continue
+        counts = [p.removeprefix(">") for p in parts[6:]]
+        if not all(c.isdigit() for c in counts):
+            continue
+        acc = out.setdefault(parts[5], [])
+        for order, n in enumerate(int(c) for c in counts):
+            if order == len(acc):
+                acc.append(0)
+            acc[order] += n
+    return out
+
+
 def parse_buddyinfo(text: str) -> list[int]:
     """/proc/buddyinfo's free blocks per order (index = order), summed over its zones; its
     lines are `Node 0, zone Normal n0 n1 ...`."""
