@@ -973,12 +973,15 @@ def test_pylib_extraction():
     PYLIB.TAR and PYLIB.VER (pylib says nothing, the reference), a card with them (the first
     boot: extracted, the modules there with their long names) and that card again after an
     umount (the second: PYLIB.VER read and found the same as PYLIB/VERSION, nothing extracted,
-    no exec). Then, at the second's shell, pylib sourced as the profile does: with PYLIB.TAR no
-    archive and another version in PYLIB.VER it says so and leaves no PYLIB/VERSION; without
-    PYLIB.VER it does nothing; the shell goes on."""
+    no exec). Then, at the second's shell, pylib sourced as the profile does: with the real
+    PYLIB.TAR but another version in PYLIB.VER it extracts, finds the archive not of that
+    version, says so and leaves no PYLIB/VERSION; with PYLIB.TAR no archive it says so and
+    leaves none either; without PYLIB.VER it does nothing; the shell goes on. A linux-dist
+    without PYLIB.TAR (a stale one) fails it: linux_files() has seen VUX9K_LINUX_TEST."""
     image, dtb = linux_files()
-    if linux_checks.PYLIB_TAR not in card_programs():
-        pytest.skip(f"{linux_checks.PYLIB_TAR} not in make linux-dist's tree")
+    assert linux_checks.PYLIB_TAR in card_programs(), (
+        f"{linux_checks.PYLIB_TAR} not in make linux-dist's tree ({LINUX_DIST}): make linux-dist again"
+    )
     version = pylib_version()
     modules = (*linux_checks.PYLIB_MODULES, "VERSION")
     labels = ("pylib: without PYLIB.TAR", "pylib: first boot, extracted", "pylib: second boot, left")
@@ -1013,8 +1016,21 @@ def test_pylib_extraction():
     assert not linux_checks.missing(out, modules), out
 
     pylib = ". /mnt/sd/VUX9K/LINUX/BIN/pylib; echo pylib-done"
+    # The real archive, PYLIB.VER another version: extracted, its VERSION not PYLIB.VER's
+    other = "0123456789abcdef"
+    assert other != version
+    command(linux, f"echo {other} > /mnt/sd/{linux_checks.PYLIB_VER}")
+    assert wait_large(linux), f"no free block of order {BUSYBOX_ORDER} for tar's exec"
+    out = command(linux, pylib)
+    assert linux_checks.PYLIB_EXTRACTING in out, out
+    assert f"pylib: PYLIB.TAR is not version {other}" in out, out
+    assert "pylib: PYLIB.TAR not extracted" in out and "pylib-done" in out, out
+    out = command(linux, f"[ -e {linux_checks.MPY_LIB}/VERSION ] || echo no-version")
+    assert "no-version" in out, out
+    # No archive in PYLIB.TAR, PYLIB.VER the other version again (PYLIB/VERSION is gone, so
+    # pylib extracts again whatever the step before left)
     command(linux, f"echo junk > /mnt/sd/{linux_checks.PYLIB_TAR}")
-    command(linux, f"echo 0123456789abcdef > /mnt/sd/{linux_checks.PYLIB_VER}")
+    command(linux, f"echo {other} > /mnt/sd/{linux_checks.PYLIB_VER}")
     assert wait_large(linux), f"no free block of order {BUSYBOX_ORDER} for tar's exec"
     out = command(linux, pylib)
     assert linux_checks.PYLIB_EXTRACTING in out and "pylib: PYLIB.TAR not extracted" in out, out

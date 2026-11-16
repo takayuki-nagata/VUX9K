@@ -39,6 +39,7 @@ size_t gc_get_max_new_split(void) {
     buf[len] = 0;
     // Each line: "Node 0, zone   Normal  c0 c1 c2 ...", the free blocks of each order
     int largest = -1;
+    int counts = 0;
     for (const char *p = buf; *p;) {
         const char *zone = p;
         while (*p && *p != '\n') {
@@ -70,6 +71,7 @@ size_t gc_get_max_new_split(void) {
                 break;
             }
             unsigned long count = 0;
+            counts++;
             while (zone < end && *zone >= '0' && *zone <= '9') {
                 count = count * 10 + (unsigned long)(*zone++ - '0');
             }
@@ -78,6 +80,11 @@ size_t gc_get_max_new_split(void) {
             }
         }
     }
+    // No count read at all (a format this doesn't know): the cap, as without the file
+    if (!counts) {
+        return VUX9K_SPLIT_MAX;
+    }
+    // Counts, all of them 0: no free block
     if (largest < 0) {
         return 0;
     }

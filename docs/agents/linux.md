@@ -418,6 +418,13 @@ This repository's own programs are buildroot packages of the external tree, one 
   local site `-rebuild` rsyncs the source again. The sources stay outside
   `linux_workspace/buildroot/`, so changing one leaves CI's exact cache key for
   `build/buildroot` alone (ci.yml) and costs a rebuild of the package, not of buildroot.
+  `vux9k-micropython` is not a local site but MicroPython's release tarball: its `-rebuild`
+  re-runs the build only, on the tree extracted and patched before, so a changed `000x.patch`
+  needs buildroot's `vux9k-micropython-dirclean` (through the Makefile's `BUILDROOT_MAKE`
+  command line), then `make linux-rootfs`. Its variant is read in place, and a variant newer than the port's
+  stamp (`.vux9k-variant`) rebuilds the port from scratch: CI restores `build/buildroot` from
+  its cache under a fresh checkout's mtimes, so the port rebuilds on every CI run. That is
+  safe; it costs only time.
 - **A FLAT executable's stack is fixed at link time** (elf2flt `-s`; nothing grows it). Give
   each package `<PKG>_FLAT_STACKSIZE` (buildroot passes it to elf2flt, `package/Makefile.in`);
   `riscv32-buildroot-linux-uclibc-flthdr -p` on the built file shows it.
@@ -788,7 +795,8 @@ each use** (package `vux9k-bbtools`, `linux_workspace/userland/bbtools/`), in
   bbtar from the card at every boot, +3.4 s to the prompt (2026-11-16, the emulator: 13.3 s
   without the archive, 16.7 s with it extracted already, 20.0 s at the first boot, which
   extracts). `test_linux.py`'s `test_pylib_extraction` boots a card without the archive, with it
-  (the first boot extracts) and the same card again (the second leaves it), and
+  (the first boot extracts) and the same card again (the second leaves it), then sources pylib
+  there with `PYLIB.VER` of another version, with a junk archive and without `PYLIB.VER`; and
   `test_record_measurements` prints what each adds to the boot (`pylib: ... to the prompt`). The
   emulator's other boots and `hw_linux.py`'s are first boots of their card: their time to the
   prompt includes the extraction, and the memory table ("Memory budget") is read after it,
