@@ -7,6 +7,7 @@ its vi sessions and paste. Needs no Linux build; make test-linux-emu and scripts
 read the real output with it."""
 
 import os
+import re
 import sys
 
 import pytest
@@ -173,6 +174,26 @@ def test_kernel_lines():
     assert linux_checks.without_kernel_lines(f"[    0.000000] Linux version 7.3\n{kernel}") == ""
     kept = "[1] 83\r\n[ 1.5] x\r\n[2.123456]x\r\n1.000000] y\r\n"
     assert linux_checks.without_kernel_lines(kept) == kept
+
+
+def test_reclaim_constants_are_sysmons():
+    """The orders the tests wait for and sysmon's look are sysmon's own (its src/lib.rs): the
+    least it keeps (BUSYBOX_ORDER), what it keeps by default (RECLAIM_ORDER, MPY's exec), every
+    how many intervals it looks and its default interval."""
+    lib = os.path.join(REPO_ROOT, "linux_workspace", "userland", "sysmon", "src", "lib.rs")
+    with open(lib) as f:
+        text = f.read()
+
+    def const(name: str) -> int:
+        m = re.search(rf"^pub const {name}: \w+ = (\d+);", text, re.M)
+        assert m, name
+        return int(m.group(1))
+
+    assert const("BUSYBOX_ORDER") == linux_checks.BUSYBOX_ORDER
+    assert const("RECLAIM_ORDER") == linux_checks.MPY_ORDER
+    assert const("RECLAIM_EVERY") == linux_checks.SYSMON_RECLAIM_EVERY
+    m = re.search(r"interval_ms: (\d+),", text)
+    assert m and int(m.group(1)) == linux_checks.SYSMON_INTERVAL_S * 1000
 
 
 def test_mpy_commands():

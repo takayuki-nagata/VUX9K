@@ -69,7 +69,7 @@ LOAD_TIMEOUT = 120.0
 BOOT_TIMEOUT = 180.0
 COMMAND_TIMEOUT = 60.0
 PUT_LINE_TIMEOUT = 30.0
-# The commands before which the test waits for a free block of linux_checks.RECLAIM_ORDER (an
+# The commands before which the test waits for a free block of linux_checks.BUSYBOX_ORDER (an
 # exec of busybox after the card's reads: sysmon's reclaim), as test_linux.py's tests of them do
 WAIT_LARGE = frozenset((*linux_checks.TOOL_COMMANDS, *linux_checks.PIPE_COMMANDS, *linux_checks.SCRIPT_COMMANDS))
 # The command after which mpy_repl runs MicroPython's REPL (the last of MPY_COMMANDS); every
@@ -177,8 +177,8 @@ def run_command(ser, cmd: str, timeout: float = COMMAND_TIMEOUT) -> str | None:
     return None if at < 0 else out[at + len(cmd) :]
 
 
-def wait_large(ser, before: str, order: int = linux_checks.RECLAIM_ORDER) -> str | None:
-    """Waits up to RECLAIM_WAIT_S for a free block of order (RECLAIM_ORDER: the next exec of
+def wait_large(ser, before: str, order: int = linux_checks.BUSYBOX_ORDER) -> str | None:
+    """Waits up to RECLAIM_WAIT_S for a free block of order (BUSYBOX_ORDER: the next exec of
     busybox's; sysmon gives one back after the card's reads; test_linux.py's wait_large; or
     MPY_ORDER, MPY's), reading /proc/buddyinfo with the shell's builtins: the failure, None
     once one is free."""
@@ -241,7 +241,7 @@ def boot(
     for cmd, wanted in linux_checks.COMMANDS.items():
         mpy = linux_checks.runs_mpy(cmd)
         if cmd in WAIT_LARGE or mpy:
-            err = wait_large(ser, cmd, linux_checks.MPY_ORDER if mpy else linux_checks.RECLAIM_ORDER)
+            err = wait_large(ser, cmd, linux_checks.MPY_ORDER if mpy else linux_checks.BUSYBOX_ORDER)
             if err:
                 failures.append(err)
         t = time.monotonic()

@@ -128,7 +128,7 @@ fn args(s: &str) -> Option<Options> {
 #[test]
 fn options() {
     assert_eq!(args(""), Some(Options::default()));
-    let o = args("-m load -i 500 -b 50 -n 3 -r 0 -v").unwrap();
+    let o = args("-m load -i 500 -b 50 -n 3 -r 0 -o 6 -v").unwrap();
     assert_eq!(
         o,
         Options {
@@ -137,11 +137,14 @@ fn options() {
             button_ms: 50,
             count: 3,
             reclaim_kb: 0,
+            reclaim_order: 6,
             verbose: true
         }
     );
     assert_eq!(args("-r 1024").unwrap().reclaim_kb, 1024);
     assert_eq!(Options::default().reclaim_kb, RECLAIM_CACHED_KB);
+    assert_eq!(Options::default().reclaim_order, 7);
+    assert_eq!(args("-o 10").unwrap().reclaim_order, 10);
     for bad in [
         "-m",
         "-m disk",
@@ -154,6 +157,9 @@ fn options() {
         "-r",
         "-r 8193",
         "-r 1k",
+        "-o",
+        "-o 0",
+        "-o 11",
         "-x",
         "cpu",
     ] {
@@ -203,6 +209,8 @@ struct Fake {
     /// Cached at each read of /proc/meminfo (in place of `meminfo`), the last one again once
     /// it is the only one left
     cached: VecDeque<u64>,
+    /// Cached by the clock (ms), in place of `cached`
+    cached_at: Option<fn(u32) -> u64>,
     meminfo_reads: u32,
     /// The intervals (by the uptime reads before them) at which the page cache was dropped
     drops: Vec<usize>,
@@ -221,6 +229,9 @@ impl Sys for Fake {
             }
             b"/proc/meminfo\0" => {
                 self.meminfo_reads += 1;
+                if let Some(at) = self.cached_at {
+                    return copy(&meminfo_cached(at(self.now_ms)), buf);
+                }
                 match self.cached.len() {
                     0 => self.meminfo.clone(),
                     1 => meminfo_cached(self.cached[0]),
@@ -238,9 +249,7 @@ impl Sys for Fake {
             }
             _ => return None,
         };
-        let n = text.len().min(buf.len());
-        buf[..n].copy_from_slice(&text[..n]);
-        Some(n)
+        copy(&text, buf)
     }
     fn led(&mut self, n: u32, on: bool) -> bool {
         if self.broken_led == Some(n) {
@@ -279,6 +288,13 @@ impl Sys for Fake {
         }
         true
     }
+}
+
+/// A file's text into a read's buffer
+fn copy(text: &[u8], buf: &mut [u8]) -> Option<usize> {
+    let n = text.len().min(buf.len());
+    buf[..n].copy_from_slice(&text[..n]);
+    Some(n)
 }
 
 /// /proc/uptime after busy and idle hundredths of a second
@@ -537,6 +553,8 @@ fn buddy(counts: &[u64]) -> Vec<u8> {
 
 const FRAGMENTED: &[u64] = &[3, 10, 2, 5, 2, 3, 0, 0, 0, 0, 0];
 const WHOLE: &[u64] = &[10, 12, 3, 9, 5, 8, 2, 0, 1, 0, 0];
+/// Blocks for busybox's exec, none for MPY's
+const NO_ORDER_7: &[u64] = &[6, 8, 3, 4, 2, 3, 2, 0, 0, 0, 0];
 
 fn meminfo_cached(kb: u64) -> Vec<u8> {
     format!(
@@ -547,14 +565,18 @@ fn meminfo_cached(kb: u64) -> Vec<u8> {
 
 #[test]
 fn free_blocks_of_an_order_and_above() {
-    assert_eq!(free_blocks_from(&buddy(WHOLE), RECLAIM_ORDER), Some(3));
-    assert_eq!(free_blocks_from(&buddy(FRAGMENTED), RECLAIM_ORDER), Some(0));
+    assert_eq!(free_blocks_from(&buddy(WHOLE), BUSYBOX_ORDER), Some(3));
+    assert_eq!(free_blocks_from(&buddy(WHOLE), RECLAIM_ORDER), Some(1));
+    assert_eq!(free_blocks_from(&buddy(FRAGMENTED), BUSYBOX_ORDER), Some(0));
     assert_eq!(free_blocks_from(&buddy(FRAGMENTED), 5), Some(3));
-    assert_eq!(free_blocks_from(&buddy(&[1, 2]), RECLAIM_ORDER), Some(0));
+    assert_eq!(free_blocks_from(&buddy(NO_ORDER_7), BUSYBOX_ORDER), Some(2));
+    assert_eq!(free_blocks_from(&buddy(NO_ORDER_7), RECLAIM_ORDER), Some(0));
+    assert_eq!(free_blocks_from(&buddy(&[1, 2]), BUSYBOX_ORDER), Some(0));
     // Every zone counts; tabs too
     let two = b"Node 0, zone      DMA 1 0 0 0 0 0 1\nNode 0, zone\tNormal\t0 0 0 0 0 0 2 1\n";
-    assert_eq!(free_blocks_from(two, RECLAIM_ORDER), Some(4));
-    assert_eq!(free_blocks_from(b"", RECLAIM_ORDER), None);
+    assert_eq!(free_blocks_from(two, BUSYBOX_ORDER), Some(4));
+    assert_eq!(free_blocks_from(two, RECLAIM_ORDER), Some(1));
+    assert_eq!(free_blocks_from(b"", BUSYBOX_ORDER), None);
     assert_eq!(free_blocks_from(b"Node 0, zone Normal 1 x 3\n", 0), None);
     assert_eq!(free_blocks_from(b"Node 0, zone\n", 0), None);
 }
@@ -587,9 +609,14 @@ fn reclaim_fake_cached(buddyinfo: Vec<Vec<u8>>, cached: Vec<u64>, intervals: u32
 }
 
 fn run_for(f: &mut Fake, intervals: u32, reclaim_kb: u32, verbose: bool) {
+    run_order(f, intervals, reclaim_kb, verbose, RECLAIM_ORDER);
+}
+
+fn run_order(f: &mut Fake, intervals: u32, reclaim_kb: u32, verbose: bool, order: usize) {
     let o = Options {
         count: intervals,
         reclaim_kb,
+        reclaim_order: order as u32,
         verbose,
         ..Options::default()
     };
@@ -605,7 +632,7 @@ fn at_look(look: u32) -> usize {
 #[test]
 fn it_drops_the_page_cache_when_no_large_block_is_left() {
     // Whole at the first look, then the card's reads leave it in pieces; the drop brings an
-    // order-8 block back
+    // order-8 block back (MPY's exec fits in it)
     let seq = vec![buddy(WHOLE), buddy(FRAGMENTED), buddy(WHOLE)];
     let mut f = reclaim_fake(seq, 1112, 2 * RECLAIM_EVERY + 1);
     run_for(&mut f, 2 * RECLAIM_EVERY + 1, RECLAIM_CACHED_KB, true);
@@ -614,7 +641,7 @@ fn it_drops_the_page_cache_when_no_large_block_is_left() {
     assert_eq!(f.drop_writes, b"41");
     assert!(
         f.out.contains(
-            &"sysmon: dropped the page cache (no free block of order 6, Cached 1112 kB)".into()
+            &"sysmon: dropped the page cache (no free block of order 7, Cached 1112 kB)".into()
         ),
         "{:?}",
         f.out
@@ -745,4 +772,110 @@ fn a_drop_that_fails_stops_the_reclaim() {
     assert_eq!(r.0.drop_writes, b"41");
     let said = r.0.out.iter().filter(|l| l.contains("drop_caches")).count();
     assert_eq!(said, 1);
+}
+
+#[test]
+fn it_drops_for_order_7_with_blocks_of_order_6_left() {
+    // Busybox's blocks are there, MPY's not: a drop, which brings an order-8 block back
+    let seq = vec![buddy(NO_ORDER_7), buddy(WHOLE)];
+    let mut f = reclaim_fake(seq, 1112, 2 * RECLAIM_EVERY);
+    run_for(&mut f, 2 * RECLAIM_EVERY, RECLAIM_CACHED_KB, true);
+    assert_eq!(f.drops, [at_look(0)]);
+    // -o 6: what it kept before, no drop for that
+    let mut f = reclaim_fake(vec![buddy(NO_ORDER_7)], 1112, 4 * RECLAIM_EVERY);
+    run_order(
+        &mut f,
+        4 * RECLAIM_EVERY,
+        RECLAIM_CACHED_KB,
+        true,
+        BUSYBOX_ORDER,
+    );
+    assert!(f.drops.is_empty(), "{:?}", f.out);
+}
+
+#[test]
+fn a_drop_that_never_brings_order_7_back_comes_once_with_cached_flat() {
+    // Order 7 never comes back (the pieces aren't the page cache's), Cached stays at what the
+    // drop left: one drop, however long it runs
+    let intervals = 4 * RECLAIM_HOLDOFF;
+    let mut f = reclaim_fake(vec![buddy(NO_ORDER_7)], 600, intervals);
+    run_for(&mut f, intervals, RECLAIM_CACHED_KB, true);
+    assert_eq!(f.drops, [at_look(0)]);
+    let said: Vec<_> = f.out.iter().filter(|l| l.contains("dropped")).collect();
+    assert_eq!(
+        said,
+        ["sysmon: dropped the page cache (no free block of order 7, Cached 600 kB)"]
+    );
+}
+
+#[test]
+fn with_cached_growing_one_drop_per_step() {
+    // Order 7 never comes back; Cached grows by 100 kB (above -r) every 60 intervals: the
+    // first drop, then one at the first look after each step
+    fn cached(ms: u32) -> u64 {
+        600 + 100 * u64::from(ms / 60_000)
+    }
+    let intervals = 200;
+    let mut f = reclaim_fake(vec![buddy(NO_ORDER_7)], 0, intervals);
+    f.cached_at = Some(cached);
+    run_for(&mut f, intervals, RECLAIM_CACHED_KB, false);
+    // A step's interval k ends at (k + 1) s; looks are every RECLAIM_EVERY from interval 0
+    // The first look whose interval ends at or after step s
+    let first_after = |s: u32| (0..).find(|l| l * RECLAIM_EVERY + 1 >= 60 * s).unwrap();
+    assert_eq!(
+        f.drops,
+        [
+            at_look(0),
+            at_look(first_after(1)),
+            at_look(first_after(2)),
+            at_look(first_after(3))
+        ]
+    );
+    // Steps every 10 intervals: still one drop per step, none between
+    fn faster(ms: u32) -> u64 {
+        600 + 100 * u64::from(ms / 10_000)
+    }
+    let mut f = reclaim_fake(vec![buddy(NO_ORDER_7)], 0, intervals);
+    f.cached_at = Some(faster);
+    run_for(&mut f, intervals, RECLAIM_CACHED_KB, false);
+    let steps = (1..)
+        .map(|s| (0..).find(|l| l * RECLAIM_EVERY + 1 >= 10 * s).unwrap())
+        .take_while(|&l| l * RECLAIM_EVERY < intervals);
+    let want: Vec<_> = std::iter::once(0).chain(steps).map(at_look).collect();
+    assert_eq!(f.drops, want);
+}
+
+#[test]
+fn order_6_is_kept_as_before() {
+    // A drop for order 7 brings back order 6 only, Cached at the floor: no drop at the next
+    // look; then the card's reads leave none of order 6 either, with 300 kB more cached: a drop
+    let seq = vec![
+        buddy(NO_ORDER_7),
+        buddy(NO_ORDER_7),
+        buddy(FRAGMENTED),
+        buddy(WHOLE),
+    ];
+    // The check's look reads Cached twice: the floor, then for a drop
+    let cached = vec![1112, 520, 520, 820, 520];
+    let mut f = reclaim_fake_cached(seq, cached, 4 * RECLAIM_EVERY);
+    run_for(&mut f, 4 * RECLAIM_EVERY, RECLAIM_CACHED_KB, true);
+    assert_eq!(f.drops, [at_look(0), at_look(2)]);
+    let said: Vec<_> = f.out.iter().filter(|l| l.contains("dropped")).collect();
+    assert_eq!(
+        said,
+        [
+            "sysmon: dropped the page cache (no free block of order 7, Cached 1112 kB)",
+            "sysmon: dropped the page cache (no free block of order 7, Cached 820 kB)"
+        ]
+    );
+}
+
+#[test]
+fn the_floor_is_what_the_drop_left_not_what_was_read_since() {
+    // Cached right after the drop is 520 kB; by the next look the exec that waited for the
+    // block has read 300 kB of its file and holds the block: that is above the floor, a drop
+    let seq = vec![buddy(NO_ORDER_7), buddy(NO_ORDER_7), buddy(WHOLE)];
+    let mut f = reclaim_fake_cached(seq, vec![1112, 520, 820, 820], 3 * RECLAIM_EVERY);
+    run_for(&mut f, 3 * RECLAIM_EVERY, RECLAIM_CACHED_KB, false);
+    assert_eq!(f.drops, [at_look(0), at_look(1)]);
 }

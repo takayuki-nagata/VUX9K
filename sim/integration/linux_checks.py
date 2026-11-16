@@ -279,11 +279,16 @@ TOOL_BUSYBOXES = {
     "bbtar": ("tar",),
     "bbedit": ("vi", "less"),
 }
-# The order of the initramfs' busybox's exec (docs/agents/linux.md, "Memory budget"), which
-# sysmon's reclaim of the page cache gives back within 3 of its 1 s intervals after the card's
-# reads, and how long a test waits for a free block of it before an exec of busybox (seconds)
-RECLAIM_ORDER = 6
+# The order of the initramfs' busybox's exec (docs/agents/linux.md, "Memory budget"), the least
+# sysmon's reclaim of the page cache keeps (its BUSYBOX_ORDER; by default it keeps MPY_ORDER,
+# its RECLAIM_ORDER), and how long a test waits for a free block before an exec (seconds)
+BUSYBOX_ORDER = 6
 RECLAIM_WAIT_S = 10
+# sysmon's interval (its -i default, seconds) and every how many intervals its reclaim looks
+# (linux_workspace/userland/sysmon/src/lib.rs: RECLAIM_EVERY; sim/emu/test_linux_checks.py
+# holds these and the orders to it)
+SYSMON_INTERVAL_S = 1
+SYSMON_RECLAIM_EVERY = 3
 
 
 def first_execs(commands) -> dict[str, str]:

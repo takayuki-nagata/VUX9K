@@ -275,9 +275,9 @@ shell (a daemon) is started, and restarted, by init; what it does stays out of p
   any use lighting the first; a load at 0.25, 0.5, 1, 2); the button, read every `-b` (200 ms),
   steps cpu -> mem -> load; `-m` the first mode, `-n` a number of intervals, `-v` a line per
   interval (`sysmon: cpu 37% bar 2`) and one per drop of the page cache (`sysmon: dropped the
-  page cache (no free block of order 6, Cached 1112 kB)`), `-r KB` the Cached above its floor
-  that drop needs (64; `-r 0` no reclaim at all: "Memory budget"); it looks every 3
-  intervals. Without `-v` a drop says nothing (init's sysmon has no
+  page cache (no free block of order 7, Cached 1112 kB)`, the order it looked for), `-r KB` the
+  Cached above its floor that drop needs (64; `-r 0` no reclaim at all: "Memory budget"), `-o
+  ORDER` the free block it keeps (7, MPY's exec; 1 to 10); it looks every 3 intervals. Without `-v` a drop says nothing (init's sysmon has no
   `-v`: a line every few seconds would land in the shell's or vi's screen); a
   `/proc/sys/vm/drop_caches` it can't write it says once (`sysmon: cannot write
   /proc/sys/vm/drop_caches`) and reclaims no more. It writes an LED's `brightness` when it changes, and all
@@ -324,15 +324,16 @@ paths (`test_linux.py`'s `test_record_measurements`), the board's `hw_linux.py` 
   of a power of two pages, and busybox's is ~232 KB of 256 KB (`flthdr -p`: Data End, BSS End
   and its stack, 16,000 B, fixed by busybox's Makefile); `test_linux.py`'s
   `test_exec_after_card_reads` reads 1.5 MB more from the card, an exec after each.
-- **sysmon drops the page cache when no free block of order 6 is left** (`Reclaim` in its
-  `src/lib.rs`). An allocation above order 3 (`PAGE_ALLOC_COSTLY_ORDER`) tries reclaim once and
+- **sysmon drops the page cache when no free block of order 7 is left** (`Reclaim` in its
+  `src/lib.rs`; `-o`, `RECLAIM_ORDER`: MPY's exec, "MicroPython"; it was order 6, busybox's,
+  before MicroPython came). An allocation above order 3 (`PAGE_ALLOC_COSTLY_ORDER`) tries reclaim once and
   then gives up without compaction (mm/page_alloc.c: `if (costly_order && (!can_compact ||
   ...)) goto nopage;`, and noMMU can't compact), so the card's page cache, clean and
   droppable, keeps the blocks it lies in split. In a spike (2026-11-15, the emulator), 2 MB
   read from the card left `5:3 6:0` (Cached 1,116 kB, MemFree 640 kB), and then busybox's
   exec failed; `echo 1 > /proc/sys/vm/drop_caches` (~20M cycles, ~1.1 s) brought back `6:2
   8:1` (Cached 520 kB, MemFree 3,352 kB). So every 3 intervals (`RECLAIM_EVERY`) sysmon reads
-  `/proc/buddyinfo` and, with no block of order 6 or above, `/proc/meminfo`'s Cached; at `-r`
+  `/proc/buddyinfo` and, with no block of order 7 or above, `/proc/meminfo`'s Cached; at `-r`
   kB (64) above the Cached its last drop left, or at any Cached before its first drop, it
   writes `1` to `/proc/sys/vm/drop_caches`. The file takes 1 to 4 only (`extra1`/`extra2`
   of its sysctl; a `5` is refused with EINVAL): at its start sysmon writes `4`, which drops
@@ -341,15 +342,46 @@ paths (`test_linux.py`'s `test_record_measurements`), the board's `hw_linux.py` 
   - **The threshold is above a floor**: Cached is not what a drop frees, since the initramfs
     is ramfs, whose ~520 kB of pages count in it and stay. An absolute threshold under that
     is always met; one above it would also need the droppable part to pass it. So the floor
-    is the Cached sysmon reads at the look after a drop (what that drop could not free), and a
-    drop needs `-r` kB of cache above it. Before any drop there is no floor, so the first drop
+    is the Cached sysmon reads right after a drop (what that drop could not free: the write
+    returns once it has dropped), and a drop needs `-r` kB of cache above it. Not at the look
+    after it, as before MicroPython: by then the exec that waited for the block the drop gave
+    back has read its program into the cache (MPY ~460 KB), and a floor with that in it would
+    keep off the drop that MPY's next exec needs. Before any drop there is no floor, so the first drop
     needs no margin. The floor is set anew after each drop, not kept at the lowest Cached seen:
-    files written to the initramfs (ramfs) since, or a process that still holds what it took,
-    raise what can't be dropped, and a floor that only went down would then be passed all the
+    files written to the initramfs (ramfs) since raise what can't be dropped, and a floor that only went down would then be passed all the
     time, with a drop that frees nothing every 33 s (each one costing the card's busybox its
     cache). 64 kB, not more: the spike's pieces came with 100 to 600 kB above the floor. A
     drop that brought back no block of order 6 (the pieces are someone else's) is followed by
     30 intervals (`RECLAIM_HOLDOFF`) without one.
+  - **Order 7 may never come back; order 6 is still kept.** The pieces that split the last
+    order-7 block can be another process's (a running MPY holds one itself, a pipe's processes
+    theirs, a heap its malloc'd blocks), and no drop of the page cache joins them. Only a drop
+    that brings back no block of order 6 (`BUSYBOX_ORDER`) is followed by the holdoff; one that
+    brings back order 6 but not order 7 is bounded by the floor alone: no second drop until 64
+    kB more is cached. Not a holdoff there, as the exec that waited for the order-7 block a drop
+    brought back holds it by the next look, which would then hold the next MPY's drop off for
+    30 s. So with order 7 gone for good and Cached flat there is one drop, and with Cached
+    growing one per `-r` kB of growth, at most one a look (the host tests in `src/tests.rs`).
+    Whenever order 6 is gone order 7 is too, and the floor is no higher (read right after the
+    drop), so busybox's exec gets its block back no later than with the order-6 reclaim.
+    `test_linux.py`'s `test_reclaim_for_mpy` reads the card until no order-7 block is free
+    (sysmon stopped), wants none back from `sysmon -r 0` and one back from sysmon's drop, then
+    runs MPY.
+  - **What order 7 costs** (an estimate from the allocator; the tests' times show it, not a
+    measurement of its own): the buddy allocator gives the page cache the smallest free
+    blocks first and splits a larger one only when none is left, so the card's reads alone
+    take the boot's order-7 and order-8 blocks last, after the order-6 ones, and leave an
+    order-6 piece of each order-7 block they split: by page cache alone the order-7 reclaim
+    drops after only ~0.25-0.5 MB less read than the order-6 one did. The rest is the other
+    allocations, an exec's block or a heap that takes the last large block while the cache
+    holds the others. The case that costs most is MPY itself: once the boot's spare order-8
+    block is broken, a running MPY holds the only order-7 block, so sysmon drops at its next
+    look, MPY's own file among the cache, and MPY's next exec reads its ~460 KB from the card
+    again (~13 s on the board at ~36 KB/s; the emulator's first exec took 14.9 s), as each card
+    busybox's next exec does (3-5 s each on the board, "Speed"). While that exec reads the card
+    (~36 KB/s, ~108 kB a look) the floor lets a drop through at every look, each of only what
+    was read since; once MPY runs from its block Cached stays and the drops stop. `-o 6` gives
+    the old behaviour back.
   - **Every 3 intervals, the files kept open**: a read of `/proc/buddyinfo` every interval
     took sysmon's CPU over an idle shell from 3.5-3.7% to 5.0-5.1% (2026-11-15, the
     emulator: ~0.15% a read). It looks every 3 s instead, and main.c keeps each `/proc` file
@@ -508,7 +540,7 @@ each use** (package `vux9k-bbtools`, `linux_workspace/userland/bbtools/`), in
   budget"; `test_linux.py`'s `test_pipe_command`). Each test
   there waits first (`wait_large`, up to 10 s) for a free block of order 6, which sysmon gives
   back within 3 intervals of a read: a person typing leaves it that time. `hw_linux.py` waits
-  the same way (`linux_checks.RECLAIM_ORDER`, `RECLAIM_WAIT_S`) before these, the scripts'
+  the same way (`linux_checks.BUSYBOX_ORDER`, `RECLAIM_WAIT_S`) before these, the scripts'
   commands, and vi's and cat's execs. It times each busybox's first exec (from the card) by
   the first of `TOOL_COMMANDS` that runs one of its applets (`linux_checks.TOOL_BUSYBOXES`, the
   table above, which `test_linux_checks.py` holds to the fragments and the `.mk`): `[TIME]
@@ -607,8 +639,9 @@ each use** (package `vux9k-bbtools`, `linux_workspace/userland/bbtools/`), in
   empty. With bc_clone_py frozen in (the spike, 2026-11-15) MPY was 492,500 B, its exec's block
   512,448 B.
 - **Each exec of MPY takes an order-7 block** (~512 KB). After the boot one or two are free
-  ("Memory budget": `6:4 7:1 8:1`), the card's reads break them, and sysmon's reclaim looks for
-  order 6 only. So the tests run MicroPython right after the boot's commands
+  ("Memory budget": `6:4 7:1 8:1`), the card's reads break them, and sysmon's reclaim gives one
+  back ("Memory budget": order 7 is its `-o` default), unless what split it is not the page
+  cache. So the tests run MicroPython right after the boot's commands
   (`linux_checks.COMMANDS` puts `MPY_COMMANDS` after `BASE_COMMANDS`; `test_linux.py`'s
   `test_mpy_command` and `test_mpy_repl` before `test_exec_after_card_reads`), and each exec
   first waits for a free block of order 7 (`linux_checks.MPY_ORDER`, `runs_mpy`; `wait_large`'s

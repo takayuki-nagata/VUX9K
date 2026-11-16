@@ -106,20 +106,24 @@ RECLAIM: dict[str, str] = {}
 PASTE: dict[str, str] = {}
 # What test_pylib_extraction saw: each boot's cycles to the prompt, by its label
 PYLIB_BOOTS: dict[str, int] = {}
-# sysmon's reclaim (linux_workspace/userland/sysmon/src/lib.rs, RECLAIM_ORDER, RECLAIM_EVERY):
+# sysmon's reclaim (linux_workspace/userland/sysmon/src/lib.rs, BUSYBOX_ORDER, RECLAIM_EVERY):
 # the order of the initramfs' busybox's exec (the board's test waits for it too), and every how
 # many intervals it looks
-RECLAIM_ORDER = linux_checks.RECLAIM_ORDER
-RECLAIM_EVERY = 3
+BUSYBOX_ORDER = linux_checks.BUSYBOX_ORDER
+RECLAIM_EVERY = linux_checks.SYSMON_RECLAIM_EVERY
 # 2 x 1 MB from the card, other blocks than the commands' reads before (the spike, 2026-11-15:
 # the largest free block order 5 after them, Cached ~1,100 kB)
 RECLAIM_READS = tuple(f"dd if=/dev/mmcblk0 of=/dev/null bs=4096 count=256 skip={s}" for s in (512, 768))
-# The processes that hold the free blocks of RECLAIM_ORDER and up that the reads left (each a
+# The processes that hold the free blocks of BUSYBOX_ORDER and up that the reads left (each a
 # copy of busybox, one such block), at most
 RECLAIM_HOLDERS = 12
+# test_reclaim_for_mpy's reads, 1 MB each, of blocks no test read before (RECLAIM_READS' cache
+# may still be there), until no free block of MPY_ORDER is left (the boot leaves an order-7 and
+# an order-8 one)
+MPY_RECLAIM_READS = tuple(f"dd if=/dev/mmcblk0 of=/dev/null bs=4096 count=256 skip={s}" for s in (1024, 1280, 1536))
 # The kernel's line for sysmon's write of 4 at its start, the one drop_caches line it prints
 DROP_CACHES_QUIET = "): drop_caches: 4"
-# How long a test waits for sysmon to give back a free block of RECLAIM_ORDER (its interval is
+# How long a test waits for sysmon to give back a free block of BUSYBOX_ORDER (its interval is
 # 1 s), in seconds
 RECLAIM_WAIT_S = linux_checks.RECLAIM_WAIT_S
 # The LEDs sysmon's bar has (led1-led4)
@@ -349,15 +353,15 @@ def test_leds(linux):
     assert "[mmc0]" in command(linux, "cat /sys/class/leds/led5/trigger")
 
 
-def free_large(linux: Booted, order: int = RECLAIM_ORDER) -> int:
-    """The free blocks of order (RECLAIM_ORDER) and above, read with the shell's builtins."""
+def free_large(linux: Booted, order: int = BUSYBOX_ORDER) -> int:
+    """The free blocks of order (BUSYBOX_ORDER) and above, read with the shell's builtins."""
     orders = linux_checks.parse_buddyinfo(command(linux, linux_checks.MEM_PROBES[1]))
     assert orders, "no /proc/buddyinfo"
     return sum(orders[order:])
 
 
-def wait_large(linux: Booted, order: int = RECLAIM_ORDER) -> int:
-    """Waits up to RECLAIM_WAIT_S for a free block of order: RECLAIM_ORDER (sysmon's reclaim),
+def wait_large(linux: Booted, order: int = BUSYBOX_ORDER) -> int:
+    """Waits up to RECLAIM_WAIT_S for a free block of order: BUSYBOX_ORDER (sysmon's reclaim),
     which the next exec of busybox needs, or linux_checks.MPY_ORDER, MPY's; the count, 0 if
     none came."""
     for _ in range(RECLAIM_WAIT_S):
@@ -373,7 +377,7 @@ def test_tool_command(linux, line):
     """The text tools, the card's busyboxes (docs/agents/linux.md, "Text tools and vi"), after
     the card reads above: each exec finds its block, once sysmon has given back one of order 6
     (bbawk's and busybox's; wait_large)."""
-    assert wait_large(linux), f"no free block of order {RECLAIM_ORDER} before {line!r}"
+    assert wait_large(linux), f"no free block of order {BUSYBOX_ORDER} before {line!r}"
     out = command(linux, line)
     assert not any(e in out for e in EXEC_FAILED), out[:600]
     assert not linux_checks.missing(out, linux_checks.TOOL_COMMANDS[line]), out
@@ -383,7 +387,7 @@ def test_tool_command(linux, line):
 def test_pipe_command(linux, line):
     """The text tools' pipes (on test_tool_command's files), whose processes each hold a block
     at once, the { } one busybox's too (docs/agents/linux.md, "Text tools and vi")."""
-    assert wait_large(linux), f"no free block of order {RECLAIM_ORDER} before {line!r}"
+    assert wait_large(linux), f"no free block of order {BUSYBOX_ORDER} before {line!r}"
     out = command(linux, line)
     assert not any(e in out for e in EXEC_FAILED), out[:600]
     # The lines without uniq -c's alignment
@@ -457,8 +461,9 @@ def test_sysmon(linux):
 
 
 def test_page_cache_reclaim(linux):
-    """sysmon drops the page cache when the card's reads have left no free block of order 6
-    (noMMU has no compaction: docs/agents/linux.md, "Memory budget"), and only then. With no
+    """sysmon drops the page cache when the card's reads have left no free block of order 7
+    (MPY's exec; noMMU has no compaction: docs/agents/linux.md, "Memory budget"), and gives
+    back one of order 6 (busybox's) whatever it brings back of order 7. With no
     sysmon running (test_sysmon's last one stopped), 2 MB read from the card, and the free
     blocks of order 6 and up that are left taken by sleeping busyboxes (each dd and each sleep
     is an exec of busybox, which needs such a block itself: the reads can't leave none), none
@@ -483,9 +488,9 @@ def test_page_cache_reclaim(linux):
         while free_large(linux) and len(holders) < RECLAIM_HOLDERS:
             holders.append(background(linux, "sleep 600"))
         buddyinfo = command(linux, linux_checks.MEM_PROBES[1])
-        seen = f"{reads} reads, {len(holders)} sleepers"
+        seen = f"free blocks of order >= {BUSYBOX_ORDER}: {reads} reads, {len(holders)} sleepers"
         RECLAIM[linux.how] = seen
-        assert sum(linux_checks.parse_buddyinfo(buddyinfo)[RECLAIM_ORDER:]) == 0, f"{seen}: {buddyinfo}"
+        assert sum(linux_checks.parse_buddyinfo(buddyinfo)[BUSYBOX_ORDER:]) == 0, f"{seen}: {buddyinfo}"
         # No reclaim: nothing comes back
         mark = len(soc.uart_received())
         background(linux, f"sysmon -r 0 -v -n {2 * RECLAIM_EVERY}")
@@ -512,11 +517,53 @@ def test_page_cache_reclaim(linux):
     assert "sysmon: cannot write /proc/sys/vm/drop_caches" not in console
 
 
+def test_reclaim_for_mpy(linux):
+    """sysmon keeps a free block of order 7 for MPY's exec (linux_checks.MPY_ORDER; docs/agents/
+    linux.md, "Memory budget") after the card's reads. With no sysmon running, reads from the
+    card (MPY_RECLAIM_READS) until none of order 7 is free; a sysmon with -r 0 leaves it so for
+    two of its looks; one with the reclaim says it dropped the page cache for order 7, a block
+    of order 7 is free again, and MPY runs in it."""
+    soc = linux.soc
+    order = linux_checks.MPY_ORDER
+    mark = len(soc.uart_received())
+    command(linux, f"kill {sysmon_pid(linux)}")
+    wait_console(linux, "sysmon: stopped", mark)
+    try:
+        reads = 0
+        # Each dd is an exec of busybox: an order-7 block left is one of order 6 too
+        for line in MPY_RECLAIM_READS:
+            if not free_large(linux, order):
+                break
+            assert "256+0 records in" in command(linux, line)
+            reads += 1
+        buddyinfo = command(linux, linux_checks.MEM_PROBES[1])
+        key = f"{linux.how}, MPY"
+        RECLAIM[key] = seen = f"free blocks of order >= {order}: {reads} reads"
+        assert sum(linux_checks.parse_buddyinfo(buddyinfo)[order:]) == 0, f"{seen}: {buddyinfo}"
+        mark = len(soc.uart_received())
+        background(linux, f"sysmon -r 0 -v -n {2 * RECLAIM_EVERY}")
+        wait_console(linux, "sysmon: stopped", mark)
+        without = free_large(linux, order)
+        RECLAIM[key] = seen = f"{seen}; after sysmon -r 0 {without}"
+        assert without == 0, seen
+        mark = len(soc.uart_received())
+        background(linux, f"sysmon -v -n {2 * RECLAIM_EVERY}")
+        dropped = wait_console(linux, f"sysmon: dropped the page cache (no free block of order {order},", mark)
+        wait_console(linux, "sysmon: stopped", mark)
+        after = free_large(linux, order)
+        RECLAIM[key] = seen = f"{seen}, after sysmon's drop {after}"
+        assert after > 0, f"{seen}: {dropped[-300:]}"
+        out = command(linux, 'MPY -c "print(6 * 7)"')
+        assert "42" in out and not any(e in out for e in EXEC_FAILED), out[-1500:]
+    finally:
+        background(linux, linux_checks.SYSMON)
+
+
 @pytest.mark.parametrize("line", list(linux_checks.SCRIPT_COMMANDS))
 def test_script_command(linux, line):
     """The card's sample scripts (linux_checks.SCRIPT_COMMANDS): #!/bin/sh files on vfat,
     executable by the mode its mount gives every file, run by their names from the PATH."""
-    assert wait_large(linux), f"no free block of order {RECLAIM_ORDER} before {line!r}"
+    assert wait_large(linux), f"no free block of order {BUSYBOX_ORDER} before {line!r}"
     out = command(linux, line)
     assert not any(e in out for e in EXEC_FAILED), out[:600]
     assert not linux_checks.missing(out, linux_checks.SCRIPT_COMMANDS[line]), out
@@ -528,7 +575,7 @@ def test_ledctl_modes(linux):
     none, its LEDs dark; `cpu` one again, for the tests after this one."""
     soc = linux.soc
     old = sysmon_pid(linux)
-    assert wait_large(linux), f"no free block of order {RECLAIM_ORDER} for ledctl"
+    assert wait_large(linux), f"no free block of order {BUSYBOX_ORDER} for ledctl"
     mark = len(soc.uart_received())
     command(linux, "ledctl mem")
     console = wait_console(linux, "sysmon: mode mem", mark)
@@ -538,7 +585,7 @@ def test_ledctl_modes(linux):
     press_button(soc, hold_ms=500, after_ms=500)
     wait_console(linux, "sysmon: mode load", mark)
     # Off: no sysmon to give back a large block, but each ledctl frees the one it took
-    assert wait_large(linux), f"no free block of order {RECLAIM_ORDER} for ledctl"
+    assert wait_large(linux), f"no free block of order {BUSYBOX_ORDER} for ledctl"
     mark = len(soc.uart_received())
     command(linux, "ledctl off")
     wait_console(linux, "sysmon: stopped", mark)
@@ -584,9 +631,9 @@ def test_vi(linux, session):
     soc = linux.soc
     vi_file = linux_checks.VI_FILE
     if session is linux_checks.VI_SESSIONS[0]:
-        assert wait_large(linux), f"no free block of order {RECLAIM_ORDER} for rm"
+        assert wait_large(linux), f"no free block of order {BUSYBOX_ORDER} for rm"
         command(linux, linux_checks.VI_CLEAR)
-    assert wait_large(linux), f"no free block of order {RECLAIM_ORDER} for vi"
+    assert wait_large(linux), f"no free block of order {BUSYBOX_ORDER} for vi"
     dropped = soc.uart_rx_dropped
     start = len(soc.uart_received())
     meter = Meter(soc, MEASURED)
@@ -601,7 +648,7 @@ def test_vi(linux, session):
     screen = wait_for(soc, PROMPT, COMMAND_CYCLES, mark)
     assert soc.uart_rx_dropped == dropped
     assert not any(e in screen for e in EXEC_FAILED), screen[:600]
-    assert wait_large(linux), f"no free block of order {RECLAIM_ORDER} for cat"
+    assert wait_large(linux), f"no free block of order {BUSYBOX_ORDER} for cat"
     # command() starts past the echo, so the file's lines come first, then the prompt
     out = command(linux, f"cat {vi_file}")
     got = [ln.rstrip("\r") for ln in out.split("\n")]
@@ -618,7 +665,7 @@ def test_card_after_linux(linux, tmp_path):
     boots the second stage from it, which reads the file Linux wrote: the stages' FAT32 and
     Linux's vfat share the card. umount is an exec of busybox: it waits for its block (sysmon's
     reclaim) first."""
-    assert wait_large(linux), f"no free block of order {RECLAIM_ORDER} for umount's exec"
+    assert wait_large(linux), f"no free block of order {BUSYBOX_ORDER} for umount's exec"
     out = command(linux, "umount /mnt/sd")
     assert "umount:" not in out and not any(e in out for e in EXEC_FAILED), out
     # Unmounted indeed (linux_checks.MOUNTS_PROBE)
@@ -715,7 +762,7 @@ def test_card_with_read_waits():
 
     def run(line: str) -> str:
         # An exec of busybox after the reads: it waits for its block first (sysmon's reclaim)
-        assert wait_large(linux), f"no free block of order {RECLAIM_ORDER} before {line!r}"
+        assert wait_large(linux), f"no free block of order {BUSYBOX_ORDER} before {line!r}"
         out = command(linux, line)
         assert not any(e in out for e in EXEC_FAILED), out[:600]
         return out
@@ -774,7 +821,7 @@ def test_pylib_extraction():
     assert linux_checks.PYLIB_EXTRACTED + version in linux.boot, linux.boot[-1500:]
     out = command(linux, f"ls {linux_checks.MPY_LIB}")
     assert not linux_checks.missing(out, modules), out
-    assert wait_large(linux), f"no free block of order {RECLAIM_ORDER} for umount's exec"
+    assert wait_large(linux), f"no free block of order {BUSYBOX_ORDER} for umount's exec"
     out = command(linux, "umount /mnt/sd")
     assert "umount:" not in out and not any(e in out for e in EXEC_FAILED), out
 
@@ -791,14 +838,14 @@ def test_pylib_extraction():
     pylib = ". /mnt/sd/VUX9K/LINUX/BIN/pylib; echo pylib-done"
     command(linux, f"echo junk > /mnt/sd/{linux_checks.PYLIB_TAR}")
     command(linux, f"echo 0123456789abcdef > /mnt/sd/{linux_checks.PYLIB_VER}")
-    assert wait_large(linux), f"no free block of order {RECLAIM_ORDER} for tar's exec"
+    assert wait_large(linux), f"no free block of order {BUSYBOX_ORDER} for tar's exec"
     out = command(linux, pylib)
     assert linux_checks.PYLIB_EXTRACTING in out and "pylib: PYLIB.TAR not extracted" in out, out
     assert "pylib-done" in out, out
     out = command(linux, f"[ -e {linux_checks.MPY_LIB}/VERSION ] || echo no-version")
     assert "no-version" in out, out
     # Without PYLIB.VER: nothing, not even an exec
-    assert wait_large(linux), f"no free block of order {RECLAIM_ORDER} for rm's exec"
+    assert wait_large(linux), f"no free block of order {BUSYBOX_ORDER} for rm's exec"
     command(linux, f"rm /mnt/sd/{linux_checks.PYLIB_VER}")
     out = command(linux, pylib)
     assert "pylib:" not in out and "pylib-done" in out, out
@@ -993,7 +1040,7 @@ def test_record_measurements(record_property, capsys):
             print(f"  {how}: sysmon's CPU over {IDLE_S} s of an idle shell: {pct:.1f}%")
             record_property(f"{how}: sysmon CPU", f"{pct:.1f}%")
         for how, text in RECLAIM.items():
-            print(f"  {how}: sysmon's reclaim (free blocks of order >= {RECLAIM_ORDER}): {text}")
+            print(f"  {how}: sysmon's reclaim: {text}")
             record_property(f"{how}: reclaim", text)
         for how, text in PASTE.items():
             print(f"  {how} paste: {text}")

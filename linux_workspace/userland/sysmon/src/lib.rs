@@ -8,7 +8,7 @@
 //! LEDs on led1-led4; the button S2 moves to the next of the three. Its options:
 //!
 //! ```text
-//! sysmon [-m cpu|mem|load] [-i MS] [-b MS] [-n COUNT] [-r KB] [-v]
+//! sysmon [-m cpu|mem|load] [-i MS] [-b MS] [-n COUNT] [-r KB] [-o ORDER] [-v]
 //! ```
 //!
 //! `-i` the interval (default 1000 ms), `-b` how often the button is read (default 200 ms),
@@ -18,15 +18,17 @@
 //!
 //! Every [`RECLAIM_EVERY`] intervals it also reclaims the page cache when no large free block
 //! is left ([`Reclaim`]; docs/agents/linux.md, "Memory budget"): /proc/buddyinfo has no free
-//! block of [`RECLAIM_ORDER`] or above (an exec of the initramfs' busybox needs one, and noMMU
-//! has no compaction to make one), and /proc/meminfo's Cached is `-r` kB (default
-//! [`RECLAIM_CACHED_KB`]; `-r 0` turns it off) above the Cached its last drop left (the
-//! initramfs' pages and whatever else stays; before the first drop, any Cached), so it drops
-//! the clean page cache (/proc/sys/vm/drop_caches, `1`). A drop that brings no such block back
-//! is followed by [`RECLAIM_HOLDOFF`] intervals without one. At its start it writes `4` there, which drops
-//! nothing but keeps the kernel's `drop_caches: N` line on the console to that one write.
-//! `-v` says each drop; without it a drop says nothing. If the file can't be written it says
-//! so once and reclaims no more.
+//! block of `-o` (default [`RECLAIM_ORDER`], MPY's exec) or above (an exec copies the program
+//! into one such block, and noMMU has no compaction to make one), and /proc/meminfo's Cached
+//! is `-r` kB (default [`RECLAIM_CACHED_KB`]; `-r 0` turns it off) above the Cached its last
+//! drop left (the initramfs' pages and whatever else stays; before the first drop, any
+//! Cached), so it drops the clean page cache (/proc/sys/vm/drop_caches, `1`). A drop that
+//! brings no block of [`BUSYBOX_ORDER`] back (the initramfs' busybox's exec) is followed by
+//! [`RECLAIM_HOLDOFF`] intervals without one; one that brings that back but none of `-o` only by
+//! the floor. At its start it writes `4` there, which drops nothing but keeps the kernel's
+//! `drop_caches: N` line on the console to that one write. `-v` says each drop with the order
+//! it looked for; without it a drop says nothing. If the file can't be written it says so once
+//! and reclaims no more.
 //!
 //! This crate is the logic: parsing, the bar, the loop. The system calls are main.c's (uClibc
 //! has no Rust target), reached through [`Sys`]; host tests drive the loop with a fake.
@@ -211,6 +213,8 @@ pub struct Options {
     pub count: u32,
     /// The page cache's reclaim: the Cached it needs, in kB; 0: off
     pub reclaim_kb: u32,
+    /// The order of the free block the reclaim keeps
+    pub reclaim_order: u32,
     pub verbose: bool,
 }
 
@@ -222,6 +226,7 @@ impl Default for Options {
             button_ms: 200,
             count: 0,
             reclaim_kb: RECLAIM_CACHED_KB,
+            reclaim_order: RECLAIM_ORDER as u32,
             verbose: false,
         }
     }
@@ -255,6 +260,10 @@ pub fn parse_args<'a>(args: impl IntoIterator<Item = &'a [u8]>) -> Option<Option
             b"-n" => o.count = parse_u32(it.next()?, u32::MAX)?,
             // More than the RAM is never cached: 8 MB
             b"-r" => o.reclaim_kb = parse_u32(it.next()?, 8192)?,
+            // Up to MAX_PAGE_ORDER (buddyinfo's last column); 0 would be any free page
+            b"-o" => {
+                o.reclaim_order = parse_u32(it.next()?, MAX_ORDER as u32).filter(|&v| v > 0)?
+            }
             _ => return None,
         }
     }
@@ -377,8 +386,17 @@ fn say_mode(sys: &mut impl Sys, o: &Options) {
 pub const REFRESH_INTERVALS: u32 = 10;
 
 /// The order of the free block an exec of the initramfs' busybox needs (docs/agents/linux.md,
-/// "Memory budget"): 64 pages, 256 KB.
-pub const RECLAIM_ORDER: usize = 6;
+/// "Memory budget"): 64 pages, 256 KB. A drop that brings back none of it (or of `-o`, if lower)
+/// is followed by RECLAIM_HOLDOFF.
+pub const BUSYBOX_ORDER: usize = 6;
+/// The order of the free block the reclaim keeps by default (`-o`): MPY's exec, 128 pages,
+/// 512 KB (docs/agents/linux.md, "MicroPython"). A drop may never bring one back (the pieces
+/// that split it can be another process's, not the page cache): the floor bounds what that
+/// costs, not a holdoff, since the exec that waited for the block a drop brought back holds it
+/// by the next look.
+pub const RECLAIM_ORDER: usize = 7;
+/// The largest order /proc/buddyinfo shows (MAX_PAGE_ORDER, its 11 columns from 0)
+pub const MAX_ORDER: usize = 10;
 /// The Cached (kB) above its floor that a drop needs by default. The initramfs' ramfs pages
 /// count in Cached and can't be dropped (~520 kB), so the floor is the Cached its last drop
 /// left (what can't be dropped, files written to the ramfs since among it): what lies above it
@@ -389,7 +407,7 @@ pub const RECLAIM_CACHED_KB: u32 = 64;
 /// (~0.15% of it a second at 18 MHz, measured as sysmon's CPU going from 3.6% to 5.1% with a
 /// read every interval), and the card's reads that break the blocks take seconds.
 pub const RECLAIM_EVERY: u32 = 3;
-/// The intervals without a drop after one that brought back no block of RECLAIM_ORDER: the
+/// The intervals without a drop after one that brought back no block of BUSYBOX_ORDER: the
 /// pieces are then not the page cache's, and a drop at every look would only cost.
 pub const RECLAIM_HOLDOFF: u32 = 30;
 
@@ -403,7 +421,8 @@ pub struct Reclaim {
     off: bool,
     /// Intervals left without a drop
     holdoff: u32,
-    /// A drop at the last look: this one checks what it brought back
+    /// A drop at the last look: this one checks what it brought back (the free blocks, which
+    /// the pages freed reach in the next seconds)
     dropped: bool,
     /// Intervals so far
     ticks: u32,
@@ -431,9 +450,9 @@ impl Reclaim {
         parse_cached_kb(&buf[..n])
     }
 
-    /// Drops the page cache if no free block of RECLAIM_ORDER is left and Cached is
-    /// `cached_kb` above the floor (any, without one yet); the Cached it dropped at, or None.
-    pub fn step(&mut self, sys: &mut impl Sys, cached_kb: u32) -> Option<u64> {
+    /// Drops the page cache if no free block of `order` is left and Cached is `cached_kb` above
+    /// the floor (any, without one yet); the Cached it dropped at, or None.
+    pub fn step(&mut self, sys: &mut impl Sys, cached_kb: u32, order: usize) -> Option<u64> {
         if cached_kb == 0 || self.off {
             return None;
         }
@@ -448,14 +467,13 @@ impl Reclaim {
         }
         let mut buf = [0u8; 1536];
         let n = sys.read_file(b"/proc/buddyinfo\0", &mut buf)?;
-        let large = free_blocks_from(&buf[..n], RECLAIM_ORDER)?;
+        let large = free_blocks_from(&buf[..n], order)?;
+        let needed = free_blocks_from(&buf[..n], order.min(BUSYBOX_ORDER))?;
         if core::mem::take(&mut self.dropped) {
-            // What the drop left: the floor, also when it is above the one before (a file
-            // written to the ramfs, or a process holding the blocks it took)
-            if let Some(left) = Self::cached(sys, &mut buf) {
-                self.floor = Some(left);
-            }
-            if large == 0 {
+            // Without even busybox's block back; with that but none of `order` (another
+            // process holds the pieces, or the exec that waited for it took it) the floor
+            // alone stops the next drop until more is cached
+            if needed == 0 {
                 self.holdoff = RECLAIM_HOLDOFF;
                 return None;
             }
@@ -473,6 +491,12 @@ impl Reclaim {
         if !sys.drop_caches(b'1') {
             self.fail(sys);
             return None;
+        }
+        // What the drop left (the write returns once it has dropped): the floor, also when it
+        // is above the one before (a file written to the ramfs since). Read now, not at the
+        // next look: by then the exec that waited for a block has read its file into the cache
+        if let Some(left) = Self::cached(sys, &mut buf) {
+            self.floor = Some(left);
         }
         self.dropped = true;
         Some(cached)
@@ -562,11 +586,11 @@ pub fn run(sys: &mut impl Sys, mut o: Options) -> i32 {
             l.push(b" bar ").num(n);
             sys.say(l.as_bytes());
         }
-        if let Some(cached) = reclaim.step(sys, o.reclaim_kb) {
+        if let Some(cached) = reclaim.step(sys, o.reclaim_kb, o.reclaim_order as usize) {
             if o.verbose {
                 let mut l = Line::new();
                 l.push(b"dropped the page cache (no free block of order ")
-                    .num(RECLAIM_ORDER as u32)
+                    .num(o.reclaim_order)
                     .push(b", Cached ")
                     .num(cached.min(u64::from(u32::MAX)) as u32)
                     .push(b" kB)");
@@ -648,7 +672,7 @@ mod board {
             Some(o) => run(&mut Board, o),
             None => {
                 let usage =
-                    b"usage: sysmon [-m cpu|mem|load] [-i MS] [-b MS] [-n COUNT] [-r KB] [-v]";
+                    b"usage: sysmon [-m cpu|mem|load] [-i MS] [-b MS] [-n COUNT] [-r KB] [-o ORDER] [-v]";
                 vux9k_say(usage.as_ptr(), usage.len());
                 2
             }
