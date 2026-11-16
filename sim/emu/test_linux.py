@@ -10,12 +10,17 @@ second stage, booted by the first from the card, loads and starts with `linux`, 
 board. Each boots to busybox's shell on the console, then commands are typed at it
 (sim/integration/linux_checks.py, which the board's scripts/hw_linux.py checks too).
 
-On each boot, after the commands: the card's sample scripts, vi driven by its keys
+On each boot, after the boot's commands: MicroPython from the card (linux_checks.MPY_COMMANDS:
+its modules, which the login shell's profile extracted from the card's PYLIB.TAR, bc_clone_py's
+self-test, scripts on the card, an LED, the heap's growth; then its REPL); after the other
+commands: the card's sample scripts, vi driven by its keys
 (linux_checks.VI_SESSIONS; the file then read from the card image) and, last, a paste at the
 shell, back to back (its dropped bytes recorded) and as vux_tool's monitor paces it (none).
 
 A third boot (load_linux) has a card that waits before every block it reads, as a real card
-does (test_card_with_read_waits).
+does (test_card_with_read_waits). Three more (load_linux) boot cards without PYLIB.TAR and
+with it, twice: the profile extracts it at the first boot of a card and leaves it at the next
+(test_pylib_extraction).
 
 The cycles, retired instructions and the caches' hit rates to the prompt (for the card: the
 second stage's load, `linux` typed to its [LINUX] line, and the kernel's boot from there) and
@@ -75,8 +80,9 @@ LOAD_CYCLES = 3_000_000_000
 # The card: 8 MB, room for the Image, the device tree, the second stage and the programs for
 # the card
 CARD_SECTORS = 16384
-# Wall-clock seconds for scripts/hw_linux.py on the emulator's CLI
-BOARD_SCRIPT_TIMEOUT_S = 1500
+# Wall-clock seconds for scripts/hw_linux.py on the emulator's CLI (with MicroPython's ~0.5 MB
+# put and its commands)
+BOARD_SCRIPT_TIMEOUT_S = 1800
 # test_board_script_with_emulator_stalls: how long the emulator stays stopped at most on a
 # write while hw_linux.py types a line (8 bytes every 20 ms: a line of up to ~80 bytes reaches
 # the UART in one go), at most how many times, its own bound (the commands' and probes' ~3,300
@@ -98,6 +104,8 @@ IDLE_S = 10
 RECLAIM: dict[str, str] = {}
 # What test_paste saw, per boot path and way of sending
 PASTE: dict[str, str] = {}
+# What test_pylib_extraction saw: each boot's cycles to the prompt, by its label
+PYLIB_BOOTS: dict[str, int] = {}
 # sysmon's reclaim (linux_workspace/userland/sysmon/src/lib.rs, RECLAIM_ORDER, RECLAIM_EVERY):
 # the order of the initramfs' busybox's exec (the board's test waits for it too), and every how
 # many intervals it looks
@@ -139,8 +147,8 @@ class Booted:
 
 
 def card_programs() -> dict[str, bytes]:
-    """make linux-dist's programs for the card (VUX9K/LINUX/BIN/), as its MANIFEST.json lists
-    them."""
+    """make linux-dist's programs for the card (VUX9K/LINUX/BIN/) and MicroPython's modules'
+    archive (linux_checks.PYLIB_TAR), as its MANIFEST.json lists them."""
     try:
         with open(os.path.join(LINUX_DIST, "MANIFEST.json")) as f:
             listed = json.load(f)["card_files"]
@@ -148,17 +156,19 @@ def card_programs() -> dict[str, bytes]:
         return {}
     progs = {}
     for rel in listed:
-        if rel.startswith("VUX9K/LINUX/BIN/"):
+        if rel.startswith("VUX9K/LINUX/BIN/") or rel == linux_checks.PYLIB_TAR:
             with open(os.path.join(LINUX_DIST, rel), "rb") as f:
                 progs[rel] = f.read()
     return progs
 
 
-def card(image: bytes, dtb: bytes) -> bytes:
+def card(image: bytes, dtb: bytes, without: tuple[str, ...] = ()) -> bytes:
     """The card both boot paths have in the socket (the kernel mounts it): the second stage,
-    the Image and device tree where its `linux` looks for them, and the programs for the card."""
+    the Image and device tree where its `linux` looks for them, and the programs for the card
+    (but those in without)."""
     files = {"VUX9K/STAGE2.BIN": s1_env.stage2(), "VUX9K/LINUX/Image": image, "VUX9K/LINUX/vux9k.dtb": dtb}
-    return vux_tool.build_fat32_image(files | card_programs(), part_sectors=CARD_SECTORS)
+    progs = {k: v for k, v in card_programs().items() if k not in without}
+    return vux_tool.build_fat32_image(files | progs, part_sectors=CARD_SECTORS)
 
 
 def boot_direct(image: bytes, dtb: bytes, sd: bytes | None = None, how: str = "load_linux", **faults) -> Booted:
@@ -248,6 +258,53 @@ EXEC_FAILED = ("page allocation failure", "Unable to allocate RAM")
 READS = 6
 
 
+@pytest.mark.parametrize("line", list(linux_checks.MPY_COMMANDS))
+def test_mpy_command(linux, line):
+    """MicroPython on the card (linux_checks.MPY_COMMANDS; docs/agents/linux.md,
+    "MicroPython"), right after the boot's commands: each exec of MPY waits for a free block of
+    MPY_ORDER first, which nothing reclaims yet (sysmon looks for order 6), so these run before
+    the card reads of the tests after them. The LED script lights MPY_LED on the GPIO
+    register."""
+    if linux_checks.runs_mpy(line):
+        assert wait_large(linux, linux_checks.MPY_ORDER), f"no free block of order {linux_checks.MPY_ORDER} for MPY"
+    out = command(linux, line)
+    assert not any(e in out for e in EXEC_FAILED), out[:600]
+    assert not linux_checks.missing(out, linux_checks.MPY_COMMANDS[line]), out[-1500:]
+    assert not linux_checks.problems(line, out), out[-1500:]
+    if line == f"MPY {linux_checks.MPY_LED_PY}":
+        n = int(linux_checks.MPY_LED.removeprefix("led"))
+        assert linux.soc.leds & (1 << n), hex(linux.soc.leds)
+
+
+def test_mpy_repl(linux):
+    """MicroPython's REPL: MPY alone, its banner and prompt, 1+1, and Ctrl-D back to the shell;
+    on a failure Ctrl-C (and Ctrl-D once in the REPL) for the tests after this one."""
+    soc = linux.soc
+    assert wait_large(linux, linux_checks.MPY_ORDER), f"no free block of order {linux_checks.MPY_ORDER} for MPY"
+    repl_prompt = linux_checks.MPY_REPL_PROMPT.encode()
+    in_repl = False
+    try:
+        start = len(soc.uart_received())
+        meter = Meter(soc, MEASURED)
+        send_paced(soc, f"{linux_checks.MPY_REPL}\n".encode())
+        banner = wait_for(soc, repl_prompt, timeout_cycles=COMMAND_CYCLES, start=start)
+        meter.done(f"{linux.how}: MPY to the REPL's prompt")
+        in_repl = True
+        assert linux_checks.MPY_VERSION in banner, banner[-1500:]
+        start = len(soc.uart_received())
+        send_paced(soc, f"{linux_checks.MPY_REPL_LINE}\r".encode())
+        out = wait_for(soc, repl_prompt, timeout_cycles=COMMAND_CYCLES, start=start + len(linux_checks.MPY_REPL_LINE))
+        assert linux_checks.MPY_REPL_OUT in [o.strip() for o in out.splitlines()], out
+        start = len(soc.uart_received())
+        send_paced(soc, linux_checks.MPY_REPL_EXIT.encode())
+        wait_for(soc, PROMPT, timeout_cycles=COMMAND_CYCLES, start=start)
+    except Exception:
+        start = len(soc.uart_received())
+        send_paced(soc, b"\x03" + (linux_checks.MPY_REPL_EXIT.encode() if in_repl else b""))
+        wait_for(soc, PROMPT, timeout_cycles=COMMAND_CYCLES, start=start)
+        raise
+
+
 def test_exec_after_card_reads(linux):
     """Busybox's exec after each of READS more 256 KB reads from the card (other blocks than
     BASE_COMMANDS' dd): the page cache they leave breaks the free memory's large blocks (noMMU
@@ -291,22 +348,23 @@ def test_leds(linux):
     assert "[mmc0]" in command(linux, "cat /sys/class/leds/led5/trigger")
 
 
-def free_large(linux: Booted) -> int:
-    """The free blocks of order RECLAIM_ORDER and above, read with the shell's builtins."""
+def free_large(linux: Booted, order: int = RECLAIM_ORDER) -> int:
+    """The free blocks of order (RECLAIM_ORDER) and above, read with the shell's builtins."""
     orders = linux_checks.parse_buddyinfo(command(linux, linux_checks.MEM_PROBES[1]))
     assert orders, "no /proc/buddyinfo"
-    return sum(orders[RECLAIM_ORDER:])
+    return sum(orders[order:])
 
 
-def wait_large(linux: Booted) -> int:
-    """Waits up to RECLAIM_WAIT_S for a free block of RECLAIM_ORDER (sysmon's reclaim), which
-    the next exec of busybox needs; the count, 0 if none came."""
+def wait_large(linux: Booted, order: int = RECLAIM_ORDER) -> int:
+    """Waits up to RECLAIM_WAIT_S for a free block of order: RECLAIM_ORDER (sysmon's reclaim),
+    which the next exec of busybox needs, or linux_checks.MPY_ORDER, MPY's; the count, 0 if
+    none came."""
     for _ in range(RECLAIM_WAIT_S):
-        n = free_large(linux)
+        n = free_large(linux, order)
         if n:
             return n
         linux.soc.run(ms(1000))
-    return free_large(linux)
+    return free_large(linux, order)
 
 
 @pytest.mark.parametrize("line", list(linux_checks.TOOL_COMMANDS))
@@ -678,6 +736,64 @@ def test_card_with_read_waits():
     assert linux.soc.sd_image()[dst : dst + len(ref)] == ref, "the copy differs"
 
 
+def pylib_version() -> str:
+    """The version make linux-dist gave PYLIB.TAR (its MANIFEST.json)."""
+    with open(os.path.join(LINUX_DIST, "MANIFEST.json")) as f:
+        return json.load(f)["pylib_version"]
+
+
+def test_pylib_extraction():
+    """The login shell's profile and the card's pylib (docs/agents/linux.md, "MicroPython"),
+    three boots (load_linux) to the prompt, each one's cycles recorded: a card without
+    PYLIB.TAR (pylib says nothing, the reference), a card with it (the first boot: extracted,
+    the modules there with their long names) and that card again after an umount (the
+    second: the archive's version read and found the same, nothing extracted). Then, at the
+    second's shell, a PYLIB.TAR that is no archive: pylib, sourced as the profile does, says
+    so, leaves the modules there, and the shell goes on."""
+    image, dtb = linux_files()
+    if linux_checks.PYLIB_TAR not in card_programs():
+        pytest.skip(f"{linux_checks.PYLIB_TAR} not in make linux-dist's tree")
+    version = pylib_version()
+    modules = (*linux_checks.PYLIB_MODULES, "VERSION")
+    labels = ("pylib: without PYLIB.TAR", "pylib: first boot, extracted", "pylib: second boot, left")
+
+    def booted(sd: bytes, label: str) -> Booted:
+        linux = boot_direct(image, dtb, sd=sd, how=label)
+        PYLIB_BOOTS[label] = MEASURED[f"{label}: start to the first prompt"][0]
+        assert not linux_checks.missing(linux.boot, linux_checks.BOOT_LINES), linux.boot[-2000:]
+        return linux
+
+    linux = booted(card(image, dtb, without=(linux_checks.PYLIB_TAR,)), labels[0])
+    assert "pylib:" not in linux.boot, linux.boot[-1500:]
+    assert "no-ver" in command(linux, "[ -e /run/pylib.ver ] || echo no-ver")
+
+    linux = booted(card(image, dtb), labels[1])
+    assert linux_checks.PYLIB_EXTRACTING in linux.boot, linux.boot[-1500:]
+    assert linux_checks.PYLIB_EXTRACTED + version in linux.boot, linux.boot[-1500:]
+    out = command(linux, f"ls {linux_checks.MPY_LIB}")
+    assert not linux_checks.missing(out, modules), out
+    assert wait_large(linux), f"no free block of order {RECLAIM_ORDER} for umount's exec"
+    out = command(linux, "umount /mnt/sd")
+    assert "umount:" not in out and not any(e in out for e in EXEC_FAILED), out
+
+    linux = booted(linux.soc.sd_image(), labels[2])
+    assert "pylib:" not in linux.boot, linux.boot[-1500:]
+    # The profile's pylib ran: it read the archive's version, the extracted one's
+    out = command(linux, "read v </run/pylib.ver; echo v=$v")
+    assert f"v={version}" in out, out
+    out = command(linux, f"read v <{linux_checks.MPY_LIB}/VERSION; echo v=$v")
+    assert f"v={version}" in out, out
+    out = command(linux, f"ls {linux_checks.MPY_LIB}")
+    assert not linux_checks.missing(out, modules), out
+
+    command(linux, f"echo junk > /mnt/sd/{linux_checks.PYLIB_TAR}")
+    assert wait_large(linux), f"no free block of order {RECLAIM_ORDER} for tar's exec"
+    out = command(linux, ". /mnt/sd/VUX9K/LINUX/BIN/pylib; echo pylib-done")
+    assert "pylib: no PYLIB/VERSION in PYLIB.TAR" in out and "pylib-done" in out, out
+    out = command(linux, f"ls {linux_checks.MPY_LIB}")
+    assert not linux_checks.missing(out, modules), out
+
+
 def run_board_script(tmp_path, stall: bool = False) -> None:
     """scripts/hw_linux.py, the board's test, against the emulator's CLI at full speed
     (--speed 0; its times mean nothing then): a card with only the second stage, the
@@ -851,7 +967,7 @@ def test_board_script_with_emulator_stalls(tmp_path):
 
 def test_record_measurements(record_property, capsys):
     """Asserts nothing about speed: prints what the tests above measured (run last)."""
-    if not MEASURED and not MEMORY and not SYSMON_CPU and not RECLAIM and not PASTE:
+    if not MEASURED and not MEMORY and not SYSMON_CPU and not RECLAIM and not PASTE and not PYLIB_BOOTS:
         pytest.skip("nothing measured")
     with capsys.disabled():
         print(f"\nnoMMU Linux on the emulator (18 MHz: {CLK_HZ:,} cycles a second)")
@@ -872,6 +988,14 @@ def test_record_measurements(record_property, capsys):
         for how, text in PASTE.items():
             print(f"  {how} paste: {text}")
             record_property(f"{how} paste", text)
+        # What pylib adds to the boot: its extraction at a card's first boot, its look at the
+        # archive at the next ones, each against the boot without the archive
+        ref = PYLIB_BOOTS.get("pylib: without PYLIB.TAR")
+        for label, cycles in PYLIB_BOOTS.items():
+            if ref is not None and cycles != ref:
+                added = f"{(cycles - ref) / CLK_HZ:+.1f} s"
+                print(f"  {label}: {added} to the prompt against the boot without PYLIB.TAR")
+                record_property(f"{label}: added", added)
         for how, rows in MEMORY.items():
             print(f"\nnoMMU Linux memory after the boot ({how})")
             for name, value in rows.items():

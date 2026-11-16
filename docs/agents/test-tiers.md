@@ -144,11 +144,13 @@ clock-and-board.md, "Board UART output that is noise: ModemManager and the bridg
 - `make test-hw-linux LINUX=<dir>` (`scripts/hw_linux.py`; `test-hw-linux-dist DIST=<dir>` takes
   that tree's `pack.fs`): the noMMU Linux kernel of a `make linux-dist` tree (CI's
   `vux9k-linux-<sha>`) put on the card in `\VUX9K\LINUX\`, its programs for the card in
-  `BIN\` (~6 min for the 3.2 MB Image; `HW_LINUX_FLAGS=--keep-card` boots the files already
+  `BIN\`, MicroPython's modules as `PYLIB.TAR` (~6 min for the 3.2 MB Image, ~1 min for the
+  0.5 MB `MPY`; `HW_LINUX_FLAGS=--keep-card` boots the files already
   there), then `pack.fs` loaded into SRAM, the first stage booting the second, whose `linux`
   starts the kernel; the boot lines and commands of `sim/integration/linux_checks.py` (the
   emulator's `test_linux.py` checks the same; the kernel mounts the card, runs programs, the
-  text tools and the sample scripts from it, writes `\VUX9K\SDTEST.TXT` and reads it back),
+  text tools, MicroPython (its REPL too; linux.md, "MicroPython") and the sample scripts from
+  it, writes `\VUX9K\SDTEST.TXT` and reads it back),
   vi driven by `VI_SESSIONS`' keys (`\VUX9K\VITEST.TXT`), then `CARD_CLEANUP` removes the
   files and unmounts the card, and last a paste at the shell, back to back and paced as the
   monitor sends it (linux.md, "Text tools and vi"). `[TIME]` lines from the load to the

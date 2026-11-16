@@ -1,0 +1,23 @@
+unix: the main stack limit a variant may set
+
+main() limits the C stack to a fixed 40000 bytes. A FLAT executable on noMMU Linux has the
+stack elf2flt gives it at link time and nothing grows it, so a variant for one sets
+MICROPY_UNIX_STACK_LIMIT below that.
+
+diff --git a/ports/unix/main.c b/ports/unix/main.c
+index 8f42d4f..50eafe2 100644
+--- a/ports/unix/main.c
++++ b/ports/unix/main.c
+@@ -441,7 +441,11 @@ int main(int argc, char **argv) {
+     #endif
+ 
+     // Define a reasonable stack limit to detect stack overflow.
+-    mp_uint_t stack_size = 40000 * UNIX_STACK_MULTIPLIER;
++    // A port variant may set its own (a fixed stack smaller than the default).
++    #ifndef MICROPY_UNIX_STACK_LIMIT
++    #define MICROPY_UNIX_STACK_LIMIT (40000)
++    #endif
++    mp_uint_t stack_size = MICROPY_UNIX_STACK_LIMIT * UNIX_STACK_MULTIPLIER;
+ 
+     // We should capture stack top ASAP after start, and it should be
+     // captured guaranteedly before any other stack variables are allocated.

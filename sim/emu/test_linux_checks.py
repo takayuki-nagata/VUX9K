@@ -35,10 +35,19 @@ def test_buddyinfo_sums_zones():
 
 
 def test_table():
-    sizes = {"image": 3244488, "rootfs_cpio": 1000, "busybox": 330000, "bbedit": 87144, "bbawk": 133172}
+    sizes = {
+        "image": 3244488,
+        "rootfs_cpio": 1000,
+        "busybox": 330000,
+        "bbedit": 87144,
+        "bbawk": 133172,
+        "mpy": 492500,
+        "pylib_tar": 40960,
+    }
     rows = linux_checks.memory(MEMINFO, BUDDYINFO, sizes)
     assert list(rows) == list(linux_checks.TABLE_ROWS)
     assert rows["the card's busyboxes"] == "220,316 B in 2 (the largest bbawk, 133,172 B)"
+    assert rows["MicroPython (MPY)"] == "492,500 B, its modules' VUX9K/LINUX/PYLIB.TAR 40,960 B"
     assert rows["MemFree"] == "3,912 kB"
     assert rows["largest free block"] == "1,024 kB (order 8)"
     assert rows["free blocks of order >= 6"] == "6:1 7:0 8:1 9:0 10:0"
@@ -47,7 +56,7 @@ def test_table():
 
 def test_table_without_sizes_or_free_blocks():
     rows = linux_checks.memory(MEMINFO, "Node 0, zone Normal 0 0 0 0 0")
-    assert "Image" not in rows and "the card's busyboxes" not in rows
+    assert "Image" not in rows and "the card's busyboxes" not in rows and "MicroPython (MPY)" not in rows
     assert rows["largest free block"] == "none"
 
 
@@ -56,6 +65,7 @@ def test_commands_are_each_ones():
     place, with the second's expectations."""
     parts = (
         linux_checks.BASE_COMMANDS,
+        linux_checks.MPY_COMMANDS,
         linux_checks.LED_COMMANDS,
         linux_checks.TOOL_COMMANDS,
         linux_checks.PIPE_COMMANDS,
@@ -74,6 +84,8 @@ def test_board_lines_fit_the_console():
         *linux_checks.MEM_PROBES,
         linux_checks.MOUNTS_PROBE,
         linux_checks.VI_CLEAR,
+        linux_checks.MPY_REPL,
+        linux_checks.MPY_REPL_LINE,
     )
     for line in lines:
         assert len(line) + len(linux_checks.PROMPT) < 80, line
@@ -161,3 +173,45 @@ def test_kernel_lines():
     assert linux_checks.without_kernel_lines(f"[    0.000000] Linux version 7.3\n{kernel}") == ""
     kept = "[1] 83\r\n[ 1.5] x\r\n[2.123456]x\r\n1.000000] y\r\n"
     assert linux_checks.without_kernel_lines(kept) == kept
+
+
+def test_mpy_commands():
+    """Which commands execute MPY (each waits for a block of MPY_ORDER first): its name as a
+    word, also after a subshell's parenthesis, not in a path or a script's text; every one of
+    them is checked for MPY_UNWANTED; the scripts are written before they run."""
+    assert linux_checks.runs_mpy('MPY -c "print(1)"')
+    assert linux_checks.runs_mpy('(unset MICROPYPATH; exec MPY -c "x")')
+    assert linux_checks.runs_mpy(f"MPY {linux_checks.MPY_HEAP_PY}")
+    assert not linux_checks.runs_mpy(f'echo "import sys" > {linux_checks.MPY_ARGS_PY}')
+    assert not linux_checks.runs_mpy("echo $MICROPYPATH")
+    runs = [c for c in linux_checks.MPY_COMMANDS if linux_checks.runs_mpy(c)]
+    assert len(runs) == 6 and runs[0].startswith("MPY -c ")
+    assert linux_checks.problems(runs[0], "Traceback (most recent call last):") != []
+    assert linux_checks.problems("ls /", "Traceback") == []
+    seen: set[str] = set()
+    for cmd in linux_checks.MPY_COMMANDS:
+        for path in (linux_checks.MPY_ARGS_PY, linux_checks.MPY_LED_PY, linux_checks.MPY_HEAP_PY):
+            if cmd.startswith("echo ") and cmd.endswith(f"> {path}"):
+                assert (path in seen) == cmd.endswith(f">> {path}"), cmd
+                seen.add(path)
+            elif path in cmd:
+                assert path in seen, cmd
+    # Every file the commands write on the card goes again
+    cleanup = " ".join(linux_checks.CARD_CLEANUP)
+    assert all(p in cleanup for p in seen)
+
+
+def test_heap_problems():
+    """The heap must grow to MPY_HEAP_BYTES in steps of at most HEAP_STEP_MAX."""
+    heap = linux_checks.heap_problems
+
+    def info(*totals):
+        return "".join(f"GC: total: {t}, used: 1, free: 2, max new split: 126976\r\n" for t in totals)
+
+    assert heap(info(63_936, 63_936, 128_000, 128_000, 250_368, 250_368)) == []
+    assert heap("heap 200") != []
+    # Never grown, or not enough
+    assert heap(info(63_936, 63_936)) != []
+    assert heap(info(63_936, 128_000)) != []
+    # A step of more than an order-5 block (the cap's absence: the heap doubles)
+    assert heap(info(63_936, 128_000, 260_000)) != []

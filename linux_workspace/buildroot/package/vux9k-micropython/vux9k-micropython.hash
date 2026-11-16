@@ -1,0 +1,7 @@
+# The Makefile's MICROPY_SHA256 (MicroPython's release tarball)
+sha256  d925a7c664e79a2bdf3dfcb285ba5e2237041cc35a0bd4ee573b6c5711efeca0  micropython-1.29.0.tar.xz
+# The Makefile's BC_PY_SHA256 (bc_clone_py's GitHub archive of BC_PY_COMMIT; buildroot names
+# an extra download after its URL's last component, the commit)
+sha256  f7b882f9c96271c7e670e50ba040809cac2666f412af409bb6e1232175a91c41  4e5f33959135a8171c35909317e8cab2cc85729b
+# Locally computed
+sha256  80d3459978572b5bbb1dd274a98b01a625aeff467588ad69cefdf7eb607c1306  LICENSE

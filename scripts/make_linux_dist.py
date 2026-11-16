@@ -9,17 +9,21 @@ Apart from `make dist`'s tree, which needs no Linux build: the kernel `make linu
 vux9k.dtb), laid out as they go on the card (VUX9K/LINUX/, where the second stage's
 `linux` finds them by default), this tree's programs for the card (VUX9K/LINUX/BIN/, from
 buildroot's images/sd/, where its own packages install them: docs/agents/linux.md, "Userland
-packages"), and the kernel's .config. MANIFEST.json records the
+packages"), MicroPython's modules as one archive for the card (VUX9K/LINUX/PYLIB.TAR, made here
+from images/pylib/: docs/agents/linux.md, "MicroPython"), and the kernel's .config. MANIFEST.json records the
 commit, the kernel's and buildroot's versions and each card file's size and sha256 (a
 release's tag message carries the Image's, docs/RELEASING.md); SHA256SUMS covers every
 other file. CI uploads the tree as vux9k-linux-<sha> (docs/agents/linux.md).
 """
 
 import argparse
+import hashlib
+import io
 import json
 import os
 import shutil
 import sys
+import tarfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from make_dist import REPO_ROOT, git, sha256  # noqa: E402
@@ -33,7 +37,12 @@ FILES = CARD_FILES | {"linux.config": ".config"}
 # The sizes MANIFEST.json records for the memory table (sim/integration/linux_checks.py): its
 # key -> the path under --linux-out (the Image) or --buildroot-out
 SIZES_LINUX = {"image": "arch/riscv/boot/Image"}
-SIZES_BUILDROOT = {"rootfs_cpio": "images/rootfs.cpio", "busybox": "target/bin/busybox"}
+SIZES_BUILDROOT = {
+    "rootfs_cpio": "images/rootfs.cpio",
+    "busybox": "target/bin/busybox",
+    # MicroPython on the card (package vux9k-micropython): its exec's block is order 7
+    "mpy": "images/sd/VUX9K/LINUX/BIN/MPY",
+}
 # Under --buildroot-out: the card's tree this repository's buildroot packages install, copied as
 # it is (its paths start with VUX9K/LINUX/BIN/)
 SD_TREE = os.path.join("images", "sd")
@@ -42,6 +51,19 @@ SD_PREFIX = "VUX9K/LINUX/BIN/"
 # also shows: SD_PREFIX + this prefix, the size under the file's name. The other files there
 # (memprobe, the scripts of vux9k-scripts) are only in card_files
 BBTOOLS_PREFIX = SD_PREFIX + "bb"
+# Under --buildroot-out: MicroPython's compiled modules (package vux9k-micropython), only .mpy
+# files, which go to the card as one archive, PYLIB_TAR: the stages and mkfat write 8.3 names
+# only, and the modules' are longer. The login shell's profile extracts it into PYLIB_MEMBER/
+# beside it (linux_workspace/userland/scripts/pylib) when its PYLIB_VERSION, the last member,
+# is not the one there. An uncompressed ustar archive (the card's bbtar has no gzip), made
+# here with deterministic metadata: the names sorted, owner 0, no user or group names, the
+# same time on every member (TAR_MTIME, a day after FAT's epoch of 1980, which no time zone
+# puts before it), so the same modules give the same bytes.
+PYLIB_SRC = os.path.join("images", "pylib")
+PYLIB_TAR = "VUX9K/LINUX/PYLIB.TAR"
+PYLIB_MEMBER = "PYLIB"
+PYLIB_VERSION = PYLIB_MEMBER + "/VERSION"
+TAR_MTIME = 315619200
 
 
 def is_script(path: str) -> bool:
@@ -70,6 +92,54 @@ def sd_files(buildroot_out: str) -> dict[str, str]:
     return dict(sorted(files.items()))
 
 
+def pylib_files(buildroot_out: str) -> dict[str, str]:
+    """images/pylib/'s modules: their name -> the file; exits on anything but a .mpy file."""
+    root = os.path.join(buildroot_out, PYLIB_SRC)
+    files = {}
+    for name in sorted(os.listdir(root)):
+        path = os.path.join(root, name)
+        if not name.endswith(".mpy") or not os.path.isfile(path):
+            sys.exit(f"make_linux_dist: {path} is not a .mpy module")
+        files[name] = path
+    if not files:
+        sys.exit(f"make_linux_dist: no .mpy module in {root}")
+    return files
+
+
+def pylib_version(files: dict[str, str]) -> str:
+    """What PYLIB_VERSION holds: the first 16 hex digits of a sha256 over each module's name
+    and contents, in name order (the same modules, the same version)."""
+    h = hashlib.sha256()
+    for name, path in files.items():
+        h.update(f"{name}\0{sha256(path)}\n".encode())
+    return h.hexdigest()[:16]
+
+
+def write_pylib_tar(files: dict[str, str], out: str) -> str:
+    """The card's PYLIB_TAR at out: PYLIB_MEMBER/, its modules, then PYLIB_VERSION (last, so an
+    extraction cut short leaves none and is done again); returns the version."""
+    version = pylib_version(files)
+
+    def member(name: str, kind: bytes, size: int = 0) -> tarfile.TarInfo:
+        info = tarfile.TarInfo(name)
+        info.type = kind
+        info.size = size
+        info.mode = 0o755 if kind == tarfile.DIRTYPE else 0o644
+        info.mtime = TAR_MTIME
+        info.uid = info.gid = 0
+        info.uname = info.gname = ""
+        return info
+
+    with tarfile.open(out, "w", format=tarfile.USTAR_FORMAT) as tar:
+        tar.addfile(member(PYLIB_MEMBER, tarfile.DIRTYPE))
+        for name, path in files.items():
+            with open(path, "rb") as f:
+                tar.addfile(member(f"{PYLIB_MEMBER}/{name}", tarfile.REGTYPE, os.path.getsize(path)), f)
+        data = f"{version}\n".encode()
+        tar.addfile(member(PYLIB_VERSION, tarfile.REGTYPE, len(data)), io.BytesIO(data))
+    return version
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--linux-out", default=os.path.join(REPO_ROOT, "build", "linux"), help="make linux's output")
@@ -86,6 +156,8 @@ def main():
     }
     inputs = [os.path.join(args.linux_out, src) for src in FILES.values()] + list(sized.values())
     missing = [path for path in inputs if not os.path.isfile(path)]
+    if not os.path.isdir(os.path.join(args.buildroot_out, PYLIB_SRC)):
+        missing.append(os.path.join(args.buildroot_out, PYLIB_SRC) + os.sep)
     if missing:
         listed = "\n  ".join(missing)
         sys.exit(f"make_linux_dist: missing (run `make linux-dist`):\n  {listed}")
@@ -103,7 +175,10 @@ def main():
         os.makedirs(os.path.dirname(out), exist_ok=True)
         shutil.copyfile(src, out)
         os.chmod(out, 0o755)
-    card = [*CARD_FILES, *bins]
+    pylib = os.path.join(args.out, PYLIB_TAR)
+    version = write_pylib_tar(pylib_files(args.buildroot_out), pylib)
+    os.chmod(pylib, 0o644)
+    card = [*CARD_FILES, *bins, PYLIB_TAR]
 
     manifest = {
         "git_sha": git("rev-parse", "HEAD"),
@@ -116,13 +191,17 @@ def main():
             for dst in card
         },
         "sizes": {key: os.path.getsize(path) for key, path in sized.items()}
-        | {os.path.basename(dst): os.path.getsize(src) for dst, src in bins.items() if dst.startswith(BBTOOLS_PREFIX)},
+        | {os.path.basename(dst): os.path.getsize(src) for dst, src in bins.items() if dst.startswith(BBTOOLS_PREFIX)}
+        | {"pylib_tar": os.path.getsize(pylib)},
+        "pylib_version": version,
     }
     with open(os.path.join(args.out, "MANIFEST.json"), "w") as f:
         json.dump(manifest, f, indent=2)
         f.write("\n")
 
-    sums = [f"{sha256(os.path.join(args.out, rel))}  {rel}" for rel in sorted([*FILES, *bins, "MANIFEST.json"])]
+    sums = [
+        f"{sha256(os.path.join(args.out, rel))}  {rel}" for rel in sorted([*FILES, *bins, PYLIB_TAR, "MANIFEST.json"])
+    ]
     with open(os.path.join(args.out, "SHA256SUMS"), "w") as f:
         f.write("\n".join(sums) + "\n")
 

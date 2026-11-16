@@ -47,7 +47,8 @@ stage's `linux` does (`fw_common::linux`). Index and the rules that apply everyw
   machine, a kernel rebuild ~6 min.
 - `make linux-dist` (`scripts/make_linux_dist.py`) puts the kernel as it goes on the card into
   `build/linux-dist/` (`VUX9K/LINUX/Image` and `vux9k.dtb`, this tree's programs for the card in
-  `VUX9K/LINUX/BIN/` ("Userland packages"), the kernel's `linux.config`, `MANIFEST.json` with
+  `VUX9K/LINUX/BIN/` ("Userland packages"), MicroPython's modules as `VUX9K/LINUX/PYLIB.TAR`
+  ("MicroPython"), the kernel's `linux.config`, `MANIFEST.json` with
   each card file's size and sha256 and the build's sizes for the memory table, `SHA256SUMS`;
   `sim/emu/test_make_linux_dist.py`). It is not part of
   `make dist`, which needs no Linux build. CI's job `linux` (beside `test`, so the kernel adds
@@ -412,7 +413,9 @@ This repository's own programs are buildroot packages of the external tree, one 
   linux-dist` copies as it is into its tree (with each file's size and sha256 in
   `MANIFEST.json`'s `card_files`, and `SHA256SUMS`): the card's programs go with the kernel
   (`vux9k-linux-<sha>`, a release's kernel archive), not in `make dist`, which builds no Linux.
-  `make_linux_dist.py` refuses anything in `images/sd/` outside `VUX9K/LINUX/BIN/`. That
+  `make_linux_dist.py` refuses anything in `images/sd/` outside `VUX9K/LINUX/BIN/`; the one
+  card file elsewhere, `VUX9K/LINUX/PYLIB.TAR`, it makes itself from `images/pylib/`
+  ("MicroPython"). That
   directory is on the login shell's PATH (`/etc/profile`, after the initramfs' directories), as
   `/mnt/sd/VUX9K/LINUX/BIN` once init has mounted the card ("The SD card"); `hw_linux.py` puts
   it on the board's card with the Image and the device tree, `test_linux.py` builds it into the
@@ -448,7 +451,7 @@ each use** (package `vux9k-bbtools`, `linux_workspace/userland/bbtools/`), in
 | `bbawk` | awk |
 | `bbcalc` | expr, dc |
 | `bbfiles` | find, xargs, diff, cmp, stty |
-| `bbtar` | tar (no compression) |
+| `bbtar` | tar (no compression; "MicroPython") |
 
 - **Each is built from `common.config` and its own fragment over allnoconfig**
   (`bbconfig.sh`): busybox's kconfig resets every bool in allnoconfig, `KCONFIG_ALLCONFIG`'s
@@ -513,7 +516,8 @@ each use** (package `vux9k-bbtools`, `linux_workspace/userland/bbtools/`), in
 - The memory table has a row for them (`sizes` in make linux-dist's `MANIFEST.json`, each by
   its name): they are RAM only while one runs.
 - **The terminal**: `/etc/profile` (`board/post-build.sh`) exports `HOME=/mnt/sd` (the card:
-  the initramfs is RAM, lost at a reset), `EDITOR=vi` and `TERM=vt100`, and doesn't cd: the
+  the initramfs is RAM, lost at a reset), `EDITOR=vi`, `TERM=vt100` and `MICROPYPATH`
+  ("MicroPython"), sources the card's `pylib` once a boot, and doesn't cd: the
   prompt stays `/ # `, which `linux_checks.PROMPT` and `hw_linux.py` wait for
   (`linux_checks.BASE_COMMANDS` checks the values). The console has no size (TIOCGWINSZ is 0x0
   on a serial port), so vi asks the terminal (`ESC [ 6 n`, `FEATURE_VI_ASK_TERMINAL`) and waits
@@ -538,7 +542,8 @@ each use** (package `vux9k-bbtools`, `linux_workspace/userland/bbtools/`), in
   in one write.
 - **Sample scripts** (`linux_workspace/userland/scripts/`, package `vux9k-scripts`, in
   `VUX9K/LINUX/BIN/`): `meminfo` (`/proc/meminfo`'s main lines, `/proc/buddyinfo`'s free blocks
-  and the largest, with awk) and `ledctl` (each LED's trigger, `ledctl LED TRIGGER`, `ledctl
+  and the largest, with awk), `pylib` (MicroPython's modules extracted from the card's
+  `PYLIB.TAR`: "MicroPython") and `ledctl` (each LED's trigger, `ledctl LED TRIGGER`, `ledctl
   cpu|mem|load` stops the running sysmon, waits for it to exit, which frees the button's line,
   and starts one in that mode; `ledctl off`). `#!/bin/sh`: the kernel's `BINFMT_SCRIPT`
   executes the initramfs' busybox (order 6) for them. meminfo `exec`s awk, which frees the
@@ -578,6 +583,98 @@ each use** (package `vux9k-bbtools`, `linux_workspace/userland/bbtools/`), in
   Measured (2026-11-15, 63cd76b): back to back, the emulator dropped 171-176 of the 208 bytes
   and 1 of 8 lines came through, the board 2 of 8; paced, 8 of 8 on both, and on the board the
   `keys` session's arrow split 20 ms apart still read as one key through the USB bridge.
+
+## MicroPython
+
+- **`MPY` on the card** (package `vux9k-micropython`, `VUX9K/LINUX/BIN/MPY`): MicroPython 1.29.0's
+  unix port (the Makefile's `MICROPY_*` tarball, as the Zephyr build's) as a FLAT program, with
+  a variant of its own (`linux_workspace/userland/micropython/variant/`, read where it is, as
+  bbtools' fragments are: "Userland packages"): the extra features, as the Zephyr build has
+  them (bc_clone_py needs f-strings, `re`, `math.factorial`), the unix port's (arbitrary-precision
+  integers, `os`, the posix VFS), MicroPython's own readline for the REPL; no threads, ffi,
+  sockets, ssl, btree or `termios` module (the toolchain has no thread library, no libffi, and
+  there is no network). **No native code**: the port's `mpconfigport.h` turns the RV32 emitter
+  on for any riscv32, and its code then needs an executable mmap, which a FLAT process doesn't
+  get. The package's patches: 0001 the C stack's limit (a FLAT stack is fixed at link time:
+  `VUX9K_MICROPYTHON_FLAT_STACKSIZE` 24 KB, the limit 20,000 B under it; bc_clone_py's parser
+  recurses), 0002 the heap's first size.
+- **Not buildroot's `micropython` package**: it needs threads (`BR2_PTHREADS_NONE` here) and
+  takes the port's default variant, which freezes the standard manifest. **Nothing is frozen**:
+  every exec copies the whole program into one block of contiguous RAM ("Memory budget"), so
+  frozen bytecode is RAM at each run and a larger block, while a module on the card costs only
+  when it is imported. The port's Makefile would freeze `variants/manifest.py` (asyncio, mip,
+  ssl, unix-ffi) unless the variant names another: `mpconfigvariant.mk` sets `FROZEN_MANIFEST`
+  empty. With bc_clone_py frozen in (the spike, 2026-11-15) MPY was 492,500 B, its exec's block
+  512,448 B.
+- **Each exec of MPY takes an order-7 block** (~512 KB). After the boot one or two are free
+  ("Memory budget": `6:4 7:1 8:1`), the card's reads break them, and sysmon's reclaim looks for
+  order 6 only. So the tests run MicroPython right after the boot's commands
+  (`linux_checks.COMMANDS` puts `MPY_COMMANDS` after `BASE_COMMANDS`; `test_linux.py`'s
+  `test_mpy_command` and `test_mpy_repl` before `test_exec_after_card_reads`), and each exec
+  first waits for a free block of order 7 (`linux_checks.MPY_ORDER`, `runs_mpy`; `wait_large`'s
+  `order` in `test_linux.py` and `hw_linux.py`), failing without one. The spike's numbers (the
+  emulator): its first exec 14.9 s (~0.5 MB from the card), the REPL's prompt 1.16 s,
+  bc_clone_py's self-test passed with the heap at 35.6 KB at most.
+- **The heap grows by at most an order-5 block.** It starts at 64 KB (`MICROPY_UNIX_HEAP_SIZE`,
+  patch 0002; a malloc on noMMU is one block of a power of two pages, so the port's 1 MB would
+  take the largest one there is) and is split (`MICROPY_GC_SPLIT_HEAP_AUTO`): when a collection
+  leaves no room, py/gc.c adds an area as large as the heap so far, up to what
+  `gc_get_max_new_split` allows. `variant/vux9k_heap.c` allows the largest free block in
+  `/proc/buddyinfo`, never more than 128 KB less malloc's page (124 KB): uncapped, the third
+  area would take an order-7 block, the one MPY's next exec needs. So the heap goes 64 KB ->
+  ~130 KB -> ~254 KB ..., and no single object can be larger than an area (~124 KB: a
+  `bytearray(200_000)` is a MemoryError, 200 bytearrays of 1 KB are not). `gc.mem_free()`
+  counts the area the heap could still add; `micropython.mem_info()`'s `GC: total` is the
+  heap. `linux_checks.MPY_HEAP_PY` holds 200 KB in 1 KB pieces and `heap_problems` wants
+  every step of `GC: total` at most `HEAP_STEP_MAX`.
+- **The modules are `.mpy` files on the card, sent as one archive.** The package builds the
+  host's mpy-cross from the same tree and compiles bc_clone_py's five modules (its
+  `BC_PY_COMMIT`'s archive) to plain bytecode (no `-march`: there is no native code to load)
+  into buildroot's `images/pylib/`; `make_linux_dist.py` makes them into
+  `VUX9K/LINUX/PYLIB.TAR`: uncompressed ustar, the members `PYLIB/`, the modules, then
+  `PYLIB/VERSION` last (16 hex digits of a sha256 over the modules' names and contents,
+  `MANIFEST.json`'s `pylib_version`), deterministic (names sorted, owner 0, no user or group
+  names, one time, 1980-01-02, on every member; `test_make_linux_dist.py`). An archive because
+  **the card's files are written with 8.3 names only**: by `vux_tool.py mkfat` and by the second
+  stage's `put`, which `hw_linux.py` uses, and both refuse other names, while an import needs the
+  module's own (`bc_selftest.mpy`). Linux's vfat writes long names, so Linux extracts it. In
+  `VUX9K/LINUX/`, not `BIN/`, which is on the PATH. `MANIFEST.json`'s `sizes` has `mpy` and
+  `pylib_tar` (the memory table's row). A slow first import from the card is accepted.
+- **The extraction runs at the boot, from the login shell's profile.** `/etc/profile`
+  (`board/post-build.sh`) sources the card's `pylib` (package `vux9k-scripts`) at the shell's
+  first start in a boot (`/run/pylib.ver`, which pylib writes, marks it: init starts the shell
+  again whenever it exits). Not init: process 1 stays without helpers to run and wait for, as
+  it was kept small on purpose ("Init"), and the profile runs after init has mounted the card,
+  with its output on the console. Sourced, not executed, which saves an exec of busybox (order
+  6). pylib reads the archive's `PYLIB/VERSION` (`tar -xOf` into `/run/pylib.ver`, then hush's
+  `read`: this hush has no `$( )`) and compares it with `PYLIB/VERSION` on the card, **never the
+  files' times**, which a put leaves meaningless; when they differ it removes `PYLIB/`, extracts
+  the archive with the card's `tar` and syncs: `pylib: extracting PYLIB.TAR`, `pylib: PYLIB.TAR
+  extracted, version V` (`linux_checks.PYLIB_EXTRACTED`). A failure says `pylib: PYLIB.TAR not
+  extracted` or `pylib: no PYLIB/VERSION in PYLIB.TAR` and leaves no `PYLIB/VERSION` (an
+  extraction cut short too: it is the last member), so the next boot extracts again; the boot
+  goes on. No card, no archive or no pylib: nothing happens. `pylib` by hand looks again.
+  Every boot of a card runs the card's `tar` once (bbtar from the card) to read the version:
+  `test_linux.py`'s `test_pylib_extraction` boots a card without the archive, with it (the
+  first boot extracts) and the same card again (the second leaves it), and
+  `test_record_measurements` prints what each adds to the boot (`pylib: ... to the prompt`). The
+  emulator's other boots and `hw_linux.py`'s are first boots of their card: their time to the
+  prompt includes the extraction, and the memory table ("Memory budget") is read after it,
+  with its page cache.
+- **tar is `bbtar`, a busybox of its own on the card** ("Text tools and vi"), not in the
+  initramfs (RAM for good) and not in `bbfiles`: busybox counts tar at ~39 KB with every
+  feature (the host's build of `bbtar.config`: ~17 KB of text over an empty busybox), and
+  `bbfiles`' block had ~14 KB left below order 5; and each boot executes it, which a small
+  busybox reads from the card sooner. Uncompressed (no gzip or bzip2), with `-c`.
+- **`MICROPYPATH`**: the profile exports `/mnt/sd/VUX9K/LINUX/PYLIB` (`linux_checks.MPY_LIB`),
+  and MPY's own default path (`MICROPY_PY_SYS_PATH_DEFAULT` in the variant) is the same, for a
+  program not started from the login shell: `MPY_COMMANDS` runs MPY in a subshell that unsets
+  it. Change them together.
+- **The tests**: `linux_checks.MPY_COMMANDS` (the emulator's `test_mpy_command`, the board's
+  `hw_linux.py`): the version, `MICROPYPATH` and the default path, the modules' long names,
+  bc_clone_py's self-test (`ALL BC SELF-TESTS PASSED`, no `[FAIL]`: `problems`), scripts the
+  shell's `echo` writes on the card (one with arguments, one that writes `led5` through the LED
+  class, one that grows the heap), then the REPL (`MPY_REPL*`: `1+1`, Ctrl-D back to the shell).
 
 ## Speed (2026-11-01, emulator; 2026-11-11, 2026-11-14 and 2026-11-15, the board)
 

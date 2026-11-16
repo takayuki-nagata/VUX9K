@@ -11,7 +11,8 @@ then pack.fs loaded into the FPGA's SRAM, the first stage booting the card's sec
 itself, whose `linux` loads both files and starts the kernel. The console must show
 sim/integration/linux_checks.py's boot lines and answer its commands, as on the emulator
 (sim/emu/test_linux.py; the kernel mounts the card, runs programs and the sample scripts from
-it and writes files, which linux_checks.CARD_CLEANUP removes again); right after the boot the
+it and writes files, which linux_checks.CARD_CLEANUP removes again; MicroPython from the card,
+its modules extracted at the boot, and its REPL); right after the boot the
 shell's builtins read /proc/meminfo and /proc/buddyinfo, and [MEM] lines give linux_checks'
 memory table. Then vi is driven by linux_checks.VI_SESSIONS' keys and cat shows what each
 session left, the card is cleaned up and unmounted, and last a paste at the shell is sent in
@@ -71,6 +72,9 @@ PUT_LINE_TIMEOUT = 30.0
 # The commands before which the test waits for a free block of linux_checks.RECLAIM_ORDER (an
 # exec of busybox after the card's reads: sysmon's reclaim), as test_linux.py's tests of them do
 WAIT_LARGE = frozenset((*linux_checks.TOOL_COMMANDS, *linux_checks.PIPE_COMMANDS, *linux_checks.SCRIPT_COMMANDS))
+# The command after which mpy_repl runs MicroPython's REPL (the last of MPY_COMMANDS); every
+# command that executes MPY waits for a free block of linux_checks.MPY_ORDER first
+MPY_REPL_AFTER = list(linux_checks.MPY_COMMANDS)[-1]
 # send_line's chunk of a command line, sent once the one before has come back as echo, at most
 # ECHO_TIMEOUT after it (the shell echoes each key as it reads it)
 SEND_CHUNK = 8
@@ -151,10 +155,11 @@ def banner(image: bytes) -> str | None:
     return m.group().decode() if m else None
 
 
-def run_command(ser, cmd: str) -> str | None:
-    """One command typed at the shell: what follows its echo up to the next prompt, None
-    without the echo (a chunk's echo missing: the line is dropped with ^C, so the run goes on
-    to its next command). The kernel's lines in it are printed and left out of both."""
+def run_command(ser, cmd: str, timeout: float = COMMAND_TIMEOUT) -> str | None:
+    """One command typed at the shell: what follows its echo up to the next prompt (within
+    timeout), None without the echo (a chunk's echo missing: the line is dropped with ^C, so
+    the run goes on to its next command). The kernel's lines in it are printed and left out of
+    both."""
     try:
         text = send_line(ser, cmd)
     except TimeoutError as e:
@@ -164,7 +169,7 @@ def run_command(ser, cmd: str) -> str | None:
         read_until(ser, linux_checks.PROMPT, COMMAND_TIMEOUT)
         return None
     # The echo, the reply and the next prompt can come in one read: read to the prompt
-    out = read_until(ser, linux_checks.PROMPT, COMMAND_TIMEOUT, text)
+    out = read_until(ser, linux_checks.PROMPT, timeout, text)
     for line in linux_checks.KERNEL_LINE.findall(out):
         print(line.rstrip())
     out = linux_checks.without_kernel_lines(out)
@@ -172,21 +177,22 @@ def run_command(ser, cmd: str) -> str | None:
     return None if at < 0 else out[at + len(cmd) :]
 
 
-def wait_large(ser, before: str) -> str | None:
-    """Waits up to RECLAIM_WAIT_S for a free block of RECLAIM_ORDER, which the next exec of
-    busybox needs (sysmon gives one back after the card's reads; test_linux.py's wait_large),
-    reading /proc/buddyinfo with the shell's builtins: the failure, None once one is free."""
+def wait_large(ser, before: str, order: int = linux_checks.RECLAIM_ORDER) -> str | None:
+    """Waits up to RECLAIM_WAIT_S for a free block of order (RECLAIM_ORDER: the next exec of
+    busybox's; sysmon gives one back after the card's reads; test_linux.py's wait_large; or
+    MPY_ORDER, MPY's), reading /proc/buddyinfo with the shell's builtins: the failure, None
+    once one is free."""
     end = time.monotonic() + linux_checks.RECLAIM_WAIT_S
     while True:
         out = run_command(ser, linux_checks.MEM_PROBES[1])
         orders = linux_checks.parse_buddyinfo(out or "")
         if not orders:
             return f"{before}: no /proc/buddyinfo before it: {out!r}"[:600]
-        if sum(orders[linux_checks.RECLAIM_ORDER :]):
+        if sum(orders[order:]):
             return None
         if time.monotonic() >= end:
             return (
-                f"{before}: no free block of order {linux_checks.RECLAIM_ORDER} within "
+                f"{before}: no free block of order {order} within "
                 f"{linux_checks.RECLAIM_WAIT_S} s before it (free blocks per order {orders})"
             )
         time.sleep(1.0)
@@ -233,12 +239,13 @@ def boot(
     except ValueError as e:
         failures.append(f"memory: {e}: {probes!r}"[:600])
     for cmd, wanted in linux_checks.COMMANDS.items():
-        if cmd in WAIT_LARGE:
-            err = wait_large(ser, cmd)
+        mpy = linux_checks.runs_mpy(cmd)
+        if cmd in WAIT_LARGE or mpy:
+            err = wait_large(ser, cmd, linux_checks.MPY_ORDER if mpy else linux_checks.RECLAIM_ORDER)
             if err:
                 failures.append(err)
         t = time.monotonic()
-        reply = run_command(ser, cmd)
+        reply = run_command(ser, cmd, linux_checks.MPY_TIMEOUT_S if mpy else COMMAND_TIMEOUT)
         times[f"command: {cmd}"] = time.monotonic() - t
         if reply is None:
             failures.append(f"{cmd}: no echo")
@@ -247,10 +254,48 @@ def boot(
         lost = linux_checks.missing(reply, wanted)
         if lost:
             failures.append(f"{cmd}: missing {lost}")
+        failures += [p[:600] for p in linux_checks.problems(cmd, reply)]
+        if cmd == MPY_REPL_AFTER:
+            failures += mpy_repl(ser, times)
     # The first exec reads the busybox from the card, the later ones from the page cache
     for bb, cmd in linux_checks.first_execs(linux_checks.COMMANDS).items():
         size = f" ({sizes[bb]:,} B)" if bb in sizes else ""
         times[f"first exec of {bb}{size}: {cmd}"] = times[f"command: {cmd}"]
+    return failures
+
+
+def mpy_repl(ser, times: dict[str, float]) -> list[str]:
+    """MicroPython's REPL (linux_checks.MPY_REPL): MPY alone, its banner up to the REPL's
+    prompt, a line and its value, Ctrl-D back to the shell's prompt; returns the failures."""
+    err = wait_large(ser, linux_checks.MPY_REPL, linux_checks.MPY_ORDER)
+    failures = [err] if err else []
+    in_repl = False
+    try:
+        t = time.monotonic()
+        text = send_line(ser, linux_checks.MPY_REPL)
+        banner = read_until(ser, linux_checks.MPY_REPL_PROMPT, linux_checks.MPY_TIMEOUT_S, text)
+        in_repl = True
+        times["MPY to the REPL's prompt"] = time.monotonic() - t
+        if linux_checks.MPY_VERSION not in banner:
+            failures.append(f"the REPL's banner lacks {linux_checks.MPY_VERSION!r}: {banner[-300:]!r}")
+        ser.write((linux_checks.MPY_REPL_LINE + "\r").encode())
+        ser.flush()
+        out = read_until(ser, linux_checks.MPY_REPL_PROMPT, COMMAND_TIMEOUT)
+        lines = [ln.strip() for ln in linux_checks.without_kernel_lines(out).splitlines()]
+        print(f"MPY's REPL: {lines!r}")
+        if linux_checks.MPY_REPL_OUT not in lines:
+            failures.append(f"the REPL's {linux_checks.MPY_REPL_LINE}: {out[-300:]!r}")
+    except TimeoutError as e:
+        failures.append(f"the REPL: {e}")
+    # Back to the shell whatever happened: in the REPL ^C stops a line that runs and ^D ends
+    # it; before its prompt ^C alone (it stops MPY, or drops the shell's line; a ^D at the
+    # shell's prompt would end the login shell)
+    ser.write(CANCEL_LINE + (linux_checks.MPY_REPL_EXIT.encode() if in_repl else b""))
+    ser.flush()
+    try:
+        read_until(ser, linux_checks.PROMPT, COMMAND_TIMEOUT)
+    except TimeoutError as e:
+        failures.append(f"the REPL's Ctrl-D: {e}")
     return failures
 
 

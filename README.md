@@ -194,7 +194,8 @@ one formatted without a partition table is refused). What VUX9K uses is in the d
 | `\VUX9K\STAGE2.OLD` | The previous one, booted when `STAGE2.BIN` is missing, broken or too old |
 | `\VUX9K\APPS\` | Applications as VUX9 v4 files, started by the second stage's `run` (a release ships the demos as `sd/VUX9K/APPS/`) |
 | `\VUX9K\LINUX\Image`, `\VUX9K\LINUX\vux9k.dtb` | A noMMU Linux kernel and its device tree as `make linux` builds them (`build/linux/arch/riscv/boot/Image`, `build/linux/vux9k.dtb`), copied unchanged; the second stage's `linux` boots them (a release ships neither) |
-| `\VUX9K\LINUX\BIN\` | Programs for that Linux (`make linux-dist`'s `VUX9K/LINUX/BIN/`, e.g. `memprobe`): the kernel mounts the card's partition on `/mnt/sd` and has this directory on the shell's `PATH` |
+| `\VUX9K\LINUX\BIN\` | Programs for that Linux (`make linux-dist`'s `VUX9K/LINUX/BIN/`, e.g. `memprobe`, the text tools, MicroPython's `MPY`): the kernel mounts the card's partition on `/mnt/sd` and has this directory on the shell's `PATH` |
+| `\VUX9K\LINUX\PYLIB.TAR` | MicroPython's modules for that Linux as one tar archive (`make linux-dist`'s; their names are longer than 8.3); Linux extracts it into `\VUX9K\LINUX\PYLIB\` at the first boot after it changed, where `MPY` imports them from |
 
 The second stage reads FAT32 only, with 8.3 and long names (long names are read only, and
 shown in ASCII with `?` for other characters); the files and directories it makes get 8.3

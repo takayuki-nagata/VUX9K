@@ -1,0 +1,23 @@
+unix: the initial GC heap size a variant may set
+
+The default heap is 1 MB. On noMMU Linux a malloc of it takes one contiguous block of a
+power of two pages, which the RAM may not have; a variant with MICROPY_GC_SPLIT_HEAP_AUTO
+starts small (MICROPY_UNIX_HEAP_SIZE) and grows. -X heapsize still sets it.
+
+diff --git a/ports/unix/main.c b/ports/unix/main.c
+index 50eafe2..9b9a344 100644
+--- a/ports/unix/main.c
++++ b/ports/unix/main.c
+@@ -64,7 +64,11 @@ static uint emit_opt = MP_EMIT_OPT_NONE;
+ #if MICROPY_ENABLE_GC
+ // Heap size of GC heap (if enabled)
+ // Make it larger on a 64 bit machine, because pointers are larger.
+-long heap_size = 1024 * 1024 * (sizeof(mp_uint_t) / 4);
++// A port variant may set its own (a small one that MICROPY_GC_SPLIT_HEAP_AUTO grows).
++#ifndef MICROPY_UNIX_HEAP_SIZE
++#define MICROPY_UNIX_HEAP_SIZE (1024 * 1024 * (sizeof(mp_uint_t) / 4))
++#endif
++long heap_size = MICROPY_UNIX_HEAP_SIZE;
+ #endif
+ 
+ // Number of heaps to assign by default if MICROPY_GC_SPLIT_HEAP=1

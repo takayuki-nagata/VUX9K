@@ -170,23 +170,36 @@ class ShellPort:
     """A port that answers hw_linux.boot as the second stage and the kernel would: the second
     stage's prompt, `linux` with linux_line and the console up to the shell's prompt, and
     each command line with its echo (each write's as it comes, as busybox's line editing
-    echoes keys), its reply from replies and the prompt."""
+    echoes keys), its reply from replies and the prompt; MicroPython's REPL (repl, the line
+    and its value, Ctrl-D back to the shell)."""
 
-    def __init__(self, linux_line: str, console: str, replies: dict[str, str]):
-        self.linux_line, self.console, self.replies = linux_line, console, replies
+    def __init__(self, linux_line: str, console: str, replies: dict[str, str], repl: str = "MicroPython v1.29.0"):
+        import linux_checks
+
+        self.linux_line, self.console, self.replies, self.repl_banner = linux_line, console, replies, repl
+        self.repl_cmd = linux_checks.MPY_REPL
         self.out = b"s2> "
         self.typed = b""
         self.shell = False
+        self.repl = False
 
     def write(self, data: bytes):
         self.typed += data
         if self.shell:
             self.out += data.rstrip(b"\r\n")
-        if self.typed.endswith((b"\r", b"\n")):
+        if self.repl and b"\x04" in self.typed:
+            self.typed, self.repl = b"", False
+            self.out += b"\r\n/ # "
+        elif self.typed.endswith((b"\r", b"\n")):
             line, self.typed = self.typed.strip().decode(), b""
             if line == "linux" and not self.shell:
                 self.out += f"linux\n{self.linux_line}\n\n{self.console}/ # ".encode()
                 self.shell = True
+            elif self.repl:
+                self.out += f"\r\n{self.replies.get('>>> ' + line, '')}>>> ".encode()
+            elif line == self.repl_cmd:
+                self.out += f"\r\n{self.repl_banner} on 2026-11-16; linux\r\n>>> ".encode()
+                self.repl = True
             else:
                 self.out += f"\r\n{self.replies.get(line, '')}/ # ".encode()
 
@@ -214,10 +227,14 @@ def test_linux_script_reports_what_the_board_got_wrong(monkeypatch):
     console = f"[    0.000000] {version}\r\n" + "".join(f"{ln}\r\n" for ln in linux_checks.BOOT_LINES)
     replies = {cmd: " ".join(want) + "\r\n" for cmd, want in linux_checks.COMMANDS.items()}
     meminfo, buddyinfo = linux_checks.MEM_PROBES
-    # A free block of order 6, which the text tools' commands wait for
+    heap = f"MPY {linux_checks.MPY_HEAP_PY}"
+    # Free blocks of order 6 and 7, which the text tools' and MicroPython's commands wait for;
+    # the heap's growth in mem_info's lines; the REPL's value
     replies |= {
         meminfo: "MemTotal: 7960 kB\r\nMemFree: 3912 kB\r\n",
-        buddyinfo: "Node 0, zone Normal 1 0 1 0 0 0 1\r\n",
+        buddyinfo: "Node 0, zone Normal 1 0 1 0 0 0 1 1\r\n",
+        heap: "GC: total: 63936,\r\nGC: total: 128000,\r\nGC: total: 250368,\r\n" + replies[heap],
+        ">>> " + linux_checks.MPY_REPL_LINE: linux_checks.MPY_REPL_OUT + "\r\n",
     }
     mem: dict[str, str] = {}
     times: dict[str, float] = {}
@@ -230,14 +247,16 @@ def test_linux_script_reports_what_the_board_got_wrong(monkeypatch):
         return got + hw_linux.cleanup(port)
 
     assert failures() == []
-    assert mem["Image"] == "64 B" and mem["MemFree"] == "3,912 kB" and mem["largest free block"] == "256 kB (order 6)"
+    assert mem["Image"] == "64 B" and mem["MemFree"] == "3,912 kB" and mem["largest free block"] == "512 kB (order 7)"
     # Each of the card's busyboxes' first exec, by its first command
     first = [label for label in times if label.startswith("first exec of ")]
     assert len(first) == len(linux_checks.TOOL_BUSYBOXES), first
     assert "first exec of bbawk (9 B): awk 'BEGIN{print 6*7, sqrt(2)}'" in first, first
     got = failures(replies=replies | {buddyinfo: ""})
     assert got[0].startswith("memory: the probes' output lacks buddyinfo"), got
-    assert len(got) == 1 + len(hw_linux.WAIT_LARGE) and all("no /proc/buddyinfo" in g for g in got[1:]), got
+    # Every command that waits (MicroPython's REPL too) says so
+    waits = len(hw_linux.WAIT_LARGE) + sum(map(linux_checks.runs_mpy, linux_checks.COMMANDS)) + 1
+    assert len(got) == 1 + waits and all("no /proc/buddyinfo" in g for g in got[1:]), got
     got = failures(console=console.replace("hush - the humble shell", "hush"))
     assert len(got) == 1 and "boot lines missing" in got[0], got
     got = failures(console=console.replace("#28 ", "#27 "))
@@ -246,6 +265,15 @@ def test_linux_script_reports_what_the_board_got_wrong(monkeypatch):
     assert len(got) == 1 and "not the tree's" in got[0], got
     got = failures(replies=replies | {"uname -a": "Linux (none) 6.0\r\n"})
     assert len(got) == 1 and got[0].startswith("uname -a: missing"), got
+    # MicroPython: a traceback, the heap grown by more than an order-5 block, no block of
+    # order 7 for its execs, the REPL's value missing
+    selftest = next(c for c in linux_checks.MPY_COMMANDS if "bc_selftest" in c)
+    got = failures(replies=replies | {selftest: replies[selftest] + "Traceback (most recent call last):\r\n"})
+    assert len(got) == 1 and "'Traceback' in its output" in got[0], got
+    got = failures(replies=replies | {heap: "GC: total: 63936,\r\nGC: total: 260000,\r\n" + replies[heap]})
+    assert len(got) == 1 and "more than 131,072 B at a time" in got[0], got
+    got = failures(replies=replies | {">>> " + linux_checks.MPY_REPL_LINE: "3\r\n"})
+    assert len(got) == 1 and got[0].startswith("the REPL's 1+1"), got
     assert hw_linux.banner(b"no banner here") is None
 
 

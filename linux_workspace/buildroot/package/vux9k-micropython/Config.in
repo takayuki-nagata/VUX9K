@@ -1,0 +1,9 @@
+config BR2_PACKAGE_VUX9K_MICROPYTHON
+	bool "vux9k-micropython"
+	help
+	  MicroPython's unix port as a FLAT program on the card (MPY),
+	  without threads, native code or networking, nothing frozen
+	  in (linux_workspace/userland/micropython/variant/), and
+	  bc_clone_py's modules compiled to .mpy for the card's
+	  PYLIB.TAR. Not buildroot's micropython package, which needs
+	  threads and shared libraries.
