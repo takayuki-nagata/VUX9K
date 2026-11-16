@@ -720,18 +720,32 @@ each use** (package `vux9k-bbtools`, `linux_workspace/userland/bbtools/`), in
     the claim takes the largest such block first). So a busybox splits a free order-7 block
     whenever no *unmovable* order-6 block is free, whatever buddyinfo shows of order 6 (the
     emulator, 2026-11-17: a `sleep 600` split it with four order-6 blocks free, on the movable
-    lists); the launcher's shell on the board very likely does the same. The test: MPYs hold
-    the order-7 blocks but one (at most 4); `sleep 600`s start one at a time, buddyinfo read
-    after each, until one's exec takes that block (at most 8); that one is killed and its
-    block joins its buddy again; `/proc/pagetypeinfo` (`linux_checks.PAGETYPEINFO_PROBE`,
-    `parse_pagetypeinfo`: free blocks per order and migratetype) must then show no unmovable
-    order-6 block and one order-7 block free. Then `PYTHON_DEBUG=1 python -c "print(6 * 7)"`
-    must show a look without an order-7 block, the drop, and 42, with no allocation failure on
-    the console; a look that still finds the block (`caches kept`) fails as the state not
-    reached, not retried. `test_python_without_a_block` holds every order-7 block with MPYs
-    and drops the caches until none comes back, then wants the drop, the kernel's `page
-    allocation failure` on the console, the shell's `$?` 139 (SIGSEGV) and the shell answering
-    after; the dump (two of them, below) fits `COMMAND_CYCLES` easily. Both kill their holders
+    lists); the launcher's shell on the board very likely does the same. The test reaches one
+    free order-7 block, none above and no unmovable order-6 block from whatever layout the
+    tests before left, counting free memory in order-7 units (an order-8 block is two). A
+    pageblock is order 7 (`CONFIG_PAGE_BLOCK_MAX_ORDER`), so an unmovable allocation that takes
+    a block of order 7 or more, from its own lists or by the claim of another type's whole
+    block, leaves the rest on the unmovable lists, where the smallest that fits serves the
+    holder's further (smaller) allocations: a holder's start splits at most one unit beyond
+    what its exec takes. An MPY takes one or two units (its exec, and its 64 KB heap, stack and
+    libc's mmaps when the unmovable lists have no block of orders 4-6: on the emulator,
+    2026-11-17, one MPY with two units free took both), a `sleep 600` none or one (an unmovable
+    order-6 block, or a split unit whose other half becomes one). So MPYs (at most 4) start only while three units
+    or more are free, sleepers take two down to one; an MPY that leaves none all the same is
+    killed, its blocks join again (bounded waits), and sleepers go the rest of the way. Then
+    sleepers start one at a time, buddyinfo read after each, until one's exec takes the last
+    unit (at most 12 sleepers in all); that one is killed and its block joins its buddy again;
+    `/proc/pagetypeinfo` (`linux_checks.PAGETYPEINFO_PROBE`, `parse_pagetypeinfo`: free blocks
+    per order and migratetype) must then show no unmovable order-6 block and one order-7 block
+    free. Then `PYTHON_DEBUG=1 python -c "print(6 * 7)"` must show a look without an order-7
+    block, the drop, and 42, with no allocation failure on the console; a look that still finds
+    the block (`caches kept`) fails as the state not reached, not retried; a failure gives
+    buddyinfo after each step. `test_python_without_a_block` holds every order-7 block with
+    MPYs and drops the caches until none comes back; when the last MPY's heap took the last
+    free order-6 block, which the launcher's shell needs, that MPY is killed and sleepers hold
+    the rest (a sleeper's split leaves an order-6 half free). It then wants the drop, the
+    kernel's `page allocation failure` on the console, the shell's `$?` 139 (SIGSEGV) and the
+    shell answering after; the dump (two of them, below) fits `COMMAND_CYCLES` easily. Both kill their holders
     at the end and leave init's sysmon alone, so the tests after them find it init's child
     (its reclaim drops only when no free block of order 6 or above is left; the first keeps
     one free throughout, the second wants one for the launcher). The launcher's logic also

@@ -130,11 +130,13 @@ RECLAIM_HOLDERS = 12
 MPY_HELD = "held"
 MPY_HELD_HOLDER = "MPY -c \"import time; print('he' + 'ld'); time.sleep(600)\""
 MPY_HOLDERS = 4
-# test_python_from_its_shells_block's sleeping busyboxes, started one at a time until one's exec
-# splits the free block of MPY_ORDER, at most; then how long it waits for that one's block,
-# once it is killed, to join its buddy again: at most MERGE_WAITS steps of MERGE_STEP_MS
+# The sleeping busyboxes that hold blocks, at most (test_python_from_its_shells_block: those that
+# bring two order-7 units down to one and those started until one's exec splits the last;
+# test_python_without_a_block: those in place of an MPY whose start took the last order-6
+# block); then how long a killed holder's block takes to join its buddy again: at most
+# MERGE_WAITS steps of MERGE_STEP_MS
 SLEEP_HOLDER = "sleep 600"
-SLEEP_HOLDERS = 8
+SLEEP_HOLDERS = 12
 MERGE_WAITS = 10
 MERGE_STEP_MS = 200
 # test_python's command, through the launcher and MPY itself
@@ -384,6 +386,67 @@ def hold_mpy_block(linux: Booted, holders: list[int]) -> None:
     wait_console(linux, MPY_HELD, mark)
 
 
+def units(free: list[int], order: int = linux_checks.MPY_ORDER) -> int:
+    """The free memory in blocks of order and above as blocks of order: an order-8 block is
+    two."""
+    return sum(n << (k - order) for k, n in enumerate(free) if k >= order)
+
+
+class Holders:
+    """The background processes a test starts to hold free blocks (MPYs and sleepers), with
+    buddyinfo after each step for the failure's message (history)."""
+
+    def __init__(self, linux: Booted, key: str):
+        self.linux = linux
+        self.key = key
+        self.mpys: list[int] = []
+        self.sleepers: list[int] = []
+        self.history: list[str] = []
+
+    def look(self, label: str) -> list[int]:
+        free = linux_checks.parse_buddyinfo(command(self.linux, linux_checks.MEM_PROBES[1]))
+        self.history.append(f"{label}: {free}")
+        return free
+
+    def types(self, label: str) -> dict[str, list[int]]:
+        types = linux_checks.parse_pagetypeinfo(command(self.linux, linux_checks.PAGETYPEINFO_PROBE))
+        self.history.append(f"{label}, pagetypeinfo: {types}")
+        return types
+
+    def fail(self, why: str) -> NoReturn:
+        LAUNCHER[self.key] = why
+        pytest.fail(f"{why}; buddyinfo after each step: " + "; ".join(self.history))
+
+    def mpy(self) -> list[int]:
+        if len(self.mpys) == MPY_HOLDERS:
+            self.fail(f"{MPY_HOLDERS} MPYs and another one wanted")
+        hold_mpy_block(self.linux, self.mpys)
+        return self.look(f"MPY {len(self.mpys)}")
+
+    def sleeper(self) -> list[int]:
+        if len(self.sleepers) == SLEEP_HOLDERS:
+            self.fail(f"{SLEEP_HOLDERS} sleepers and another one wanted")
+        self.sleepers.append(background(self.linux, SLEEP_HOLDER))
+        return self.look(f"sleeper {len(self.sleepers)}")
+
+    def kill(self, pid: int, label: str) -> list[int]:
+        """Kills one holder and waits for its block to join a free block of MPY_ORDER again;
+        buddyinfo then, the last look's if none came."""
+        command(self.linux, f"kill {pid}")
+        for holders in (self.mpys, self.sleepers):
+            if pid in holders:
+                holders.remove(pid)
+        for k in range(1, MERGE_WAITS + 1):
+            self.linux.soc.run(ms(MERGE_STEP_MS))
+            free = self.look(f"{label} killed, {k * MERGE_STEP_MS} ms")
+            if units(free):
+                return free
+        self.fail(f"{label}'s block never joined a free block of order {linux_checks.MPY_ORDER} again")
+
+    def kill_all(self) -> None:
+        kill_holders(self.linux, self.mpys + self.sleepers)
+
+
 def test_python_from_its_shells_block(linux):
     """The launcher executes MPY when its look finds no free block of MPY_ORDER, and MPY gets
     the block the launcher's own shell split (docs/agents/linux.md, "MicroPython"): exec frees
@@ -391,83 +454,87 @@ def test_python_from_its_shells_block(linux):
     MPY's, and the copy joins its free buddy again. An exec's allocation is unmovable, and the
     allocator takes the smallest free block on the unmovable lists before it falls back to
     another migratetype's (mm/page_alloc.c, `__rmqueue`), so a busybox splits the order-7
-    block whenever no unmovable order-6 block is free, whatever buddyinfo shows of order 6. The
-    state: MPYs (MPY_HELD_HOLDER, at most MPY_HOLDERS) hold the blocks of MPY_ORDER and up but
-    one; sleeping busyboxes (SLEEP_HOLDER, at most SLEEP_HOLDERS) start one at a time until
-    one's exec takes that block (no free block of MPY_ORDER and up left after it); that one is
-    killed and its block joins its buddy again, so the unmovable lists have no free block of
-    BUSYBOX_ORDER (checked in /proc/pagetypeinfo) and the next exec of busybox, the launcher's
-    shell, splits the order-7 block the same way. With PYTHON_DEBUG=1 the launcher then shows a
-    look without a free block of MPY_ORDER and its drop, and MPY still prints 42, with none of
-    NO_BLOCK_SHOWN on the console. A look that still finds the block (caches kept) means the
-    state wasn't reached: a failure, not retried, as the state was checked just before. init's
-    sysmon is left alone: its reclaim drops only when no free block of BUSYBOX_ORDER or above
-    is left, and the order-7 block or the other half of its split is free throughout. The
-    holders are killed whatever happens, for the tests after this one."""
+    block whenever no unmovable order-6 block is free, whatever buddyinfo shows of order 6.
+
+    The state: one free block of MPY_ORDER, none above, and no unmovable one of BUSYBOX_ORDER.
+    Counted in blocks of MPY_ORDER (units: an order-8 block is two), each holder's start splits
+    at most one more block of MPY_ORDER and up than its exec takes: a pageblock is order 7
+    (CONFIG_PAGE_BLOCK_MAX_ORDER), so an unmovable allocation that takes a block of order 7 and
+    up, from its own lists or by the fallback's claim of another type's whole block, leaves the
+    rest on the unmovable lists, where the smallest that fits serves the start's next
+    allocations, all of them smaller than order 7. An MPY (MPY_HELD_HOLDER, its exec a block of
+    MPY_ORDER; its 64 KB heap, stack and libc's mmaps unmovable too) so takes one or two units,
+    a sleeping busybox (SLEEP_HOLDER, its exec a block of BUSYBOX_ORDER) none or one. MPYs
+    start while three units or more are free, so at least one is left; with two, sleepers, as
+    an MPY's side allocations could split the second (the emulator, 2026-11-17: one MPY took
+    both, the unmovable lists had no block of orders 4-6 for its heap); each sleeper takes an
+    unmovable block of BUSYBOX_ORDER or splits one unit, whose other half is then such a block.
+    An MPY that leaves none all the same is killed, its blocks join again, and the rest of the
+    way goes by sleepers alone, as it does past MPY_HOLDERS MPYs. Then, at one unit, sleepers
+    start one at a time until one's exec takes that block (the unmovable lists had no block of
+    BUSYBOX_ORDER left for it); that one is killed and its block joins its buddy again, so the
+    unmovable lists have no free block of BUSYBOX_ORDER (checked in /proc/pagetypeinfo) and the
+    next exec of busybox, the launcher's shell, splits the order-7 block the same way. Each
+    kind of holder has its cap.
+
+    With PYTHON_DEBUG=1 the launcher then shows a look without a free block of MPY_ORDER and
+    its drop, and MPY still prints 42, with none of NO_BLOCK_SHOWN on the console. A look that
+    still finds the block (caches kept) means the state wasn't reached: a failure, not retried,
+    as the state was checked just before. init's sysmon is left alone: its reclaim drops only
+    when no free block of BUSYBOX_ORDER or above is left, and the order-7 block or the other
+    half of its split is free throughout. The holders are killed whatever happens, for the
+    tests after this one."""
     soc = linux.soc
     order = linux_checks.MPY_ORDER
-    key = f"{linux.how}, shell's block"
-    mpys: list[int] = []
-    sleepers: list[int] = []
-    history: list[str] = []
-
-    def look(label: str) -> list[int]:
-        free = linux_checks.parse_buddyinfo(command(linux, linux_checks.MEM_PROBES[1]))
-        history.append(f"{label}: {free}")
-        return free
-
-    def fail(why: str) -> NoReturn:
-        LAUNCHER[key] = why
-        pytest.fail(f"{why}; buddyinfo after each step: " + "; ".join(history))
-
+    h = Holders(linux, f"{linux.how}, shell's block")
     try:
-        free = look("the start")
-        if sum(free[order:]) == 0:
+        free = h.look("the start")
+        h.types("the start")
+        if units(free) == 0:
             command(linux, DROP_CACHES)
             # The dentries' and inodes' memory is freed after an RCU grace period
             soc.run(ms(100))
-            free = look("the shell's drop")
-        # One free block of MPY_ORDER and none above: MPYs hold the others
-        while sum(free[order:]) != 1 or free[order] != 1:
-            if sum(free[order:]) == 0:
-                fail(f"no free block of order {order} left after {len(mpys)} MPYs")
-            if len(mpys) == MPY_HOLDERS:
-                fail(f"{len(mpys)} MPYs and still more than one free block of order {order} and up")
-            hold_mpy_block(linux, mpys)
-            free = look(f"MPY {len(mpys)}")
-        # Sleepers until one's exec splits it: the unmovable lists had no order-6 block for it
-        while sum(free[order:]):
-            if len(sleepers) == SLEEP_HOLDERS:
-                fail(f"none of {len(sleepers)} sleepers split the free block of order {order}")
-            sleepers.append(background(linux, SLEEP_HOLDER))
-            free = look(f"sleeper {len(sleepers)}")
-        last = sleepers[-1]
-        command(linux, f"kill {last}")
-        sleepers.remove(last)
-        for k in range(1, MERGE_WAITS + 1):
-            soc.run(ms(MERGE_STEP_MS))
-            free = look(f"sleeper {len(sleepers) + 1} killed, {k * MERGE_STEP_MS} ms")
-            if sum(free[order:]):
+            free = h.look("the shell's drop")
+        mpy_route = True
+        # Down to one unit: each step starts a holder (or undoes an MPY, once)
+        for _ in range(MPY_HOLDERS + SLEEP_HOLDERS + 2):
+            left = units(free)
+            if left == 1:
                 break
+            if left == 0:
+                h.fail(f"no free block of order {order} left after {len(h.mpys)} MPYs and {len(h.sleepers)} sleepers")
+            if left >= 3 and mpy_route and len(h.mpys) < MPY_HOLDERS:
+                free = h.mpy()
+                if units(free) == 0:
+                    free = h.kill(h.mpys[-1], f"MPY {len(h.mpys)}, which left none,")
+                    mpy_route = False
+            else:
+                free = h.sleeper()
         else:
-            fail(f"the killed sleeper's block never joined a free block of order {order} again")
-        types = linux_checks.parse_pagetypeinfo(command(linux, linux_checks.PAGETYPEINFO_PROBE))
-        unmovable = types.get("Unmovable", [])
-        history.append(f"pagetypeinfo: {types}")
+            h.fail(
+                f"still {units(free)} units of order {order} after {len(h.mpys)} MPYs and {len(h.sleepers)} sleepers"
+            )
+        held = len(h.sleepers)
+        # Sleepers until one's exec splits it: the unmovable lists had no order-6 block for it
+        while units(free):
+            free = h.sleeper()
+        free = h.kill(h.sleepers[-1], f"sleeper {len(h.sleepers)}")
+        unmovable = h.types("the state").get("Unmovable", [])
         if len(unmovable) <= BUSYBOX_ORDER:
-            fail("no Unmovable line in /proc/pagetypeinfo")
-        if unmovable[BUSYBOX_ORDER] or sum(free[order:]) != 1:
-            fail(f"not one free block of order {order} and no unmovable one of order {BUSYBOX_ORDER}")
+            h.fail("no Unmovable line in /proc/pagetypeinfo")
+        if unmovable[BUSYBOX_ORDER] or units(free) != 1:
+            h.fail(f"not one free block of order {order} and no unmovable one of order {BUSYBOX_ORDER}")
         mark = len(soc.uart_received())
         out = command(linux, PYTHON_NO_LOOK)
         console = soc.uart_received()[mark:].decode(errors="replace")
         saw = linux_checks.launcher_saw(out)
-        LAUNCHER[key] = (
-            f"{len(mpys)} MPYs and {len(sleepers)} sleepers holding blocks (sleeper {len(sleepers) + 1}'s exec split"
-            f" order {order}, killed), free before {free}, unmovable {unmovable}, the launcher saw {saw}"
+        LAUNCHER[h.key] = (
+            f"{len(h.mpys)} MPYs and {held} + {len(h.sleepers) - held} sleepers holding blocks (sleeper"
+            f" {len(h.sleepers) + 1}'s exec split order {order}, killed), free before {free}, unmovable {unmovable},"
+            f" the launcher saw {saw}"
         )
         if linux_checks.PYTHON_KEPT in out:
-            fail(
+            h.fail(
                 f"the launcher's look still found a free block of order {order} (caches kept), saw {saw}: {out[-1500:]}"
             )
         assert saw and sum(saw[order:]) == 0, out[-1500:]
@@ -476,7 +543,7 @@ def test_python_from_its_shells_block(linux):
         assert "status=0" in out, out[-1500:]
         assert not any(e in console for e in NO_BLOCK_SHOWN), console[-3000:]
     finally:
-        kill_holders(linux, mpys + sleepers)
+        h.kill_all()
 
 
 def test_python_without_a_block(linux):
@@ -491,27 +558,44 @@ def test_python_without_a_block(linux):
     MPY_ORDER pages held an allocated page at the last look (one with all of its pages free is
     a free block of its order), and those pages are the holders', the kernel's and the
     initramfs', none of them dropped; the launcher's own block of BUSYBOX_ORDER, freed by the
-    exec, joins one only with free pages, so not into a free block of MPY_ORDER either. The
-    holders are killed whatever happens, for the tests after this one."""
+    exec, joins one only with free pages, so not into a free block of MPY_ORDER either.
+
+    The launcher's shell needs a free block of BUSYBOX_ORDER, and the last MPY's side
+    allocations (its heap, order 4, the smallest unmovable block that fits, or another type's
+    largest) can take the last one, depending on the layout the tests before left
+    (test_python_from_its_shells_block explains why a start splits at most one such block). If
+    none is left, that MPY is killed (its blocks join again, the order-6 one included) and
+    sleepers (SLEEP_HOLDER, at most SLEEP_HOLDERS) hold the rest instead: a busybox's exec
+    takes an unmovable block of BUSYBOX_ORDER or splits a block of MPY_ORDER, whose other half
+    is then a free block of BUSYBOX_ORDER, and its other allocations are smaller than that
+    half. Each step is a holder or a drop, bounded. The holders are killed whatever happens,
+    for the tests after this one."""
     soc = linux.soc
     order = linux_checks.MPY_ORDER
-    holders: list[int] = []
+    h = Holders(linux, f"{linux.how}, no block")
+    mpy_route = True
     try:
-        # A holder per free block, a drop when none is left: at most a drop after each holder
-        for _ in range(2 * MPY_HOLDERS + 2):
-            if free_large(linux, order):
-                assert len(holders) < MPY_HOLDERS, f"{len(holders)} MPYs and still a free block of order {order}"
-                hold_mpy_block(linux, holders)
+        free = h.look("the start")
+        # A holder per free unit, a drop when none is left: at most a drop after each holder,
+        # and the MPY a sleeper replaces once
+        for _ in range(2 * (MPY_HOLDERS + SLEEP_HOLDERS) + 4):
+            if units(free):
+                free = h.mpy() if mpy_route else h.sleeper()
                 continue
             command(linux, DROP_CACHES)
             # The dentries' and inodes' memory is freed after an RCU grace period
             soc.run(ms(100))
-            if not free_large(linux, order):
+            free = h.look("drop")
+            if units(free):
+                continue
+            if sum(free[BUSYBOX_ORDER:]):
                 break
-        buddyinfo = command(linux, linux_checks.MEM_PROBES[1])
-        free = linux_checks.parse_buddyinfo(buddyinfo)
-        assert sum(free[order:]) == 0, f"{len(holders)} MPYs: {buddyinfo}"
-        assert sum(free[BUSYBOX_ORDER:]) > 0, f"no free block of order {BUSYBOX_ORDER} for the launcher: {buddyinfo}"
+            if not mpy_route or not h.mpys:
+                h.fail(f"no free block of order {BUSYBOX_ORDER} for the launcher")
+            free = h.kill(h.mpys[-1], f"MPY {len(h.mpys)}, which took the last block of order {BUSYBOX_ORDER},")
+            mpy_route = False
+        else:
+            h.fail(f"still free blocks of order {order} after {len(h.mpys)} MPYs and {len(h.sleepers)} sleepers")
         mark = len(soc.uart_received())
         out, cycles = run_metered(linux, PYTHON_NO_LOOK)
         console = soc.uart_received()[mark:].decode(errors="replace")
@@ -521,12 +605,12 @@ def test_python_without_a_block(linux):
         assert "42" not in [o.strip() for o in out.splitlines()], out[-1500:]
         # The shell lives on
         assert "alive" in [o.strip() for o in command(linux, "echo alive").splitlines()]
-        LAUNCHER[f"{linux.how}, no block"] = (
-            f"{len(holders)} MPYs holding the blocks; the launcher's run to MPY's SIGSEGV {cycles:,} cycles"
-            f" ({cycles / CLK_HZ:.2f} s), {len(console):,} bytes on the console"
+        LAUNCHER[h.key] = (
+            f"{len(h.mpys)} MPYs and {len(h.sleepers)} sleepers holding the blocks; the launcher's run to MPY's"
+            f" SIGSEGV {cycles:,} cycles ({cycles / CLK_HZ:.2f} s), {len(console):,} bytes on the console"
         )
     finally:
-        kill_holders(linux, holders)
+        h.kill_all()
 
 
 def test_exec_after_card_reads(linux):
