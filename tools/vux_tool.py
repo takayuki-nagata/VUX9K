@@ -357,7 +357,7 @@ def cmd_monitor(args):
     drain_serial(ser, timeout=0.1)
 
     print(f"=== Connected to VUX9K on {args.port} ({args.baud} bps) ===")
-    print("Interactive mode active: Type commands directly. Press Ctrl+C or Ctrl+] to exit.\n")
+    print("Interactive mode active: Type commands directly. Press Ctrl+] to exit (Ctrl+C goes to the board).\n")
 
     # Send return to trigger fresh prompt
     ser.write(b"\r")
@@ -373,7 +373,8 @@ def cmd_monitor(args):
     if is_tty:
         old_settings = termios.tcgetattr(sys.stdin)
         # Raw: every key as it is typed (Enter as CR, which Linux's tty turns into LF, ICRNL,
-        # and vi takes as it is), Ctrl+C below
+        # and vi takes as it is), Ctrl+C as 0x03 to the board (it stops a program there: Linux's
+        # shell, MicroPython's REPL), only Ctrl+] below leaves
         tty.setraw(sys.stdin.fileno())
         # Output post-processing on again, for this tool's own lines (monitor_output gives the
         # board's bytes CR LF already)
@@ -400,8 +401,8 @@ def cmd_monitor(args):
                 key = os.read(sys.stdin.fileno(), 1024)
                 if not key:
                     break
-                # Check for exit hotkeys (Ctrl+C: 0x03, Ctrl+]: 0x1D)
-                if b"\x03" in key or b"\x1d" in key:
+                # The exit hotkey (Ctrl+]: 0x1D); Ctrl+C (0x03) goes to the board like any key
+                if b"\x1d" in key:
                     break
                 pacer.push(key)
 

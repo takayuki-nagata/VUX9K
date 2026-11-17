@@ -128,8 +128,9 @@ class FakePort:
 def test_monitor_paces_a_paste(monkeypatch, tmp_path):
     """The monitor on a pseudo-terminal: a 200-byte paste reaches the port in chunks of at
     most PASTE_CHUNK, PASTE_GAP_MS apart, in order; the board's output reaches the terminal
-    with its bare LFs as CR LF; Ctrl+] ends it. The gaps are checked on the times the monitor
-    gave its pacer, not on when the writes arrived: a loaded machine can't shorten them."""
+    with its bare LFs as CR LF; Ctrl+C goes to the board and Ctrl+] ends it. The gaps are
+    checked on the times the monitor gave its pacer, not on when the writes arrived: a loaded
+    machine can't shorten them."""
     board, host = socket.socketpair()
     port = FakePort(host)
     monkeypatch.setattr(vux_tool, "open_port", lambda *a, **kw: port)
@@ -161,6 +162,10 @@ def test_monitor_paces_a_paste(monkeypatch, tmp_path):
         while sum(len(d) for _, d in port.writes[1:]) < len(paste) and time.monotonic() < end:
             time.sleep(0.01)
         time.sleep(0.2)  # the board's output read too
+        # Ctrl+C goes to the board (it stops a program there), only Ctrl+] ends the monitor
+        os.write(master, b"\x03")
+        while sum(len(d) for _, d in port.writes[1:]) < len(paste) + 1 and time.monotonic() < end:
+            time.sleep(0.01)
         os.write(master, b"\x1d")
 
     t = threading.Thread(target=keys, daemon=True)
@@ -179,7 +184,7 @@ def test_monitor_paces_a_paste(monkeypatch, tmp_path):
     # The first write is the monitor's own CR for a fresh prompt
     assert port.writes[0][1] == b"\r"
     sent = port.writes[1:]
-    assert b"".join(d for _, d in sent) == paste
+    assert b"".join(d for _, d in sent) == paste + b"\x03"
     assert all(len(d) <= vux_tool.PASTE_CHUNK for _, d in sent), [len(d) for _, d in sent]
     # Each chunk as the pacer gave it, GAP apart on the monitor's clock (less a rounding)
     assert [d for _, d in popped] == [d for _, d in sent]
